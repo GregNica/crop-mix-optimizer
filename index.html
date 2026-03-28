@@ -558,6 +558,120 @@
     border: 1.5px solid #d1d5db; border-radius: 6px;
     background: #fafafa; width: 100%;
   }
+
+  /* ─── HUB VIEW ─── */
+  #hub-view { padding: 2rem; max-width: 860px; margin: 0 auto; display: none; }
+  #hub-view.active { display: block; }
+  .hub-welcome { text-align: center; margin-bottom: 1.8rem; }
+  .hub-welcome h2 { font-size: 1.3rem; color: #1b4332; margin-bottom: 0.35rem; font-weight: 800; }
+  .hub-welcome p  { font-size: 0.85rem; color: #6b7280; }
+  #wizard-prompt {
+    background: #f0faf4; border: 2px solid #52b788; border-radius: 12px;
+    padding: 1.1rem 1.5rem; margin-bottom: 1.5rem; text-align: center; display: none;
+  }
+  #wizard-prompt.visible { display: block; }
+  #wizard-prompt h3 { font-size: 0.95rem; color: #1b4332; margin-bottom: 0.3rem; }
+  #wizard-prompt p  { font-size: 0.8rem; color: #4b5563; margin-bottom: 0.75rem; }
+  .wizard-prompt-btns { display: flex; gap: 0.6rem; justify-content: center; flex-wrap: wrap; }
+  .btn-outline {
+    background: transparent; border: 2px solid #2d6a4f; color: #2d6a4f;
+    border-radius: 8px; padding: 0.5rem 1.2rem; font-size: 0.85rem; font-weight: 600; cursor: pointer;
+  }
+  .btn-outline:hover { background: #f0faf4; }
+  .hub-sections-grid {
+    display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.9rem; margin-bottom: 1.5rem;
+  }
+  @media (max-width: 700px) { .hub-sections-grid { grid-template-columns: repeat(2, 1fr); } }
+  .hub-card {
+    background: #fff; border: 2px solid #e5e7eb; border-radius: 12px;
+    padding: 1.1rem 0.8rem; cursor: pointer; text-align: center;
+    transition: border-color 0.15s, box-shadow 0.15s; position: relative;
+    display: flex; flex-direction: column; align-items: center; gap: 0.45rem;
+  }
+  .hub-card:hover { border-color: #2d6a4f; box-shadow: 0 2px 14px rgba(45,106,79,0.13); }
+  .hub-card.complete { border-color: #52b788; background: #f9fef9; }
+  .hub-card.review-card { border-style: dashed; }
+  .hub-card-icon  { font-size: 1.75rem; line-height: 1; }
+  .hub-card-title { font-size: 0.83rem; font-weight: 700; color: #1a2e1a; }
+  .hub-card-desc  { font-size: 0.68rem; color: #6b7280; line-height: 1.35; }
+  .hub-check {
+    display: none; position: absolute; top: 7px; right: 7px;
+    background: #52b788; color: #fff; border-radius: 50%;
+    width: 18px; height: 18px; font-size: 0.65rem; font-weight: 800;
+    align-items: center; justify-content: center;
+  }
+  .hub-card.complete .hub-check { display: flex; }
+  .hub-run-row {
+    display: flex; justify-content: center; gap: 0.8rem; flex-wrap: wrap; margin-bottom: 0.5rem;
+  }
+  .hub-run-row .btn-opt { font-size: 1rem; padding: 0.7rem 2.5rem; }
+
+  /* ─── SECTION PANEL NAV ─── */
+  #input-view { padding: 0; max-width: 1600px; margin: 0 auto; }
+  #section-nav {
+    display: flex; align-items: center; justify-content: space-between;
+    background: #f0faf4; border-bottom: 1px solid #b7e4c7;
+    padding: 0.7rem 2rem; flex-wrap: wrap; gap: 0.5rem;
+  }
+  .section-nav-left  { display: flex; align-items: center; gap: 0.8rem; }
+  .section-nav-title { font-size: 0.95rem; font-weight: 700; color: #1b4332; }
+  .section-nav-step  { font-size: 0.72rem; color: #6b7280; background: #fff; border: 1px solid #d1d5db; border-radius: 10px; padding: 1px 8px; }
+  .section-nav-btns  { display: flex; gap: 0.5rem; }
+  .btn-ghost {
+    background: transparent; border: 1.5px solid #2d6a4f; color: #2d6a4f;
+    border-radius: 7px; padding: 0.28rem 0.85rem; font-size: 0.8rem; font-weight: 600; cursor: pointer;
+  }
+  .btn-ghost:hover { background: #f0faf4; }
+
+  /* ─── SECTION PANELS ─── */
+  .section-panel { display: none; }
+  .section-panel.active { display: block; }
+  .section-cards-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+  .section-cards-grid .span-2 { grid-column: span 2; }
+  .section-cards-grid .span-3 { grid-column: span 3; }
+
+  /* ─── EXECUTIVE SUMMARY ─── */
+  #exec-summary-card {
+    background: linear-gradient(135deg, #1b4332 0%, #2d6a4f 100%);
+    border-radius: 10px; padding: 1.2rem 1.5rem; margin-bottom: 1rem; color: #fff;
+  }
+  #exec-summary-card h2 {
+    font-size: 0.85rem; font-weight: 700; color: #d8f3dc; margin-bottom: 0.8rem;
+    border-bottom: 1px solid rgba(255,255,255,0.25); padding-bottom: 0.4rem;
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .exec-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.8rem; }
+  .exec-item { background: rgba(255,255,255,0.1); border-radius: 8px; padding: 0.65rem 0.9rem; }
+  .exec-label { font-size: 0.63rem; text-transform: uppercase; letter-spacing: 0.5px; color: #b7e4c7; font-weight: 700; margin-bottom: 0.25rem; }
+  .exec-value { font-size: 0.87rem; font-weight: 600; color: #fff; line-height: 1.35; }
+
+  /* ─── ADVANCED SECTION ─── */
+  #advanced-section { display: none; }
+  #advanced-section.visible { display: block; }
+  .advanced-banner {
+    display: flex; align-items: center; gap: 0.5rem; background: #fffbeb;
+    border: 1px solid #fbbf24; border-radius: 8px; padding: 0.55rem 1rem;
+    margin: 0.8rem 0 0.3rem; font-size: 0.78rem; color: #78350f;
+  }
+  #btn-advanced, #btn-print {
+    background: transparent; border: 1.5px solid rgba(255,255,255,0.5);
+    color: #fff; padding: 0.28rem 0.75rem; border-radius: 6px;
+    cursor: pointer; font-size: 0.75rem; font-weight: 600;
+  }
+  #btn-advanced:hover, #btn-print:hover { background: rgba(255,255,255,0.15); }
+  #btn-advanced.active { background: rgba(255,255,255,0.2); border-color: #fff; }
+
+  /* ─── PRINT ─── */
+  @media print {
+    header, #status-bar, #hub-view, #input-view, #results-topbar, #param-summary,
+    .edit-btn, #btn-advanced, #btn-print, #sens-range-row { display: none !important; }
+    #results-view   { display: block !important; height: auto !important; }
+    #results-layout { display: block !important; overflow: visible !important; }
+    #results-main   { overflow: visible !important; padding: 0; }
+    #advanced-section { display: block !important; }
+    .card { break-inside: avoid; box-shadow: none; border: 1px solid #ddd; }
+    body  { background: #fff !important; }
+  }
 </style>
 </head>
 <body>
@@ -572,29 +686,69 @@
 
 <main>
 
-<!-- ═══════════════════ INPUT VIEW ═══════════════════ -->
-<div id="input-view">
+<!-- ═══════════════════ HUB VIEW ═══════════════════ -->
+<div id="hub-view">
 
-  <!-- Instructions bar -->
-  <div id="instructions-bar">
-    <div>
-      <h2>Configure Your Farm</h2>
-      <p>Fill in parameters below, then click <strong>Optimize</strong> to find the profit-maximizing planting plan. The HiGHS MILP solver runs entirely in your browser — no data leaves your machine.</p>
+  <div class="hub-welcome">
+    <h2>Farm Crop-Mix Optimizer</h2>
+    <p>Configure your farm parameters section by section, then run the MILP optimizer. No data leaves your browser.</p>
+  </div>
+
+  <!-- First-time wizard prompt (shown once) -->
+  <div id="wizard-prompt">
+    <h3>First time here?</h3>
+    <p>Walk through each section step by step with the guided setup wizard, or jump directly to any section.</p>
+    <div class="wizard-prompt-btns">
+      <button class="btn-opt" onclick="startWizard()">&#9654; Start Guided Setup</button>
+      <button class="btn-outline" onclick="dismissWizardPrompt()">Skip — configure manually</button>
     </div>
-    <button class="btn-opt" onclick="runOptimizer()" id="btn-optimize-top">
-      <div class="spinner" id="spinner-top"></div>
-      <span>Optimize</span>
+  </div>
+
+  <!-- Section navigation cards (rendered by renderHub()) -->
+  <div class="hub-sections-grid" id="hub-sections-grid"></div>
+
+  <!-- Optimize button + progress feedback -->
+  <div class="hub-run-row">
+    <button id="btn-optimize-top" class="btn-opt" onclick="runOptimizer()">
+      <div class="spinner" id="spinner-top" style="display:none"></div>
+      <span>&#9654;&nbsp; Optimize</span>
+    </button>
+    <!-- #btn-optimize kept in DOM (hidden) for runOptimizer() backward compat -->
+    <button id="btn-optimize" style="display:none" onclick="runOptimizer()">
+      <div class="spinner" id="spinner"></div>
+      <span id="btn-text">Optimize</span>
     </button>
   </div>
 
-  <div id="progress-wrap">
+  <div id="progress-wrap" style="display:none; max-width:500px; margin:0.6rem auto">
     <div id="progress-bar-track"><div id="progress-bar-fill"></div></div>
     <div id="progress-label">Initializing…</div>
   </div>
   <div id="error-box"></div>
 
-  <!-- Card grid (3 columns) -->
-  <div id="card-grid">
+</div><!-- #hub-view -->
+
+
+<!-- ═══════════════════ INPUT VIEW ═══════════════════ -->
+<div id="input-view" style="display:none">
+
+  <!-- Section navigation bar -->
+  <div id="section-nav">
+    <div class="section-nav-left">
+      <button class="btn-ghost" onclick="showHub()">&#8592; Hub</button>
+      <span class="section-nav-title" id="section-nav-title">Farm Basics</span>
+      <span class="section-nav-step" id="section-nav-step">1 / 5</span>
+    </div>
+    <div class="section-nav-btns">
+      <button class="btn-ghost" id="section-prev-btn" onclick="wizardPrev()" style="display:none">&#8592; Prev</button>
+      <button class="btn-ghost" id="section-next-btn" onclick="wizardNext()" style="display:none">Next &#8594;</button>
+    </div>
+  </div>
+
+  <div style="padding:1rem 2rem 2rem">
+  <!-- ── SECTION: Farm Basics ── -->
+  <div id="section-farm-basics" class="section-panel">
+    <div class="section-cards-grid">
 
     <!-- 1. Farm Infrastructure -->
     <div class="card">
@@ -649,8 +803,15 @@
       </div>
     </div>
 
+    </div><!-- .section-cards-grid -->
+  </div><!-- #section-farm-basics -->
+
+  <!-- ── SECTION: Water ── -->
+  <div id="section-water" class="section-panel">
+    <div class="section-cards-grid">
+
     <!-- 4. Water & Climate -->
-    <div class="card">
+    <div class="card span-3">
       <h2>Water &amp; Climate</h2>
       <div class="form-grid">
         <div class="form-group full">
@@ -715,8 +876,15 @@
       </div>
     </div>
 
-    <!-- 5. Labor (spans 2 columns) -->
-    <div class="card span-2">
+    </div><!-- .section-cards-grid -->
+  </div><!-- #section-water -->
+
+  <!-- ── SECTION: Labor & Channels ── -->
+  <div id="section-labor-channels" class="section-panel">
+    <div class="section-cards-grid">
+
+    <!-- 5. Labor -->
+    <div class="card span-3">
       <h2>Labor</h2>
       <p style="font-size:0.73rem;color:#6b7280;margin:0 0 0.6rem"><strong>Salary</strong> = year-round fixed cost. <strong>Hourly</strong> = year-round variable. <strong>Seasonal</strong> = crew active only between Start–End week.</p>
       <div id="labor-list"></div>
@@ -731,7 +899,14 @@
       <button type="button" id="add-channel-btn" onclick="addChannel()">+ Add Channel</button>
     </div>
 
-    <!-- 7. Crops (full row) -->
+    </div><!-- .section-cards-grid -->
+  </div><!-- #section-labor-channels -->
+
+  <!-- ── SECTION: Crops ── -->
+  <div id="section-crops" class="section-panel">
+    <div class="section-cards-grid">
+
+    <!-- 7. Crops -->
     <div class="card span-3" id="crops-card">
       <h2>Crops</h2>
       <p style="font-size:0.73rem;color:#6b7280;margin:0 0 0.8rem">Configure every crop — growth cycle, seasons, resource use, and market channels. Click a crop to expand.</p>
@@ -739,15 +914,22 @@
       <button type="button" id="add-crop-btn" onclick="addCrop()">+ Add Crop</button>
     </div>
 
-  </div><!-- #card-grid -->
+    </div><!-- .section-cards-grid -->
+  </div><!-- #section-crops -->
 
-  <!-- Bottom optimize button -->
-  <div style="margin-top:1rem">
-    <button id="btn-optimize" class="btn-opt" onclick="runOptimizer()">
-      <div class="spinner" id="spinner"></div>
-      <span id="btn-text">Optimize</span>
-    </button>
-  </div>
+  <!-- ── SECTION: Review & Run ── -->
+  <div id="section-review" class="section-panel">
+    <div class="card">
+      <h2>Ready to Optimize</h2>
+      <p style="font-size:0.82rem;color:#6b7280;margin-bottom:1rem">Your farm is configured. Head back to the Hub to run the optimizer, or click below.</p>
+      <div style="display:flex;gap:0.8rem;flex-wrap:wrap;align-items:center">
+        <button class="btn-opt" onclick="showHub()">&#8592; Back to Hub</button>
+        <button class="btn-opt" style="background:#1b4332" onclick="showHub();setTimeout(runOptimizer,100)">&#9654; Run Now</button>
+      </div>
+    </div>
+  </div><!-- #section-review -->
+
+  </div><!-- padding container -->
 
 </div><!-- #input-view -->
 
@@ -759,7 +941,10 @@
   <div id="results-topbar">
     <button class="edit-btn" onclick="switchToInput()">&#8592; Edit Parameters</button>
     <span id="results-title">Optimization Results</span>
-    <div style="width:140px"></div>
+    <div style="display:flex;gap:0.5rem;align-items:center">
+      <button id="btn-advanced" onclick="toggleAdvanced()">Advanced &#9660;</button>
+      <button id="btn-print" onclick="window.print()">&#9113; Print</button>
+    </div>
   </div>
 
   <div id="results-layout">
@@ -772,6 +957,11 @@
 
     <!-- Right: scrollable results -->
     <div id="results-main">
+
+      <!-- Executive Summary (rendered after solve) -->
+      <div id="exec-summary-card">
+        <div style="color:rgba(255,255,255,0.45);font-size:0.82rem;padding:0.4rem 0">Run the optimizer to see the executive summary.</div>
+      </div>
 
       <!-- KPIs -->
       <div class="kpi-grid" id="kpi-grid"></div>
@@ -834,8 +1024,12 @@
         <div id="contribution-margin-content"><div style="color:#9ca3af;font-size:0.85rem">Run optimizer to see results.</div></div>
       </div>
 
+      <!-- Advanced Tools (hidden until toggled) -->
+      <div id="advanced-section">
+        <div class="advanced-banner">&#9658; Advanced tools — for exploring model sensitivity and outcome risk. These may take additional time to run.</div>
+
       <!-- Sensitivity Analysis -->
-      <div class="card" style="margin-top:1rem">
+      <div class="card" style="margin-top:0.5rem">
         <h2>Sensitivity Analysis</h2>
         <p style="font-size:0.78rem;color:#6b7280;margin-bottom:0.8rem">Select a parameter to sweep and see how profit responds. The highlighted row shows the current optimized value.</p>
         <div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.8rem" id="sens-variable-btns"></div>
@@ -877,6 +1071,8 @@
         </div>
         <div id="mc-results" style="margin-top:0.8rem"></div>
       </div>
+
+      </div><!-- #advanced-section -->
 
     </div><!-- #results-main -->
   </div><!-- #results-layout -->
@@ -1424,10 +1620,269 @@ function getCropsFromForm() {
   return crops;
 }
 
+// ============================================================
+// APP STATE — hub navigation, wizard, advanced toggle
+// ============================================================
+/* Small state object; no persistence needed beyond the session. */
+const APP_STATE = {
+  view: 'hub',           // 'hub' | 'section' | 'results'
+  section: null,         // current section id when view === 'section'
+  wizardMode: false,     // true when step-by-step wizard is active
+  advancedVisible: false,
+  hasOptimized: false,
+};
+
+const SECTION_ORDER = ['farm-basics', 'water', 'labor-channels', 'crops', 'review'];
+
+const SECTION_META = {
+  'farm-basics':    { icon: '🏡', title: 'Farm Basics',      desc: 'Land, budget, storage & cost rates' },
+  'water':          { icon: '💧', title: 'Water',            desc: 'Climate zone and water sources'     },
+  'labor-channels': { icon: '👷', title: 'Labor & Channels', desc: 'Workforce and sales channels'       },
+  'crops':          { icon: '🌱', title: 'Crops',            desc: 'Crop varieties, cycles & pricing'   },
+  'review':         { icon: '▶',  title: 'Review & Run',     desc: 'Check settings and optimize'        },
+};
+
+function isFirstVisit() {
+  try { return !localStorage.getItem('farm_optimizer_visited'); } catch(e) { return false; }
+}
+function markVisited() {
+  try { localStorage.setItem('farm_optimizer_visited', '1'); } catch(e) {}
+}
+
+/* Returns { sectionId: boolean } completion states based on current form content */
+function getSectionCompletion() {
+  let laborOk = false, channelsOk = false, cropsOk = false;
+  try { laborOk    = getLaborFromForm().length > 0;   } catch(e) {}
+  try { channelsOk = getChannelDefs().length > 0;     } catch(e) {}
+  try { cropsOk    = getCropsFromForm().filter(c => c.name).length > 0; } catch(e) {}
+  const anyWater = (document.getElementById('well_enabled')?.checked) ||
+                   (document.getElementById('catchment_enabled')?.checked) ||
+                   (document.getElementById('city_water_enabled')?.checked);
+  return {
+    'farm-basics':    true,          // always valid — has sensible defaults
+    'water':          !!anyWater,
+    'labor-channels': laborOk && channelsOk,
+    'crops':          cropsOk,
+    'review':         APP_STATE.hasOptimized,
+  };
+}
+
+/* Render the hub section cards with current completion state */
+function renderHub() {
+  const completion = getSectionCompletion();
+  const grid = document.getElementById('hub-sections-grid');
+  if (!grid) return;
+  grid.innerHTML = SECTION_ORDER.map(id => {
+    const m = SECTION_META[id];
+    const done = completion[id];
+    const isReview = id === 'review';
+    return `
+      <div class="hub-card${done ? ' complete' : ''}${isReview ? ' review-card' : ''}"
+           onclick="showSection('${id}')">
+        <div class="hub-check">&#10003;</div>
+        <div class="hub-card-icon">${m.icon}</div>
+        <div class="hub-card-title">${m.title}</div>
+        <div class="hub-card-desc">${m.desc}</div>
+      </div>`;
+  }).join('');
+
+  // Show wizard prompt on first ever visit
+  const wp = document.getElementById('wizard-prompt');
+  if (wp) wp.classList.toggle('visible', isFirstVisit());
+}
+
+function showHub() {
+  APP_STATE.view = 'hub';
+  APP_STATE.section = null;
+  document.getElementById('hub-view').style.display   = 'block';
+  document.getElementById('input-view').style.display = 'none';
+  document.getElementById('results-view').style.display = 'none';
+  renderHub();
+}
+
+function showSection(sectionId) {
+  markVisited();
+  APP_STATE.view    = 'section';
+  APP_STATE.section = sectionId;
+  document.getElementById('hub-view').style.display     = 'none';
+  document.getElementById('results-view').style.display = 'none';
+  const inputView = document.getElementById('input-view');
+  inputView.style.display = 'block';
+
+  // Activate only the target section panel
+  SECTION_ORDER.forEach(id => {
+    const el = document.getElementById('section-' + id);
+    if (el) el.classList.toggle('active', id === sectionId);
+  });
+
+  // Update section nav bar labels
+  const meta = SECTION_META[sectionId];
+  document.getElementById('section-nav-title').textContent = meta ? meta.title : sectionId;
+  const idx = SECTION_ORDER.indexOf(sectionId);
+  document.getElementById('section-nav-step').textContent = `${idx + 1} / ${SECTION_ORDER.length}`;
+
+  // Wizard nav: show Prev/Next only in wizard mode
+  const prevBtn = document.getElementById('section-prev-btn');
+  const nextBtn = document.getElementById('section-next-btn');
+  if (prevBtn) prevBtn.style.display = (APP_STATE.wizardMode && idx > 0) ? 'inline-flex' : 'none';
+  if (nextBtn) nextBtn.style.display = (APP_STATE.wizardMode && idx < SECTION_ORDER.length - 1) ? 'inline-flex' : 'none';
+
+  window.scrollTo(0, 0);
+}
+
+function startWizard() {
+  markVisited();
+  APP_STATE.wizardMode = true;
+  const wp = document.getElementById('wizard-prompt');
+  if (wp) wp.classList.remove('visible');
+  showSection(SECTION_ORDER[0]);
+}
+
+function dismissWizardPrompt() {
+  markVisited();
+  const wp = document.getElementById('wizard-prompt');
+  if (wp) wp.classList.remove('visible');
+}
+
+function wizardNext() {
+  const idx = SECTION_ORDER.indexOf(APP_STATE.section);
+  if (idx < SECTION_ORDER.length - 1) {
+    showSection(SECTION_ORDER[idx + 1]);
+  } else {
+    APP_STATE.wizardMode = false;
+    showHub();
+  }
+}
+
+function wizardPrev() {
+  const idx = SECTION_ORDER.indexOf(APP_STATE.section);
+  if (idx > 0) showSection(SECTION_ORDER[idx - 1]);
+}
+
+// ============================================================
+// Executive Summary
+// ============================================================
+function renderExecutiveSummary(res, params) {
+  const el = document.getElementById('exec-summary-card');
+  if (!el) return;
+
+  const fmtDollar = n => (n == null || isNaN(n)) ? '—' : '$' + Number(n).toLocaleString('en-US', {maximumFractionDigits: 0});
+  const fmtPct    = n => (n == null || isNaN(n)) ? '—' : Math.round(n * 100) + '%';
+
+  // 1. Profit headline
+  const profitStr = res.total_profit != null ? fmtDollar(res.total_profit) + ' projected annual profit' : '—';
+
+  // 2. Highest-margin crop (compute from params — same logic as renderContributionMargins)
+  let topCrop = '—';
+  try {
+    const crops    = params.crops    || [];
+    const channels = params.channels || [];
+    const LABOR_RATE = parseFloat(params.cost_labor_per_hr || 20);
+    const WATER_RATE = parseFloat(params.cost_water_per_L  || 0.002);
+    const FERT_RATE  = parseFloat(params.cost_fert_per_lb  || 0.82);
+    const FUEL_RATE  = parseFloat(params.cost_fuel_per_L   || 1.25);
+    let bestMargin = -Infinity, bestLabel = null;
+    for (const crop of crops) {
+      const dtm = parseFloat(crop.days_to_maturity) || 84;
+      const pw  = parseInt(crop.planting_weeks)     || 1;
+      const hw  = parseInt(crop.harvest_weeks)      || 1;
+      const gw  = Math.max(0, Math.round(dtm / 7) - pw - hw);
+      const ypa = parseFloat(crop.yield_per_acre)   || 0;
+      for (const ch of channels) {
+        const cdata = (crop.channels_data || {})[ch.name] || {};
+        const price = parseFloat(cdata.price) || 0;
+        const pkg   = parseFloat(cdata.pkg)   || 0;
+        if (!price) continue;
+        const laborVC = ((parseFloat(crop.labor_plant)||0)*pw + (parseFloat(crop.labor_grow)||0)*gw + (parseFloat(crop.labor_harv)||0)*hw) * LABOR_RATE;
+        const waterVC = ((parseFloat(crop.water_plant)||0)*pw + (parseFloat(crop.water_grow)||0)*gw + (parseFloat(crop.water_harv)||0)*hw) * WATER_RATE;
+        const fertVC  = ((parseFloat(crop.fert_plant) ||0)*pw + (parseFloat(crop.fert_grow) ||0)*gw + (parseFloat(crop.fert_harv) ||0)*hw) * FERT_RATE;
+        const fuelVC  = ((parseFloat(crop.fuel_plant) ||0)*pw + (parseFloat(crop.fuel_grow) ||0)*gw + (parseFloat(crop.fuel_harv) ||0)*hw) * FUEL_RATE;
+        const seedVC  = parseFloat(crop.seed_transplant_cost_per_acre) || 0;
+        const totalVC = laborVC + waterVC + fertVC + fuelVC + seedVC + ypa * pkg;
+        const margin  = ypa * price - totalVC;
+        if (margin > bestMargin) { bestMargin = margin; bestLabel = crop.name + ' (' + ch.name + ')'; }
+      }
+    }
+    if (bestLabel) topCrop = bestLabel + ' — ' + fmtDollar(bestMargin) + '/ac';
+  } catch(e) {}
+
+  // 3. Most binding constraint (find max peak utilization from weekly arrays)
+  let bindingConstraint = '—';
+  try {
+    const opW  = parseInt(params.operating_weeks) || 48;
+    const slice = arr => (arr || []).slice(0, opW);
+    const peakFrac = (usedArr, supplyArr) => {
+      const fracs = slice(usedArr).map((v, i) => {
+        const cap = Array.isArray(supplyArr) ? supplyArr[i] : supplyArr;
+        return cap > 0 ? v / cap : 0;
+      });
+      return fracs.length ? Math.max(...fracs) : 0;
+    };
+    const candidates = [
+      { name: 'Land',            peak: Math.max(...slice(res.weekly_land_frac  || []).map(v => v)) },
+      { name: 'Labor',           peak: peakFrac(res.weekly_labor_used,   res.weekly_labor_supply) },
+      { name: 'Irrigation Water',peak: peakFrac(res.weekly_water_used,   res.weekly_water_supply) },
+      { name: 'Harvest Storage', peak: peakFrac(res.weekly_harvest_vol,  (params.harvest_storage_cap || 1e9)) },
+    ];
+    candidates.sort((a, b) => b.peak - a.peak);
+    const top = candidates[0];
+    if (top && top.peak > 0.5) {
+      bindingConstraint = top.name + ' at ' + Math.round(top.peak * 100) + '% peak capacity';
+    } else {
+      bindingConstraint = 'No single dominant bottleneck — plan has headroom';
+    }
+  } catch(e) {}
+
+  // 4. Suggested next step
+  let nextStep = '—';
+  try {
+    const landPeak  = Math.max(...((res.weekly_land_frac || [])).slice(0, params.operating_weeks || 48));
+    const laborPeak = (() => {
+      const u = res.weekly_labor_used || [], s = res.weekly_labor_supply || [];
+      if (!u.length || !s.length) return 0;
+      return Math.max(...u.slice(0,48).map((v,i) => s[i] > 0 ? v/s[i] : 0));
+    })();
+    const waterPeak = (() => {
+      const u = res.weekly_water_used || [], s = res.weekly_water_supply || [];
+      if (!u.length || !s.length) return 0;
+      return Math.max(...u.slice(0,48).map((v,i) => s[i] > 0 ? v/s[i] : 0));
+    })();
+    if (landPeak < 0.65)        nextStep = 'Land is underutilized — add more crop successions or extend planting seasons.';
+    else if (laborPeak > 0.90)  nextStep = 'Labor near capacity — consider hiring more staff to unlock additional profit.';
+    else if (waterPeak > 0.90)  nextStep = 'Water near capacity — adding a well or catchment system could increase planting.';
+    else                        nextStep = 'Plan looks well-balanced — use Sensitivity Analysis (Advanced) to explore upside.';
+  } catch(e) {}
+
+  el.innerHTML = `
+    <h2>Executive Summary</h2>
+    <div class="exec-grid">
+      <div class="exec-item"><div class="exec-label">Projected Profit</div><div class="exec-value">${profitStr}</div></div>
+      <div class="exec-item"><div class="exec-label">Highest-Margin Option</div><div class="exec-value">${topCrop}</div></div>
+      <div class="exec-item"><div class="exec-label">Key Constraint</div><div class="exec-value">${bindingConstraint}</div></div>
+      <div class="exec-item"><div class="exec-label">Suggested Next Step</div><div class="exec-value">${nextStep}</div></div>
+    </div>`;
+}
+
+// ============================================================
+// Advanced toggle
+// ============================================================
+function toggleAdvanced() {
+  APP_STATE.advancedVisible = !APP_STATE.advancedVisible;
+  const sec = document.getElementById('advanced-section');
+  const btn = document.getElementById('btn-advanced');
+  if (sec) sec.classList.toggle('visible', APP_STATE.advancedVisible);
+  if (btn) {
+    btn.textContent = APP_STATE.advancedVisible ? 'Advanced \u25B2' : 'Advanced \u25BC';
+    btn.classList.toggle('active', APP_STATE.advancedVisible);
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   renderAllLabor();
   renderAllChannels();
   renderAllCrops();
+  // Initialize to hub view
+  showHub();
 });
 
 // ============================================================
@@ -2643,12 +3098,17 @@ function renderContributionMargins(params) {
 // View switching
 // ============================================================
 function switchToResults(params, res) {
+  document.getElementById('hub-view').style.display   = 'none';
   document.getElementById('input-view').style.display = 'none';
   const rv = document.getElementById('results-view');
-  rv.style.display = 'flex';
+  rv.style.display      = 'flex';
   rv.style.flexDirection = 'column';
+  APP_STATE.view         = 'results';
+  APP_STATE.hasOptimized = true;
   window._lastParams = params;
   window._lastRes    = res;
+  // Render all result sections
+  renderExecutiveSummary(res, params);
   renderSummaryPane(params);
   renderGanttCalendar(res);
   updatePieChart(document.getElementById('week-slider').value);
@@ -2661,7 +3121,8 @@ function switchToResults(params, res) {
 
 function switchToInput() {
   document.getElementById('results-view').style.display = 'none';
-  document.getElementById('input-view').style.display = 'block';
+  // Return to hub so user can navigate to any section
+  showHub();
 }
 
 // ============================================================
