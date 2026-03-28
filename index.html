@@ -617,6 +617,15 @@
   .section-cards-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
   .section-cards-grid .span-2 { grid-column: span 2; }
   .section-cards-grid .span-3 { grid-column: span 3; }
+  /* Section guidance banner */
+  .section-guidance {
+    background: #f8faff; border: 1px solid #c7d9f5; border-radius: 8px;
+    padding: 0.65rem 1rem; margin-bottom: 0.9rem; font-size: 0.78rem;
+    color: #374151; line-height: 1.55;
+  }
+  .section-guidance .sg-req  { color: #1b4332; font-weight: 700; }
+  .section-guidance .sg-opt  { color: #6b7280; }
+  .section-guidance .sg-note { color: #78350f; font-style: italic; }
 
   /* ─── EXECUTIVE SUMMARY ─── */
   #exec-summary-card {
@@ -723,6 +732,11 @@
   <div style="padding:1rem 2rem 2rem">
   <!-- ── SECTION: Farm Basics ── -->
   <div id="section-farm-basics" class="section-panel">
+    <div class="section-guidance">
+      <span class="sg-req">Required:</span> Total Land (acres) and Opening Cash set your core constraints. &nbsp;
+      <span class="sg-opt">Safe to leave at defaults:</span> all cost rates, storage sizes, and Operating Weeks — pre-calibrated for a 150-acre vegetable operation. &nbsp;
+      <span class="sg-note">Tip: buttons labeled "hide" collapse optional fields (Equipment Storage, Fuel Storage, Credit Line) that have no effect unless you override them.</span>
+    </div>
     <div class="section-cards-grid">
 
     <!-- 1. Farm Infrastructure -->
@@ -783,6 +797,11 @@
 
   <!-- ── SECTION: Water ── -->
   <div id="section-water" class="section-panel">
+    <div class="section-guidance">
+      <span class="sg-req">Required:</span> at least one water source must be checked (Well, Catchment, or City). Well Water is enabled by default — enter your weekly pump capacity. &nbsp;
+      <span class="sg-opt">Optional:</span> Catchment adds rainfall-offset supply; City Water adds an unlimited but costly fallback. Uncheck either to disable it entirely. &nbsp;
+      <span class="sg-note">Climate Zone sets weekly rainfall estimates used to offset irrigation demand — pick the zone closest to your farm location.</span>
+    </div>
     <div class="section-cards-grid">
 
     <!-- 4. Water & Climate -->
@@ -856,6 +875,11 @@
 
   <!-- ── SECTION: Labor & Channels ── -->
   <div id="section-labor-channels" class="section-panel">
+    <div class="section-guidance">
+      <span class="sg-req">Required:</span> at least one labor position and at least one sales channel — both are pre-loaded. &nbsp;
+      <span class="sg-opt">Labor types:</span> Salary = fixed annual cost regardless of planting; Hourly = variable by hours worked; Seasonal = crew active only between Start–End week. &nbsp;
+      <span class="sg-note">Channels defined here automatically appear in every crop form. Add or remove channels here — not per crop.</span>
+    </div>
     <div class="section-cards-grid">
 
     <!-- 5. Labor -->
@@ -879,6 +903,11 @@
 
   <!-- ── SECTION: Crops ── -->
   <div id="section-crops" class="section-panel">
+    <div class="section-guidance">
+      <span class="sg-req">Required:</span> at least one crop with a name, a planting season, and a price in at least one channel. Six crops are pre-loaded with realistic defaults. &nbsp;
+      <span class="sg-opt">Safe to leave:</span> resource rates (labor, water, fertilizer, fuel) are benchmarked — only override if you have farm-specific data. &nbsp;
+      <span class="sg-note">Use the template selector (top of each crop card) to quickly load benchmarks for 28 common crops. Demand caps control how much the optimizer can sell per channel per week.</span>
+    </div>
     <div class="section-cards-grid">
 
     <!-- 7. Crops -->
@@ -894,6 +923,11 @@
 
   <!-- ── SECTION: Review & Run ── -->
   <div id="section-review" class="section-panel">
+    <div class="section-guidance">
+      <span class="sg-req">All defaults are calibrated for a 150-acre California vegetable farm</span> — you can run the optimizer immediately without changing anything. &nbsp;
+      <span class="sg-opt">If you have your own data,</span> go back to each section and override specific values. The optimizer will use exactly what you enter. &nbsp;
+      <span class="sg-note">First run takes 30–60 seconds to load the solver (cached on repeat visits). Subsequent runs are typically under 10 seconds.</span>
+    </div>
     <div class="card">
       <h2>Ready to Optimize</h2>
       <p style="font-size:0.82rem;color:#6b7280;margin-bottom:1rem">Your farm is configured. Head back to the Hub to run the optimizer, or click below.</p>
@@ -1693,91 +1727,131 @@ function renderExecutiveSummary(res, params) {
   const el = document.getElementById('exec-summary-card');
   if (!el) return;
 
-  const fmtDollar = n => (n == null || isNaN(n)) ? '—' : '$' + Number(n).toLocaleString('en-US', {maximumFractionDigits: 0});
-  const fmtPct    = n => (n == null || isNaN(n)) ? '—' : Math.round(n * 100) + '%';
+  const fmtD = n => '$' + Number(n).toLocaleString('en-US', {maximumFractionDigits: 0});
 
-  // 1. Profit headline
-  const profitStr = res.profit != null ? fmtDollar(res.profit) + ' projected annual profit' : '—';
+  // ── 1. Profit headline ──────────────────────────────────────
+  const profitStr = (res.profit != null && !isNaN(res.profit))
+    ? fmtD(res.profit) + ' projected annual profit'
+    : 'Profit data unavailable';
 
-  // 2. Highest-margin crop (compute from params — same logic as renderContributionMargins)
-  let topCrop = '—';
+  // ── 2. Highest-margin crop/channel ──────────────────────────
+  // Uses price_per_lb / packaging_cost_per_lb — the field names
+  // produced by getCropsFromForm() and stored in params.crops[].channels
+  let topCrop = 'Unable to compute — check that crops have prices entered';
   try {
-    const crops    = params.crops    || [];
-    const channels = params.channels || [];
     const LABOR_RATE = parseFloat(params.cost_labor_per_hr || 20);
     const WATER_RATE = parseFloat(params.cost_water_per_L  || 0.002);
     const FERT_RATE  = parseFloat(params.cost_fert_per_lb  || 0.82);
     const FUEL_RATE  = parseFloat(params.cost_fuel_per_L   || 1.25);
     let bestMargin = -Infinity, bestLabel = null;
-    for (const crop of crops) {
+    for (const crop of (params.crops || [])) {
       const dtm = parseFloat(crop.days_to_maturity) || 84;
       const pw  = parseInt(crop.planting_weeks)     || 1;
       const hw  = parseInt(crop.harvest_weeks)      || 1;
       const gw  = Math.max(0, Math.round(dtm / 7) - pw - hw);
       const ypa = parseFloat(crop.yield_per_acre)   || 0;
-      for (const ch of channels) {
-        const cdata = (crop.channels || {})[ch.name] || {};
-        const price = parseFloat(cdata.price) || 0;
-        const pkg   = parseFloat(cdata.pkg)   || 0;
-        if (!price) continue;
-        const laborVC = ((parseFloat(crop.labor_plant)||0)*pw + (parseFloat(crop.labor_grow)||0)*gw + (parseFloat(crop.labor_harv)||0)*hw) * LABOR_RATE;
-        const waterVC = ((parseFloat(crop.water_plant)||0)*pw + (parseFloat(crop.water_grow)||0)*gw + (parseFloat(crop.water_harv)||0)*hw) * WATER_RATE;
-        const fertVC  = ((parseFloat(crop.fert_plant) ||0)*pw + (parseFloat(crop.fert_grow) ||0)*gw + (parseFloat(crop.fert_harv) ||0)*hw) * FERT_RATE;
-        const fuelVC  = ((parseFloat(crop.fuel_plant) ||0)*pw + (parseFloat(crop.fuel_grow) ||0)*gw + (parseFloat(crop.fuel_harv) ||0)*hw) * FUEL_RATE;
-        const seedVC  = parseFloat(crop.seed_transplant_cost_per_acre) || 0;
-        const totalVC = laborVC + waterVC + fertVC + fuelVC + seedVC + ypa * pkg;
-        const margin  = ypa * price - totalVC;
-        if (margin > bestMargin) { bestMargin = margin; bestLabel = crop.name + ' (' + ch.name + ')'; }
+      for (const [chName, cdata] of Object.entries(crop.channels || {})) {
+        // price_per_lb is the canonical field name from getCropsFromForm()
+        const price = parseFloat(cdata.price_per_lb || cdata.price || 0);
+        const pkg   = parseFloat(cdata.packaging_cost_per_lb || cdata.pkg || 0);
+        if (!price || !ypa) continue;
+        const laborVC = ((crop.labor_plant||0)*pw + (crop.labor_grow||0)*gw + (crop.labor_harv||0)*hw) * LABOR_RATE;
+        const waterVC = ((crop.water_plant||0)*pw + (crop.water_grow||0)*gw + (crop.water_harv||0)*hw) * WATER_RATE;
+        const fertVC  = ((crop.fert_plant ||0)*pw + (crop.fert_grow ||0)*gw + (crop.fert_harv ||0)*hw) * FERT_RATE;
+        const fuelVC  = ((crop.fuel_plant ||0)*pw + (crop.fuel_grow ||0)*gw + (crop.fuel_harv ||0)*hw) * FUEL_RATE;
+        const seedVC  = parseFloat(crop.seed_transplant_cost_per_acre || 0);
+        const margin  = ypa * price - (laborVC + waterVC + fertVC + fuelVC + seedVC + ypa * pkg);
+        if (margin > bestMargin) { bestMargin = margin; bestLabel = `${crop.name} (${chName})`; }
       }
     }
-    if (bestLabel) topCrop = bestLabel + ' — ' + fmtDollar(bestMargin) + '/ac';
-  } catch(e) {}
+    if (bestLabel) topCrop = `${bestLabel} — ${fmtD(bestMargin)}/ac contribution margin`;
+  } catch(e) { topCrop = 'Calculation error — check crop channel prices'; }
 
-  // 3. Most binding constraint (find max peak utilization from weekly arrays)
-  let bindingConstraint = '—';
+  // ── 3. Most binding physical constraint ────────────────────
+  let bindingConstraint = 'No dominant bottleneck — plan has headroom across all resources';
   try {
-    const opW  = parseInt(params.operating_weeks) || 48;
-    const slice = arr => (arr || []).slice(0, opW);
-    const peakFrac = (usedArr, supplyArr) => {
-      const fracs = slice(usedArr).map((v, i) => {
-        const cap = Array.isArray(supplyArr) ? supplyArr[i] : supplyArr;
-        return cap > 0 ? v / cap : 0;
-      });
-      return fracs.length ? Math.max(...fracs) : 0;
+    const opW   = parseInt(params.operating_weeks) || 48;
+    const slc   = arr => (arr || []).slice(0, opW);
+    const peak  = (u, s) => {
+      const f = slc(u).map((v,i) => { const c = Array.isArray(s)?s[i]:s; return c>0?v/c:0; });
+      return f.length ? Math.max(...f) : 0;
     };
-    const candidates = [
-      { name: 'Land',            peak: Math.max(...slice(res.weekly_land_frac  || []).map(v => v)) },
-      { name: 'Labor',           peak: peakFrac(res.weekly_labor_used,   res.weekly_labor_supply) },
-      { name: 'Irrigation Water',peak: peakFrac(res.weekly_water_used,   res.weekly_water_supply) },
-      { name: 'Harvest Storage', peak: peakFrac(res.weekly_harvest_vol,  (params.harvest_storage_cap || 1e9)) },
-    ];
-    candidates.sort((a, b) => b.peak - a.peak);
-    const top = candidates[0];
-    if (top && top.peak > 0.5) {
-      bindingConstraint = top.name + ' at ' + Math.round(top.peak * 100) + '% peak capacity';
-    } else {
-      bindingConstraint = 'No single dominant bottleneck — plan has headroom';
-    }
+    const cands = [
+      { name:'Land',             p: Math.max(0, ...slc(res.weekly_land_frac || [])) },
+      { name:'Labor',            p: peak(res.weekly_labor_used,  res.weekly_labor_supply) },
+      { name:'Irrigation Water', p: peak(res.weekly_water_used,  res.weekly_water_supply) },
+      { name:'Harvest Storage',  p: peak(res.weekly_harvest_vol, params.harvest_storage_cap || 1e9) },
+    ].sort((a,b) => b.p - a.p);
+    if (cands[0].p > 0.5)
+      bindingConstraint = `${cands[0].name} peaks at ${Math.round(cands[0].p*100)}% of capacity — likely limiting further planting`;
   } catch(e) {}
 
-  // 4. Suggested next step
-  let nextStep = '—';
+  // ── 4. Demand pressure insight ──────────────────────────────
+  // Computes annual harvest vs annual demand cap per crop/channel.
+  // High saturation (≥85%) = demand cap is a binding market constraint.
+  // Low saturation (≤30%) = market can absorb significantly more production.
+  let demandInsight = 'Demand data unavailable';
   try {
-    const landPeak  = Math.max(...((res.weekly_land_frac || [])).slice(0, params.operating_weeks || 48));
-    const laborPeak = (() => {
-      const u = res.weekly_labor_used || [], s = res.weekly_labor_supply || [];
-      if (!u.length || !s.length) return 0;
-      return Math.max(...u.slice(0,48).map((v,i) => s[i] > 0 ? v/s[i] : 0));
-    })();
-    const waterPeak = (() => {
-      const u = res.weekly_water_used || [], s = res.weekly_water_supply || [];
-      if (!u.length || !s.length) return 0;
-      return Math.max(...u.slice(0,48).map((v,i) => s[i] > 0 ? v/s[i] : 0));
-    })();
-    if (landPeak < 0.65)        nextStep = 'Land is underutilized — add more crop successions or extend planting seasons.';
-    else if (laborPeak > 0.90)  nextStep = 'Labor near capacity — consider hiring more staff to unlock additional profit.';
-    else if (waterPeak > 0.90)  nextStep = 'Water near capacity — adding a well or catchment system could increase planting.';
-    else                        nextStep = 'Plan looks well-balanced — use Sensitivity Analysis (Advanced) to explore upside.';
+    const sched    = res.succession_schedule || [];
+    const cropInfo = {};
+    (params.crops || []).forEach(c => { cropInfo[c.name] = c; });
+
+    // Aggregate total harvest acres per crop
+    const cropAcres = {};
+    sched.forEach(s => {
+      const key = s.crop || s.name;
+      cropAcres[key] = (cropAcres[key] || 0) + (s.acres || 0);
+    });
+
+    const demandEntries = []; // { label, sat }
+    Object.entries(cropAcres).forEach(([cropName, acres]) => {
+      const ci = cropInfo[cropName];
+      if (!ci) return;
+      const ypa = parseFloat(ci.yield_per_acre || 0);
+      const totalHarv = acres * ypa;
+      Object.entries(ci.channels || {}).forEach(([chName, chData]) => {
+        let annualCap = 0;
+        if (chData.demand_cap_type === 'annual') {
+          annualCap = parseFloat(chData.annual_demand_lbs) || 0;
+        } else if (chData.demand_cap_type === 'weekly_varying') {
+          (chData.demand_ranges || []).forEach(dr => {
+            const m = dr.weeks ? dr.weeks.match(/W(\d+)-W(\d+)/) : null;
+            if (m) annualCap += (parseFloat(dr.weekly_lbs)||0) * (parseInt(m[2])-parseInt(m[1])+1);
+          });
+        } else { // weekly_flat (default)
+          annualCap = (parseFloat(chData.weekly_demand_lbs) || 0) * 52;
+        }
+        if (annualCap > 0) demandEntries.push({ label:`${cropName} → ${chName}`, sat: Math.min(1, totalHarv/annualCap) });
+      });
+    });
+
+    if (demandEntries.length === 0) {
+      demandInsight = 'No planted crops with demand caps to evaluate';
+    } else {
+      demandEntries.sort((a,b) => b.sat - a.sat);
+      const most = demandEntries[0];
+      const least = demandEntries[demandEntries.length - 1];
+      const avgSat = demandEntries.reduce((s,d) => s+d.sat, 0) / demandEntries.length;
+      if (most.sat >= 0.85) {
+        demandInsight = `${most.label} fills ${Math.round(most.sat*100)}% of its demand cap — market nearly saturated for this channel. Consider shifting volume elsewhere.`;
+      } else if (least.sat <= 0.25 && demandEntries.length > 1) {
+        demandInsight = `${least.label} uses only ${Math.round(least.sat*100)}% of its demand cap — significant market headroom available if you increase production.`;
+      } else {
+        demandInsight = `Avg demand utilization ${Math.round(avgSat*100)}% across ${demandEntries.length} crop/channel combos — no single channel is a bottleneck.`;
+      }
+    }
+  } catch(e) { demandInsight = 'Could not compute demand utilization'; }
+
+  // ── 5. Suggested next step (resource-aware) ─────────────────
+  let nextStep = 'Run Sensitivity Analysis (Advanced) to explore how profit changes with more land, labor, or water.';
+  try {
+    const opW = parseInt(params.operating_weeks) || 48;
+    const landPeak = Math.max(0, ...(res.weekly_land_frac||[]).slice(0,opW));
+    const lbPeak   = (() => { const u=res.weekly_labor_used||[],s=res.weekly_labor_supply||[]; return u.length&&s.length?Math.max(...u.slice(0,opW).map((v,i)=>s[i]>0?v/s[i]:0)):0; })();
+    const wPeak    = (() => { const u=res.weekly_water_used||[],s=res.weekly_water_supply||[]; return u.length&&s.length?Math.max(...u.slice(0,opW).map((v,i)=>s[i]>0?v/s[i]:0)):0; })();
+    if      (landPeak < 0.60) nextStep = `Only ${Math.round(landPeak*100)}% of land is in use at peak — add crop successions or extend season windows to fill idle acreage.`;
+    else if (lbPeak   > 0.90) nextStep = `Labor hits ${Math.round(lbPeak*100)}% of capacity — hiring more seasonal workers could unlock significant additional planting.`;
+    else if (wPeak    > 0.90) nextStep = `Water peaks at ${Math.round(wPeak*100)}% of supply — adding a well or catchment system is the highest-leverage infrastructure investment.`;
   } catch(e) {}
 
   el.innerHTML = `
@@ -1785,7 +1859,8 @@ function renderExecutiveSummary(res, params) {
     <div class="exec-grid">
       <div class="exec-item"><div class="exec-label">Projected Profit</div><div class="exec-value">${profitStr}</div></div>
       <div class="exec-item"><div class="exec-label">Highest-Margin Option</div><div class="exec-value">${topCrop}</div></div>
-      <div class="exec-item"><div class="exec-label">Key Constraint</div><div class="exec-value">${bindingConstraint}</div></div>
+      <div class="exec-item"><div class="exec-label">Key Resource Constraint</div><div class="exec-value">${bindingConstraint}</div></div>
+      <div class="exec-item"><div class="exec-label">Demand Pressure</div><div class="exec-value">${demandInsight}</div></div>
       <div class="exec-item"><div class="exec-label">Suggested Next Step</div><div class="exec-value">${nextStep}</div></div>
     </div>`;
 }
