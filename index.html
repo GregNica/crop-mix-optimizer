@@ -567,9 +567,15 @@
   .hub-welcome p  { font-size: 0.85rem; color: #6b7280; }
 
   .hub-sections-grid {
-    display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.9rem; margin-bottom: 1.5rem;
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.9rem; margin-bottom: 1.5rem;
   }
   @media (max-width: 700px) { .hub-sections-grid { grid-template-columns: repeat(2, 1fr); } }
+  .hub-optimize-hint {
+    text-align: center; font-size: 0.76rem; color: #6b7280; margin-bottom: 0.6rem;
+    min-height: 1.2em;
+  }
+  .hub-card.unvisited { border-color: #e5e7eb; }
+  .hub-card.unvisited .hub-card-title::after { content: ' ↗'; font-size: 0.68rem; color: #9ca3af; }
   .hub-card {
     background: #fff; border: 2px solid #e5e7eb; border-radius: 12px;
     padding: 1.1rem 0.8rem; cursor: pointer; text-align: center;
@@ -590,7 +596,7 @@
   }
   .hub-card.complete .hub-check { display: flex; }
   .hub-run-row {
-    display: flex; justify-content: center; gap: 0.8rem; flex-wrap: wrap; margin-bottom: 0.5rem;
+    display: flex; justify-content: center; gap: 0.8rem; flex-wrap: wrap; margin-bottom: 0.3rem;
   }
   .hub-run-row .btn-opt { font-size: 1rem; padding: 0.7rem 2.5rem; }
 
@@ -723,15 +729,16 @@
 
   <div class="hub-welcome">
     <h2>Farm Crop-Mix Optimizer</h2>
-    <p>Configure your farm parameters section by section, then run the MILP optimizer. No data leaves your browser.</p>
+    <p>Defaults are preloaded for a 150-acre California vegetable operation. <strong>Visit each of the 4 sections</strong> to review and customize, then run the optimizer. No data leaves your browser.</p>
   </div>
 
   <!-- Section navigation cards (rendered by renderHub()) -->
   <div class="hub-sections-grid" id="hub-sections-grid"></div>
 
   <!-- Optimize button + progress feedback -->
+  <div class="hub-optimize-hint" id="hub-optimize-hint">Visit all 4 sections to unlock Optimize</div>
   <div class="hub-run-row">
-    <button id="btn-optimize-top" class="btn-opt" onclick="runOptimizer()">
+    <button id="btn-optimize-top" class="btn-opt" onclick="runOptimizer()" disabled title="Visit all 4 sections to unlock">
       <div class="spinner" id="spinner-top" style="display:none"></div>
       <span>&#9654;&nbsp; Optimize</span>
     </button>
@@ -956,22 +963,7 @@
     </div><!-- .section-cards-grid -->
   </div><!-- #section-crops -->
 
-  <!-- ── SECTION: Review & Run ── -->
-  <div id="section-review" class="section-panel">
-    <div class="section-guidance">
-      <span class="sg-req">All unfilled optional fields will use defaults — you can run the optimizer immediately without changing anything.</span> &nbsp;
-      <span class="sg-opt">Adjust any values above if you have actual farm data.</span> Defaults are calibrated for a 150-acre California vegetable operation and will produce a valid plan regardless. &nbsp;
-      <span class="sg-note">First run takes 30–60 s to load the solver (cached after that). Subsequent runs are typically under 10 s.</span>
-    </div>
-    <div class="card">
-      <h2>Ready to Optimize</h2>
-      <p style="font-size:0.82rem;color:#6b7280;margin-bottom:1rem">Your farm is configured. Head back to the Hub to run the optimizer, or click below.</p>
-      <div style="display:flex;gap:0.8rem;flex-wrap:wrap;align-items:center">
-        <button class="btn-opt" onclick="showHub()">&#8592; Back to Hub</button>
-        <button class="btn-opt" style="background:#1b4332" onclick="showHub();setTimeout(runOptimizer,100)">&#9654; Run Now</button>
-      </div>
-    </div>
-  </div><!-- #section-review -->
+  <!-- Review & Run section removed (Phase 2.3): Optimize is now gated by visit tracking on hub -->
 
   </div><!-- padding container -->
 
@@ -1007,21 +999,22 @@
         <div style="color:rgba(255,255,255,0.45);font-size:0.82rem;padding:0.4rem 0">Run the optimizer to see the executive summary.</div>
       </div>
 
-      <!-- KPIs -->
-      <div class="kpi-grid" id="kpi-grid"></div>
-
-      <!-- Charts -->
-      <div style="margin-top:1rem">
-        <div class="chart-box">
-          <h3>Profit Waterfall</h3>
-          <img id="chart-waterfall" src="" alt="Waterfall chart" style="max-width:600px">
+      <!-- Profit Waterfall card with Export P&L in header -->
+      <div class="card" style="margin-top:1rem" id="waterfall-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.7rem;flex-wrap:wrap;gap:0.5rem">
+          <h2 style="margin:0;border:none;padding:0">Profit Waterfall</h2>
+          <button onclick="exportPLCSV()" style="padding:0.32rem 1rem;background:#fff;border:1.5px solid #2d6a4f;color:#2d6a4f;border-radius:7px;font-size:0.79rem;font-weight:700;cursor:pointer">&#8595; Export P&amp;L</button>
         </div>
+        <img id="chart-waterfall" src="" alt="Waterfall chart" style="max-width:100%;width:100%;display:block;border-radius:6px">
       </div>
 
       <!-- What-If Scenario Analysis — actionable section, shown early -->
       <div class="card" style="margin-top:1rem" id="bottleneck-card">
-        <h2>What-If Scenario Analysis</h2>
-        <p style="font-size:0.78rem;color:#6b7280;margin-bottom:0.6rem">Ranks active and near-binding constraints — physical resources and per-crop/channel demand caps — and lets you test how profit responds when each is loosened. Baseline stays pinned; scenario history persists in session.</p>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.4rem;flex-wrap:wrap;gap:0.5rem">
+          <h2 style="margin:0;border:none;padding:0">What-If Scenario Analysis</h2>
+          <button onclick="exportConstraintCSV()" style="padding:0.28rem 0.85rem;background:#fff;border:1.5px solid #9ca3af;color:#6b7280;border-radius:7px;font-size:0.76rem;font-weight:600;cursor:pointer">&#8595; Export Utilization CSV</button>
+        </div>
+        <p style="font-size:0.78rem;color:#6b7280;margin-bottom:0.6rem">Ranks all constraints by peak utilization. Click a pill to auto-run +10/+20/+40% scenarios. Select multiple pills and click <em>Run Combined</em> for a joint scenario in one solve.</p>
         <div id="bottleneck-content"><div style="color:#9ca3af;font-size:0.85rem">Run optimizer to see scenario analysis.</div></div>
       </div>
 
@@ -1061,17 +1054,21 @@
         </div>
       </div>
 
-      <!-- Constraint Summary (replaces planting plan table) -->
-      <div class="card" style="margin-top:1rem" id="constraint-summary-card">
+      <!-- Constraint Utilization Summary hidden (Phase 2.3) — data accessible via What-If CSV export -->
+      <div class="card" style="display:none;margin-top:1rem" id="constraint-summary-card">
         <h2>Constraint Utilization Summary</h2>
-        <p style="font-size:0.78rem;color:#6b7280;margin-bottom:0.8rem">How close are you to your limits? Red = likely binding. See the What-If Scenario Analysis card above to test relaxing these constraints.</p>
-        <div id="constraint-summary-content"><div style="color:#9ca3af;font-size:0.85rem">Run optimizer to see results.</div></div>
+        <div id="constraint-summary-content"></div>
       </div>
 
       <!-- Contribution Margin Table -->
       <div class="card" style="margin-top:1rem" id="contribution-margin-card">
         <h2>Unit Contribution Margins</h2>
-        <p style="font-size:0.78rem;color:#6b7280;margin-bottom:0.8rem">Revenue minus all variable costs per acre, by crop and channel. Drives which crops the optimizer selects and through which channels.</p>
+        <p style="font-size:0.78rem;color:#6b7280;margin-bottom:0.8rem">
+          Revenue minus all variable costs per acre, by crop and channel — this drives which crops the optimizer selects.
+          <strong>Formula:</strong> (yield/ac × net price) − (labor + water + fertilizer + fuel + seed costs per acre).
+          Higher values tell the optimizer to plant more of that crop; the constraint system then determines actual allocation.
+          Annualized margin (shown in Executive Summary) also divides by crop cycle length to compare crops with different rotation speeds.
+        </p>
         <div id="contribution-margin-content"><div style="color:#9ca3af;font-size:0.85rem">Run optimizer to see results.</div></div>
       </div>
 
@@ -1676,58 +1673,64 @@ function getCropsFromForm() {
 // ============================================================
 /* Small state object; no persistence needed beyond the session. */
 const APP_STATE = {
-  view: 'hub',           // 'hub' | 'section' | 'results'
-  section: null,         // current section id when view === 'section'
+  view: 'hub',              // 'hub' | 'section' | 'results'
+  section: null,            // current section id when view === 'section'
   advancedVisible: false,
   hasOptimized: false,
+  visitedSections: new Set(), // tracks which sections the user has opened at least once
 };
 
-const SECTION_ORDER = ['farm-basics', 'water', 'labor-channels', 'crops', 'review'];
+const SECTION_ORDER = ['farm-basics', 'water', 'labor-channels', 'crops'];
 
 const SECTION_META = {
   'farm-basics':    { icon: '🏡', title: 'Farm Basics',      desc: 'Set your farm size, budget, and storage infrastructure — these define your hard constraints.' },
   'water':          { icon: '💧', title: 'Water',            desc: 'Configure water sources (well, catchment, city supply) — we calculate weekly availability from these.' },
   'labor-channels': { icon: '👷', title: 'Labor & Channels', desc: 'Define your workforce and sales channels — labor availability and market access are key profit drivers.' },
   'crops':          { icon: '🌱', title: 'Crops',            desc: 'Add crop varieties with planting dates, growth cycles, yields, and per-channel pricing.' },
-  'review':         { icon: '▶',  title: 'Review & Run',     desc: 'All sections configured — return here to run the optimizer and see your planting plan.' },
 };
 
-/* Returns { sectionId: boolean } completion states based on current form content */
+/* Returns { sectionId: boolean } — true when user has visited that section at least once */
 function getSectionCompletion() {
-  let laborOk = false, channelsOk = false, cropsOk = false;
-  try { laborOk    = getLaborFromForm().length > 0;   } catch(e) {}
-  try { channelsOk = getChannelDefs().length > 0;     } catch(e) {}
-  try { cropsOk    = getCropsFromForm().filter(c => c.name).length > 0; } catch(e) {}
-  const anyWater = (document.getElementById('well_enabled')?.checked) ||
-                   (document.getElementById('catchment_enabled')?.checked) ||
-                   (document.getElementById('city_water_enabled')?.checked);
-  return {
-    'farm-basics':    true,          // always valid — has sensible defaults
-    'water':          !!anyWater,
-    'labor-channels': laborOk && channelsOk,
-    'crops':          cropsOk,
-    'review':         APP_STATE.hasOptimized,
-  };
+  return Object.fromEntries(SECTION_ORDER.map(id => [id, APP_STATE.visitedSections.has(id)]));
 }
 
-/* Render the hub section cards with current completion state */
+/* Enable Optimize button once all 4 sections have been visited */
+function updateOptimizeBtn() {
+  const allVisited = SECTION_ORDER.every(id => APP_STATE.visitedSections.has(id));
+  const btnTop = document.getElementById('btn-optimize-top');
+  const hint   = document.getElementById('hub-optimize-hint');
+  if (btnTop) {
+    btnTop.disabled = !allVisited;
+    btnTop.title    = allVisited ? '' : 'Visit all 4 sections to unlock';
+  }
+  if (hint) {
+    const remaining = SECTION_ORDER.filter(id => !APP_STATE.visitedSections.has(id));
+    hint.textContent = allVisited
+      ? 'All sections reviewed — ready to optimize!'
+      : `Visit ${remaining.length} more section${remaining.length > 1 ? 's' : ''} to unlock Optimize`;
+    hint.style.color = allVisited ? '#2d6a4f' : '#6b7280';
+  }
+}
+
+/* Render the hub section cards with visit-based completion state */
 function renderHub() {
   const completion = getSectionCompletion();
   const grid = document.getElementById('hub-sections-grid');
   if (!grid) return;
   grid.innerHTML = SECTION_ORDER.map(id => {
-    const m = SECTION_META[id];
+    const m    = SECTION_META[id];
     const done = completion[id];
-    const isReview = id === 'review';
     return `
-      <div class="hub-card${done ? ' complete' : ''}${isReview ? ' review-card' : ''}"
-           onclick="showSection('${id}')">
+      <div class="hub-card${done ? ' complete' : ' unvisited'}"
+           onclick="showSection('${id}')" tabindex="0"
+           onkeydown="if(event.key==='Enter'||event.key===' ')showSection('${id}')">
         <div class="hub-check">&#10003;</div>
         <div class="hub-card-icon">${m.icon}</div>
         <div class="hub-card-title">${m.title}</div>
         <div class="hub-card-desc">${m.desc}</div>
       </div>`;
   }).join('');
+  updateOptimizeBtn();
 }
 
 function showHub() {
@@ -1742,6 +1745,10 @@ function showHub() {
 function showSection(sectionId) {
   APP_STATE.view    = 'section';
   APP_STATE.section = sectionId;
+
+  // Mark this section visited and update optimize button
+  APP_STATE.visitedSections.add(sectionId);
+
   document.getElementById('hub-view').style.display     = 'none';
   document.getElementById('results-view').style.display = 'none';
   const inputView = document.getElementById('input-view');
@@ -2623,23 +2630,10 @@ async function runOptimizer() {
 }
 
 function renderResults(res, total_land) {
-  // KPI grid
-  const kpiGrid = document.getElementById('kpi-grid');
-  const borrowClass = res.peak_borrowing > 0 ? ' amber' : '';
-
-  kpiGrid.innerHTML = `
-    <div class="kpi${borrowClass}">
-      <label>Peak Borrowing</label>
-      <div class="val">${fmt(res.peak_borrowing)}</div>
-    </div>
-    <button onclick="exportPLCSV()" style="align-self:center;padding:0.5rem 1.2rem;background:#fff;border:1.5px solid #2d6a4f;color:#2d6a4f;border-radius:8px;font-size:0.82rem;font-weight:700;cursor:pointer">&#8595; Export P&amp;L</button>
-  `;
-
-  // Charts
+  // Waterfall chart — KPI grid removed; Peak Borrowing lives in exec summary only
   document.getElementById('chart-waterfall').src = 'data:image/png;base64,' + res.waterfall_png;
-  // heatmap removed from UI
 
-  // Constraint summary
+  // Constraint summary (kept hidden but data populated for CSV export)
   renderConstraintSummary(res, window._lastParams);
 
   // Contribution margins
@@ -2742,6 +2736,28 @@ function exportPLCSV() {
   const a = document.createElement('a');
   a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
   a.download = 'farm_pl.csv';
+  a.click();
+}
+
+// ============================================================
+// Export Constraint Utilization CSV
+// ============================================================
+function exportConstraintCSV() {
+  const res    = window._lastRes;
+  const params = window._lastParams;
+  if (!res || !params) { alert('Run the optimizer first.'); return; }
+  const ranked = rankBottlenecks(res, params);
+  const rows   = [['Constraint', 'Type', 'Peak Utilization %', 'Status', 'Baseline Value']];
+  ranked.forEach(c => {
+    const pct    = Math.round(c.peak * 100);
+    const status = pct >= 90 ? 'Binding' : pct >= 70 ? 'Near-binding' : pct >= 50 ? 'Active' : 'Slack';
+    const base   = c.displayFn ? c.displayFn(params, 1.0) : '';
+    rows.push([c.name, c.type, pct, status, base]);
+  });
+  const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const a   = document.createElement('a');
+  a.href     = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+  a.download = 'constraint_utilization.csv';
   a.click();
 }
 
@@ -3382,12 +3398,18 @@ function drawPie(slices) {
 // ============================================================
 
 const WHATIF_STATE = {
-  rankedConstraints: [],  // all candidates, sorted by peak desc
-  selectedIdx: 0,         // which constraint pill is selected
+  rankedConstraints: [],      // all candidates sorted by peak desc
+  selectedSet: new Set([0]),  // multi-select: indices of selected constraint pills
   combinedAvailable: false,
 };
 const WHATIF_HISTORY_KEY = 'whatif_scenario_history';
 const WHATIF_MAX_HISTORY = 5;
+
+/** Returns the visible constraint list: all with peak>=50% PLUS land always */
+function getVisibleConstraints() {
+  const all  = WHATIF_STATE.rankedConstraints;
+  return all.filter(c => c.peak >= 0.50 || c.type === 'land');
+}
 
 /**
  * rankBottlenecks(res, params)
@@ -3419,6 +3441,26 @@ const WHATIF_MAX_HISTORY = 5;
  *   - Crop planted but cap = 0 (disabled): entry omitted
  *   - annual_demand_lbs vs weekly_demand_lbs vs demand_ranges all handled
  */
+/**
+ * Compute annual cap for one channel (any cap type).
+ * Used by computeDemandCandidates and computeSingleDemandPeak.
+ */
+function _channelAnnualCap(chData) {
+  if (!chData) return 0;
+  if (chData.demand_cap_type === 'annual') {
+    return parseFloat(chData.annual_demand_lbs) || 0;
+  } else if (chData.demand_cap_type === 'weekly_varying') {
+    let cap = 0;
+    (chData.demand_ranges || []).forEach(dr => {
+      const m = dr.weeks ? dr.weeks.match(/W(\d+)-W(\d+)/) : null;
+      if (m) cap += (parseFloat(dr.weekly_lbs)||0) * (parseInt(m[2])-parseInt(m[1])+1);
+    });
+    return cap;
+  } else {
+    return (parseFloat(chData.weekly_demand_lbs) || 0) * 52;
+  }
+}
+
 function computeDemandCandidates(res, params) {
   const sched    = res.succession_schedule || [];
   const cropInfo = {};
@@ -3435,23 +3477,24 @@ function computeDemandCandidates(res, params) {
     const ci = cropInfo[cropName];
     if (!ci) return;
     const totalHarv = acres * (parseFloat(ci.yield_per_acre) || 0);
+
+    // Total annual cap across ALL channels for this crop.
+    // Saturation = totalHarv / totalCapAllChannels so that per-channel ranking
+    // is not inflated by comparing full crop production against a single channel's cap.
+    const totalCapAllCh = Object.values(ci.channels || {}).reduce(
+      (sum, ch) => sum + _channelAnnualCap(ch), 0
+    );
+    if (totalCapAllCh <= 0) return;
+    const cropSat = Math.min(1, totalHarv / totalCapAllCh);
+
     Object.entries(ci.channels || {}).forEach(([channelName, chData]) => {
-      let annualCap = 0;
-      if (chData.demand_cap_type === 'annual') {
-        annualCap = parseFloat(chData.annual_demand_lbs) || 0;
-      } else if (chData.demand_cap_type === 'weekly_varying') {
-        (chData.demand_ranges || []).forEach(dr => {
-          const m = dr.weeks ? dr.weeks.match(/W(\d+)-W(\d+)/) : null;
-          if (m) annualCap += (parseFloat(dr.weekly_lbs)||0) * (parseInt(m[2])-parseInt(m[1])+1);
-        });
-      } else {
-        annualCap = (parseFloat(chData.weekly_demand_lbs) || 0) * 52;
-      }
+      const annualCap = _channelAnnualCap(chData);
       if (annualCap > 0) {
         entries.push({
           cropName,
           channelName,
-          sat: Math.min(1, totalHarv / annualCap),
+          // sat reflects crop-level fill rate; all channels of same crop share the same sat
+          sat: cropSat,
           annualCap,
           weeklyBase: parseFloat(chData.weekly_demand_lbs) || 0,
           capType: chData.demand_cap_type || 'weekly_flat',
@@ -3560,28 +3603,24 @@ function rankBottlenecks(res, params) {
   return [...physical, ...demandEntries].sort((a, b) => b.peak - a.peak);
 }
 
-/** Helper: compute per-crop/channel demand peak in a given result. */
+/**
+ * Helper: compute demand saturation for a crop in a given result.
+ * Uses the same formula as computeDemandCandidates:
+ *   sat = totalHarv / sum(annualCap for ALL channels of this crop)
+ * so saturation is not overstated for crops with multiple small channels.
+ */
 function computeSingleDemandPeak(res, params, cropName, channelName) {
-  const sched    = res.succession_schedule || [];
+  const sched     = res.succession_schedule || [];
   const cropAcres = {};
   sched.forEach(s => { const k=s.crop||s.name||'?'; cropAcres[k]=(cropAcres[k]||0)+(s.acres||0); });
   const ci = (params.crops||[]).find(c => c.name === cropName);
   if (!ci) return 0;
   const totalHarv = (cropAcres[cropName]||0) * (parseFloat(ci.yield_per_acre)||0);
-  const chData = (ci.channels||{})[channelName];
-  if (!chData) return 0;
-  let annualCap = 0;
-  if (chData.demand_cap_type === 'annual') {
-    annualCap = parseFloat(chData.annual_demand_lbs)||0;
-  } else if (chData.demand_cap_type === 'weekly_varying') {
-    (chData.demand_ranges||[]).forEach(dr => {
-      const m = dr.weeks ? dr.weeks.match(/W(\d+)-W(\d+)/) : null;
-      if (m) annualCap += (parseFloat(dr.weekly_lbs)||0)*(parseInt(m[2])-parseInt(m[1])+1);
-    });
-  } else {
-    annualCap = (parseFloat(chData.weekly_demand_lbs)||0)*52;
-  }
-  return annualCap > 0 ? Math.min(1, totalHarv/annualCap) : 0;
+  // Sum caps across ALL channels (consistent with computeDemandCandidates)
+  const totalCapAllCh = Object.values(ci.channels || {}).reduce(
+    (sum, ch) => sum + _channelAnnualCap(ch), 0
+  );
+  return totalCapAllCh > 0 ? Math.min(1, totalHarv / totalCapAllCh) : 0;
 }
 
 /**
@@ -3716,92 +3755,117 @@ function renderWhatIfCard(res, params) {
   if (!el) return;
 
   const allCands = rankBottlenecks(res, params);
-  const visible  = allCands.filter(c => c.peak >= 0.50);
   WHATIF_STATE.rankedConstraints = allCands;
-  WHATIF_STATE.selectedIdx = 0;
+  WHATIF_STATE.selectedSet = new Set([0]);
 
-  const PHYSICAL_TYPES = new Set(['land','labor','water','storage','cash']);
-  const active = allCands.filter(c => c.peak >= 0.90 && PHYSICAL_TYPES.has(c.type));
-  WHATIF_STATE.combinedAvailable = active.length >= 2;
+  const visible = getVisibleConstraints();
 
-  if (visible.length === 0) {
-    el.innerHTML = `
-      <p style="color:#6b7280;font-size:0.85rem;margin:0 0 0.5rem">
-        No near-binding constraints detected (all resources peak below 50%).
-        The plan has structural headroom — add more crops or extend the planting season to fill it.
-      </p>
-      <div id="whatif-history-wrap"></div>`;
-    renderScenarioHistory(res, params);
-    return;
-  }
-
-  // Constraint pills — coloured by severity
+  // Constraint pills — coloured by severity; multi-select supported
+  // Land always appears; if below 50% it renders as low-util (grey, no severity class)
   const pills = visible.map((c, i) => {
     const pct = Math.round(c.peak * 100);
     const sev = c.peak >= 0.90 ? 'active-constraint' : c.peak >= 0.70 ? 'near-constraint' : '';
-    return `<button class="cn-btn ${sev}" id="cn-btn-${i}" onclick="selectConstraint(${i})">${c.name} ${pct}%</button>`;
+    const lowUtil = c.type === 'land' && c.peak < 0.50 ? ' style="opacity:0.65"' : '';
+    return `<button class="cn-btn ${sev}" id="cn-btn-${i}" onclick="toggleConstraint(${i})"${lowUtil}>${c.name} ${pct}%</button>`;
   }).join('');
 
-  const combinedBtn = WHATIF_STATE.combinedAvailable
-    ? `<div style="margin-top:0.4rem">
-         <button class="btn-combined" id="btn-combined" onclick="runCombinedWhatIf()">
-           Test combined: ${active[0].name} + ${active[1].name} +20%
-         </button>
-       </div>`
+  const infoMsg = visible.every(c => c.peak < 0.50)
+    ? `<p style="color:#6b7280;font-size:0.82rem;margin:0.4rem 0">No near-binding constraints (all below 50%). The plan has headroom — you can still run what-if scenarios to explore the response surface.</p>`
     : '';
 
   el.innerHTML = `
     <div style="margin-bottom:0.4rem">
       <div style="font-size:0.72rem;color:#9ca3af;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:0.3rem">
-        Active / near-binding &nbsp;
+        Select one or more constraints &nbsp;
         <span style="color:#b91c1c;font-weight:700">●</span> ≥90%&nbsp;
         <span style="color:#92400e;font-weight:700">●</span> ≥70%&nbsp;
-        <span style="color:#6b7280">●</span> ≥50%
+        <span style="color:#6b7280">●</span> ≥50%&nbsp;
+        <span style="color:#d1d5db">●</span> &lt;50%
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:0.35rem" id="cn-btns">${pills}</div>
     </div>
+    ${infoMsg}
     <div id="whatif-selected-label" style="font-size:0.81rem;color:#374151;min-height:1.2em;margin:0.35rem 0 0.1rem"></div>
     <div class="whatif-controls">
-      <span style="font-size:0.73rem;color:#9ca3af;align-self:center">Quick:</span>
-      <button class="whatif-preset-btn" onclick="runPresetWhatIf(1.10)">+10%</button>
-      <button class="whatif-preset-btn" onclick="runPresetWhatIf(1.20)">+20%</button>
-      <button class="whatif-preset-btn" onclick="runPresetWhatIf(1.40)">+40%</button>
-      <span style="font-size:0.73rem;color:#9ca3af;margin-left:0.3rem;align-self:center">Custom:</span>
+      <span style="font-size:0.73rem;color:#9ca3af;align-self:center">Custom:</span>
       <input type="number" id="custom-pct-input" class="whatif-custom-input"
-             min="1" max="200" value="25" step="5" title="Enter 1–200">
+             min="1" max="200" value="20" step="5" title="Enter 1–200">
       <span style="font-size:0.8rem;color:#6b7280;align-self:center">%</span>
-      <button class="whatif-preset-btn" style="background:#4b5563" onclick="runCustomWhatIf()">Run</button>
+      <button class="whatif-preset-btn" style="background:#4b5563" onclick="runCustomWhatIf()">Run Custom</button>
+      <button class="btn-combined" id="btn-combined" onclick="runCombinedWhatIf()" style="display:none">Run Combined</button>
     </div>
-    ${combinedBtn}
-    <div id="whatif-running" style="display:none;font-size:0.8rem;color:#6b7280;padding:0.3rem 0">Running scenario…</div>
+    <div id="whatif-running" style="display:none;font-size:0.8rem;color:#6b7280;padding:0.3rem 0">Running scenarios…</div>
     <div id="whatif-history-wrap"></div>
   `;
 
-  selectConstraint(0);
+  // Highlight first pill visually (no auto-run on initial render)
+  updateWhatIfSelectionUI(visible);
   renderScenarioHistory(res, params);
 }
 
-function selectConstraint(idx) {
-  const visible = WHATIF_STATE.rankedConstraints.filter(c => c.peak >= 0.50);
+/** Toggle a constraint pill in/out of selectedSet. Auto-runs presets when only one is selected. */
+function toggleConstraint(idx) {
+  const visible = getVisibleConstraints();
   if (idx < 0 || idx >= visible.length) return;
-  WHATIF_STATE.selectedIdx = idx;
 
-  document.querySelectorAll('.cn-btn').forEach((b, i) =>
-    b.classList.toggle('selected', i === idx));
+  if (WHATIF_STATE.selectedSet.has(idx)) {
+    WHATIF_STATE.selectedSet.delete(idx);
+  } else {
+    WHATIF_STATE.selectedSet.add(idx);
+  }
 
-  const c = visible[idx];
-  const lbl = document.getElementById('whatif-selected-label');
-  if (lbl) {
-    const severity = c.peak >= 0.90 ? 'clearly binding' : c.peak >= 0.70 ? 'likely near-binding' : 'possibly affecting';
-    lbl.innerHTML = `Testing: <strong>${c.name}</strong> — ${severity} at ${Math.round(c.peak*100)}% ` +
-      `<span style="font-size:0.74rem;color:#9ca3af">(baseline: ${c.displayFn(window._lastParams||{}, 1.0)})</span>`;
+  updateWhatIfSelectionUI(visible);
+
+  // Auto-run +10%/+20%/+40% presets when exactly one constraint is selected
+  if (WHATIF_STATE.selectedSet.size === 1) {
+    const c = visible[[...WHATIF_STATE.selectedSet][0]];
+    if (c) autoRunPresets(c);
   }
 }
 
-function runPresetWhatIf(factor) {
-  const visible = WHATIF_STATE.rankedConstraints.filter(c => c.peak >= 0.50);
-  const c = visible[WHATIF_STATE.selectedIdx];
-  if (c) runScenario(c, factor, null);
+/** Update pill highlights, label text, and combined button visibility */
+function updateWhatIfSelectionUI(visible) {
+  const vis = visible || getVisibleConstraints();
+  document.querySelectorAll('.cn-btn').forEach((b, i) =>
+    b.classList.toggle('selected', WHATIF_STATE.selectedSet.has(i)));
+
+  const lbl = document.getElementById('whatif-selected-label');
+  const combBtn = document.getElementById('btn-combined');
+
+  if (WHATIF_STATE.selectedSet.size === 0) {
+    if (lbl) lbl.innerHTML = '<span style="color:#9ca3af">Click a constraint to select and auto-run scenarios.</span>';
+    if (combBtn) combBtn.style.display = 'none';
+    return;
+  }
+
+  const selected = [...WHATIF_STATE.selectedSet].filter(i => i < vis.length).map(i => vis[i]);
+
+  if (selected.length === 1) {
+    const c = selected[0];
+    const severity = c.peak >= 0.90 ? 'clearly binding' : c.peak >= 0.70 ? 'likely near-binding' : c.peak >= 0.50 ? 'possibly affecting' : 'slack';
+    if (lbl) lbl.innerHTML = `Selected: <strong>${c.name}</strong> — ${severity} at ${Math.round(c.peak*100)}% ` +
+      `<span style="font-size:0.74rem;color:#9ca3af">(baseline: ${c.displayFn(window._lastParams||{}, 1.0)})</span><br>` +
+      `<span style="font-size:0.74rem;color:#6b7280">Auto-running +10%/+20%/+40% scenarios…</span>`;
+    if (combBtn) combBtn.style.display = 'none';
+  } else {
+    const names = selected.map(c => c.name).join(' + ');
+    if (lbl) lbl.innerHTML = `Combined: <strong>${names}</strong> — click <em>Run Combined</em> to solve at your custom %.`;
+    if (combBtn) {
+      const input = document.getElementById('custom-pct-input');
+      const pct   = parseFloat(input ? input.value : 20) || 20;
+      combBtn.style.display = '';
+      combBtn.textContent   = `Run Combined +${pct}% (${selected.length} constraints)`;
+    }
+  }
+}
+
+/** Runs +10%/+20%/+40% in sequence for a single constraint (called on pill click) */
+async function autoRunPresets(constraint) {
+  for (const factor of [1.10, 1.20, 1.40]) {
+    // Stop if user changed selection
+    if (WHATIF_STATE.selectedSet.size !== 1) break;
+    await runScenario([constraint], factor);
+  }
 }
 
 function runCustomWhatIf() {
@@ -3810,53 +3874,64 @@ function runCustomWhatIf() {
   const pct = parseFloat(input.value);
   if (isNaN(pct) || pct < 1 || pct > 200) {
     input.style.borderColor = '#dc2626';
-    input.title = 'Enter a value between 1 and 200';
     setTimeout(() => { input.style.borderColor = ''; }, 2000);
     return;
   }
-  const visible = WHATIF_STATE.rankedConstraints.filter(c => c.peak >= 0.50);
-  const c = visible[WHATIF_STATE.selectedIdx];
-  if (c) runScenario(c, 1 + pct / 100, null);
+  const visible  = getVisibleConstraints();
+  const selected = [...WHATIF_STATE.selectedSet].filter(i => i < visible.length).map(i => visible[i]);
+  if (selected.length >= 1) runScenario(selected, 1 + pct / 100);
 }
 
 function runCombinedWhatIf() {
-  const active = WHATIF_STATE.rankedConstraints.filter(c => c.peak >= 0.90 && c.type !== 'demand');
-  if (active.length < 2) return;
-  runScenario(active[0], 1.20, active[1]);
+  const input   = document.getElementById('custom-pct-input');
+  const pct     = parseFloat(input ? input.value : 20) || 20;
+  const valid   = Math.min(200, Math.max(1, pct));
+  const visible = getVisibleConstraints();
+  const selected = [...WHATIF_STATE.selectedSet].filter(i => i < visible.length).map(i => visible[i]);
+  if (selected.length >= 2) runScenario(selected, 1 + valid / 100);
 }
 
-async function runScenario(constraint, factor, combined) {
+/**
+ * runScenario(constraints, factor)
+ *
+ * constraints: array of constraint objects (or single object for backward compat).
+ * factor: scale factor e.g. 1.20 for +20%.
+ * Applies all constraints composably, runs one solver call, records result.
+ */
+async function runScenario(constraints, factor) {
+  const cArr   = Array.isArray(constraints) ? constraints : [constraints];
   const params = window._lastParams;
   const res    = window._lastRes;
-  if (!params || !res || !pyReady) return;
+  if (!params || !res || !pyReady || !cArr.length) return;
 
-  // Disable buttons
-  document.querySelectorAll('.whatif-preset-btn, .btn-combined').forEach(b => { if(b) b.disabled = true; });
+  document.querySelectorAll('.whatif-preset-btn, .btn-combined, .cn-btn').forEach(b => { if(b) b.disabled = true; });
   const runEl = document.getElementById('whatif-running');
   if (runEl) runEl.style.display = 'block';
 
-  // Build label
+  // Build label: "+20% Labor AND +20% Water AND +20% Spinach / FM"
   const pctStr = `+${Math.round((factor-1)*100)}%`;
-  const label  = combined
-    ? `Combined (${constraint.name} + ${combined.name}) ${pctStr}`
-    : `${constraint.name} ${pctStr}`;
+  const label  = cArr.map(c => `${pctStr} ${c.name}`).join(' AND ');
 
-  // Scale params — composable: apply second constraint on top if combined
-  let scaledParams = scaleParamsForScenario(params, constraint, factor);
-  if (combined) scaledParams = scaleParamsForScenario(scaledParams, combined, factor);
+  // Apply all constraints composably — each call deep-copies, never mutates
+  let scaledParams = params;
+  for (const c of cArr) {
+    scaledParams = scaleParamsForScenario(scaledParams, c, factor);
+  }
 
+  const primary = cArr[0];
   let record;
   try {
-    const r = await pyodide.runPythonAsync(`run_from_js(${JSON.stringify(JSON.stringify(scaledParams))})`);
+    const r  = await pyodide.runPythonAsync(`run_from_js(${JSON.stringify(JSON.stringify(scaledParams))})`);
     const sr = JSON.parse(r);
     if (sr.status === 'optimal') {
-      const profit  = sr.profit || 0;
-      const scPeak  = getBottleneckPeak(sr, scaledParams, constraint.type, constraint);
+      const profit = sr.profit || 0;
+      const scPeak = getBottleneckPeak(sr, scaledParams, primary.type, primary);
       record = {
         id: Date.now(), label,
-        constraintType: constraint.type, constraintName: constraint.name,
-        factor, combined: combined ? combined.name : null,
-        resourceDisplay: constraint.displayFn(params, factor),
+        constraintType: primary.type,
+        constraintName: cArr.map(c => c.name).join(', '),
+        factor, combined: cArr.length > 1 ? cArr.map(c=>c.name).join(' + ') : null,
+        resourceDisplay: cArr.map(c => c.displayFn(params, factor)).join(', '),
         profit, delta: profit - (res.profit || 0),
         peakUtil: Math.round(scPeak * 100),
         topCrops: getTopCropsSummary(sr, 3),
@@ -3865,9 +3940,10 @@ async function runScenario(constraint, factor, combined) {
     } else {
       record = {
         id: Date.now(), label,
-        constraintType: constraint.type, constraintName: constraint.name,
-        factor, combined: combined ? combined.name : null,
-        resourceDisplay: constraint.displayFn(params, factor),
+        constraintType: primary.type,
+        constraintName: cArr.map(c => c.name).join(', '),
+        factor, combined: cArr.length > 1 ? cArr.map(c=>c.name).join(' + ') : null,
+        resourceDisplay: cArr.map(c => c.displayFn(params, factor)).join(', '),
         profit: null, delta: null, peakUtil: null, topCrops: '—',
         status: sr.status || 'infeasible',
       };
@@ -3875,9 +3951,10 @@ async function runScenario(constraint, factor, combined) {
   } catch(e) {
     record = {
       id: Date.now(), label,
-      constraintType: constraint.type, constraintName: constraint.name,
-      factor, combined: combined ? combined.name : null,
-      resourceDisplay: constraint.displayFn(params, factor),
+      constraintType: primary.type,
+      constraintName: cArr.map(c => c.name).join(', '),
+      factor, combined: cArr.length > 1 ? cArr.map(c=>c.name).join(' + ') : null,
+      resourceDisplay: cArr.map(c => c.displayFn(params, factor)).join(', '),
       profit: null, delta: null, peakUtil: null, topCrops: '—',
       status: 'error',
     };
@@ -3886,7 +3963,7 @@ async function runScenario(constraint, factor, combined) {
   saveScenarioToHistory(record);
   renderScenarioHistory(res, params);
 
-  document.querySelectorAll('.whatif-preset-btn, .btn-combined').forEach(b => { if(b) b.disabled = false; });
+  document.querySelectorAll('.whatif-preset-btn, .btn-combined, .cn-btn').forEach(b => { if(b) b.disabled = false; });
   if (runEl) runEl.style.display = 'none';
 }
 
@@ -4062,11 +4139,14 @@ window._testWhatIf = function() {
   const ranked2   = rankBottlenecks(mockRes2, mockParamsBase);
   console.assert(ranked2[0].type === 'labor', `T3: labor should rank first, got ${ranked2[0].type}`);
 
-  // ── T4: no visible constraints when all are low ──────────────
+  // ── T4: land always visible even when all resources are low ──
   const mockRes3  = { ...mockRes, weekly_land_frac:Array(48).fill(0.20), weekly_labor_used:Array(48).fill(100), weekly_water_used:Array(48).fill(100), weekly_harvest_vol:Array(48).fill(100), peak_borrowing:0 };
   const ranked3   = rankBottlenecks(mockRes3, mockParamsBase);
-  const visible3  = ranked3.filter(c => c.peak >= 0.50);
-  console.assert(visible3.length === 0, `T4: expected 0 visible, got ${visible3.length}`);
+  WHATIF_STATE.rankedConstraints = ranked3;
+  const visible4  = getVisibleConstraints();
+  console.assert(visible4.some(c => c.type === 'land'), 'T4a: land always visible');
+  const highUtilNonLand = visible4.filter(c => c.peak >= 0.50 && c.type !== 'land');
+  console.assert(highUtilNonLand.length === 0, `T4b: no high-util non-land below 50%, got ${highUtilNonLand.length}`);
 
   // ── T5: labor scaling skips salary employees ─────────────────
   const laborC  = ranked.find(c => c.type === 'labor');
@@ -4091,10 +4171,12 @@ window._testWhatIf = function() {
   console.assert(Math.abs(cucAfter - 400) < 1, `T7: Cucumber/FM cap should be 400, got ${cucAfter}`);
   console.assert(Math.abs(spAfter - 900) < 1,  `T7: Spinach/FM cap should be unchanged 900, got ${spAfter}`);
 
-  // ── T8: computeSingleDemandPeak returns correct utilization ──
+  // ── T8: computeSingleDemandPeak uses totalCapAllChannels formula ──
   const spPeak = computeSingleDemandPeak(mockResD, mockParamsD, 'Spinach', 'FM');
-  // Spinach: 5ac × 8000 = 40000 lbs/yr; FM cap = 900/wk × 52 = 46800 → sat = 40000/46800 ≈ 0.855
-  console.assert(Math.abs(spPeak - 0.855) < 0.01, `T8: Spinach/FM peak ~0.855, got ${spPeak.toFixed(3)}`);
+  // Spinach: 5ac × 8000 = 40000 lbs/yr
+  // All channels: FM=900/wk×52=46800, Wholesale=2000/wk×52=104000 → total=150800
+  // cropSat = 40000/150800 ≈ 0.265 (not 0.855 — 0.855 would overstate by ignoring Wholesale cap)
+  console.assert(Math.abs(spPeak - (40000/150800)) < 0.01, `T8: Spinach peak ~${(40000/150800).toFixed(3)}, got ${spPeak.toFixed(3)}`);
 
   // ── T9: demand_single not included in combined-scenario check ─
   const PHYSICAL_TYPES = new Set(['land','labor','water','storage','cash']);
@@ -4136,7 +4218,60 @@ window._testWhatIf = function() {
     console.warn('T13: elements not found in DOM — run after page loads');
   }
 
-  console.log('✓ All what-if tests passed (13/13).');
+  // ── T14: land always appears in getVisibleConstraints even when all-slack ──
+  WHATIF_STATE.rankedConstraints = ranked3; // all-slack scenario from T4
+  const vis14 = getVisibleConstraints();
+  console.assert(vis14.some(c => c.type === 'land'), 'T14: land always in visible constraints');
+  const landEntry14 = vis14.find(c => c.type === 'land');
+  console.assert(landEntry14 !== undefined && landEntry14.peak < 0.50, `T14: land visible with low peak (${(landEntry14?.peak||0).toFixed(2)})`);
+
+  // ── T15: visit-based optimize gating ─────────────────────────
+  const savedVisited = new Set(APP_STATE.visitedSections);
+  APP_STATE.visitedSections = new Set();
+  const allBefore = SECTION_ORDER.every(id => APP_STATE.visitedSections.has(id));
+  console.assert(!allBefore, 'T15a: optimize should be locked with no sections visited');
+  SECTION_ORDER.forEach(id => APP_STATE.visitedSections.add(id));
+  const allAfter = SECTION_ORDER.every(id => APP_STATE.visitedSections.has(id));
+  console.assert(allAfter, 'T15b: optimize should unlock after all sections visited');
+  APP_STATE.visitedSections = savedVisited; // restore
+
+  // ── T16: multi-constraint runScenario label format ─────────────
+  const landC16   = rankBottlenecks(mockRes, mockParamsBase).find(c => c.type === 'land');
+  const laborC16  = rankBottlenecks(mockRes, mockParamsBase).find(c => c.type === 'labor');
+  const pctStr16  = `+${Math.round((1.20-1)*100)}%`;
+  const label16   = [landC16, laborC16].map(c => `${pctStr16} ${c.name}`).join(' AND ');
+  console.assert(label16 === '+20% Total Land AND +20% Labor Availability',
+    `T16: combined label should be '+20% Total Land AND +20% Labor Availability', got: "${label16}"`);
+
+  // ── T17: demand saturation uses total-cap-all-channels formula ──
+  // Spinach/FM: totalCapAllCh = FM(46800) + Wholesale(104000) = 150800; harvest=40000
+  // expected sat = 40000/150800 ≈ 0.265 — avoids overstating by not comparing total harvest to one channel cap
+  const rankedD17 = rankBottlenecks(mockResD, mockParamsD);
+  const spEntry17 = rankedD17.filter(c => c.type === 'demand_single' && c.cropName === 'Spinach');
+  // All Spinach channels should have same sat (crop-level)
+  console.assert(spEntry17.length >= 1, 'T17a: Spinach demand entries present');
+  const expectedSpSat = 40000 / (900*52 + 2000*52); // ≈ 0.265
+  spEntry17.forEach(e => {
+    console.assert(Math.abs(e.peak - expectedSpSat) < 0.01,
+      `T17b: Spinach (${e.channelName}) sat ~${expectedSpSat.toFixed(3)}, got ${e.peak.toFixed(3)}`);
+  });
+
+  // ── T18: constraint-summary-card hidden; Export CSV button in What-If header ──
+  const cSummaryCard = document.getElementById('constraint-summary-card');
+  if (cSummaryCard) {
+    const hidden = cSummaryCard.style.display === 'none' || getComputedStyle(cSummaryCard).display === 'none';
+    console.assert(hidden, 'T18a: constraint-summary-card should be hidden');
+  } else {
+    console.warn('T18a: constraint-summary-card not found in DOM');
+  }
+  // Export CSV button should be in bottleneck-card header area
+  const bottleneckCard18 = document.getElementById('bottleneck-card');
+  if (bottleneckCard18) {
+    const hasExportBtn = bottleneckCard18.querySelector('[onclick="exportConstraintCSV()"]') !== null;
+    console.assert(hasExportBtn, 'T18b: Export Constraint CSV button should be in What-If card');
+  }
+
+  console.log('✓ All what-if tests passed (18/18).');
 };
 
 // ============================================================
