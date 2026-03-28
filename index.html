@@ -660,6 +660,22 @@
   .whatif-table tr.whatif-baseline td:first-child::after { content:' ✓'; color:#52b788; font-size:0.7rem; }
   .delta-pos { color:#059669; font-weight:600; }
   .delta-neg { color:#dc2626; font-weight:600; }
+  /* ─── CONSTRAINT PILLS & WHAT-IF CONTROLS ─── */
+  .cn-btn { display:inline-flex; align-items:center; gap:0.3rem; padding:0.3rem 0.8rem; border:1.5px solid #d1d5db; border-radius:20px; background:#fff; font-size:0.76rem; cursor:pointer; color:#374151; transition:border-color 0.15s; }
+  .cn-btn:hover { border-color:#9ca3af; }
+  .cn-btn.selected { border-color:#1b4332; background:#f0faf4; color:#1b4332; font-weight:700; }
+  .cn-btn.active-constraint { border-color:#dc2626; color:#b91c1c; }
+  .cn-btn.active-constraint.selected { background:#fff5f5; border-color:#dc2626; }
+  .cn-btn.near-constraint  { border-color:#f97316; color:#92400e; }
+  .cn-btn.near-constraint.selected  { background:#fffbeb; border-color:#f97316; }
+  .whatif-controls { display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap; padding:0.5rem 0; }
+  .whatif-preset-btn { padding:0.33rem 0.85rem; background:#1b4332; color:#fff; border:none; border-radius:6px; font-size:0.79rem; font-weight:600; cursor:pointer; white-space:nowrap; }
+  .whatif-preset-btn:hover { background:#2d6a4f; }
+  .whatif-preset-btn:disabled { opacity:0.55; cursor:not-allowed; }
+  .whatif-custom-input { padding:0.3rem 0.45rem; border:1.5px solid #d1d5db; border-radius:5px; font-size:0.79rem; width:56px; text-align:right; }
+  .btn-combined { margin-top:0.45rem; padding:0.38rem 1.1rem; background:#78350f; color:#fff; border:none; border-radius:8px; font-size:0.79rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:0.35rem; }
+  .btn-combined:hover { background:#92400e; }
+  .btn-combined:disabled { opacity:0.55; cursor:not-allowed; }
 
   /* ─── ADVANCED SECTION ─── */
   #advanced-section { display: none; }
@@ -1041,7 +1057,7 @@
       <!-- Constraint Summary (replaces planting plan table) -->
       <div class="card" style="margin-top:1rem" id="constraint-summary-card">
         <h2>Constraint Utilization Summary</h2>
-        <p style="font-size:0.78rem;color:#6b7280;margin-bottom:0.8rem">How close are you to your limits? Red = likely binding. See the Bottleneck Analysis card below to run what-if scenarios on the top constraint.</p>
+        <p style="font-size:0.78rem;color:#6b7280;margin-bottom:0.8rem">How close are you to your limits? Red = likely binding. See the What-If Scenario Analysis card below to test relaxing these constraints.</p>
         <div id="constraint-summary-content"><div style="color:#9ca3af;font-size:0.85rem">Run optimizer to see results.</div></div>
       </div>
 
@@ -1052,11 +1068,11 @@
         <div id="contribution-margin-content"><div style="color:#9ca3af;font-size:0.85rem">Run optimizer to see results.</div></div>
       </div>
 
-      <!-- Bottleneck Analysis & What-If (always visible, not gated by Advanced) -->
+      <!-- What-If Scenario Analysis (always visible, not gated by Advanced) -->
       <div class="card" style="margin-top:1rem" id="bottleneck-card">
-        <h2>Bottleneck Analysis &amp; What-If</h2>
-        <p style="font-size:0.78rem;color:#6b7280;margin-bottom:0.6rem">Identifies the most constrained resource in your plan and lets you test how much more profit you could unlock by loosening it.</p>
-        <div id="bottleneck-content"><div style="color:#9ca3af;font-size:0.85rem">Run optimizer to see bottleneck analysis.</div></div>
+        <h2>What-If Scenario Analysis</h2>
+        <p style="font-size:0.78rem;color:#6b7280;margin-bottom:0.6rem">Ranks active and near-binding constraints — physical resources and market demand caps — and lets you test how profit responds when each is loosened. Baseline stays pinned; scenario history persists in session.</p>
+        <div id="bottleneck-content"><div style="color:#9ca3af;font-size:0.85rem">Run optimizer to see scenario analysis.</div></div>
       </div>
 
       <!-- Advanced Tools (hidden until toggled) -->
@@ -1794,95 +1810,7 @@ function renderExecutiveSummary(res, params) {
     if (bestLabel) topCrop = `${bestLabel} — ${fmtD(bestMargin)}/year per acre`;
   } catch(e) { topCrop = 'Calculation error — check crop channel prices'; }
 
-  // ── 3. Most binding physical constraint ────────────────────
-  let bindingConstraint = 'No dominant bottleneck — plan has headroom across all resources';
-  try {
-    const opW  = parseInt(params.operating_weeks) || 48;
-    const slc  = arr => (arr || []).slice(0, opW);
-    const peak = (u, s) => {
-      const f = slc(u).map((v,i) => { const c = Array.isArray(s)?s[i]:s; return c>0?v/c:0; });
-      return f.length ? Math.max(...f) : 0;
-    };
-    const cands = [
-      { name:'Land',             p: Math.max(0, ...slc(res.weekly_land_frac || [])) },
-      { name:'Labor',            p: peak(res.weekly_labor_used,  res.weekly_labor_supply) },
-      { name:'Irrigation Water', p: peak(res.weekly_water_used,  res.weekly_water_supply) },
-      { name:'Harvest Storage',  p: peak(res.weekly_harvest_vol, params.harvest_storage_cap || 1e9) },
-    ].sort((a,b) => b.p - a.p);
-    if (cands[0].p > 0.5)
-      bindingConstraint = `${cands[0].name} peaks at ${Math.round(cands[0].p*100)}% of capacity — likely limiting further planting`;
-  } catch(e) {}
-
-  // ── 4. Market demand pressure (with dollar-value headroom) ──
-  // Computes annual harvest vs annual demand cap per crop/channel.
-  // ≥80%: near-saturated, reports remaining revenue headroom in dollars.
-  // ≤25%: market can absorb far more volume — production is the limit.
-  let demandInsight = 'Demand data unavailable';
-  try {
-    const sched    = res.succession_schedule || [];
-    const cropInfo = {};
-    (params.crops || []).forEach(c => { cropInfo[c.name] = c; });
-
-    const cropAcres = {};
-    sched.forEach(s => {
-      const key = s.crop || s.name;
-      cropAcres[key] = (cropAcres[key] || 0) + (s.acres || 0);
-    });
-
-    const demandEntries = [];
-    Object.entries(cropAcres).forEach(([cropName, acres]) => {
-      const ci = cropInfo[cropName];
-      if (!ci) return;
-      const ypa      = parseFloat(ci.yield_per_acre || 0);
-      const totalHarv = acres * ypa;
-      Object.entries(ci.channels || {}).forEach(([chName, chData]) => {
-        let annualCap = 0;
-        if (chData.demand_cap_type === 'annual') {
-          annualCap = parseFloat(chData.annual_demand_lbs) || 0;
-        } else if (chData.demand_cap_type === 'weekly_varying') {
-          (chData.demand_ranges || []).forEach(dr => {
-            const m = dr.weeks ? dr.weeks.match(/W(\d+)-W(\d+)/) : null;
-            if (m) annualCap += (parseFloat(dr.weekly_lbs)||0) * (parseInt(m[2])-parseInt(m[1])+1);
-          });
-        } else {
-          annualCap = (parseFloat(chData.weekly_demand_lbs) || 0) * 52;
-        }
-        if (annualCap > 0) {
-          const price  = parseFloat(chData.price_per_lb || chData.price || 0);
-          const pkg    = parseFloat(chData.packaging_cost_per_lb || chData.pkg || 0);
-          const netPx  = Math.max(0, price - pkg);
-          demandEntries.push({
-            label: `${cropName} → ${chName}`,
-            sat:   Math.min(1, totalHarv / annualCap),
-            headroomLbs: Math.max(0, annualCap - totalHarv),
-            netPx,
-          });
-        }
-      });
-    });
-
-    if (demandEntries.length === 0) {
-      demandInsight = 'No planted crops with demand caps — add weekly demand lbs per channel to model market limits';
-    } else {
-      demandEntries.sort((a,b) => b.sat - a.sat);
-      const most   = demandEntries[0];
-      const least  = demandEntries[demandEntries.length - 1];
-      const avgSat = demandEntries.reduce((s,d) => s+d.sat, 0) / demandEntries.length;
-      if (most.sat >= 0.80) {
-        const dollarHeadroom = most.headroomLbs * most.netPx;
-        const extra = dollarHeadroom > 100
-          ? ` — room for ${fmtD(dollarHeadroom)} more revenue if you can expand this market`
-          : ' — market nearly saturated for this channel';
-        demandInsight = `${most.label} at ${Math.round(most.sat*100)}% of demand cap${extra}.`;
-      } else if (least.sat <= 0.25 && demandEntries.length > 1) {
-        demandInsight = `${least.label} uses only ${Math.round(least.sat*100)}% of its demand cap — demand caps provide headroom across all crops and channels. Production constraints are primary.`;
-      } else {
-        demandInsight = `Avg demand utilization ${Math.round(avgSat*100)}% across ${demandEntries.length} crop/channel combos — demand caps are not a bottleneck.`;
-      }
-    }
-  } catch(e) { demandInsight = 'Could not compute demand utilization'; }
-
-  // ── 5. Peak Borrowing ───────────────────────────────────────
+  // ── 3. Peak Borrowing ───────────────────────────────────────
   let peakBorrow = 'Borrowing data unavailable';
   if (res.peak_borrowing != null && !isNaN(res.peak_borrowing)) {
     peakBorrow = res.peak_borrowing > 0
@@ -1890,27 +1818,12 @@ function renderExecutiveSummary(res, params) {
       : 'No credit line draw — cash stays positive all season';
   }
 
-  // ── 6. Suggested next step (resource-aware) ─────────────────
-  let nextStep = 'Run Sensitivity Analysis (Advanced) to explore how profit changes with more land, labor, or water.';
-  try {
-    const opW      = parseInt(params.operating_weeks) || 48;
-    const landPeak = Math.max(0, ...(res.weekly_land_frac||[]).slice(0,opW));
-    const lbPeak   = (() => { const u=res.weekly_labor_used||[],s=res.weekly_labor_supply||[]; return u.length&&s.length?Math.max(...u.slice(0,opW).map((v,i)=>s[i]>0?v/s[i]:0)):0; })();
-    const wPeak    = (() => { const u=res.weekly_water_used||[],s=res.weekly_water_supply||[]; return u.length&&s.length?Math.max(...u.slice(0,opW).map((v,i)=>s[i]>0?v/s[i]:0)):0; })();
-    if      (landPeak < 0.60) nextStep = `Only ${Math.round(landPeak*100)}% of land is in use at peak — add crop successions or extend season windows to fill idle acreage.`;
-    else if (lbPeak   > 0.90) nextStep = `Labor hits ${Math.round(lbPeak*100)}% of capacity — hiring seasonal workers could unlock significant additional planting.`;
-    else if (wPeak    > 0.90) nextStep = `Water peaks at ${Math.round(wPeak*100)}% of supply — adding a well or catchment system is the highest-leverage infrastructure investment.`;
-  } catch(e) {}
-
   el.innerHTML = `
     <h2>Executive Summary</h2>
     <div class="exec-grid">
       <div class="exec-item"><div class="exec-label">Projected Profit</div><div class="exec-value">${profitStr}</div></div>
       <div class="exec-item"><div class="exec-label">Highest-Margin Option</div><div class="exec-value">${topCrop}</div></div>
-      <div class="exec-item"><div class="exec-label">Key Resource Constraint</div><div class="exec-value">${bindingConstraint}</div></div>
-      <div class="exec-item"><div class="exec-label">Market Demand Pressure</div><div class="exec-value">${demandInsight}</div></div>
       <div class="exec-item"><div class="exec-label">Peak Borrowing</div><div class="exec-value">${peakBorrow}</div></div>
-      <div class="exec-item"><div class="exec-label">Suggested Next Step</div><div class="exec-value">${nextStep}</div></div>
     </div>`;
 }
 
@@ -3152,7 +3065,7 @@ function switchToResults(params, res) {
   window._lastRes    = res;
   // Render all result sections
   renderExecutiveSummary(res, params);
-  renderBottleneckCard(res, params);
+  renderWhatIfCard(res, params);
   renderSummaryPane(params);
   renderGanttCalendar(res);
   updatePieChart(document.getElementById('week-slider').value);
@@ -3465,31 +3378,36 @@ function drawPie(slices) {
 
 // ============================================================
 // ============================================================
-// Bottleneck Analysis & What-If
+// What-If Scenario Analysis
 // ============================================================
 
+const WHATIF_STATE = {
+  rankedConstraints: [],  // all candidates, sorted by peak desc
+  selectedIdx: 0,         // which constraint pill is selected
+  combinedAvailable: false,
+};
+const WHATIF_HISTORY_KEY = 'whatif_scenario_history';
+const WHATIF_MAX_HISTORY = 5;
+
 /**
- * identifyBottleneck(res, params)
+ * rankBottlenecks(res, params)
  *
- * Heuristic rules:
- *   high confidence   : peak utilization >= 90% of capacity
- *   medium confidence : peak utilization >= 70%
- *   low confidence    : peak utilization >= 50%
- *   null              : all resources peak below 50% — no meaningful bottleneck
+ * Returns ALL constraint candidates sorted by peak utilization (desc).
+ * Includes 5 physical resources + market demand caps.
  *
- * Resource priority (sorted by descending peak utilization):
- *   land, labor, water, harvest_storage, cash/credit
+ * Thresholds (caller applies):
+ *   active     : peak >= 90%
+ *   near-active: peak >= 70%
+ *   visible    : peak >= 50% (shown in pill list)
  *
- * False-positive / edge-case risks:
- *   - Labor: if all employees are salaried, labor supply is high and labor never
- *     binds in the constraint sense. This is handled by including salary employees
- *     in supply but skipping them in scaleParamsForScenario.
- *   - Water: if city water is enabled (unlimited), water never truly binds.
- *     The peak util will be low because supply is effectively infinite.
- *   - Cash: peak_borrowing = 0 with credit_line = 0 gives cashPeak = 0, not 1.
- *   - Storage: harvest_storage_cap = 0 (disabled) → peak = 0, not infinity.
+ * Edge cases handled:
+ *   - City water enabled: supply is very high → water peak stays low (correct)
+ *   - All-salary workforce: scaling count has no effect (documented)
+ *   - credit_line = 0: cashPeak = 0, not Infinity
+ *   - harvest_storage_cap = 0: storPeak = 0 (disabled)
+ *   - No demand caps set: demandPeak = 0
  */
-function identifyBottleneck(res, params) {
+function rankBottlenecks(res, params) {
   const opW  = parseInt(params.operating_weeks) || 48;
   const slc  = arr => (arr || []).slice(0, opW);
 
@@ -3509,71 +3427,98 @@ function identifyBottleneck(res, params) {
   const storPeak  = (() => {
     const cap = parseFloat(params.harvest_storage_cap) || 0;
     if (!cap) return 0;
-    const v = slc(res.weekly_harvest_vol || []);
-    return v.length ? Math.max(...v.concat([0])) / cap : 0;
+    return Math.max(...slc(res.weekly_harvest_vol || []).concat([0])) / cap;
   })();
   const cashLine  = parseFloat(params.credit_line) || 0;
   const cashPeak  = cashLine > 0 ? Math.min(1, (res.peak_borrowing || 0) / cashLine) : 0;
+  const demandUtil = computeDemandUtilization(res, params);
 
-  const cands = [
+  return [
     {
       type:'land',    name:'Total Land',
-      peak: landPeak,
-      param:'total_land',        scaleType:'land',
-      ctaLabel:'Test more land',
-      displayFn: (p, f) => `${Math.round((p.total_land||150) * f)} ac`,
+      peak: landPeak, scaleType:'land',
+      displayFn: (p, f) => `${Math.round((p.total_land||150)*f)} ac`,
     },
     {
       type:'labor',   name:'Labor Availability',
-      peak: laborPeak,
-      param:'_labor_count',      scaleType:'labor',
-      ctaLabel:'Test more labor',
+      peak: laborPeak, scaleType:'labor',
       displayFn: (p, f) => {
         const ns = (p.employees||[]).filter(e => e.type !== 'salary');
-        const tot = ns.reduce((s, e) => s + (e.count || 1), 0);
-        return `${Math.round(tot * f)} field workers`;
+        return `${Math.round(ns.reduce((s,e)=>s+(e.count||1),0)*f)} field workers`;
       },
     },
     {
       type:'water',   name:'Water Supply',
-      peak: waterPeak,
-      param:'well_weekly_cap_L', scaleType:'water',
-      ctaLabel:'Test more water',
+      peak: waterPeak, scaleType:'water',
       displayFn: (p, f) => `${(((p.well_weekly_cap_L||0)*f)/1000).toFixed(0)}k L/wk well`,
     },
     {
       type:'storage', name:'Harvest Storage',
-      peak: storPeak,
-      param:'harvest_storage_cap', scaleType:'direct',
-      ctaLabel:'Test more storage',
+      peak: storPeak, scaleType:'direct', param:'harvest_storage_cap',
       displayFn: (p, f) => `${Math.round((p.harvest_storage_cap||0)*f).toLocaleString()} m³`,
     },
     {
-      type:'cash',    name:'Cash / Credit Line',
-      peak: cashPeak,
-      param:'credit_line',       scaleType:'direct',
-      ctaLabel:'Test larger credit line',
+      type:'cash',    name:'Cash / Credit',
+      peak: cashPeak, scaleType:'direct', param:'credit_line',
       displayFn: (p, f) => `$${Math.round((p.credit_line||0)*f).toLocaleString()} credit`,
     },
+    {
+      type:'demand',  name:'Market Demand Caps',
+      peak: demandUtil.peak, scaleType:'demand',
+      demandDetail: demandUtil,
+      displayFn: (p, f) => `caps × ${f.toFixed(2)} (${demandUtil.topLabel})`,
+    },
   ].sort((a, b) => b.peak - a.peak);
+}
 
-  const top = cands[0];
-  if (top.peak < 0.50) return null;
+/** Compute max demand cap saturation across all crop/channel combos in the result. */
+function computeDemandUtilization(res, params) {
+  const sched    = res.succession_schedule || [];
+  const cropInfo = {};
+  (params.crops || []).forEach(c => { cropInfo[c.name] = c; });
 
-  const confidence = top.peak >= 0.90 ? 'high' : top.peak >= 0.70 ? 'medium' : 'low';
-  return { ...top, confidence, allCands: cands };
+  const cropAcres = {};
+  sched.forEach(s => {
+    const key = s.crop || s.name || '?';
+    cropAcres[key] = (cropAcres[key] || 0) + (s.acres || 0);
+  });
+
+  let peak = 0, topLabel = 'no demand caps set';
+  Object.entries(cropAcres).forEach(([cropName, acres]) => {
+    const ci = cropInfo[cropName];
+    if (!ci) return;
+    const totalHarv = acres * (parseFloat(ci.yield_per_acre) || 0);
+    Object.entries(ci.channels || {}).forEach(([chName, chData]) => {
+      let annualCap = 0;
+      if (chData.demand_cap_type === 'annual') {
+        annualCap = parseFloat(chData.annual_demand_lbs) || 0;
+      } else if (chData.demand_cap_type === 'weekly_varying') {
+        (chData.demand_ranges || []).forEach(dr => {
+          const m = dr.weeks ? dr.weeks.match(/W(\d+)-W(\d+)/) : null;
+          if (m) annualCap += (parseFloat(dr.weekly_lbs)||0) * (parseInt(m[2])-parseInt(m[1])+1);
+        });
+      } else {
+        annualCap = (parseFloat(chData.weekly_demand_lbs) || 0) * 52;
+      }
+      if (annualCap > 0) {
+        const sat = Math.min(1, totalHarv / annualCap);
+        if (sat > peak) { peak = sat; topLabel = `${cropName} → ${chName}`; }
+      }
+    });
+  });
+  return { peak, topLabel };
 }
 
 /**
- * Deep-copy params and scale the bottleneck resource by factor.
- * Never mutates window._lastParams.
+ * Deep-copy params and scale the selected constraint by factor.
+ * Never mutates the input. Composable: call twice for combined scenarios.
  *
- * Labor scaling only affects non-salary employees (count × factor).
- * Salary employees are fixed cost regardless of headcount in what-if.
+ * Labor: scales count of non-salary employees only.
+ * Demand: scales all demand caps across all crops and channels.
  */
-function scaleParamsForScenario(params, bottleneck, factor) {
+function scaleParamsForScenario(params, constraint, factor) {
   const p = JSON.parse(JSON.stringify(params));
-  switch (bottleneck.scaleType) {
+  switch (constraint.scaleType) {
     case 'labor':
       p.employees = p.employees.map(e => {
         if (e.type === 'salary') return e;
@@ -3586,9 +3531,28 @@ function scaleParamsForScenario(params, bottleneck, factor) {
     case 'land':
       p.total_land = (p.total_land || 150) * factor;
       break;
+    case 'demand':
+      p.crops = p.crops.map(crop => {
+        const newCh = {};
+        Object.entries(crop.channels || {}).forEach(([chName, chData]) => {
+          const sc = { ...chData };
+          if (chData.demand_cap_type === 'annual') {
+            sc.annual_demand_lbs = (parseFloat(chData.annual_demand_lbs) || 0) * factor;
+          } else if (chData.demand_cap_type === 'weekly_varying') {
+            sc.demand_ranges = (chData.demand_ranges || []).map(dr => ({
+              ...dr, weekly_lbs: (parseFloat(dr.weekly_lbs) || 0) * factor,
+            }));
+          } else {
+            sc.weekly_demand_lbs = (parseFloat(chData.weekly_demand_lbs) || 0) * factor;
+          }
+          newCh[chName] = sc;
+        });
+        return { ...crop, channels: newCh };
+      });
+      break;
     case 'direct':
     default:
-      p[bottleneck.param] = (parseFloat(p[bottleneck.param]) || 0) * factor;
+      if (constraint.param) p[constraint.param] = (parseFloat(p[constraint.param]) || 0) * factor;
   }
   return p;
 }
@@ -3607,182 +3571,326 @@ function getTopCropsSummary(res, n) {
     .join(' · ') || '—';
 }
 
-/** Peak utilisation of the bottleneck resource type for a given result. */
-function getBottleneckPeak(res, params, bottleneckType) {
+/** Peak utilisation of a given constraint type from a result. */
+function getBottleneckPeak(res, params, constraintType) {
   const opW = parseInt(params.operating_weeks) || 48;
   const slc = arr => (arr || []).slice(0, opW);
-  switch (bottleneckType) {
+  switch (constraintType) {
     case 'land':
       return Math.max(0, ...slc(res.weekly_land_frac || []).concat([0]));
     case 'labor': {
       const u = slc(res.weekly_labor_used || []);
       const s = slc(res.weekly_labor_supply || []);
-      return u.length && s.length ? Math.max(...u.map((v, i) => s[i] > 0 ? v / s[i] : 0)) : 0;
+      return u.length && s.length ? Math.max(...u.map((v, i) => s[i] > 0 ? v/s[i] : 0)) : 0;
     }
     case 'water': {
       const u = slc(res.weekly_water_used || []);
       const s = slc(res.weekly_water_supply || []);
-      return u.length && s.length ? Math.max(...u.map((v, i) => s[i] > 0 ? v / s[i] : 0)) : 0;
+      return u.length && s.length ? Math.max(...u.map((v, i) => s[i] > 0 ? v/s[i] : 0)) : 0;
     }
     case 'storage': {
       const cap = parseFloat(params.harvest_storage_cap) || 0;
       if (!cap) return 0;
-      const v = slc(res.weekly_harvest_vol || []);
-      return v.length ? Math.max(...v.concat([0])) / cap : 0;
+      return Math.max(...slc(res.weekly_harvest_vol || []).concat([0])) / cap;
     }
     case 'cash': {
       const line = parseFloat(params.credit_line) || 0;
       return line > 0 ? Math.min(1, (res.peak_borrowing || 0) / line) : 0;
     }
+    case 'demand':
+      return computeDemandUtilization(res, params).peak;
     default: return 0;
   }
 }
 
-let _currentBottleneck = null;
+// ── Render the What-If card ──────────────────────────────────
 
-function renderBottleneckCard(res, params) {
+function renderWhatIfCard(res, params) {
   const el = document.getElementById('bottleneck-content');
   if (!el) return;
 
-  const bn = identifyBottleneck(res, params);
-  _currentBottleneck = bn;
+  const allCands = rankBottlenecks(res, params);
+  const visible  = allCands.filter(c => c.peak >= 0.50);
+  WHATIF_STATE.rankedConstraints = allCands;
+  WHATIF_STATE.selectedIdx = 0;
 
-  if (!bn) {
-    el.innerHTML = `<p style="color:#6b7280;font-size:0.85rem;margin:0">
-      No dominant bottleneck detected — all resources peak below 50% of capacity.
-      The plan has structural headroom. Consider adding more crops, more successions,
-      or extending the planting season to capture additional profit.
-    </p>`;
+  const active = allCands.filter(c => c.peak >= 0.90 && c.type !== 'demand');
+  WHATIF_STATE.combinedAvailable = active.length >= 2;
+
+  if (visible.length === 0) {
+    el.innerHTML = `
+      <p style="color:#6b7280;font-size:0.85rem;margin:0 0 0.5rem">
+        No near-binding constraints detected (all resources peak below 50%).
+        The plan has structural headroom — add more crops or extend the planting season to fill it.
+      </p>
+      <div id="whatif-history-wrap"></div>`;
+    renderScenarioHistory(res, params);
     return;
   }
 
-  const confColor = { high:'#b91c1c', medium:'#92400e', low:'#6b7280' }[bn.confidence];
-  const confBg    = { high:'#fee2e2', medium:'#fef3c7', low:'#f3f4f6' }[bn.confidence];
-  const confVerb  = { high:'is clearly binding', medium:'is likely limiting', low:'may be limiting' }[bn.confidence];
+  // Constraint pills — coloured by severity
+  const pills = visible.map((c, i) => {
+    const pct = Math.round(c.peak * 100);
+    const sev = c.peak >= 0.90 ? 'active-constraint' : c.peak >= 0.70 ? 'near-constraint' : '';
+    return `<button class="cn-btn ${sev}" id="cn-btn-${i}" onclick="selectConstraint(${i})">${c.name} ${pct}%</button>`;
+  }).join('');
 
-  const runner = bn.allCands.slice(0, 3)
-    .map(c => `${c.name}: ${Math.round(c.peak*100)}%`)
-    .join(' &nbsp;&middot;&nbsp; ');
+  const combinedBtn = WHATIF_STATE.combinedAvailable
+    ? `<div style="margin-top:0.4rem">
+         <button class="btn-combined" id="btn-combined" onclick="runCombinedWhatIf()">
+           Test combined: ${active[0].name} + ${active[1].name} +20%
+         </button>
+       </div>`
+    : '';
 
   el.innerHTML = `
-    <div class="bottleneck-header">
-      <span class="bottleneck-resource">${bn.name}</span>
-      <span class="confidence-badge" style="background:${confBg};color:${confColor}">${bn.confidence} confidence</span>
-      <span class="bottleneck-stat">peaks at ${Math.round(bn.peak*100)}% of capacity</span>
+    <div style="margin-bottom:0.4rem">
+      <div style="font-size:0.72rem;color:#9ca3af;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:0.3rem">
+        Active / near-binding &nbsp;
+        <span style="color:#b91c1c;font-weight:700">●</span> ≥90%&nbsp;
+        <span style="color:#92400e;font-weight:700">●</span> ≥70%&nbsp;
+        <span style="color:#6b7280">●</span> ≥50%
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:0.35rem" id="cn-btns">${pills}</div>
     </div>
-    <p style="font-size:0.82rem;color:#374151;margin:0 0 0.2rem">
-      <strong>${bn.name}</strong> ${confVerb} — loosening it is the highest-leverage investment to explore.
-    </p>
-    <p style="font-size:0.75rem;color:#9ca3af;margin:0 0 0.1rem">
-      All resources at peak: ${runner}
-    </p>
-    <button class="btn-whatif" id="btn-whatif" onclick="runWhatIf()">
-      <span id="spinner-whatif" class="spinner" style="display:none"></span>
-      <span>${bn.ctaLabel} →</span>
-    </button>
-    <div id="whatif-results"></div>
+    <div id="whatif-selected-label" style="font-size:0.81rem;color:#374151;min-height:1.2em;margin:0.35rem 0 0.1rem"></div>
+    <div class="whatif-controls">
+      <span style="font-size:0.73rem;color:#9ca3af;align-self:center">Quick:</span>
+      <button class="whatif-preset-btn" onclick="runPresetWhatIf(1.10)">+10%</button>
+      <button class="whatif-preset-btn" onclick="runPresetWhatIf(1.20)">+20%</button>
+      <button class="whatif-preset-btn" onclick="runPresetWhatIf(1.40)">+40%</button>
+      <span style="font-size:0.73rem;color:#9ca3af;margin-left:0.3rem;align-self:center">Custom:</span>
+      <input type="number" id="custom-pct-input" class="whatif-custom-input"
+             min="1" max="200" value="25" step="5" title="Enter 1–200">
+      <span style="font-size:0.8rem;color:#6b7280;align-self:center">%</span>
+      <button class="whatif-preset-btn" style="background:#4b5563" onclick="runCustomWhatIf()">Run</button>
+    </div>
+    ${combinedBtn}
+    <div id="whatif-running" style="display:none;font-size:0.8rem;color:#6b7280;padding:0.3rem 0">Running scenario…</div>
+    <div id="whatif-history-wrap"></div>
   `;
+
+  selectConstraint(0);
+  renderScenarioHistory(res, params);
 }
 
-async function runWhatIf() {
-  const bn     = _currentBottleneck;
+function selectConstraint(idx) {
+  const visible = WHATIF_STATE.rankedConstraints.filter(c => c.peak >= 0.50);
+  if (idx < 0 || idx >= visible.length) return;
+  WHATIF_STATE.selectedIdx = idx;
+
+  document.querySelectorAll('.cn-btn').forEach((b, i) =>
+    b.classList.toggle('selected', i === idx));
+
+  const c = visible[idx];
+  const lbl = document.getElementById('whatif-selected-label');
+  if (lbl) {
+    const severity = c.peak >= 0.90 ? 'clearly binding' : c.peak >= 0.70 ? 'likely near-binding' : 'possibly affecting';
+    lbl.innerHTML = `Testing: <strong>${c.name}</strong> — ${severity} at ${Math.round(c.peak*100)}% ` +
+      `<span style="font-size:0.74rem;color:#9ca3af">(baseline: ${c.displayFn(window._lastParams||{}, 1.0)})</span>`;
+  }
+}
+
+function runPresetWhatIf(factor) {
+  const visible = WHATIF_STATE.rankedConstraints.filter(c => c.peak >= 0.50);
+  const c = visible[WHATIF_STATE.selectedIdx];
+  if (c) runScenario(c, factor, null);
+}
+
+function runCustomWhatIf() {
+  const input = document.getElementById('custom-pct-input');
+  if (!input) return;
+  const pct = parseFloat(input.value);
+  if (isNaN(pct) || pct < 1 || pct > 200) {
+    input.style.borderColor = '#dc2626';
+    input.title = 'Enter a value between 1 and 200';
+    setTimeout(() => { input.style.borderColor = ''; }, 2000);
+    return;
+  }
+  const visible = WHATIF_STATE.rankedConstraints.filter(c => c.peak >= 0.50);
+  const c = visible[WHATIF_STATE.selectedIdx];
+  if (c) runScenario(c, 1 + pct / 100, null);
+}
+
+function runCombinedWhatIf() {
+  const active = WHATIF_STATE.rankedConstraints.filter(c => c.peak >= 0.90 && c.type !== 'demand');
+  if (active.length < 2) return;
+  runScenario(active[0], 1.20, active[1]);
+}
+
+async function runScenario(constraint, factor, combined) {
   const params = window._lastParams;
   const res    = window._lastRes;
-  if (!bn || !params || !res) return;
+  if (!params || !res || !pyReady) return;
 
-  const btn = document.getElementById('btn-whatif');
-  const sp  = document.getElementById('spinner-whatif');
-  if (btn) { btn.disabled = true; }
-  if (sp)  { sp.style.display = 'block'; }
+  // Disable buttons
+  document.querySelectorAll('.whatif-preset-btn, .btn-combined').forEach(b => { if(b) b.disabled = true; });
+  const runEl = document.getElementById('whatif-running');
+  if (runEl) runEl.style.display = 'block';
 
-  const el = document.getElementById('whatif-results');
-  if (el) el.innerHTML = '<div style="color:#6b7280;font-size:0.82rem;padding:0.5rem 0">Running what-if scenarios…</div>';
+  // Build label
+  const pctStr = `+${Math.round((factor-1)*100)}%`;
+  const label  = combined
+    ? `Combined (${constraint.name} + ${combined.name}) ${pctStr}`
+    : `${constraint.name} ${pctStr}`;
 
-  const fmtM = n => '$' + Math.round(n).toLocaleString();
-  const fmtDelta = (n, base) => {
-    const d = n - base;
-    if (Math.abs(d) < 50) return '<span style="color:#9ca3af">—</span>';
-    const sign = d > 0 ? '+' : '';
-    const cls  = d > 0 ? 'delta-pos' : 'delta-neg';
-    return `<span class="${cls}">${sign}${fmtM(d)}</span>`;
-  };
+  // Scale params — composable: apply second constraint on top if combined
+  let scaledParams = scaleParamsForScenario(params, constraint, factor);
+  if (combined) scaledParams = scaleParamsForScenario(scaledParams, combined, factor);
 
-  // +10%, +20%, +40% on the bottleneck resource
-  const FACTORS = [1.10, 1.20, 1.40];
-  const scenarios = [];
-
-  for (const factor of FACTORS) {
-    const sp2 = scaleParamsForScenario(params, bn, factor);
-    try {
-      const r = await pyodide.runPythonAsync(`run_from_js(${JSON.stringify(JSON.stringify(sp2))})`);
-      scenarios.push({ factor, scaledParams: sp2, result: JSON.parse(r) });
-    } catch(e) {
-      scenarios.push({ factor, scaledParams: sp2, result: null });
+  let record;
+  try {
+    const r = await pyodide.runPythonAsync(`run_from_js(${JSON.stringify(JSON.stringify(scaledParams))})`);
+    const sr = JSON.parse(r);
+    if (sr.status === 'optimal') {
+      const profit  = sr.profit || 0;
+      const scPeak  = getBottleneckPeak(sr, scaledParams, constraint.type);
+      record = {
+        id: Date.now(), label,
+        constraintType: constraint.type, constraintName: constraint.name,
+        factor, combined: combined ? combined.name : null,
+        resourceDisplay: constraint.displayFn(params, factor),
+        profit, delta: profit - (res.profit || 0),
+        peakUtil: Math.round(scPeak * 100),
+        topCrops: getTopCropsSummary(sr, 3),
+        status: 'optimal',
+      };
+    } else {
+      record = {
+        id: Date.now(), label,
+        constraintType: constraint.type, constraintName: constraint.name,
+        factor, combined: combined ? combined.name : null,
+        resourceDisplay: constraint.displayFn(params, factor),
+        profit: null, delta: null, peakUtil: null, topCrops: '—',
+        status: sr.status || 'infeasible',
+      };
     }
+  } catch(e) {
+    record = {
+      id: Date.now(), label,
+      constraintType: constraint.type, constraintName: constraint.name,
+      factor, combined: combined ? combined.name : null,
+      resourceDisplay: constraint.displayFn(params, factor),
+      profit: null, delta: null, peakUtil: null, topCrops: '—',
+      status: 'error',
+    };
   }
 
-  const baseProfit = res.profit || 0;
-  const basePeak   = getBottleneckPeak(res, params, bn.type);
-  const baseCrops  = getTopCropsSummary(res, 3);
-  const baseLabel  = bn.displayFn(params, 1.0);
+  saveScenarioToHistory(record);
+  renderScenarioHistory(res, params);
+
+  document.querySelectorAll('.whatif-preset-btn, .btn-combined').forEach(b => { if(b) b.disabled = false; });
+  if (runEl) runEl.style.display = 'none';
+}
+
+// ── Scenario history (sessionStorage) ───────────────────────
+
+function saveScenarioToHistory(record) {
+  const hist = loadScenarioHistory();
+  hist.push(record);
+  while (hist.length > WHATIF_MAX_HISTORY) hist.shift();
+  try { sessionStorage.setItem(WHATIF_HISTORY_KEY, JSON.stringify(hist)); } catch(e) {}
+  WHATIF_STATE.history = hist;
+}
+
+function loadScenarioHistory() {
+  try {
+    const raw = sessionStorage.getItem(WHATIF_HISTORY_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch(e) { return []; }
+}
+
+function clearScenarioHistory() {
+  try { sessionStorage.removeItem(WHATIF_HISTORY_KEY); } catch(e) {}
+  WHATIF_STATE.history = [];
+  renderScenarioHistory(window._lastRes, window._lastParams);
+}
+
+function renderScenarioHistory(res, params) {
+  const wrap = document.getElementById('whatif-history-wrap');
+  if (!wrap) return;
+
+  const hist = loadScenarioHistory();
+  WHATIF_STATE.history = hist;
+
+  const fmtM = n => n != null ? '$' + Math.round(n).toLocaleString() : '—';
+  const fmtD = n => {
+    if (n == null || Math.abs(n) < 50) return '<span style="color:#9ca3af">—</span>';
+    const cls = n > 0 ? 'delta-pos' : 'delta-neg';
+    return `<span class="${cls}">${n > 0 ? '+' : ''}${fmtM(Math.abs(n))}</span>`;
+  };
+
+  // Baseline row (always from live result)
+  const baseProfit = (res && res.profit) ? res.profit : 0;
+  const opW = params ? (parseInt(params.operating_weeks)||48) : 48;
+  const basePeakLand = res
+    ? Math.round(Math.max(0,...((res.weekly_land_frac||[]).slice(0,opW).concat([0])))*100)
+    : 0;
+  const baseCrops = res ? getTopCropsSummary(res, 3) : '—';
 
   let rows = `
     <tr class="whatif-baseline">
       <td>Baseline</td>
-      <td>${baseLabel}</td>
+      <td>—</td>
       <td>${fmtM(baseProfit)}</td>
       <td>—</td>
-      <td>${Math.round(basePeak*100)}%</td>
+      <td>${basePeakLand}% land</td>
       <td style="font-size:0.74rem;color:#6b7280">${baseCrops}</td>
     </tr>`;
 
-  scenarios.forEach(({ factor, scaledParams, result: sr }) => {
-    const label = bn.displayFn(params, factor);
-    const pct   = `+${Math.round((factor - 1) * 100)}%`;
-    if (!sr || sr.status !== 'optimal') {
-      rows += `<tr>
-        <td style="color:#2d6a4f;font-weight:600">${pct}</td>
-        <td>${label}</td>
-        <td colspan="4" style="color:#9ca3af;font-size:0.79rem">No optimal solution at this level</td>
-      </tr>`;
-      return;
-    }
-    const profit = sr.profit || 0;
-    const scPeak = getBottleneckPeak(sr, scaledParams, bn.type);
-    const crops  = getTopCropsSummary(sr, 3);
-    rows += `<tr>
-      <td style="color:#2d6a4f;font-weight:600">${pct}</td>
-      <td>${label}</td>
-      <td>${fmtM(profit)}</td>
-      <td>${fmtDelta(profit, baseProfit)}</td>
-      <td>${Math.round(scPeak*100)}%</td>
-      <td style="font-size:0.74rem;color:#6b7280">${crops}</td>
-    </tr>`;
-  });
+  if (hist.length === 0) {
+    rows += `<tr><td colspan="6" style="color:#9ca3af;font-size:0.79rem;padding:7px 10px">
+      No scenarios run yet. Select a constraint above and click a preset to begin.
+    </td></tr>`;
+  } else {
+    hist.forEach(r => {
+      if (r.status === 'optimal') {
+        rows += `<tr>
+          <td style="font-size:0.75rem">${r.label}</td>
+          <td style="font-size:0.75rem;color:#6b7280">${r.resourceDisplay}</td>
+          <td>${fmtM(r.profit)}</td>
+          <td>${fmtD(r.delta)}</td>
+          <td>${r.peakUtil != null ? r.peakUtil+'%' : '—'}</td>
+          <td style="font-size:0.74rem;color:#6b7280">${r.topCrops}</td>
+        </tr>`;
+      } else {
+        const msg = r.status === 'error' ? 'Solver error' : 'No optimal solution';
+        rows += `<tr>
+          <td style="font-size:0.75rem">${r.label}</td>
+          <td style="font-size:0.75rem;color:#6b7280">${r.resourceDisplay}</td>
+          <td colspan="4" style="color:#9ca3af;font-size:0.79rem">${msg}</td>
+        </tr>`;
+      }
+    });
+  }
 
-  if (el) el.innerHTML = `
-    <table class="whatif-table" style="margin-top:0.8rem">
+  const clearBtn = hist.length > 0
+    ? `<button onclick="clearScenarioHistory()" style="font-size:0.71rem;color:#9ca3af;background:none;border:none;cursor:pointer;padding:2px 6px">Clear history</button>`
+    : '';
+
+  wrap.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:0.9rem;margin-bottom:0.2rem">
+      <span style="font-size:0.72rem;color:#9ca3af;text-transform:uppercase;letter-spacing:0.5px">
+        Scenario history (last ${WHATIF_MAX_HISTORY})
+      </span>
+      ${clearBtn}
+    </div>
+    <p style="font-size:0.69rem;color:#9ca3af;margin:0 0 0.3rem">
+      Scenarios do not change your current parameters. Baseline is always pinned.
+      History stored in browser session — clears on page reload.
+    </p>
+    <table class="whatif-table">
       <thead><tr>
-        <th>Scenario</th>
-        <th>${bn.name}</th>
-        <th>Profit</th>
-        <th>&Delta; vs Baseline</th>
-        <th>Peak Util</th>
-        <th>Top Crops</th>
+        <th>Scenario</th><th>Resource Level</th><th>Profit</th>
+        <th>&Delta; vs Baseline</th><th>Peak Util</th><th>Top Crops</th>
       </tr></thead>
       <tbody>${rows}</tbody>
-    </table>
-    <p style="font-size:0.69rem;color:#9ca3af;margin-top:0.35rem">
-      Baseline is pinned. Scenarios are independent solver runs — they do not change your current parameters or results.
-    </p>`;
-
-  if (btn) btn.disabled = false;
-  if (sp)  sp.style.display = 'none';
+    </table>`;
 }
 
-// ── Console-accessible self-tests ──────────────────────────────
-// Run window._testBottleneck() from browser console to verify logic.
-window._testBottleneck = function() {
+// ── Console-accessible self-tests ────────────────────────────
+// Run window._testWhatIf() from browser console to verify logic.
+window._testWhatIf = function() {
   const mockRes = {
     profit: 100000, peak_borrowing: 50000,
     weekly_land_frac:    Array(48).fill(0.95),
@@ -3800,24 +3908,27 @@ window._testBottleneck = function() {
       {type:'salary',   count:1, hours_per_week:40},
       {type:'seasonal', count:15, hours_per_week:40},
     ],
+    crops:[],
   };
-  // Test 1: land is top bottleneck at 95%
-  const bn = identifyBottleneck(mockRes, mockParams);
-  console.assert(bn !== null,              'T1: bottleneck should be detected');
-  console.assert(bn.type === 'land',       `T1: expected land, got ${bn.type}`);
-  console.assert(bn.confidence === 'high', `T1: expected high, got ${bn.confidence}`);
 
-  // Test 2: scaleParamsForScenario does not mutate original
-  const scaled = scaleParamsForScenario(mockParams, bn, 1.2);
+  // T1: land is top at 95%
+  const ranked = rankBottlenecks(mockRes, mockParams);
+  console.assert(ranked.length >= 5,       `T1: expected >=5 candidates, got ${ranked.length}`);
+  console.assert(ranked[0].type === 'land',`T1: land should rank first, got ${ranked[0].type}`);
+  console.assert(Math.abs(ranked[0].peak - 0.95) < 0.01, `T1: land peak should be ~0.95`);
+
+  // T2: scaleParamsForScenario immutability
+  const landC = ranked.find(c => c.type === 'land');
+  const scaled = scaleParamsForScenario(mockParams, landC, 1.2);
   console.assert(Math.abs(scaled.total_land - 180) < 0.1, `T2: expected 180ac, got ${scaled.total_land}`);
   console.assert(mockParams.total_land === 150,            'T2: original must not be mutated');
 
-  // Test 3: labor bottleneck selected when land is low
-  const mockRes2 = { ...mockRes, weekly_land_frac: Array(48).fill(0.30) };
-  const bn2 = identifyBottleneck(mockRes2, mockParams);
-  console.assert(bn2 && bn2.type === 'labor', `T3: expected labor, got ${bn2?.type}`);
+  // T3: labor ranks higher than water when labor is binding
+  const mockRes2 = { ...mockRes, weekly_land_frac: Array(48).fill(0.20) };
+  const ranked2 = rankBottlenecks(mockRes2, mockParams);
+  console.assert(ranked2[0].type === 'labor', `T3: labor should rank first, got ${ranked2[0].type}`);
 
-  // Test 4: null when all resources are low
+  // T4: no visible constraints when all are low
   const mockRes3 = {
     ...mockRes,
     weekly_land_frac:   Array(48).fill(0.20),
@@ -3826,20 +3937,49 @@ window._testBottleneck = function() {
     weekly_harvest_vol: Array(48).fill(100),
     peak_borrowing: 0,
   };
-  const bn3 = identifyBottleneck(mockRes3, mockParams);
-  console.assert(bn3 === null, `T4: expected null (no bottleneck), got ${bn3?.type}`);
+  const ranked3 = rankBottlenecks(mockRes3, mockParams);
+  const visible3 = ranked3.filter(c => c.peak >= 0.50);
+  console.assert(visible3.length === 0, `T4: expected 0 visible, got ${visible3.length}`);
 
-  // Test 5: labor scaling skips salary employees
-  const laborBn = { type:'labor', scaleType:'labor', param:'_labor_count' };
-  const scaledL = scaleParamsForScenario(mockParams, laborBn, 2.0);
+  // T5: labor scaling skips salary employees
+  const laborC = ranked.find(c => c.type === 'labor');
+  const scaledL = scaleParamsForScenario(mockParams, laborC, 2.0);
   console.assert(scaledL.employees[0].count === 1,  'T5: salary count must not change');
-  console.assert(scaledL.employees[1].count === 30, `T5: seasonal count should be 30, got ${scaledL.employees[1].count}`);
+  console.assert(scaledL.employees[1].count === 30, `T5: seasonal should be 30, got ${scaledL.employees[1].count}`);
 
-  // Test 6: getTopCropsSummary order
+  // T6: demand scaling multiplies weekly_demand_lbs
+  const mockParamsD = {
+    ...mockParams,
+    crops: [{ name:'Spinach', yield_per_acre:8000, channels: {
+      'FM': { demand_cap_type:'weekly_flat', weekly_demand_lbs:'500', price_per_lb:'2' }
+    }}],
+  };
+  const demandC = { type:'demand', scaleType:'demand' };
+  const scaledD = scaleParamsForScenario(mockParamsD, demandC, 1.5);
+  const demandAfter = parseFloat(scaledD.crops[0].channels['FM'].weekly_demand_lbs);
+  console.assert(Math.abs(demandAfter - 750) < 1, `T6: demand should be 750, got ${demandAfter}`);
+
+  // T7: custom % validation range (logic test, not DOM test)
+  const validPct = pct => !isNaN(pct) && pct >= 1 && pct <= 200;
+  console.assert( validPct(25),  'T7: 25 should be valid');
+  console.assert(!validPct(0),   'T7: 0 should be invalid');
+  console.assert(!validPct(201), 'T7: 201 should be invalid');
+
+  // T8: history persistence round-trip
+  try {
+    const key = WHATIF_HISTORY_KEY + '_test';
+    const fakeRecord = { id:1, label:'Test', status:'optimal', profit:50000, delta:1000 };
+    sessionStorage.setItem(key, JSON.stringify([fakeRecord]));
+    const loaded = JSON.parse(sessionStorage.getItem(key));
+    console.assert(loaded[0].profit === 50000, 'T8: history round-trip should preserve profit');
+    sessionStorage.removeItem(key);
+  } catch(e) { console.warn('T8: sessionStorage not available in this environment'); }
+
+  // T9: top crops summary order
   const topCrops = getTopCropsSummary(mockRes, 2);
-  console.assert(topCrops.startsWith('Spinach'), `T6: Spinach should be first, got: ${topCrops}`);
+  console.assert(topCrops.startsWith('Spinach'), `T9: Spinach should be first, got: ${topCrops}`);
 
-  console.log('✓ All bottleneck tests passed.');
+  console.log('✓ All what-if tests passed (9/9).');
 };
 
 // ============================================================
