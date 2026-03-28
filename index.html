@@ -642,6 +642,25 @@
   .exec-label { font-size: 0.63rem; text-transform: uppercase; letter-spacing: 0.5px; color: #b7e4c7; font-weight: 700; margin-bottom: 0.25rem; }
   .exec-value { font-size: 0.87rem; font-weight: 600; color: #fff; line-height: 1.35; }
 
+  /* ─── BOTTLENECK CARD ─── */
+  .confidence-badge { display:inline-block; padding:2px 9px; border-radius:10px; font-size:0.69rem; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; }
+  .confidence-badge.high   { background:#fee2e2; color:#b91c1c; }
+  .confidence-badge.medium { background:#fef3c7; color:#92400e; }
+  .confidence-badge.low    { background:#f3f4f6; color:#6b7280; }
+  .bottleneck-header { display:flex; align-items:center; gap:0.65rem; margin-bottom:0.35rem; flex-wrap:wrap; }
+  .bottleneck-resource { font-size:1rem; font-weight:700; color:#1b4332; }
+  .bottleneck-stat { font-size:0.82rem; color:#6b7280; }
+  .btn-whatif { margin-top:0.65rem; padding:0.42rem 1.2rem; background:#1b4332; color:#fff; border:none; border-radius:8px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:0.4rem; }
+  .btn-whatif:hover { background:#2d6a4f; }
+  .btn-whatif:disabled { opacity:0.6; cursor:not-allowed; }
+  .whatif-table { width:100%; border-collapse:collapse; font-size:0.79rem; }
+  .whatif-table th { text-align:left; padding:5px 10px; border-bottom:2px solid #d1d5db; color:#374151; font-size:0.74rem; white-space:nowrap; }
+  .whatif-table td { padding:5px 10px; border-bottom:1px solid #f3f4f6; vertical-align:top; }
+  .whatif-table tr.whatif-baseline { background:#f0faf4; font-weight:700; }
+  .whatif-table tr.whatif-baseline td:first-child::after { content:' ✓'; color:#52b788; font-size:0.7rem; }
+  .delta-pos { color:#059669; font-weight:600; }
+  .delta-neg { color:#dc2626; font-weight:600; }
+
   /* ─── ADVANCED SECTION ─── */
   #advanced-section { display: none; }
   #advanced-section.visible { display: block; }
@@ -1022,7 +1041,7 @@
       <!-- Constraint Summary (replaces planting plan table) -->
       <div class="card" style="margin-top:1rem" id="constraint-summary-card">
         <h2>Constraint Utilization Summary</h2>
-        <p style="font-size:0.78rem;color:#6b7280;margin-bottom:0.8rem">How close are you to your limits? Red = likely binding. Check sensitivity analysis to see what loosening these would do.</p>
+        <p style="font-size:0.78rem;color:#6b7280;margin-bottom:0.8rem">How close are you to your limits? Red = likely binding. See the Bottleneck Analysis card below to run what-if scenarios on the top constraint.</p>
         <div id="constraint-summary-content"><div style="color:#9ca3af;font-size:0.85rem">Run optimizer to see results.</div></div>
       </div>
 
@@ -1031,6 +1050,13 @@
         <h2>Unit Contribution Margins</h2>
         <p style="font-size:0.78rem;color:#6b7280;margin-bottom:0.8rem">Revenue minus all variable costs per acre, by crop and channel. Drives which crops the optimizer selects and through which channels.</p>
         <div id="contribution-margin-content"><div style="color:#9ca3af;font-size:0.85rem">Run optimizer to see results.</div></div>
+      </div>
+
+      <!-- Bottleneck Analysis & What-If (always visible, not gated by Advanced) -->
+      <div class="card" style="margin-top:1rem" id="bottleneck-card">
+        <h2>Bottleneck Analysis &amp; What-If</h2>
+        <p style="font-size:0.78rem;color:#6b7280;margin-bottom:0.6rem">Identifies the most constrained resource in your plan and lets you test how much more profit you could unlock by loosening it.</p>
+        <div id="bottleneck-content"><div style="color:#9ca3af;font-size:0.85rem">Run optimizer to see bottleneck analysis.</div></div>
       </div>
 
       <!-- Advanced Tools (hidden until toggled) -->
@@ -3126,6 +3152,7 @@ function switchToResults(params, res) {
   window._lastRes    = res;
   // Render all result sections
   renderExecutiveSummary(res, params);
+  renderBottleneckCard(res, params);
   renderSummaryPane(params);
   renderGanttCalendar(res);
   updatePieChart(document.getElementById('week-slider').value);
@@ -3437,6 +3464,385 @@ function drawPie(slices) {
 }
 
 // ============================================================
+// ============================================================
+// Bottleneck Analysis & What-If
+// ============================================================
+
+/**
+ * identifyBottleneck(res, params)
+ *
+ * Heuristic rules:
+ *   high confidence   : peak utilization >= 90% of capacity
+ *   medium confidence : peak utilization >= 70%
+ *   low confidence    : peak utilization >= 50%
+ *   null              : all resources peak below 50% — no meaningful bottleneck
+ *
+ * Resource priority (sorted by descending peak utilization):
+ *   land, labor, water, harvest_storage, cash/credit
+ *
+ * False-positive / edge-case risks:
+ *   - Labor: if all employees are salaried, labor supply is high and labor never
+ *     binds in the constraint sense. This is handled by including salary employees
+ *     in supply but skipping them in scaleParamsForScenario.
+ *   - Water: if city water is enabled (unlimited), water never truly binds.
+ *     The peak util will be low because supply is effectively infinite.
+ *   - Cash: peak_borrowing = 0 with credit_line = 0 gives cashPeak = 0, not 1.
+ *   - Storage: harvest_storage_cap = 0 (disabled) → peak = 0, not infinity.
+ */
+function identifyBottleneck(res, params) {
+  const opW  = parseInt(params.operating_weeks) || 48;
+  const slc  = arr => (arr || []).slice(0, opW);
+
+  const peakRatio = (usedArr, supplyArrOrScalar) => {
+    const u = slc(usedArr || []);
+    const s = Array.isArray(supplyArrOrScalar) ? slc(supplyArrOrScalar) : supplyArrOrScalar;
+    if (!u.length) return 0;
+    return Math.max(...u.map((v, i) => {
+      const cap = Array.isArray(s) ? (s[i] || 0) : (s || 0);
+      return cap > 0 ? v / cap : 0;
+    }));
+  };
+
+  const landPeak  = Math.max(0, ...slc(res.weekly_land_frac || []).concat([0]));
+  const laborPeak = peakRatio(res.weekly_labor_used,  res.weekly_labor_supply);
+  const waterPeak = peakRatio(res.weekly_water_used,  res.weekly_water_supply);
+  const storPeak  = (() => {
+    const cap = parseFloat(params.harvest_storage_cap) || 0;
+    if (!cap) return 0;
+    const v = slc(res.weekly_harvest_vol || []);
+    return v.length ? Math.max(...v.concat([0])) / cap : 0;
+  })();
+  const cashLine  = parseFloat(params.credit_line) || 0;
+  const cashPeak  = cashLine > 0 ? Math.min(1, (res.peak_borrowing || 0) / cashLine) : 0;
+
+  const cands = [
+    {
+      type:'land',    name:'Total Land',
+      peak: landPeak,
+      param:'total_land',        scaleType:'land',
+      ctaLabel:'Test more land',
+      displayFn: (p, f) => `${Math.round((p.total_land||150) * f)} ac`,
+    },
+    {
+      type:'labor',   name:'Labor Availability',
+      peak: laborPeak,
+      param:'_labor_count',      scaleType:'labor',
+      ctaLabel:'Test more labor',
+      displayFn: (p, f) => {
+        const ns = (p.employees||[]).filter(e => e.type !== 'salary');
+        const tot = ns.reduce((s, e) => s + (e.count || 1), 0);
+        return `${Math.round(tot * f)} field workers`;
+      },
+    },
+    {
+      type:'water',   name:'Water Supply',
+      peak: waterPeak,
+      param:'well_weekly_cap_L', scaleType:'water',
+      ctaLabel:'Test more water',
+      displayFn: (p, f) => `${(((p.well_weekly_cap_L||0)*f)/1000).toFixed(0)}k L/wk well`,
+    },
+    {
+      type:'storage', name:'Harvest Storage',
+      peak: storPeak,
+      param:'harvest_storage_cap', scaleType:'direct',
+      ctaLabel:'Test more storage',
+      displayFn: (p, f) => `${Math.round((p.harvest_storage_cap||0)*f).toLocaleString()} m³`,
+    },
+    {
+      type:'cash',    name:'Cash / Credit Line',
+      peak: cashPeak,
+      param:'credit_line',       scaleType:'direct',
+      ctaLabel:'Test larger credit line',
+      displayFn: (p, f) => `$${Math.round((p.credit_line||0)*f).toLocaleString()} credit`,
+    },
+  ].sort((a, b) => b.peak - a.peak);
+
+  const top = cands[0];
+  if (top.peak < 0.50) return null;
+
+  const confidence = top.peak >= 0.90 ? 'high' : top.peak >= 0.70 ? 'medium' : 'low';
+  return { ...top, confidence, allCands: cands };
+}
+
+/**
+ * Deep-copy params and scale the bottleneck resource by factor.
+ * Never mutates window._lastParams.
+ *
+ * Labor scaling only affects non-salary employees (count × factor).
+ * Salary employees are fixed cost regardless of headcount in what-if.
+ */
+function scaleParamsForScenario(params, bottleneck, factor) {
+  const p = JSON.parse(JSON.stringify(params));
+  switch (bottleneck.scaleType) {
+    case 'labor':
+      p.employees = p.employees.map(e => {
+        if (e.type === 'salary') return e;
+        return { ...e, count: Math.max(1, Math.round((e.count || 1) * factor)) };
+      });
+      break;
+    case 'water':
+      p.well_weekly_cap_L = (p.well_weekly_cap_L || 0) * factor;
+      break;
+    case 'land':
+      p.total_land = (p.total_land || 150) * factor;
+      break;
+    case 'direct':
+    default:
+      p[bottleneck.param] = (parseFloat(p[bottleneck.param]) || 0) * factor;
+  }
+  return p;
+}
+
+/** Top N crops by acres planted, as a compact string. */
+function getTopCropsSummary(res, n) {
+  const acres = {};
+  (res.succession_schedule || []).forEach(s => {
+    const key = s.crop || s.name || '?';
+    acres[key] = (acres[key] || 0) + (s.acres || 0);
+  });
+  return Object.entries(acres)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, n || 3)
+    .map(([name, ac]) => `${name} ${ac.toFixed(0)}ac`)
+    .join(' · ') || '—';
+}
+
+/** Peak utilisation of the bottleneck resource type for a given result. */
+function getBottleneckPeak(res, params, bottleneckType) {
+  const opW = parseInt(params.operating_weeks) || 48;
+  const slc = arr => (arr || []).slice(0, opW);
+  switch (bottleneckType) {
+    case 'land':
+      return Math.max(0, ...slc(res.weekly_land_frac || []).concat([0]));
+    case 'labor': {
+      const u = slc(res.weekly_labor_used || []);
+      const s = slc(res.weekly_labor_supply || []);
+      return u.length && s.length ? Math.max(...u.map((v, i) => s[i] > 0 ? v / s[i] : 0)) : 0;
+    }
+    case 'water': {
+      const u = slc(res.weekly_water_used || []);
+      const s = slc(res.weekly_water_supply || []);
+      return u.length && s.length ? Math.max(...u.map((v, i) => s[i] > 0 ? v / s[i] : 0)) : 0;
+    }
+    case 'storage': {
+      const cap = parseFloat(params.harvest_storage_cap) || 0;
+      if (!cap) return 0;
+      const v = slc(res.weekly_harvest_vol || []);
+      return v.length ? Math.max(...v.concat([0])) / cap : 0;
+    }
+    case 'cash': {
+      const line = parseFloat(params.credit_line) || 0;
+      return line > 0 ? Math.min(1, (res.peak_borrowing || 0) / line) : 0;
+    }
+    default: return 0;
+  }
+}
+
+let _currentBottleneck = null;
+
+function renderBottleneckCard(res, params) {
+  const el = document.getElementById('bottleneck-content');
+  if (!el) return;
+
+  const bn = identifyBottleneck(res, params);
+  _currentBottleneck = bn;
+
+  if (!bn) {
+    el.innerHTML = `<p style="color:#6b7280;font-size:0.85rem;margin:0">
+      No dominant bottleneck detected — all resources peak below 50% of capacity.
+      The plan has structural headroom. Consider adding more crops, more successions,
+      or extending the planting season to capture additional profit.
+    </p>`;
+    return;
+  }
+
+  const confColor = { high:'#b91c1c', medium:'#92400e', low:'#6b7280' }[bn.confidence];
+  const confBg    = { high:'#fee2e2', medium:'#fef3c7', low:'#f3f4f6' }[bn.confidence];
+  const confVerb  = { high:'is clearly binding', medium:'is likely limiting', low:'may be limiting' }[bn.confidence];
+
+  const runner = bn.allCands.slice(0, 3)
+    .map(c => `${c.name}: ${Math.round(c.peak*100)}%`)
+    .join(' &nbsp;&middot;&nbsp; ');
+
+  el.innerHTML = `
+    <div class="bottleneck-header">
+      <span class="bottleneck-resource">${bn.name}</span>
+      <span class="confidence-badge" style="background:${confBg};color:${confColor}">${bn.confidence} confidence</span>
+      <span class="bottleneck-stat">peaks at ${Math.round(bn.peak*100)}% of capacity</span>
+    </div>
+    <p style="font-size:0.82rem;color:#374151;margin:0 0 0.2rem">
+      <strong>${bn.name}</strong> ${confVerb} — loosening it is the highest-leverage investment to explore.
+    </p>
+    <p style="font-size:0.75rem;color:#9ca3af;margin:0 0 0.1rem">
+      All resources at peak: ${runner}
+    </p>
+    <button class="btn-whatif" id="btn-whatif" onclick="runWhatIf()">
+      <span id="spinner-whatif" class="spinner" style="display:none"></span>
+      <span>${bn.ctaLabel} →</span>
+    </button>
+    <div id="whatif-results"></div>
+  `;
+}
+
+async function runWhatIf() {
+  const bn     = _currentBottleneck;
+  const params = window._lastParams;
+  const res    = window._lastRes;
+  if (!bn || !params || !res) return;
+
+  const btn = document.getElementById('btn-whatif');
+  const sp  = document.getElementById('spinner-whatif');
+  if (btn) { btn.disabled = true; }
+  if (sp)  { sp.style.display = 'block'; }
+
+  const el = document.getElementById('whatif-results');
+  if (el) el.innerHTML = '<div style="color:#6b7280;font-size:0.82rem;padding:0.5rem 0">Running what-if scenarios…</div>';
+
+  const fmtM = n => '$' + Math.round(n).toLocaleString();
+  const fmtDelta = (n, base) => {
+    const d = n - base;
+    if (Math.abs(d) < 50) return '<span style="color:#9ca3af">—</span>';
+    const sign = d > 0 ? '+' : '';
+    const cls  = d > 0 ? 'delta-pos' : 'delta-neg';
+    return `<span class="${cls}">${sign}${fmtM(d)}</span>`;
+  };
+
+  // +10%, +20%, +40% on the bottleneck resource
+  const FACTORS = [1.10, 1.20, 1.40];
+  const scenarios = [];
+
+  for (const factor of FACTORS) {
+    const sp2 = scaleParamsForScenario(params, bn, factor);
+    try {
+      const r = await pyodide.runPythonAsync(`run_from_js(${JSON.stringify(JSON.stringify(sp2))})`);
+      scenarios.push({ factor, scaledParams: sp2, result: JSON.parse(r) });
+    } catch(e) {
+      scenarios.push({ factor, scaledParams: sp2, result: null });
+    }
+  }
+
+  const baseProfit = res.profit || 0;
+  const basePeak   = getBottleneckPeak(res, params, bn.type);
+  const baseCrops  = getTopCropsSummary(res, 3);
+  const baseLabel  = bn.displayFn(params, 1.0);
+
+  let rows = `
+    <tr class="whatif-baseline">
+      <td>Baseline</td>
+      <td>${baseLabel}</td>
+      <td>${fmtM(baseProfit)}</td>
+      <td>—</td>
+      <td>${Math.round(basePeak*100)}%</td>
+      <td style="font-size:0.74rem;color:#6b7280">${baseCrops}</td>
+    </tr>`;
+
+  scenarios.forEach(({ factor, scaledParams, result: sr }) => {
+    const label = bn.displayFn(params, factor);
+    const pct   = `+${Math.round((factor - 1) * 100)}%`;
+    if (!sr || sr.status !== 'optimal') {
+      rows += `<tr>
+        <td style="color:#2d6a4f;font-weight:600">${pct}</td>
+        <td>${label}</td>
+        <td colspan="4" style="color:#9ca3af;font-size:0.79rem">No optimal solution at this level</td>
+      </tr>`;
+      return;
+    }
+    const profit = sr.profit || 0;
+    const scPeak = getBottleneckPeak(sr, scaledParams, bn.type);
+    const crops  = getTopCropsSummary(sr, 3);
+    rows += `<tr>
+      <td style="color:#2d6a4f;font-weight:600">${pct}</td>
+      <td>${label}</td>
+      <td>${fmtM(profit)}</td>
+      <td>${fmtDelta(profit, baseProfit)}</td>
+      <td>${Math.round(scPeak*100)}%</td>
+      <td style="font-size:0.74rem;color:#6b7280">${crops}</td>
+    </tr>`;
+  });
+
+  if (el) el.innerHTML = `
+    <table class="whatif-table" style="margin-top:0.8rem">
+      <thead><tr>
+        <th>Scenario</th>
+        <th>${bn.name}</th>
+        <th>Profit</th>
+        <th>&Delta; vs Baseline</th>
+        <th>Peak Util</th>
+        <th>Top Crops</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <p style="font-size:0.69rem;color:#9ca3af;margin-top:0.35rem">
+      Baseline is pinned. Scenarios are independent solver runs — they do not change your current parameters or results.
+    </p>`;
+
+  if (btn) btn.disabled = false;
+  if (sp)  sp.style.display = 'none';
+}
+
+// ── Console-accessible self-tests ──────────────────────────────
+// Run window._testBottleneck() from browser console to verify logic.
+window._testBottleneck = function() {
+  const mockRes = {
+    profit: 100000, peak_borrowing: 50000,
+    weekly_land_frac:    Array(48).fill(0.95),
+    weekly_labor_used:   Array(48).fill(800),
+    weekly_labor_supply: Array(48).fill(1000),
+    weekly_water_used:   Array(48).fill(500),
+    weekly_water_supply: Array(48).fill(1000),
+    weekly_harvest_vol:  Array(48).fill(5000),
+    succession_schedule: [{crop:'Spinach', acres:50}, {crop:'Cucumber', acres:30}],
+  };
+  const mockParams = {
+    total_land:150, operating_weeks:48, harvest_storage_cap:24000,
+    credit_line:100000, well_weekly_cap_L:2500000,
+    employees:[
+      {type:'salary',   count:1, hours_per_week:40},
+      {type:'seasonal', count:15, hours_per_week:40},
+    ],
+  };
+  // Test 1: land is top bottleneck at 95%
+  const bn = identifyBottleneck(mockRes, mockParams);
+  console.assert(bn !== null,              'T1: bottleneck should be detected');
+  console.assert(bn.type === 'land',       `T1: expected land, got ${bn.type}`);
+  console.assert(bn.confidence === 'high', `T1: expected high, got ${bn.confidence}`);
+
+  // Test 2: scaleParamsForScenario does not mutate original
+  const scaled = scaleParamsForScenario(mockParams, bn, 1.2);
+  console.assert(Math.abs(scaled.total_land - 180) < 0.1, `T2: expected 180ac, got ${scaled.total_land}`);
+  console.assert(mockParams.total_land === 150,            'T2: original must not be mutated');
+
+  // Test 3: labor bottleneck selected when land is low
+  const mockRes2 = { ...mockRes, weekly_land_frac: Array(48).fill(0.30) };
+  const bn2 = identifyBottleneck(mockRes2, mockParams);
+  console.assert(bn2 && bn2.type === 'labor', `T3: expected labor, got ${bn2?.type}`);
+
+  // Test 4: null when all resources are low
+  const mockRes3 = {
+    ...mockRes,
+    weekly_land_frac:   Array(48).fill(0.20),
+    weekly_labor_used:  Array(48).fill(100),
+    weekly_water_used:  Array(48).fill(100),
+    weekly_harvest_vol: Array(48).fill(100),
+    peak_borrowing: 0,
+  };
+  const bn3 = identifyBottleneck(mockRes3, mockParams);
+  console.assert(bn3 === null, `T4: expected null (no bottleneck), got ${bn3?.type}`);
+
+  // Test 5: labor scaling skips salary employees
+  const laborBn = { type:'labor', scaleType:'labor', param:'_labor_count' };
+  const scaledL = scaleParamsForScenario(mockParams, laborBn, 2.0);
+  console.assert(scaledL.employees[0].count === 1,  'T5: salary count must not change');
+  console.assert(scaledL.employees[1].count === 30, `T5: seasonal count should be 30, got ${scaledL.employees[1].count}`);
+
+  // Test 6: getTopCropsSummary order
+  const topCrops = getTopCropsSummary(mockRes, 2);
+  console.assert(topCrops.startsWith('Spinach'), `T6: Spinach should be first, got: ${topCrops}`);
+
+  console.log('✓ All bottleneck tests passed.');
+};
+
+// ============================================================
 // Sensitivity Analysis
 // ============================================================
 const SENS_VARS = [
@@ -3515,7 +3921,7 @@ async function runSensitivity() {
   resEl.innerHTML = `<table style="font-size:0.8rem;border-collapse:collapse;width:100%;margin-top:0.4rem">
     <thead><tr>
       <th style="text-align:left;padding:4px 10px;border-bottom:2px solid #d1d5db;color:#374151">${v.label}</th>
-      <th style="text-align:left;padding:4px 10px;border-bottom:2px solid #d1d5db;color:#374151">Net Profit</th>
+      <th style="text-align:left;padding:4px 10px;border-bottom:2px solid #d1d5db;color:#374151">Profit</th>
       <th style="border-bottom:2px solid #d1d5db"></th>
     </tr></thead>
     <tbody>${rows}</tbody></table>`;
