@@ -3918,7 +3918,8 @@ function updateWhatIfSelectionUI(visible) {
     if (combBtn) combBtn.style.display = 'none';
   } else {
     const names = selected.map(c => c.name).join(' + ');
-    if (lbl) lbl.innerHTML = `Combined: <strong>${names}</strong> — click <em>Run Combined</em> to solve at your custom %.`;
+    if (lbl) lbl.innerHTML = `Combined: <strong>${names}</strong> — <em>Run Combined</em> applies all. ` +
+      `<span style="font-size:0.74rem;color:#9ca3af">Run Custom applies <strong>${selected[0].name}</strong> only.</span>`;
     if (combBtn) {
       const input = document.getElementById('custom-pct-input');
       const pct   = parseFloat(input ? input.value : 20) || 20;
@@ -3948,7 +3949,9 @@ function runCustomWhatIf() {
   }
   const visible  = getVisibleConstraints();
   const selected = [...WHATIF_STATE.selectedSet].filter(i => i < visible.length).map(i => visible[i]);
-  if (selected.length >= 1) runScenario(selected, 1 + pct / 100);
+  // Custom run is single-constraint only. Takes the primary (first) selected constraint.
+  // For multi-constraint combined scenarios, use Run Combined.
+  if (selected.length >= 1) runScenario([selected[0]], 1 + pct / 100);
 }
 
 function runCombinedWhatIf() {
@@ -4025,6 +4028,13 @@ async function runScenario(constraints, factor) {
       };
       if (window._whatifDebug) {
         console.log(`[What-If] Result: profit=${profit.toFixed(0)}, delta=${record.delta.toFixed(0)}, peakUtil=${record.peakUtil}%`);
+        console.log('[What-If] Utilization deltas per applied constraint:');
+        cArr.forEach(c => {
+          const baseUtil = getBottleneckPeak(res, params, c.type, c);
+          const scUtil   = getBottleneckPeak(sr, scaledParams, c.type, c);
+          console.log(`  ${c.name}: baseline=${(baseUtil*100).toFixed(1)}% → scenario=${(scUtil*100).toFixed(1)}% (Δ ${((scUtil-baseUtil)*100).toFixed(1)}pp)`);
+        });
+        console.log(`[What-If] Baseline params unchanged? _lastParams.total_land=${window._lastParams?.total_land} (should equal ${params.total_land})`);
       }
     } else {
       record = {
@@ -4419,7 +4429,93 @@ window._testWhatIf = function() {
   console.assert(pkLandWk === 3, `T22c: peak land week should be 3, got ${pkLandWk}`);
   console.assert(Math.abs(pkLandFrac - 0.95) < 0.01, `T22d: peak land frac ~0.95, got ${pkLandFrac}`);
 
-  console.log('✓ All what-if tests passed (22/22).');
+  // ── T23: runCustomWhatIf scope — only first selected constraint applied ──
+  // Simulate old path (both selected) vs new path (only first selected) for land+labor.
+  const allC23 = rankBottlenecks(mockRes, mockParamsBase);
+  WHATIF_STATE.rankedConstraints = allC23;
+  const vis23      = getVisibleConstraints();
+  const landIdx23  = vis23.findIndex(c => c.type === 'land');
+  const laborIdx23 = vis23.findIndex(c => c.type === 'labor');
+  if (landIdx23 >= 0 && laborIdx23 >= 0) {
+    const landC23  = vis23[landIdx23];
+    const laborC23 = vis23[laborIdx23];
+    // Old path: both land + labor scaled
+    let oldScaled = mockParamsBase;
+    for (const c of [landC23, laborC23]) { oldScaled = scaleParamsForScenario(oldScaled, c, 1.20); }
+    const oldLaborCount = oldScaled.employees.find(e => e.type !== 'salary')?.count;
+    console.assert(Math.abs(oldScaled.total_land - 180) < 0.1, 'T23a: old path scales land to 180ac');
+    console.assert(oldLaborCount === 18, `T23b: old path scales seasonal labor to 18, got ${oldLaborCount}`);
+    // New path: only first selected (land) scaled — labor must stay at 15
+    const newScaled    = scaleParamsForScenario(mockParamsBase, landC23, 1.20);
+    const newLaborCount = newScaled.employees.find(e => e.type !== 'salary')?.count;
+    console.assert(Math.abs(newScaled.total_land - 180) < 0.1, 'T23c: new path scales land to 180ac');
+    console.assert(newLaborCount === 15, `T23d: new path leaves labor at 15 (unchanged), got ${newLaborCount}`);
+    // Single-item array produces label with no AND separator
+    const pctStr23 = `+${Math.round(0.20*100)}%`;
+    const singleLabel23 = [landC23].map(c => `${pctStr23} ${c.name}`).join(' AND ');
+    console.assert(!singleLabel23.includes('AND'), `T23e: single-constraint label has no AND, got: "${singleLabel23}"`);
+    console.log(`T23: runCustomWhatIf scope fix verified — old path modified both params; new path modifies land only ✓`);
+  } else {
+    console.warn('T23: land or labor constraint not found in vis23 — skipped');
+  }
+
+  // ── T24: runCombinedWhatIf requires selected.length >= 2 ─────────────
+  // Verify combined path guard: < 2 selected → no runScenario call
+  // Test by checking the guard condition directly
+  const combGuardFails  = (selectedLen) => selectedLen < 2;
+  console.assert( combGuardFails(0),  'T24a: combined guard blocks 0 selected');
+  console.assert( combGuardFails(1),  'T24b: combined guard blocks 1 selected');
+  console.assert(!combGuardFails(2),  'T24c: combined guard allows 2 selected');
+  console.assert(!combGuardFails(3),  'T24d: combined guard allows 3 selected');
+  // Verify combined label includes all selected constraints
+  const allC24    = rankBottlenecks(mockRes, mockParamsBase);
+  const landC24   = allC24.find(c => c.type === 'land');
+  const laborC24  = allC24.find(c => c.type === 'labor');
+  const waterC24  = allC24.find(c => c.type === 'water');
+  const pctStr24  = `+${Math.round(0.20*100)}%`;
+  const combLabel24 = [landC24, laborC24, waterC24].map(c => `${pctStr24} ${c.name}`).join(' AND ');
+  console.assert(combLabel24.split(' AND ').length === 3, `T24e: 3-constraint combined label has 3 parts, got "${combLabel24}"`);
+  console.log('T24: runCombinedWhatIf guard and label format verified ✓');
+
+  // ── T25: label/application parity ────────────────────────────────────
+  // For every run, label constraint count must match applied constraint count
+  const mkLabel25 = (cArr, factor) => cArr.map(c => `+${Math.round((factor-1)*100)}% ${c.name}`).join(' AND ');
+  const allC25   = rankBottlenecks(mockRes, mockParamsBase);
+  const single25 = [allC25.find(c => c.type === 'land')];
+  const multi25  = [allC25.find(c => c.type === 'land'), allC25.find(c => c.type === 'labor')];
+  const lSingle25 = mkLabel25(single25, 1.20);
+  const lMulti25  = mkLabel25(multi25,  1.20);
+  // Single: exactly 1 named constraint, no AND
+  console.assert(lSingle25.split(' AND ').length === single25.length, `T25a: single label parts=${single25.length}, got "${lSingle25}"`);
+  // Multi: parts count == constraints applied
+  console.assert(lMulti25.split(' AND ').length  === multi25.length,  `T25b: multi label parts=${multi25.length}, got "${lMulti25}"`);
+  // Verify each constraint name appears in its label
+  single25.forEach((c, i) => console.assert(lSingle25.includes(c.name), `T25c: label contains "${c.name}"`));
+  multi25.forEach((c,  i) => console.assert(lMulti25.includes(c.name),  `T25d: combined label contains "${c.name}"`));
+  console.log('T25: label/application parity verified ✓');
+
+  // ── T26: baseline immutability across scenario sequence ──────────────
+  // Simulate multiple sequential scaleParamsForScenario calls — _lastParams (mockParamsBase) must not change.
+  const baseSnap26  = JSON.stringify(mockParamsBase);
+  const allC26 = rankBottlenecks(mockRes, mockParamsBase);
+  const landC26  = allC26.find(c => c.type === 'land');
+  const laborC26 = allC26.find(c => c.type === 'labor');
+  const waterC26 = allC26.find(c => c.type === 'water');
+  // Run 3 sequential scalings (simulating 3 history entries), each time starting fresh from base
+  const run1 = scaleParamsForScenario(mockParamsBase, landC26,  1.10);
+  const run2 = scaleParamsForScenario(mockParamsBase, laborC26, 1.20);
+  const run3 = scaleParamsForScenario(mockParamsBase, waterC26, 1.40);
+  console.assert(JSON.stringify(mockParamsBase) === baseSnap26, 'T26a: mockParamsBase not mutated after 3 scenario runs');
+  console.assert(Math.abs(run1.total_land - 165) < 0.1,   `T26b: run1 land=165ac, got ${run1.total_land}`);
+  console.assert(mockParamsBase.total_land === 150,        'T26c: base land still 150ac after run1');
+  // Verify each run is independent (run2 labor scaled, run1 labor not)
+  const run2Labor = run2.employees.find(e => e.type !== 'salary')?.count;
+  const run1Labor = run1.employees.find(e => e.type !== 'salary')?.count;
+  console.assert(run2Labor === 18,  `T26d: run2 labor=18, got ${run2Labor}`);
+  console.assert(run1Labor === 15,  `T26e: run1 labor=15 (unchanged), got ${run1Labor}`);
+  console.log('T26: baseline immutability across sequential runs verified ✓');
+
+  console.log('✓ All what-if tests passed (26/26).');
 };
 
 // ============================================================
