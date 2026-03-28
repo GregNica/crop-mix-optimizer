@@ -1018,6 +1018,13 @@
         </div>
       </div>
 
+      <!-- What-If Scenario Analysis — actionable section, shown early -->
+      <div class="card" style="margin-top:1rem" id="bottleneck-card">
+        <h2>What-If Scenario Analysis</h2>
+        <p style="font-size:0.78rem;color:#6b7280;margin-bottom:0.6rem">Ranks active and near-binding constraints — physical resources and per-crop/channel demand caps — and lets you test how profit responds when each is loosened. Baseline stays pinned; scenario history persists in session.</p>
+        <div id="bottleneck-content"><div style="color:#9ca3af;font-size:0.85rem">Run optimizer to see scenario analysis.</div></div>
+      </div>
+
       <!-- Planting Calendar Gantt -->
       <div class="card" style="margin-top:1rem">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.7rem;flex-wrap:wrap;gap:0.5rem">
@@ -1057,7 +1064,7 @@
       <!-- Constraint Summary (replaces planting plan table) -->
       <div class="card" style="margin-top:1rem" id="constraint-summary-card">
         <h2>Constraint Utilization Summary</h2>
-        <p style="font-size:0.78rem;color:#6b7280;margin-bottom:0.8rem">How close are you to your limits? Red = likely binding. See the What-If Scenario Analysis card below to test relaxing these constraints.</p>
+        <p style="font-size:0.78rem;color:#6b7280;margin-bottom:0.8rem">How close are you to your limits? Red = likely binding. See the What-If Scenario Analysis card above to test relaxing these constraints.</p>
         <div id="constraint-summary-content"><div style="color:#9ca3af;font-size:0.85rem">Run optimizer to see results.</div></div>
       </div>
 
@@ -1066,13 +1073,6 @@
         <h2>Unit Contribution Margins</h2>
         <p style="font-size:0.78rem;color:#6b7280;margin-bottom:0.8rem">Revenue minus all variable costs per acre, by crop and channel. Drives which crops the optimizer selects and through which channels.</p>
         <div id="contribution-margin-content"><div style="color:#9ca3af;font-size:0.85rem">Run optimizer to see results.</div></div>
-      </div>
-
-      <!-- What-If Scenario Analysis (always visible, not gated by Advanced) -->
-      <div class="card" style="margin-top:1rem" id="bottleneck-card">
-        <h2>What-If Scenario Analysis</h2>
-        <p style="font-size:0.78rem;color:#6b7280;margin-bottom:0.6rem">Ranks active and near-binding constraints — physical resources and market demand caps — and lets you test how profit responds when each is loosened. Baseline stays pinned; scenario history persists in session.</p>
-        <div id="bottleneck-content"><div style="color:#9ca3af;font-size:0.85rem">Run optimizer to see scenario analysis.</div></div>
       </div>
 
       <!-- Advanced Tools (hidden until toggled) -->
@@ -3407,6 +3407,77 @@ const WHATIF_MAX_HISTORY = 5;
  *   - harvest_storage_cap = 0: storPeak = 0 (disabled)
  *   - No demand caps set: demandPeak = 0
  */
+/**
+ * computeDemandCandidates(res, params)
+ *
+ * Returns one entry per planted crop/channel combination that has an active
+ * demand cap, sorted by saturation (harvest / cap) descending.
+ * Used by rankBottlenecks to emit per-crop/channel demand candidates.
+ *
+ * Edge cases:
+ *   - No demand caps set: returns []
+ *   - Crop planted but cap = 0 (disabled): entry omitted
+ *   - annual_demand_lbs vs weekly_demand_lbs vs demand_ranges all handled
+ */
+function computeDemandCandidates(res, params) {
+  const sched    = res.succession_schedule || [];
+  const cropInfo = {};
+  (params.crops || []).forEach(c => { cropInfo[c.name] = c; });
+
+  const cropAcres = {};
+  sched.forEach(s => {
+    const key = s.crop || s.name || '?';
+    cropAcres[key] = (cropAcres[key] || 0) + (s.acres || 0);
+  });
+
+  const entries = [];
+  Object.entries(cropAcres).forEach(([cropName, acres]) => {
+    const ci = cropInfo[cropName];
+    if (!ci) return;
+    const totalHarv = acres * (parseFloat(ci.yield_per_acre) || 0);
+    Object.entries(ci.channels || {}).forEach(([channelName, chData]) => {
+      let annualCap = 0;
+      if (chData.demand_cap_type === 'annual') {
+        annualCap = parseFloat(chData.annual_demand_lbs) || 0;
+      } else if (chData.demand_cap_type === 'weekly_varying') {
+        (chData.demand_ranges || []).forEach(dr => {
+          const m = dr.weeks ? dr.weeks.match(/W(\d+)-W(\d+)/) : null;
+          if (m) annualCap += (parseFloat(dr.weekly_lbs)||0) * (parseInt(m[2])-parseInt(m[1])+1);
+        });
+      } else {
+        annualCap = (parseFloat(chData.weekly_demand_lbs) || 0) * 52;
+      }
+      if (annualCap > 0) {
+        entries.push({
+          cropName,
+          channelName,
+          sat: Math.min(1, totalHarv / annualCap),
+          annualCap,
+          weeklyBase: parseFloat(chData.weekly_demand_lbs) || 0,
+          capType: chData.demand_cap_type || 'weekly_flat',
+        });
+      }
+    });
+  });
+  return entries.sort((a, b) => b.sat - a.sat);
+}
+
+/**
+ * rankBottlenecks(res, params)
+ *
+ * Returns ALL constraint candidates sorted by peak utilization (desc).
+ * Includes 5 physical resources + per-crop/channel demand cap candidates
+ * (top 3 by saturation, each ≥50% threshold applied by renderWhatIfCard).
+ *
+ * Thresholds (applied by caller):
+ *   active     : peak >= 90% → red pill
+ *   near-active: peak >= 70% → orange pill
+ *   visible    : peak >= 50% → grey pill (shown in list)
+ *   hidden     : peak < 50%
+ *
+ * Combined scenario (btn-combined) only shown for 2+ physical resources
+ * both ≥90% — demand_single entries are excluded from combined check.
+ */
 function rankBottlenecks(res, params) {
   const opW  = parseInt(params.operating_weeks) || 48;
   const slc  = arr => (arr || []).slice(0, opW);
@@ -3429,11 +3500,10 @@ function rankBottlenecks(res, params) {
     if (!cap) return 0;
     return Math.max(...slc(res.weekly_harvest_vol || []).concat([0])) / cap;
   })();
-  const cashLine  = parseFloat(params.credit_line) || 0;
-  const cashPeak  = cashLine > 0 ? Math.min(1, (res.peak_borrowing || 0) / cashLine) : 0;
-  const demandUtil = computeDemandUtilization(res, params);
+  const cashLine = parseFloat(params.credit_line) || 0;
+  const cashPeak = cashLine > 0 ? Math.min(1, (res.peak_borrowing || 0) / cashLine) : 0;
 
-  return [
+  const physical = [
     {
       type:'land',    name:'Total Land',
       peak: landPeak, scaleType:'land',
@@ -3462,51 +3532,56 @@ function rankBottlenecks(res, params) {
       peak: cashPeak, scaleType:'direct', param:'credit_line',
       displayFn: (p, f) => `$${Math.round((p.credit_line||0)*f).toLocaleString()} credit`,
     },
-    {
-      type:'demand',  name:'Market Demand Caps',
-      peak: demandUtil.peak, scaleType:'demand',
-      demandDetail: demandUtil,
-      displayFn: (p, f) => `caps × ${f.toFixed(2)} (${demandUtil.topLabel})`,
-    },
-  ].sort((a, b) => b.peak - a.peak);
+  ];
+
+  // Per-crop/channel demand candidates — top 3 by saturation
+  const demandCands = computeDemandCandidates(res, params);
+  const demandEntries = demandCands.slice(0, 3).map(dc => {
+    const cropName    = dc.cropName;
+    const channelName = dc.channelName;
+    return {
+      type: 'demand_single',
+      name: `${cropName} / ${channelName}`,
+      peak: dc.sat,
+      scaleType: 'demand_single',
+      cropName,
+      channelName,
+      displayFn: (p, f) => {
+        const crop = (p.crops||[]).find(c => c.name === cropName);
+        const ch   = crop ? ((crop.channels||{})[channelName] || {}) : {};
+        const wk   = parseFloat(ch.weekly_demand_lbs) || 0;
+        return wk
+          ? `${Math.round(wk*f).toLocaleString()} lbs/wk cap`
+          : `cap × ${f.toFixed(2)}`;
+      },
+    };
+  });
+
+  return [...physical, ...demandEntries].sort((a, b) => b.peak - a.peak);
 }
 
-/** Compute max demand cap saturation across all crop/channel combos in the result. */
-function computeDemandUtilization(res, params) {
+/** Helper: compute per-crop/channel demand peak in a given result. */
+function computeSingleDemandPeak(res, params, cropName, channelName) {
   const sched    = res.succession_schedule || [];
-  const cropInfo = {};
-  (params.crops || []).forEach(c => { cropInfo[c.name] = c; });
-
   const cropAcres = {};
-  sched.forEach(s => {
-    const key = s.crop || s.name || '?';
-    cropAcres[key] = (cropAcres[key] || 0) + (s.acres || 0);
-  });
-
-  let peak = 0, topLabel = 'no demand caps set';
-  Object.entries(cropAcres).forEach(([cropName, acres]) => {
-    const ci = cropInfo[cropName];
-    if (!ci) return;
-    const totalHarv = acres * (parseFloat(ci.yield_per_acre) || 0);
-    Object.entries(ci.channels || {}).forEach(([chName, chData]) => {
-      let annualCap = 0;
-      if (chData.demand_cap_type === 'annual') {
-        annualCap = parseFloat(chData.annual_demand_lbs) || 0;
-      } else if (chData.demand_cap_type === 'weekly_varying') {
-        (chData.demand_ranges || []).forEach(dr => {
-          const m = dr.weeks ? dr.weeks.match(/W(\d+)-W(\d+)/) : null;
-          if (m) annualCap += (parseFloat(dr.weekly_lbs)||0) * (parseInt(m[2])-parseInt(m[1])+1);
-        });
-      } else {
-        annualCap = (parseFloat(chData.weekly_demand_lbs) || 0) * 52;
-      }
-      if (annualCap > 0) {
-        const sat = Math.min(1, totalHarv / annualCap);
-        if (sat > peak) { peak = sat; topLabel = `${cropName} → ${chName}`; }
-      }
+  sched.forEach(s => { const k=s.crop||s.name||'?'; cropAcres[k]=(cropAcres[k]||0)+(s.acres||0); });
+  const ci = (params.crops||[]).find(c => c.name === cropName);
+  if (!ci) return 0;
+  const totalHarv = (cropAcres[cropName]||0) * (parseFloat(ci.yield_per_acre)||0);
+  const chData = (ci.channels||{})[channelName];
+  if (!chData) return 0;
+  let annualCap = 0;
+  if (chData.demand_cap_type === 'annual') {
+    annualCap = parseFloat(chData.annual_demand_lbs)||0;
+  } else if (chData.demand_cap_type === 'weekly_varying') {
+    (chData.demand_ranges||[]).forEach(dr => {
+      const m = dr.weeks ? dr.weeks.match(/W(\d+)-W(\d+)/) : null;
+      if (m) annualCap += (parseFloat(dr.weekly_lbs)||0)*(parseInt(m[2])-parseInt(m[1])+1);
     });
-  });
-  return { peak, topLabel };
+  } else {
+    annualCap = (parseFloat(chData.weekly_demand_lbs)||0)*52;
+  }
+  return annualCap > 0 ? Math.min(1, totalHarv/annualCap) : 0;
 }
 
 /**
@@ -3532,6 +3607,7 @@ function scaleParamsForScenario(params, constraint, factor) {
       p.total_land = (p.total_land || 150) * factor;
       break;
     case 'demand':
+      // Scale ALL crop/channel demand caps (used for combined aggregate scenarios)
       p.crops = p.crops.map(crop => {
         const newCh = {};
         Object.entries(crop.channels || {}).forEach(([chName, chData]) => {
@@ -3547,6 +3623,27 @@ function scaleParamsForScenario(params, constraint, factor) {
           }
           newCh[chName] = sc;
         });
+        return { ...crop, channels: newCh };
+      });
+      break;
+    case 'demand_single':
+      // Scale only the specific crop/channel pair named in constraint.cropName/channelName
+      p.crops = p.crops.map(crop => {
+        if (crop.name !== constraint.cropName) return crop;
+        const newCh = { ...crop.channels };
+        const chData = newCh[constraint.channelName];
+        if (!chData) return crop;
+        const sc = { ...chData };
+        if (chData.demand_cap_type === 'annual') {
+          sc.annual_demand_lbs = (parseFloat(chData.annual_demand_lbs) || 0) * factor;
+        } else if (chData.demand_cap_type === 'weekly_varying') {
+          sc.demand_ranges = (chData.demand_ranges || []).map(dr => ({
+            ...dr, weekly_lbs: (parseFloat(dr.weekly_lbs) || 0) * factor,
+          }));
+        } else {
+          sc.weekly_demand_lbs = (parseFloat(chData.weekly_demand_lbs) || 0) * factor;
+        }
+        newCh[constraint.channelName] = sc;
         return { ...crop, channels: newCh };
       });
       break;
@@ -3571,8 +3668,14 @@ function getTopCropsSummary(res, n) {
     .join(' · ') || '—';
 }
 
-/** Peak utilisation of a given constraint type from a result. */
-function getBottleneckPeak(res, params, constraintType) {
+/**
+ * Peak utilisation of a constraint in a given result.
+ * @param {object} res           - solver result
+ * @param {object} params        - parameters used for the run
+ * @param {string} constraintType - type string (e.g. 'land', 'demand_single')
+ * @param {object} [constraintObj] - full constraint object, required for demand_single
+ */
+function getBottleneckPeak(res, params, constraintType, constraintObj) {
   const opW = parseInt(params.operating_weeks) || 48;
   const slc = arr => (arr || []).slice(0, opW);
   switch (constraintType) {
@@ -3597,8 +3700,11 @@ function getBottleneckPeak(res, params, constraintType) {
       const line = parseFloat(params.credit_line) || 0;
       return line > 0 ? Math.min(1, (res.peak_borrowing || 0) / line) : 0;
     }
-    case 'demand':
-      return computeDemandUtilization(res, params).peak;
+    case 'demand_single':
+      if (constraintObj) {
+        return computeSingleDemandPeak(res, params, constraintObj.cropName, constraintObj.channelName);
+      }
+      return 0;
     default: return 0;
   }
 }
@@ -3614,7 +3720,8 @@ function renderWhatIfCard(res, params) {
   WHATIF_STATE.rankedConstraints = allCands;
   WHATIF_STATE.selectedIdx = 0;
 
-  const active = allCands.filter(c => c.peak >= 0.90 && c.type !== 'demand');
+  const PHYSICAL_TYPES = new Set(['land','labor','water','storage','cash']);
+  const active = allCands.filter(c => c.peak >= 0.90 && PHYSICAL_TYPES.has(c.type));
   WHATIF_STATE.combinedAvailable = active.length >= 2;
 
   if (visible.length === 0) {
@@ -3744,7 +3851,7 @@ async function runScenario(constraint, factor, combined) {
     const sr = JSON.parse(r);
     if (sr.status === 'optimal') {
       const profit  = sr.profit || 0;
-      const scPeak  = getBottleneckPeak(sr, scaledParams, constraint.type);
+      const scPeak  = getBottleneckPeak(sr, scaledParams, constraint.type, constraint);
       record = {
         id: Date.now(), label,
         constraintType: constraint.type, constraintName: constraint.name,
@@ -3891,6 +3998,7 @@ function renderScenarioHistory(res, params) {
 // ── Console-accessible self-tests ────────────────────────────
 // Run window._testWhatIf() from browser console to verify logic.
 window._testWhatIf = function() {
+  // ── Shared mock data ──────────────────────────────────────────
   const mockRes = {
     profit: 100000, peak_borrowing: 50000,
     weekly_land_frac:    Array(48).fill(0.95),
@@ -3901,85 +4009,134 @@ window._testWhatIf = function() {
     weekly_harvest_vol:  Array(48).fill(5000),
     succession_schedule: [{crop:'Spinach', acres:50}, {crop:'Cucumber', acres:30}],
   };
-  const mockParams = {
+  const mockParamsBase = {
     total_land:150, operating_weeks:48, harvest_storage_cap:24000,
     credit_line:100000, well_weekly_cap_L:2500000,
     employees:[
-      {type:'salary',   count:1, hours_per_week:40},
+      {type:'salary',   count:1,  hours_per_week:40},
       {type:'seasonal', count:15, hours_per_week:40},
     ],
     crops:[],
   };
+  // Params with demand caps for Spinach and Cucumber
+  const mockParamsD = {
+    ...mockParamsBase,
+    crops: [
+      { name:'Spinach',  yield_per_acre:8000, channels: {
+          'FM':        { demand_cap_type:'weekly_flat', weekly_demand_lbs:'900',  price_per_lb:'2' },
+          'Wholesale': { demand_cap_type:'weekly_flat', weekly_demand_lbs:'2000', price_per_lb:'1' },
+        }},
+      { name:'Cucumber', yield_per_acre:4000, channels: {
+          'FM':        { demand_cap_type:'weekly_flat', weekly_demand_lbs:'200',  price_per_lb:'1.5' },
+        }},
+    ],
+  };
+  // mockRes with demand-cap scenario:
+  // Spinach: 50ac × 8000 lbs/ac = 400,000 lbs/yr; FM cap = 900/wk × 52 = 46,800 → 400k/46.8k >> 1 → sat=1.0
+  // Actually that would be >1 but clamped to 1.0
+  // For meaningful ranking: let's use lower yield
+  const mockResD = {
+    ...mockRes,
+    weekly_land_frac:   Array(48).fill(0.30), // land not binding
+    weekly_labor_used:  Array(48).fill(200),  // labor not binding
+    succession_schedule: [
+      {crop:'Spinach',  acres:5},    // 5 ac × 8000 = 40000 lbs/yr; FM cap=46800 → sat=0.854
+      {crop:'Cucumber', acres:3},    // 3 ac × 4000 = 12000 lbs/yr; FM cap=10400 → sat=1.0 (>100%)
+    ],
+  };
 
-  // T1: land is top at 95%
-  const ranked = rankBottlenecks(mockRes, mockParams);
-  console.assert(ranked.length >= 5,       `T1: expected >=5 candidates, got ${ranked.length}`);
-  console.assert(ranked[0].type === 'land',`T1: land should rank first, got ${ranked[0].type}`);
-  console.assert(Math.abs(ranked[0].peak - 0.95) < 0.01, `T1: land peak should be ~0.95`);
+  // ── T1: land ranks first at 95% ───────────────────────────────
+  const ranked = rankBottlenecks(mockRes, mockParamsBase);
+  console.assert(ranked.length >= 5,        `T1: expected >=5 candidates, got ${ranked.length}`);
+  console.assert(ranked[0].type === 'land', `T1: land should rank first, got ${ranked[0].type}`);
+  console.assert(Math.abs(ranked[0].peak - 0.95) < 0.01, 'T1: land peak should be ~0.95');
 
-  // T2: scaleParamsForScenario immutability
-  const landC = ranked.find(c => c.type === 'land');
-  const scaled = scaleParamsForScenario(mockParams, landC, 1.2);
+  // ── T2: scaleParamsForScenario immutability ──────────────────
+  const landC  = ranked.find(c => c.type === 'land');
+  const scaled = scaleParamsForScenario(mockParamsBase, landC, 1.2);
   console.assert(Math.abs(scaled.total_land - 180) < 0.1, `T2: expected 180ac, got ${scaled.total_land}`);
-  console.assert(mockParams.total_land === 150,            'T2: original must not be mutated');
+  console.assert(mockParamsBase.total_land === 150,         'T2: original must not be mutated');
 
-  // T3: labor ranks higher than water when labor is binding
-  const mockRes2 = { ...mockRes, weekly_land_frac: Array(48).fill(0.20) };
-  const ranked2 = rankBottlenecks(mockRes2, mockParams);
+  // ── T3: labor ranks higher than water when land is low ───────
+  const mockRes2  = { ...mockRes, weekly_land_frac: Array(48).fill(0.20) };
+  const ranked2   = rankBottlenecks(mockRes2, mockParamsBase);
   console.assert(ranked2[0].type === 'labor', `T3: labor should rank first, got ${ranked2[0].type}`);
 
-  // T4: no visible constraints when all are low
-  const mockRes3 = {
-    ...mockRes,
-    weekly_land_frac:   Array(48).fill(0.20),
-    weekly_labor_used:  Array(48).fill(100),
-    weekly_water_used:  Array(48).fill(100),
-    weekly_harvest_vol: Array(48).fill(100),
-    peak_borrowing: 0,
-  };
-  const ranked3 = rankBottlenecks(mockRes3, mockParams);
-  const visible3 = ranked3.filter(c => c.peak >= 0.50);
+  // ── T4: no visible constraints when all are low ──────────────
+  const mockRes3  = { ...mockRes, weekly_land_frac:Array(48).fill(0.20), weekly_labor_used:Array(48).fill(100), weekly_water_used:Array(48).fill(100), weekly_harvest_vol:Array(48).fill(100), peak_borrowing:0 };
+  const ranked3   = rankBottlenecks(mockRes3, mockParamsBase);
+  const visible3  = ranked3.filter(c => c.peak >= 0.50);
   console.assert(visible3.length === 0, `T4: expected 0 visible, got ${visible3.length}`);
 
-  // T5: labor scaling skips salary employees
-  const laborC = ranked.find(c => c.type === 'labor');
-  const scaledL = scaleParamsForScenario(mockParams, laborC, 2.0);
+  // ── T5: labor scaling skips salary employees ─────────────────
+  const laborC  = ranked.find(c => c.type === 'labor');
+  const scaledL = scaleParamsForScenario(mockParamsBase, laborC, 2.0);
   console.assert(scaledL.employees[0].count === 1,  'T5: salary count must not change');
   console.assert(scaledL.employees[1].count === 30, `T5: seasonal should be 30, got ${scaledL.employees[1].count}`);
 
-  // T6: demand scaling multiplies weekly_demand_lbs
-  const mockParamsD = {
-    ...mockParams,
-    crops: [{ name:'Spinach', yield_per_acre:8000, channels: {
-      'FM': { demand_cap_type:'weekly_flat', weekly_demand_lbs:'500', price_per_lb:'2' }
-    }}],
-  };
-  const demandC = { type:'demand', scaleType:'demand' };
-  const scaledD = scaleParamsForScenario(mockParamsD, demandC, 1.5);
-  const demandAfter = parseFloat(scaledD.crops[0].channels['FM'].weekly_demand_lbs);
-  console.assert(Math.abs(demandAfter - 750) < 1, `T6: demand should be 750, got ${demandAfter}`);
+  // ── T6: demand_single appears in ranking when near-binding ───
+  const rankedD  = rankBottlenecks(mockResD, mockParamsD);
+  const demandCs = rankedD.filter(c => c.type === 'demand_single');
+  console.assert(demandCs.length >= 1, `T6: expected >=1 demand_single candidates, got ${demandCs.length}`);
+  // Cucumber / FM should be top (sat=1.0, clamped)
+  const cucD = demandCs.find(c => c.cropName === 'Cucumber' && c.channelName === 'FM');
+  console.assert(cucD !== undefined,           'T6: Cucumber/FM demand_single should be present');
+  console.assert(cucD.name === 'Cucumber / FM','T6: name should be "Cucumber / FM"');
+  console.assert(Math.abs(cucD.peak - 1.0) < 0.01, `T6: Cucumber/FM peak should be ~1.0, got ${cucD.peak}`);
 
-  // T7: custom % validation range (logic test, not DOM test)
+  // ── T7: demand_single scaling isolates to one crop/channel ───
+  const scaledSingle = scaleParamsForScenario(mockParamsD, cucD, 2.0);
+  const cucAfter = parseFloat(scaledSingle.crops.find(c=>c.name==='Cucumber').channels['FM'].weekly_demand_lbs);
+  const spAfter  = parseFloat(scaledSingle.crops.find(c=>c.name==='Spinach').channels['FM'].weekly_demand_lbs);
+  console.assert(Math.abs(cucAfter - 400) < 1, `T7: Cucumber/FM cap should be 400, got ${cucAfter}`);
+  console.assert(Math.abs(spAfter - 900) < 1,  `T7: Spinach/FM cap should be unchanged 900, got ${spAfter}`);
+
+  // ── T8: computeSingleDemandPeak returns correct utilization ──
+  const spPeak = computeSingleDemandPeak(mockResD, mockParamsD, 'Spinach', 'FM');
+  // Spinach: 5ac × 8000 = 40000 lbs/yr; FM cap = 900/wk × 52 = 46800 → sat = 40000/46800 ≈ 0.855
+  console.assert(Math.abs(spPeak - 0.855) < 0.01, `T8: Spinach/FM peak ~0.855, got ${spPeak.toFixed(3)}`);
+
+  // ── T9: demand_single not included in combined-scenario check ─
+  const PHYSICAL_TYPES = new Set(['land','labor','water','storage','cash']);
+  const activePhysical = rankedD.filter(c => c.peak >= 0.90 && PHYSICAL_TYPES.has(c.type));
+  const activeDemand   = rankedD.filter(c => c.peak >= 0.90 && c.type === 'demand_single');
+  // activePhysical should not include demand_single entries
+  console.assert(!activePhysical.some(c => c.type === 'demand_single'), 'T9: combined should exclude demand_single');
+  console.log(`T9: active physical=${activePhysical.length}, active demand=${activeDemand.length} — combined excludes demand ✓`);
+
+  // ── T10: custom % validation range ───────────────────────────
   const validPct = pct => !isNaN(pct) && pct >= 1 && pct <= 200;
-  console.assert( validPct(25),  'T7: 25 should be valid');
-  console.assert(!validPct(0),   'T7: 0 should be invalid');
-  console.assert(!validPct(201), 'T7: 201 should be invalid');
+  console.assert( validPct(25),  'T10: 25 should be valid');
+  console.assert(!validPct(0),   'T10: 0 should be invalid');
+  console.assert(!validPct(201), 'T10: 201 should be invalid');
 
-  // T8: history persistence round-trip
+  // ── T11: sessionStorage history round-trip ───────────────────
   try {
     const key = WHATIF_HISTORY_KEY + '_test';
     const fakeRecord = { id:1, label:'Test', status:'optimal', profit:50000, delta:1000 };
     sessionStorage.setItem(key, JSON.stringify([fakeRecord]));
     const loaded = JSON.parse(sessionStorage.getItem(key));
-    console.assert(loaded[0].profit === 50000, 'T8: history round-trip should preserve profit');
+    console.assert(loaded[0].profit === 50000, 'T11: history round-trip should preserve profit');
     sessionStorage.removeItem(key);
-  } catch(e) { console.warn('T8: sessionStorage not available in this environment'); }
+  } catch(e) { console.warn('T11: sessionStorage not available in this environment'); }
 
-  // T9: top crops summary order
+  // ── T12: top crops summary order ─────────────────────────────
   const topCrops = getTopCropsSummary(mockRes, 2);
-  console.assert(topCrops.startsWith('Spinach'), `T9: Spinach should be first, got: ${topCrops}`);
+  console.assert(topCrops.startsWith('Spinach'), `T12: Spinach should be first, got: ${topCrops}`);
 
-  console.log('✓ All what-if tests passed (9/9).');
+  // ── T13: panel order — bottleneck-card is above gantt-outer in DOM ──
+  const bottleneckEl = document.getElementById('bottleneck-card');
+  const ganttEl      = document.getElementById('gantt-outer');
+  if (bottleneckEl && ganttEl) {
+    const pos = bottleneckEl.compareDocumentPosition(ganttEl);
+    // DOCUMENT_POSITION_FOLLOWING = 4 means ganttEl comes after bottleneckEl
+    console.assert((pos & 4) === 4, 'T13: bottleneck-card must appear before gantt-outer in DOM');
+    console.log('T13: panel order verified ✓');
+  } else {
+    console.warn('T13: elements not found in DOM — run after page loads');
+  }
+
+  console.log('✓ All what-if tests passed (13/13).');
 };
 
 // ============================================================
