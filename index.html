@@ -565,19 +565,7 @@
   .hub-welcome { text-align: center; margin-bottom: 1.8rem; }
   .hub-welcome h2 { font-size: 1.3rem; color: #1b4332; margin-bottom: 0.35rem; font-weight: 800; }
   .hub-welcome p  { font-size: 0.85rem; color: #6b7280; }
-  #wizard-prompt {
-    background: #f0faf4; border: 2px solid #52b788; border-radius: 12px;
-    padding: 1.1rem 1.5rem; margin-bottom: 1.5rem; text-align: center; display: none;
-  }
-  #wizard-prompt.visible { display: block; }
-  #wizard-prompt h3 { font-size: 0.95rem; color: #1b4332; margin-bottom: 0.3rem; }
-  #wizard-prompt p  { font-size: 0.8rem; color: #4b5563; margin-bottom: 0.75rem; }
-  .wizard-prompt-btns { display: flex; gap: 0.6rem; justify-content: center; flex-wrap: wrap; }
-  .btn-outline {
-    background: transparent; border: 2px solid #2d6a4f; color: #2d6a4f;
-    border-radius: 8px; padding: 0.5rem 1.2rem; font-size: 0.85rem; font-weight: 600; cursor: pointer;
-  }
-  .btn-outline:hover { background: #f0faf4; }
+
   .hub-sections-grid {
     display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.9rem; margin-bottom: 1.5rem;
   }
@@ -694,16 +682,6 @@
     <p>Configure your farm parameters section by section, then run the MILP optimizer. No data leaves your browser.</p>
   </div>
 
-  <!-- First-time wizard prompt (shown once) -->
-  <div id="wizard-prompt">
-    <h3>First time here?</h3>
-    <p>Walk through each section step by step with the guided setup wizard, or jump directly to any section.</p>
-    <div class="wizard-prompt-btns">
-      <button class="btn-opt" onclick="startWizard()">&#9654; Start Guided Setup</button>
-      <button class="btn-outline" onclick="dismissWizardPrompt()">Skip — configure manually</button>
-    </div>
-  </div>
-
   <!-- Section navigation cards (rendered by renderHub()) -->
   <div class="hub-sections-grid" id="hub-sections-grid"></div>
 
@@ -739,10 +717,7 @@
       <span class="section-nav-title" id="section-nav-title">Farm Basics</span>
       <span class="section-nav-step" id="section-nav-step">1 / 5</span>
     </div>
-    <div class="section-nav-btns">
-      <button class="btn-ghost" id="section-prev-btn" onclick="wizardPrev()" style="display:none">&#8592; Prev</button>
-      <button class="btn-ghost" id="section-next-btn" onclick="wizardNext()" style="display:none">Next &#8594;</button>
-    </div>
+    <div class="section-nav-btns"></div>
   </div>
 
   <div style="padding:1rem 2rem 2rem">
@@ -1627,7 +1602,6 @@ function getCropsFromForm() {
 const APP_STATE = {
   view: 'hub',           // 'hub' | 'section' | 'results'
   section: null,         // current section id when view === 'section'
-  wizardMode: false,     // true when step-by-step wizard is active
   advancedVisible: false,
   hasOptimized: false,
 };
@@ -1635,19 +1609,12 @@ const APP_STATE = {
 const SECTION_ORDER = ['farm-basics', 'water', 'labor-channels', 'crops', 'review'];
 
 const SECTION_META = {
-  'farm-basics':    { icon: '🏡', title: 'Farm Basics',      desc: 'Land, budget, storage & cost rates' },
-  'water':          { icon: '💧', title: 'Water',            desc: 'Climate zone and water sources'     },
-  'labor-channels': { icon: '👷', title: 'Labor & Channels', desc: 'Workforce and sales channels'       },
-  'crops':          { icon: '🌱', title: 'Crops',            desc: 'Crop varieties, cycles & pricing'   },
-  'review':         { icon: '▶',  title: 'Review & Run',     desc: 'Check settings and optimize'        },
+  'farm-basics':    { icon: '🏡', title: 'Farm Basics',      desc: 'Set your farm size, budget, and storage infrastructure — these define your hard constraints.' },
+  'water':          { icon: '💧', title: 'Water',            desc: 'Configure water sources (well, catchment, city supply) — we calculate weekly availability from these.' },
+  'labor-channels': { icon: '👷', title: 'Labor & Channels', desc: 'Define your workforce and sales channels — labor availability and market access are key profit drivers.' },
+  'crops':          { icon: '🌱', title: 'Crops',            desc: 'Add crop varieties with planting dates, growth cycles, yields, and per-channel pricing.' },
+  'review':         { icon: '▶',  title: 'Review & Run',     desc: 'All sections configured — return here to run the optimizer and see your planting plan.' },
 };
-
-function isFirstVisit() {
-  try { return !localStorage.getItem('farm_optimizer_visited'); } catch(e) { return false; }
-}
-function markVisited() {
-  try { localStorage.setItem('farm_optimizer_visited', '1'); } catch(e) {}
-}
 
 /* Returns { sectionId: boolean } completion states based on current form content */
 function getSectionCompletion() {
@@ -1685,10 +1652,6 @@ function renderHub() {
         <div class="hub-card-desc">${m.desc}</div>
       </div>`;
   }).join('');
-
-  // Show wizard prompt on first ever visit
-  const wp = document.getElementById('wizard-prompt');
-  if (wp) wp.classList.toggle('visible', isFirstVisit());
 }
 
 function showHub() {
@@ -1701,7 +1664,6 @@ function showHub() {
 }
 
 function showSection(sectionId) {
-  markVisited();
   APP_STATE.view    = 'section';
   APP_STATE.section = sectionId;
   document.getElementById('hub-view').style.display     = 'none';
@@ -1721,42 +1683,7 @@ function showSection(sectionId) {
   const idx = SECTION_ORDER.indexOf(sectionId);
   document.getElementById('section-nav-step').textContent = `${idx + 1} / ${SECTION_ORDER.length}`;
 
-  // Wizard nav: show Prev/Next only in wizard mode
-  const prevBtn = document.getElementById('section-prev-btn');
-  const nextBtn = document.getElementById('section-next-btn');
-  if (prevBtn) prevBtn.style.display = (APP_STATE.wizardMode && idx > 0) ? 'inline-flex' : 'none';
-  if (nextBtn) nextBtn.style.display = (APP_STATE.wizardMode && idx < SECTION_ORDER.length - 1) ? 'inline-flex' : 'none';
-
   window.scrollTo(0, 0);
-}
-
-function startWizard() {
-  markVisited();
-  APP_STATE.wizardMode = true;
-  const wp = document.getElementById('wizard-prompt');
-  if (wp) wp.classList.remove('visible');
-  showSection(SECTION_ORDER[0]);
-}
-
-function dismissWizardPrompt() {
-  markVisited();
-  const wp = document.getElementById('wizard-prompt');
-  if (wp) wp.classList.remove('visible');
-}
-
-function wizardNext() {
-  const idx = SECTION_ORDER.indexOf(APP_STATE.section);
-  if (idx < SECTION_ORDER.length - 1) {
-    showSection(SECTION_ORDER[idx + 1]);
-  } else {
-    APP_STATE.wizardMode = false;
-    showHub();
-  }
-}
-
-function wizardPrev() {
-  const idx = SECTION_ORDER.indexOf(APP_STATE.section);
-  if (idx > 0) showSection(SECTION_ORDER[idx - 1]);
 }
 
 // ============================================================
@@ -1770,7 +1697,7 @@ function renderExecutiveSummary(res, params) {
   const fmtPct    = n => (n == null || isNaN(n)) ? '—' : Math.round(n * 100) + '%';
 
   // 1. Profit headline
-  const profitStr = res.total_profit != null ? fmtDollar(res.total_profit) + ' projected annual profit' : '—';
+  const profitStr = res.profit != null ? fmtDollar(res.profit) + ' projected annual profit' : '—';
 
   // 2. Highest-margin crop (compute from params — same logic as renderContributionMargins)
   let topCrop = '—';
@@ -1789,7 +1716,7 @@ function renderExecutiveSummary(res, params) {
       const gw  = Math.max(0, Math.round(dtm / 7) - pw - hw);
       const ypa = parseFloat(crop.yield_per_acre)   || 0;
       for (const ch of channels) {
-        const cdata = (crop.channels_data || {})[ch.name] || {};
+        const cdata = (crop.channels || {})[ch.name] || {};
         const price = parseFloat(cdata.price) || 0;
         const pkg   = parseFloat(cdata.pkg)   || 0;
         if (!price) continue;
