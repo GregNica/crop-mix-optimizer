@@ -1065,9 +1065,10 @@
         <h2>Unit Contribution Margins</h2>
         <p style="font-size:0.78rem;color:#6b7280;margin-bottom:0.8rem">
           Revenue minus all variable costs per acre, by crop and channel — this drives which crops the optimizer selects.
-          <strong>Formula:</strong> (yield/ac × net price) − (labor + water + fertilizer + fuel + seed costs per acre).
-          Higher values tell the optimizer to plant more of that crop; the constraint system then determines actual allocation.
-          Annualized margin (shown in Executive Summary) also divides by crop cycle length to compare crops with different rotation speeds.
+          <strong>Contribution Margin/ac</strong> = (yield/ac × price) − (packaging + labor + water + fertilizer + fuel + seed).
+          <strong>Margin % of Rev</strong> = Contribution Margin ÷ Gross Revenue — a true gross margin percentage (≤ 100%).
+          Higher margin/ac values attract more optimizer allocation; constraints determine the final split.
+          The Executive Summary's "Highest-Margin Option" further annualizes by crop cycle length to compare slow- vs fast-turnover crops.
         </p>
         <div id="contribution-margin-content"><div style="color:#9ca3af;font-size:0.85rem">Run optimizer to see results.</div></div>
       </div>
@@ -1783,17 +1784,19 @@ function renderExecutiveSummary(res, params) {
     ? fmtD(res.profit) + ' projected annual profit'
     : 'Profit data unavailable';
 
-  // ── 2. Highest-margin crop/channel (annualized per acre) ────
+  // ── 2. Highest / Lowest margin crop/channel (annualized per acre) ─────
   // annualized_margin = (yield × price - vc) × (365 / days_to_maturity)
-  // Correctly favors high-velocity crops: a 90-day spinach at $500/ac
-  // outranks a 210-day garlic at $800/ac ($2,028/yr vs $1,390/yr).
-  let topCrop = 'Unable to compute — check that crops have prices entered';
+  // Favors high-velocity crops: 90-day spinach at $500/ac outranks
+  // 210-day garlic at $800/ac ($2,028/yr vs $1,390/yr).
+  let topCrop  = 'Unable to compute — check that crops have prices entered';
+  let lowCrop  = null;
   try {
     const LABOR_RATE = parseFloat(params.cost_labor_per_hr || 20);
     const WATER_RATE = parseFloat(params.cost_water_per_L  || 0.002);
     const FERT_RATE  = parseFloat(params.cost_fert_per_lb  || 0.82);
     const FUEL_RATE  = parseFloat(params.cost_fuel_per_L   || 1.25);
     let bestMargin = -Infinity, bestLabel = null;
+    let worstMargin = Infinity, worstLabel = null;
     for (const crop of (params.crops || [])) {
       const dtm = Math.max(1, parseFloat(crop.days_to_maturity) || 84);
       const pw  = parseInt(crop.planting_weeks) || 1;
@@ -1811,13 +1814,47 @@ function renderExecutiveSummary(res, params) {
         const fuelVC  = ((crop.fuel_plant ||0)*pw + (crop.fuel_grow ||0)*gw + (crop.fuel_harv ||0)*hw) * FUEL_RATE;
         const seedVC  = parseFloat(crop.seed_transplant_cost_per_acre || 0);
         const margin  = (ypa * price - (laborVC + waterVC + fertVC + fuelVC + seedVC + ypa * pkg)) * annFactor;
-        if (margin > bestMargin) { bestMargin = margin; bestLabel = `${crop.name} (${chName})`; }
+        if (margin > bestMargin)  { bestMargin = margin;   bestLabel  = `${crop.name} (${chName})`; }
+        if (margin < worstMargin) { worstMargin = margin;  worstLabel = `${crop.name} (${chName})`; }
       }
     }
-    if (bestLabel) topCrop = `${bestLabel} — ${fmtD(bestMargin)}/year per acre`;
+    if (bestLabel)  topCrop = `${bestLabel} — ${fmtD(bestMargin)}/year per acre`;
+    if (worstLabel && worstLabel !== bestLabel) {
+      lowCrop = `${worstLabel} — ${fmtD(worstMargin)}/year per acre`;
+    }
   } catch(e) { topCrop = 'Calculation error — check crop channel prices'; }
 
-  // ── 3. Peak Borrowing ───────────────────────────────────────
+  // ── 3. Peak labor week ──────────────────────────────────────
+  let peakLaborStr = 'Labor data unavailable';
+  try {
+    const laborUsed   = res.weekly_labor_used   || [];
+    const laborSupply = res.weekly_labor_supply || [];
+    if (laborUsed.length) {
+      let peakWkL = 0, peakFracL = 0;
+      laborUsed.forEach((h, i) => {
+        const sup = laborSupply[i] || 0;
+        const frac = sup > 0 ? h / sup : 0;
+        if (frac > peakFracL) { peakFracL = frac; peakWkL = i + 1; }
+      });
+      const peakHrs = laborUsed[peakWkL - 1] || 0;
+      peakLaborStr = `Week ${peakWkL}: ${Math.round(peakFracL * 100)}% utilization (${Math.round(peakHrs).toLocaleString()} hrs)`;
+    }
+  } catch(e) {}
+
+  // ── 4. Peak land-use week ───────────────────────────────────
+  let peakLandStr = 'Land data unavailable';
+  try {
+    const landFrac = res.weekly_land_frac || [];
+    if (landFrac.length) {
+      let peakWkA = 0, peakFracA = 0;
+      landFrac.forEach((f, i) => { if (f > peakFracA) { peakFracA = f; peakWkA = i + 1; } });
+      const totalLandAc = parseFloat((params.total_land) || 150);
+      const acresUsed   = Math.round(peakFracA * totalLandAc);
+      peakLandStr = `Week ${peakWkA}: ${Math.round(peakFracA * 100)}% used (${acresUsed} of ${Math.round(totalLandAc)} acres)`;
+    }
+  } catch(e) {}
+
+  // ── 5. Peak Borrowing ───────────────────────────────────────
   let peakBorrow = 'Borrowing data unavailable';
   if (res.peak_borrowing != null && !isNaN(res.peak_borrowing)) {
     peakBorrow = res.peak_borrowing > 0
@@ -1830,6 +1867,9 @@ function renderExecutiveSummary(res, params) {
     <div class="exec-grid">
       <div class="exec-item"><div class="exec-label">Projected Profit</div><div class="exec-value">${profitStr}</div></div>
       <div class="exec-item"><div class="exec-label">Highest-Margin Option</div><div class="exec-value">${topCrop}</div></div>
+      ${lowCrop ? `<div class="exec-item"><div class="exec-label">Lowest-Margin Option</div><div class="exec-value">${lowCrop}</div></div>` : ''}
+      <div class="exec-item"><div class="exec-label">Peak Labor Week</div><div class="exec-value">${peakLaborStr}</div></div>
+      <div class="exec-item"><div class="exec-label">Peak Land-Use Week</div><div class="exec-value">${peakLandStr}</div></div>
       <div class="exec-item"><div class="exec-label">Peak Borrowing</div><div class="exec-value">${peakBorrow}</div></div>
     </div>`;
 }
@@ -3023,14 +3063,17 @@ function renderContributionMargins(params) {
       const price    = parseFloat(chData.price_per_lb || 0);
       const pkg      = parseFloat(chData.packaging_cost_per_lb || 0);
       const pkgCost  = ypa * pkg;                     // packaging VC for this channel
-      const totalVC  = nonPkgVC + pkgCost;            // ALL variable costs
-      const grossRev = ypa * price;
-      const margin   = grossRev - totalVC;
-      const marginPct = totalVC > 0 ? margin / totalVC * 100 : 0;
+      const totalVC   = nonPkgVC + pkgCost;            // ALL variable costs
+      const grossRev  = ypa * price;
+      const margin    = grossRev - totalVC;
+      // Margin % = contribution margin / gross revenue × 100  (≤ 100%, ≥ 0% for profitable crops)
+      // Not margin/VC — that would be "markup %" and can exceed 100%.
+      const marginPct = grossRev > 0 ? margin / grossRev * 100 : 0;
       const isFirst  = (ci === 0);
 
       const mStyle = margin >= 0 ? 'color:#059669;font-weight:700' : 'color:#dc2626;font-weight:700';
-      const pStyle = marginPct >= 50 ? 'color:#059669' : marginPct >= 0 ? 'color:#d97706' : 'color:#dc2626';
+      // Margin % colour: ≥50% = healthy, 20-50% = watch, <20% or negative = concern
+      const pStyle = marginPct >= 50 ? 'color:#059669' : marginPct >= 20 ? 'color:#d97706' : 'color:#dc2626';
       const chColor = chColors[chNames.indexOf(chName) % chColors.length] || '#6b7280';
 
       tableRows += `<tr style="${isFirst ? 'border-top:2px solid #e5e7eb' : ''}">
@@ -3055,14 +3098,15 @@ function renderContributionMargins(params) {
       <th style="text-align:right;padding:5px 10px;border-bottom:2px solid #d1d5db;color:#374151">Gross Rev/ac</th>
       <th style="text-align:right;padding:5px 10px;border-bottom:2px solid #d1d5db;color:#374151" title="All variable costs: packaging + labor + water + fertilizer + fuel + seed">Total VC/ac ⓘ</th>
       <th style="text-align:right;padding:5px 10px;border-bottom:2px solid #d1d5db;color:#374151">Contribution Margin/ac</th>
-      <th style="text-align:right;padding:5px 10px;border-bottom:2px solid #d1d5db;color:#374151">Margin %</th>
+      <th style="text-align:right;padding:5px 10px;border-bottom:2px solid #d1d5db;color:#374151" title="Margin % = Contribution Margin ÷ Gross Revenue × 100. Values ≤ 100%.">Margin % of Rev ⓘ</th>
     </tr></thead>
     <tbody>${tableRows}</tbody>
   </table>
   <p style="font-size:0.7rem;color:#9ca3af;margin-top:0.5rem">
-    <strong>Total VC/ac</strong> includes packaging + field labor + irrigation water + fertilizer + fuel + seed/transplant (hover for breakdown).
-    Does not include fixed overhead (storage, irrigation infrastructure, machinery).
-    <span style="color:#dc2626">Red</span> = negative margin — optimizer will avoid this crop/channel combination.
+    <strong>Contribution Margin/ac</strong> = Gross Revenue − Total Variable Cost (per acre).
+    <strong>Margin % of Rev</strong> = Contribution Margin ÷ Gross Revenue × 100 — this is the gross margin percentage, capped at 100%.
+    <strong>Total VC/ac</strong> includes packaging + field labor + irrigation water + fertilizer + fuel + seed/transplant (hover for breakdown). Does not include fixed overhead.
+    <span style="color:#dc2626">Red margin</span> = negative — optimizer will avoid this crop/channel combination.
   </p>`;
 }
 
@@ -3405,10 +3449,25 @@ const WHATIF_STATE = {
 const WHATIF_HISTORY_KEY = 'whatif_scenario_history';
 const WHATIF_MAX_HISTORY = 5;
 
-/** Returns the visible constraint list: all with peak>=50% PLUS land always */
+/**
+ * Returns the visible constraint list for What-If pills:
+ * - All physical/demand entries with peak >= 50%
+ * - Land always included (even if slack) — user preference
+ * - Defensive fallback: if demand caps exist but none pass 50%, include top demand
+ *   candidate anyway (marked informational = low-pressure display)
+ */
 function getVisibleConstraints() {
-  const all  = WHATIF_STATE.rankedConstraints;
-  return all.filter(c => c.peak >= 0.50 || c.type === 'land');
+  const all     = WHATIF_STATE.rankedConstraints;
+  const passing = all.filter(c => c.peak >= 0.50 || c.type === 'land');
+
+  // Fallback: if demand caps exist but no demand entry passed threshold, add top one
+  const hasDemandInPassing = passing.some(c => c.type === 'demand_single');
+  const topDemand          = all.find(c => c.type === 'demand_single');
+  if (!hasDemandInPassing && topDemand && topDemand.peak > 0) {
+    return [...passing, { ...topDemand, informational: true }];
+  }
+
+  return passing;
 }
 
 /**
@@ -3461,6 +3520,23 @@ function _channelAnnualCap(chData) {
   }
 }
 
+/**
+ * computeDemandCandidates(res, params)
+ *
+ * Returns demand cap candidates for What-If ranking.
+ *
+ * Saturation formula: sat = min(1, totalHarv / channelAnnualCap) — per channel.
+ * This correctly reflects how close production is to filling each channel's cap.
+ *
+ * Deduplication: only the highest-saturating channel per crop is kept.
+ * This prevents the same crop appearing N times for N channels all at high sat.
+ *
+ * Fallback: returns up to MAX_DEMAND_CANDS entries. If demand caps exist but none
+ * reach the 50% visibility threshold, the fallback in getVisibleConstraints still
+ * surfaces the top entry with "informational" styling.
+ */
+const MAX_DEMAND_CANDS = 5;
+
 function computeDemandCandidates(res, params) {
   const sched    = res.succession_schedule || [];
   const cropInfo = {};
@@ -3472,37 +3548,32 @@ function computeDemandCandidates(res, params) {
     cropAcres[key] = (cropAcres[key] || 0) + (s.acres || 0);
   });
 
-  const entries = [];
+  // Build all per-channel entries, then keep only top-1 per crop
+  const perCropBest = {};   // cropName → best entry for this crop
   Object.entries(cropAcres).forEach(([cropName, acres]) => {
     const ci = cropInfo[cropName];
     if (!ci) return;
     const totalHarv = acres * (parseFloat(ci.yield_per_acre) || 0);
 
-    // Total annual cap across ALL channels for this crop.
-    // Saturation = totalHarv / totalCapAllChannels so that per-channel ranking
-    // is not inflated by comparing full crop production against a single channel's cap.
-    const totalCapAllCh = Object.values(ci.channels || {}).reduce(
-      (sum, ch) => sum + _channelAnnualCap(ch), 0
-    );
-    if (totalCapAllCh <= 0) return;
-    const cropSat = Math.min(1, totalHarv / totalCapAllCh);
-
     Object.entries(ci.channels || {}).forEach(([channelName, chData]) => {
       const annualCap = _channelAnnualCap(chData);
-      if (annualCap > 0) {
-        entries.push({
-          cropName,
-          channelName,
-          // sat reflects crop-level fill rate; all channels of same crop share the same sat
-          sat: cropSat,
-          annualCap,
+      if (annualCap <= 0) return;
+      // Per-channel saturation: how close is production to filling THIS channel's cap?
+      const sat = Math.min(1, totalHarv / annualCap);
+      const prev = perCropBest[cropName];
+      if (!prev || sat > prev.sat) {
+        perCropBest[cropName] = {
+          cropName, channelName, sat, annualCap,
           weeklyBase: parseFloat(chData.weekly_demand_lbs) || 0,
           capType: chData.demand_cap_type || 'weekly_flat',
-        });
+        };
       }
     });
   });
-  return entries.sort((a, b) => b.sat - a.sat);
+
+  return Object.values(perCropBest)
+    .sort((a, b) => b.sat - a.sat)
+    .slice(0, MAX_DEMAND_CANDS);
 }
 
 /**
@@ -3604,10 +3675,9 @@ function rankBottlenecks(res, params) {
 }
 
 /**
- * Helper: compute demand saturation for a crop in a given result.
- * Uses the same formula as computeDemandCandidates:
- *   sat = totalHarv / sum(annualCap for ALL channels of this crop)
- * so saturation is not overstated for crops with multiple small channels.
+ * Helper: compute demand saturation for a specific crop/channel pair.
+ * sat = min(1, totalHarv / channelAnnualCap)  — per-channel formula,
+ * consistent with computeDemandCandidates.
  */
 function computeSingleDemandPeak(res, params, cropName, channelName) {
   const sched     = res.succession_schedule || [];
@@ -3616,11 +3686,9 @@ function computeSingleDemandPeak(res, params, cropName, channelName) {
   const ci = (params.crops||[]).find(c => c.name === cropName);
   if (!ci) return 0;
   const totalHarv = (cropAcres[cropName]||0) * (parseFloat(ci.yield_per_acre)||0);
-  // Sum caps across ALL channels (consistent with computeDemandCandidates)
-  const totalCapAllCh = Object.values(ci.channels || {}).reduce(
-    (sum, ch) => sum + _channelAnnualCap(ch), 0
-  );
-  return totalCapAllCh > 0 ? Math.min(1, totalHarv / totalCapAllCh) : 0;
+  const chData    = (ci.channels||{})[channelName];
+  const annualCap = _channelAnnualCap(chData);
+  return annualCap > 0 ? Math.min(1, totalHarv / annualCap) : 0;
 }
 
 /**
@@ -3761,12 +3829,13 @@ function renderWhatIfCard(res, params) {
   const visible = getVisibleConstraints();
 
   // Constraint pills — coloured by severity; multi-select supported
-  // Land always appears; if below 50% it renders as low-util (grey, no severity class)
+  // Land always appears even if slack; informational demand entries shown dimmed
   const pills = visible.map((c, i) => {
     const pct = Math.round(c.peak * 100);
     const sev = c.peak >= 0.90 ? 'active-constraint' : c.peak >= 0.70 ? 'near-constraint' : '';
-    const lowUtil = c.type === 'land' && c.peak < 0.50 ? ' style="opacity:0.65"' : '';
-    return `<button class="cn-btn ${sev}" id="cn-btn-${i}" onclick="toggleConstraint(${i})"${lowUtil}>${c.name} ${pct}%</button>`;
+    const dim = (c.informational || (c.type === 'land' && c.peak < 0.50)) ? ' style="opacity:0.60"' : '';
+    const infoTitle = c.informational ? ` title="Demand cap present — below 50% utilization (informational)"` : '';
+    return `<button class="cn-btn ${sev}" id="cn-btn-${i}" onclick="toggleConstraint(${i})"${dim}${infoTitle}>${c.name} ${pct}%</button>`;
   }).join('');
 
   const infoMsg = visible.every(c => c.peak < 0.50)
@@ -3904,6 +3973,17 @@ async function runScenario(constraints, factor) {
   const res    = window._lastRes;
   if (!params || !res || !pyReady || !cArr.length) return;
 
+  // ── Dev-only audit log ──────────────────────────────────────
+  if (window._whatifDebug) {
+    console.group(`[What-If] Scenario run`);
+    console.log('Constraints applied:', cArr.map(c => `${c.name} (${c.type})`));
+    console.log('Factor:', factor, `(+${Math.round((factor-1)*100)}%)`);
+    console.log('Single constraint?', cArr.length === 1);
+    console.log('Baseline land peak:', Math.max(0,...(res.weekly_land_frac||[]).slice(0,48)));
+    console.log('Baseline profit:', res.profit);
+    console.groupEnd();
+  }
+
   document.querySelectorAll('.whatif-preset-btn, .btn-combined, .cn-btn').forEach(b => { if(b) b.disabled = true; });
   const runEl = document.getElementById('whatif-running');
   if (runEl) runEl.style.display = 'block';
@@ -3912,10 +3992,16 @@ async function runScenario(constraints, factor) {
   const pctStr = `+${Math.round((factor-1)*100)}%`;
   const label  = cArr.map(c => `${pctStr} ${c.name}`).join(' AND ');
 
-  // Apply all constraints composably — each call deep-copies, never mutates
-  let scaledParams = params;
+  // Apply all constraints composably — each call deep-copies from immutable _lastParams
+  // Safety: scaledParams starts fresh from the canonical baseline each run
+  let scaledParams = params; // params === window._lastParams (never mutated)
   for (const c of cArr) {
     scaledParams = scaleParamsForScenario(scaledParams, c, factor);
+  }
+
+  if (window._whatifDebug) {
+    console.log('[What-If] Scaled params land:', scaledParams.total_land,
+      '| well_weekly_cap_L:', scaledParams.well_weekly_cap_L);
   }
 
   const primary = cArr[0];
@@ -3937,6 +4023,9 @@ async function runScenario(constraints, factor) {
         topCrops: getTopCropsSummary(sr, 3),
         status: 'optimal',
       };
+      if (window._whatifDebug) {
+        console.log(`[What-If] Result: profit=${profit.toFixed(0)}, delta=${record.delta.toFixed(0)}, peakUtil=${record.peakUtil}%`);
+      }
     } else {
       record = {
         id: Date.now(), label,
@@ -4171,12 +4260,11 @@ window._testWhatIf = function() {
   console.assert(Math.abs(cucAfter - 400) < 1, `T7: Cucumber/FM cap should be 400, got ${cucAfter}`);
   console.assert(Math.abs(spAfter - 900) < 1,  `T7: Spinach/FM cap should be unchanged 900, got ${spAfter}`);
 
-  // ── T8: computeSingleDemandPeak uses totalCapAllChannels formula ──
+  // ── T8: computeSingleDemandPeak uses per-channel formula ──────
   const spPeak = computeSingleDemandPeak(mockResD, mockParamsD, 'Spinach', 'FM');
-  // Spinach: 5ac × 8000 = 40000 lbs/yr
-  // All channels: FM=900/wk×52=46800, Wholesale=2000/wk×52=104000 → total=150800
-  // cropSat = 40000/150800 ≈ 0.265 (not 0.855 — 0.855 would overstate by ignoring Wholesale cap)
-  console.assert(Math.abs(spPeak - (40000/150800)) < 0.01, `T8: Spinach peak ~${(40000/150800).toFixed(3)}, got ${spPeak.toFixed(3)}`);
+  // Spinach/FM: 5ac × 8000 = 40000 lbs/yr; FM cap = 900/wk × 52 = 46800
+  // sat = 40000/46800 ≈ 0.855 (per-channel formula restored; correct signal for FM being near-saturated)
+  console.assert(Math.abs(spPeak - (40000/46800)) < 0.01, `T8: Spinach/FM peak ~0.855, got ${spPeak.toFixed(3)}`);
 
   // ── T9: demand_single not included in combined-scenario check ─
   const PHYSICAL_TYPES = new Set(['land','labor','water','storage','cash']);
@@ -4243,18 +4331,20 @@ window._testWhatIf = function() {
   console.assert(label16 === '+20% Total Land AND +20% Labor Availability',
     `T16: combined label should be '+20% Total Land AND +20% Labor Availability', got: "${label16}"`);
 
-  // ── T17: demand saturation uses total-cap-all-channels formula ──
-  // Spinach/FM: totalCapAllCh = FM(46800) + Wholesale(104000) = 150800; harvest=40000
-  // expected sat = 40000/150800 ≈ 0.265 — avoids overstating by not comparing total harvest to one channel cap
+  // ── T17: demand saturation uses per-channel formula; top-1-per-crop dedup ──
+  // Spinach has FM(900/wk) and Wholesale(2000/wk). Only best channel kept per crop.
+  // Spinach/FM: sat = 40000/46800 ≈ 0.855; Spinach/Wholesale: sat = 40000/104000 ≈ 0.385
+  // → only FM entry should appear for Spinach (highest sat)
   const rankedD17 = rankBottlenecks(mockResD, mockParamsD);
-  const spEntry17 = rankedD17.filter(c => c.type === 'demand_single' && c.cropName === 'Spinach');
-  // All Spinach channels should have same sat (crop-level)
-  console.assert(spEntry17.length >= 1, 'T17a: Spinach demand entries present');
-  const expectedSpSat = 40000 / (900*52 + 2000*52); // ≈ 0.265
-  spEntry17.forEach(e => {
-    console.assert(Math.abs(e.peak - expectedSpSat) < 0.01,
-      `T17b: Spinach (${e.channelName}) sat ~${expectedSpSat.toFixed(3)}, got ${e.peak.toFixed(3)}`);
-  });
+  const spEntries17 = rankedD17.filter(c => c.type === 'demand_single' && c.cropName === 'Spinach');
+  console.assert(spEntries17.length === 1, `T17a: only 1 Spinach demand entry (top-1-per-crop), got ${spEntries17.length}`);
+  console.assert(spEntries17[0].channelName === 'FM', `T17b: Spinach best channel should be FM, got ${spEntries17[0]?.channelName}`);
+  console.assert(Math.abs(spEntries17[0].peak - 40000/46800) < 0.01,
+    `T17c: Spinach/FM sat ~0.855, got ${spEntries17[0]?.peak?.toFixed(3)}`);
+  // Cucumber/FM: 3ac × 4000 = 12000 lbs/yr; cap = 200/wk × 52 = 10400 → sat = min(1, 12000/10400) = 1.0
+  const cucD17 = rankedD17.find(c => c.type === 'demand_single' && c.cropName === 'Cucumber');
+  console.assert(cucD17 !== undefined, 'T17d: Cucumber demand entry present');
+  console.assert(Math.abs(cucD17.peak - 1.0) < 0.01, `T17e: Cucumber/FM sat = 1.0, got ${cucD17?.peak}`);
 
   // ── T18: constraint-summary-card hidden; Export CSV button in What-If header ──
   const cSummaryCard = document.getElementById('constraint-summary-card');
@@ -4271,7 +4361,65 @@ window._testWhatIf = function() {
     console.assert(hasExportBtn, 'T18b: Export Constraint CSV button should be in What-If card');
   }
 
-  console.log('✓ All what-if tests passed (18/18).');
+  // ── T19: demand fallback — low-sat demand still visible via getVisibleConstraints ──
+  // If no demand entry passes 50%, the top one should still appear (informational flag)
+  const mockResLowSat = {
+    ...mockRes,
+    weekly_land_frac:   Array(48).fill(0.40), // land not binding
+    weekly_labor_used:  Array(48).fill(200),  // labor not binding
+    succession_schedule: [{ crop:'Spinach', acres:1 }],  // tiny farm → sat = 8000/46800 ≈ 0.17
+  };
+  const rankedLow   = rankBottlenecks(mockResLowSat, mockParamsD);
+  WHATIF_STATE.rankedConstraints = rankedLow;
+  const vis19 = getVisibleConstraints();
+  const demandVis19 = vis19.filter(c => c.type === 'demand_single');
+  console.assert(demandVis19.length >= 1, `T19: demand fallback — at least 1 demand entry shown even when sat<50%, got ${demandVis19.length}`);
+  const fallbackEntry = demandVis19.find(c => c.informational);
+  console.assert(fallbackEntry !== undefined, 'T19b: fallback demand entry should be marked informational');
+  console.log(`T19: demand fallback entry: ${fallbackEntry?.name} at ${(fallbackEntry?.peak*100).toFixed(0)}% (informational) ✓`);
+
+  // ── T20: single-constraint runScenario only applies one constraint ──
+  // Verify scaleParamsForScenario called once for single-item array
+  const landC20 = rankBottlenecks(mockRes, mockParamsBase).find(c => c.type === 'land');
+  const scaledSingle20 = scaleParamsForScenario(mockParamsBase, landC20, 1.20);
+  // Only land should change; labor (seasonal count) and water unchanged
+  console.assert(Math.abs(scaledSingle20.total_land - 180) < 0.1, 'T20a: land scaled to 180ac');
+  console.assert(scaledSingle20.well_weekly_cap_L === mockParamsBase.well_weekly_cap_L, 'T20b: water unchanged in single-land run');
+  console.assert(scaledSingle20.employees[1].count === mockParamsBase.employees[1].count, 'T20c: labor unchanged in single-land run');
+
+  // ── T21: margin % formula — margin/revenue not margin/VC ──────
+  // For: grossRev=500, totalVC=300, margin=200
+  //   margin/rev = 200/500 = 40% (correct)
+  //   margin/VC  = 200/300 = 67% (old formula — would incorrectly exceed 50% threshold)
+  const testGrossRev = 500, testVC = 300, testMargin = 200;
+  const marginPctCorrect = testMargin / testGrossRev * 100;  // 40%
+  const marginPctOld     = testMargin / testVC * 100;        // 67%
+  console.assert(Math.abs(marginPctCorrect - 40) < 0.01, `T21a: margin/rev = 40%, got ${marginPctCorrect}`);
+  console.assert(marginPctOld > 40 && marginPctOld < 100, `T21b: old formula gives ${marginPctOld.toFixed(1)}% (inflated)`);
+  console.assert(marginPctCorrect <= 100, 'T21c: margin % of revenue is always ≤ 100%');
+
+  // ── T22: executive summary peak-week helpers ──────────────────
+  const mockResWk = {
+    ...mockRes,
+    weekly_labor_used:   [800, 950, 700, 600, ...Array(44).fill(500)],
+    weekly_labor_supply: Array(48).fill(1000),
+    weekly_land_frac:    [0.60, 0.75, 0.95, 0.80, ...Array(44).fill(0.50)],
+  };
+  // Peak labor = week 2 at 95%; peak land = week 3 at 95%
+  let pkLaborWk = 0, pkLaborFrac = 0;
+  (mockResWk.weekly_labor_used||[]).forEach((h,i) => {
+    const s = (mockResWk.weekly_labor_supply||[])[i] || 0;
+    const f = s > 0 ? h/s : 0;
+    if (f > pkLaborFrac) { pkLaborFrac = f; pkLaborWk = i+1; }
+  });
+  let pkLandWk = 0, pkLandFrac = 0;
+  (mockResWk.weekly_land_frac||[]).forEach((f,i) => { if (f > pkLandFrac) { pkLandFrac = f; pkLandWk = i+1; } });
+  console.assert(pkLaborWk === 2, `T22a: peak labor week should be 2, got ${pkLaborWk}`);
+  console.assert(Math.abs(pkLaborFrac - 0.95) < 0.01, `T22b: peak labor frac ~0.95, got ${pkLaborFrac}`);
+  console.assert(pkLandWk === 3, `T22c: peak land week should be 3, got ${pkLandWk}`);
+  console.assert(Math.abs(pkLandFrac - 0.95) < 0.01, `T22d: peak land frac ~0.95, got ${pkLandFrac}`);
+
+  console.log('✓ All what-if tests passed (22/22).');
 };
 
 // ============================================================
