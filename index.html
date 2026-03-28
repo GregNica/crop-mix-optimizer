@@ -2950,32 +2950,31 @@ function renderConstraintSummary(res, params) {
     const totalHarvest = info.acres * (parseFloat(ci.yield_per_acre) || 0);
 
     Object.entries(ci.channels || {}).forEach(([chName, chData]) => {
-      // Build per-week demand cap array
+      // Annual cap — delegates to _channelAnnualCap to match What-If saturation basis exactly.
+      // Both panels now use: sat = min(1, totalHarvest / _channelAnnualCap(chData))
+      const annualCap = _channelAnnualCap(chData);
+      if (annualCap <= 0) return;
+
+      // Build per-week demand cap array (for weekly peak column only)
       const weeklyDemandCap = new Array(52).fill(0);
-      let annualDemandLbs = 0;
       if (chData.demand_cap_type === 'annual') {
-        annualDemandLbs = parseFloat(chData.annual_demand_lbs) || 0;
-        const wkCap = annualDemandLbs / 52;
-        weeklyDemandCap.fill(wkCap);
+        weeklyDemandCap.fill(annualCap / 52);
       } else if (chData.demand_cap_type === 'weekly_flat') {
-        const wkCap = parseFloat(chData.weekly_demand_lbs) || 0;
-        weeklyDemandCap.fill(wkCap);
-        annualDemandLbs = wkCap * 52;
+        weeklyDemandCap.fill(parseFloat(chData.weekly_demand_lbs) || 0);
       } else if (chData.demand_cap_type === 'weekly_varying') {
         (chData.demand_ranges || []).forEach(dr => {
           const m = dr.weeks ? dr.weeks.match(/W(\d+)-W(\d+)/) : null;
           if (m) {
             const w1 = parseInt(m[1]), w2 = parseInt(m[2]);
             for (let ww = w1; ww <= Math.min(w2, 52); ww++) weeklyDemandCap[ww-1] = parseFloat(dr.weekly_lbs) || 0;
-            annualDemandLbs += (parseFloat(dr.weekly_lbs) || 0) * (w2 - w1 + 1);
           }
         });
       }
 
-      if (annualDemandLbs <= 0) return;
-      const sat = Math.min(1, totalHarvest / annualDemandLbs);
+      // Annual saturation — same formula as What-If computeDemandCandidates
+      const sat = Math.min(1, totalHarvest / annualCap);
 
-      // Per-week utilization
+      // Per-week utilization (supplementary — can exceed annual sat when harvest is seasonal)
       const weeklyDemandFracs = info.weeklyHarv.map((h, i) => {
         const cap = weeklyDemandCap[i];
         return cap > 0 ? Math.min(1.0, h / cap) : 0;
@@ -2986,10 +2985,12 @@ function renderConstraintSummary(res, params) {
 
       const satClass  = sat    >= 0.9 ? 'color:#dc2626;font-weight:700' : sat    >= 0.6 ? 'color:#d97706' : 'color:#059669';
       const peakClass = peakWk >= 0.95 ? 'color:#dc2626;font-weight:700' : peakWk >= 0.80 ? 'color:#d97706' : 'color:#059669';
+      const satTitle  = `harvest ÷ annual cap: ${totalHarvest.toFixed(0)} lbs ÷ ${annualCap.toFixed(0)} lbs = ${(sat*100).toFixed(0)}%. Same basis as What-If ranking.`;
+      const peakTitle = `Peak weekly harvest ÷ weekly demand cap. Can exceed annual sat if harvest is concentrated in a short season.`;
       demandRows.push(`<tr>
-        <td style="padding:4px 10px;font-size:0.78rem">${cropName} → ${chName} <span style="font-size:0.68rem;color:#9ca3af">(demand cap)</span></td>
-        <td style="padding:4px 10px;text-align:right;font-size:0.78rem;${satClass}">${(sat*100).toFixed(0)}%</td>
-        <td style="padding:4px 10px;text-align:right;font-size:0.78rem;${peakClass}">${(peakWk*100).toFixed(0)}%</td>
+        <td style="padding:4px 10px;font-size:0.78rem">${cropName} → ${chName} <span style="font-size:0.68rem;color:#9ca3af" title="harvest ÷ channel annual cap — same basis as What-If ranking">(harvest / cap)</span></td>
+        <td style="padding:4px 10px;text-align:right;font-size:0.78rem;${satClass}" title="${satTitle}">${(sat*100).toFixed(0)}%</td>
+        <td style="padding:4px 10px;text-align:right;font-size:0.78rem;${peakClass}" title="${peakTitle}">${(peakWk*100).toFixed(0)}%</td>
         <td style="padding:4px 10px;font-size:0.72rem;color:#6b7280">${tightWks.length > 0 ? 'Wk ' + tightWks.slice(0,8).join(', ') + (tightWks.length>8?'…':'') : '—'}</td>
       </tr>`);
     });
@@ -3003,8 +3004,8 @@ function renderConstraintSummary(res, params) {
   el.innerHTML = `<table style="border-collapse:collapse;width:100%;font-size:0.79rem">
     <thead><tr>
       <th style="text-align:left;padding:4px 10px;border-bottom:2px solid #d1d5db;color:#374151">Constraint</th>
-      <th style="text-align:right;padding:4px 10px;border-bottom:2px solid #d1d5db;color:#374151">Avg / Season</th>
-      <th style="text-align:right;padding:4px 10px;border-bottom:2px solid #d1d5db;color:#374151">Peak Wk</th>
+      <th style="text-align:right;padding:4px 10px;border-bottom:2px solid #d1d5db;color:#374151" title="Physical constraints: avg weekly utilization ÷ capacity. Demand rows: total harvest ÷ annual channel cap (same basis as What-If ranking).">Avg / Season ⓘ</th>
+      <th style="text-align:right;padding:4px 10px;border-bottom:2px solid #d1d5db;color:#374151" title="Physical: peak weekly utilization. Demand: peak weekly harvest ÷ weekly cap.">Peak Wk ⓘ</th>
       <th style="text-align:left;padding:4px 10px;border-bottom:2px solid #d1d5db;color:#374151">Weeks ≥95%</th>
     </tr></thead>
     <tbody>
@@ -3660,6 +3661,7 @@ function rankBottlenecks(res, params) {
       scaleType: 'demand_single',
       cropName,
       channelName,
+      annualCap: dc.annualCap,    // passed through for pill tooltip
       displayFn: (p, f) => {
         const crop = (p.crops||[]).find(c => c.name === cropName);
         const ch   = crop ? ((crop.channels||{})[channelName] || {}) : {};
@@ -3834,7 +3836,11 @@ function renderWhatIfCard(res, params) {
     const pct = Math.round(c.peak * 100);
     const sev = c.peak >= 0.90 ? 'active-constraint' : c.peak >= 0.70 ? 'near-constraint' : '';
     const dim = (c.informational || (c.type === 'land' && c.peak < 0.50)) ? ' style="opacity:0.60"' : '';
-    const infoTitle = c.informational ? ` title="Demand cap present — below 50% utilization (informational)"` : '';
+    const infoTitle = c.informational
+      ? ` title="Demand cap present — below 50% utilization (informational). Basis: total harvest ÷ channel annual cap."`
+      : (c.type === 'demand_single'
+        ? ` title="Demand saturation: total crop harvest ÷ channel annual cap = ${pct}%. Click to relax this channel's demand cap."`
+        : '');
     return `<button class="cn-btn ${sev}" id="cn-btn-${i}" onclick="toggleConstraint(${i})"${dim}${infoTitle}>${c.name} ${pct}%</button>`;
   }).join('');
 
@@ -4515,7 +4521,68 @@ window._testWhatIf = function() {
   console.assert(run1Labor === 15,  `T26e: run1 labor=15 (unchanged), got ${run1Labor}`);
   console.log('T26: baseline immutability across sequential runs verified ✓');
 
-  console.log('✓ All what-if tests passed (26/26).');
+  // ── T27: cross-panel basis parity — _channelAnnualCap matches inline computation ──
+  // For each cap type, verify _channelAnnualCap produces identical result to the old inline
+  // annualDemandLbs calculation that was previously in renderConstraintSummary.
+  const annualTypeCh  = { demand_cap_type: 'annual',       annual_demand_lbs: '52000' };
+  const weekFlatCh    = { demand_cap_type: 'weekly_flat',  weekly_demand_lbs: '1000'  };
+  const weekVaryCh    = { demand_cap_type: 'weekly_varying',
+    demand_ranges: [{ weeks: 'W1-W26', weekly_lbs: '2000' }, { weeks: 'W27-W52', weekly_lbs: '3000' }] };
+  // annual type: direct parse
+  console.assert(Math.abs(_channelAnnualCap(annualTypeCh) - 52000) < 0.01, `T27a: annual type cap=52000, got ${_channelAnnualCap(annualTypeCh)}`);
+  // weekly_flat: weekly * 52
+  console.assert(Math.abs(_channelAnnualCap(weekFlatCh) - 52000) < 0.01,   `T27b: weekly_flat 1000/wk→52000/yr, got ${_channelAnnualCap(weekFlatCh)}`);
+  // weekly_varying: W1-W26=2000 (26 wks) + W27-W52=3000 (26 wks) = 52000+78000=130000
+  const expectedVary = 2000*26 + 3000*26;
+  console.assert(Math.abs(_channelAnnualCap(weekVaryCh) - expectedVary) < 0.01, `T27c: weekly_varying cap=${expectedVary}, got ${_channelAnnualCap(weekVaryCh)}`);
+  // Verify inline formula (old Constraint Summary) produces the same result
+  const inlineFlat = (parseFloat(weekFlatCh.weekly_demand_lbs) || 0) * 52;
+  console.assert(inlineFlat === _channelAnnualCap(weekFlatCh), `T27d: inline weekly_flat equals _channelAnnualCap`);
+  console.log('T27: cross-panel basis parity — _channelAnnualCap matches all 3 cap type computations ✓');
+
+  // ── T28: demand utilization label correctness ─────────────────────────────
+  // computeDemandCandidates entries have annualCap propagated from _channelAnnualCap
+  const allC28 = rankBottlenecks(mockResD, mockParamsD);
+  const demC28 = allC28.filter(c => c.type === 'demand_single');
+  console.assert(demC28.length >= 1, `T28a: at least 1 demand_single in ranked, got ${demC28.length}`);
+  // Each demand entry should have annualCap set (passed through from computeDemandCandidates)
+  demC28.forEach((c, i) => {
+    console.assert(c.annualCap > 0, `T28b[${i}]: ${c.name} has annualCap>0, got ${c.annualCap}`);
+  });
+  // Spinach/FM: annualCap = 900 * 52 = 46800
+  const spDem28 = demC28.find(c => c.cropName === 'Spinach' && c.channelName === 'FM');
+  if (spDem28) {
+    console.assert(Math.abs(spDem28.annualCap - 46800) < 1, `T28c: Spinach/FM annualCap=46800, got ${spDem28.annualCap}`);
+  }
+  // peak value equals sat = totalHarv / annualCap (same as computeSingleDemandPeak)
+  const spSingle28 = computeSingleDemandPeak(mockResD, mockParamsD, 'Spinach', 'FM');
+  if (spDem28) {
+    console.assert(Math.abs(spDem28.peak - spSingle28) < 0.001, `T28d: rankBottlenecks peak matches computeSingleDemandPeak (${spDem28.peak.toFixed(3)} vs ${spSingle28.toFixed(3)})`);
+  }
+  console.log('T28: demand utilization label correctness — annualCap propagated, peak matches computeSingleDemandPeak ✓');
+
+  // ── T29: stable ranking interpretation under per-channel basis ────────────
+  // Verify that changing one channel's cap does not affect another crop's ranking.
+  const paramsHighCap = JSON.parse(JSON.stringify(mockParamsD));
+  paramsHighCap.crops.find(c => c.name === 'Cucumber').channels['FM'].weekly_demand_lbs = '10000'; // huge cap → sat near 0
+  const rankedHigh = rankBottlenecks(mockResD, paramsHighCap);
+  const cucHighD = rankedHigh.find(c => c.type === 'demand_single' && c.cropName === 'Cucumber');
+  const spHighD  = rankedHigh.find(c => c.type === 'demand_single' && c.cropName === 'Spinach');
+  // Cucumber sat should drop dramatically
+  console.assert(!cucHighD || cucHighD.peak < 0.20, `T29a: Cucumber sat should drop with large cap, got ${cucHighD?.peak?.toFixed(3)}`);
+  // Spinach ranking should be unaffected by Cucumber's cap change
+  if (spHighD) {
+    const spOrigD = rankedD17.find(c => c.type === 'demand_single' && c.cropName === 'Spinach');
+    console.assert(Math.abs(spHighD.peak - (spOrigD?.peak || 0)) < 0.001, `T29b: Spinach/FM peak unchanged by Cucumber cap change, got ${spHighD.peak.toFixed(3)} vs ${spOrigD?.peak?.toFixed(3)}`);
+  }
+  // Ranking is always sorted descending by peak
+  const allD29 = rankedHigh.filter(c => c.type === 'demand_single');
+  for (let i = 0; i < allD29.length - 1; i++) {
+    console.assert(allD29[i].peak >= allD29[i+1].peak, `T29c: demand ranking descending at index ${i}`);
+  }
+  console.log('T29: stable ranking interpretation — per-channel isolation and sort order verified ✓');
+
+  console.log('✓ All what-if tests passed (29/29).');
 };
 
 // ============================================================
