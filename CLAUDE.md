@@ -1,0 +1,163 @@
+# CLAUDE.md — Farm Crop-Mix Optimization Project
+
+## Project Overview
+
+This project translates a farm profit-maximization Excel Solver model ("Group 5_Baby Model_Final") into a Python Jupyter notebook (`farm_optimization.ipynb`). The model finds the optimal crop planting schedule for a 150-acre farm to maximize annual profit subject to land, water, labor, storage, demand, diversity, and budget constraints.
+
+---
+
+## Files
+
+| File | Description |
+|------|-------------|
+| `Group 5_Baby Model_Final (2).xlsx` | Original Excel model with Solver. Sheets: Summary, Model, Fact Sheet, Appendix 1, Appendix 2 |
+| `farm_optimization (1).ipynb` | Python notebook replicating the Excel Solver using `scipy.optimize.milp` |
+
+---
+
+## Model Architecture
+
+### Decision Variables (28 total)
+- **14 continuous** `x[i]` ∈ [0, 1]: land fraction allocated to succession i
+- **14 binary** `y[i]` ∈ {0, 1}: plant succession i (yes/no)
+
+### Crops & Successions
+| Crop | # Successions | Crop Cycle |
+|------|--------------|------------|
+| Spinach | 5 (#1–#5) | 3 months: Plant→Grow→Harvest |
+| Cucumbers | 3 (#1–#3) | 3 months: Plant→Grow→Harvest |
+| Sweet Corn | 2 (#1–#2) | 4 months: Plant→Grow→Grow→Harvest |
+| Napa Cabbage | 2 (#1–#2) | 4 months: Plant→Grow→Grow→Harvest |
+| Hot Peppers | 1 (#1) | 7 months: Plant→Grow×3→Harvest×3 |
+| Garlic | 1 (#1) | 7 months: Plant→Grow×5→Harvest |
+
+### Objective Function
+Maximize:
+`Σ (n_harvests × land × yield/acre × avg_price × 1.04 − variable_costs) × x[i] − fixed_cost`
+
+The `1.04` factor encodes the 80/20 channel mix (80% base price + 20% at 120% premium = 1.04× average).
+
+### Constraints (7 types, 69 rows total)
+1. **Land** (12): Monthly Σ x[i] ≤ 1 (100% of 150 acres)
+2. **Labor** (12): Monthly labor hours ≤ seasonal availability (1,280–7,680 hrs/month)
+3. **Water** (12): Monthly water ≤ min(catchment, 15,000 L × 10)
+4. **Harvest Storage** (12): Monthly harvest volume ≤ 24,000 m³
+5. **Annual Demand** (6): Per-crop annual yield ≤ 11× monthly demand cap
+6. **Crop Diversity** (14): `x[i] ≤ y[i] × (diversity_limit / num_successions)`
+7. **Budget** (1): Fixed + variable costs ≤ $3,000,000
+
+### Fixed Costs (Annual)
+| Component | Formula | Value |
+|-----------|---------|-------|
+| Harvest Storage | 24,000 m³ × $2/m³ × 11 months | $528,000 |
+| Water Storage | 15,000 L × $0.002/L × 11 | $330 |
+| Irrigation | 150 acres × $175/acre × 11 | $288,750 |
+| Equipment Storage | 30,000 m³ × $2/m³ × 11 | $660,000 |
+| Fuel Storage | 750 L × $0.20/L × 11 | $1,650 |
+| Machinery | $2,600/month × 11 | $28,600 |
+| **Total** | | **$1,507,330** |
+
+### Variable Costs (per unit x[i], scaled by total land = 150 acres)
+- Seed cost (once, at planting phase)
+- Water cost ($0.002/liter)
+- Fertilizer ($2.00/lb)
+- Packaging & SG&A (weighted avg $/lb × yield)
+- Fuel ($1.00/liter)
+- Seasonal labor ($20.00/hr)
+
+---
+
+## Verified Results
+
+All 14 succession land fractions, financials, and constraint values match the Excel Solver solution exactly (differences < $0.01 due to floating-point rounding):
+
+| Metric | Python (scipy.milp) | Excel Solver |
+|--------|---------------------|--------------|
+| Total Revenue | $9,080,159.17 | $9,080,159.16 |
+| Total Variable Cost | $1,365,116.10 | $1,365,116.09 |
+| Total Fixed Cost | $1,507,330.00 | $1,507,330.00 |
+| Total Cost | $2,872,446.10 | $2,872,446.09 |
+| **Total Profit** | **$6,207,713.07** | **$6,207,713.07** |
+
+### Optimal Planting Plan
+| Succession | Land Fraction | Acres |
+|-----------|--------------|-------|
+| Spinach #1 | 0.1108 | 16.6 |
+| Spinach #2 | 0.1600 | 24.0 |
+| Spinach #3 | 0.0000 | 0 (not planted) |
+| Spinach #4 | 0.1264 | 18.9 |
+| Spinach #5 | 0.0550 | 8.2 |
+| Cucumbers #1 | 0.1000 | 15.0 |
+| Cucumbers #2 | 0.1000 | 15.0 |
+| Cucumbers #3 | 0.0949 | 14.2 |
+| Sweet Corn #1 | 0.0000 | 0 (not planted) |
+| Sweet Corn #2 | 0.0949 | 14.2 |
+| Napa Cabbage #1 | 0.0949 | 14.2 |
+| Napa Cabbage #2 | 0.1182 | 17.7 |
+| Hot Peppers #1 | 0.2102 | 31.5 |
+| Garlic #1 | 0.4000 | 60.0 |
+
+---
+
+## User-Configurable Parameters (refactored 2026-03-10)
+
+All parameters are now exposed as globals in **Section 3** and as keyword arguments on `solve_farm_optimization()`. Nothing is hard-coded inside the function body. Parameters are organized into 7 subsections:
+
+| Section | Parameters |
+|---------|-----------|
+| 3A — Farm Infrastructure | `TOTAL_LAND`, `BUDGET`, `HARVEST_STORAGE_CAP`, `WATER_STORAGE`, `EQUIP_STORAGE`, `FUEL_STORAGE` |
+| 3B — Fixed Cost Unit Rates | `RATE_HARVEST_STORAGE`, `RATE_WATER_STORAGE`, `RATE_IRRIGATION`, `RATE_EQUIP_STORAGE`, `RATE_FUEL_STORAGE`, `RATE_MACHINERY`, `OPERATING_MONTHS` |
+| 3C — Variable Cost Unit Rates | `COST_WATER_PER_L`, `COST_FERT_PER_LB`, `COST_LABOR_PER_HR`, `COST_FUEL_PER_L` |
+| 3D — Monthly Availability | `AVAILABLE_WATER_CATCHMENT` (12-element array), `AVAILABLE_LABOR` (12-element array) |
+| 3E — Crop Parameters | `YIELD_PER_ACRE`, `CROP_SIZE_M3_PER_LB`, `SEED_REQ_PER_ACRE`, `SEED_COST_PER_LB`, `CROP_DIVERSITY`, `MONTHLY_DEMAND`, `WEIGHTED_AVG_PRICE`, `WEIGHTED_AVG_PKG`, `CHANNEL_PREMIUM` |
+| 3F — Resource Usage Per Phase | `LABOR_PLANT/GROW/HARV`, `WATER_PLANT/GROW/HARV`, `FERT_PLANT/GROW/HARV`, `FUEL_PLANT/GROW/HARV` |
+| 3G — Succession Calendar | `SUCCESSIONS` (list of dicts with name, crop index, months, phases) |
+
+To run a scenario without changing Section 3: `solve_farm_optimization(budget=2_000_000)` — any unspecified parameter uses the Section 3 global default.
+
+---
+
+## Solver Details
+
+- **Library**: `scipy.optimize.milp` (wraps HiGHS MILP solver)
+- **Problem type**: Mixed-Integer Linear Program (MILP)
+- **Variables**: 28 (14 continuous + 14 binary)
+- **Constraints**: 69 linear inequality constraints
+- **Status**: Optimal (HiGHS Status 7)
+- **Excel equivalent**: OpenSolver/Solver with Simplex LP + binary integer variables
+
+---
+
+## Notebook Structure
+
+| Section | Purpose |
+|---------|---------|
+| 1 — Install Dependencies | pip installs for Colab/local |
+| 2 — Imports | numpy, pandas, scipy, matplotlib |
+| 3 — Parameters | All fixed inputs from Fact Sheet |
+| 4 — Solver Function | `solve_farm_optimization()` — parameterized, self-contained MILP |
+| 5 — Solve and Verify | Run solver, assert results match Excel within 1% |
+| 6 — Results | Detailed tables + profit waterfall + land heatmap |
+| 7 — Sensitivity Analysis | Budget sweep ($2M–$5.25M) and land sweep (50–300 acres) |
+
+---
+
+## Key Assumptions (from Excel Summary sheet)
+
+- Fixed yields, no crop failure
+- Revenue = yield × avg_price × 1.04 (80/20 channel split)
+- Yearly demand cap (not monthly — simplified)
+- Fixed infrastructure costs regardless of what is planted
+- Binary planting decisions (planted or not, no partial activation)
+- Each crop has a rigid 3–7 month cycle with fixed phase months
+
+---
+
+## How to Run
+
+```bash
+pip install scipy numpy pandas matplotlib openpyxl
+jupyter notebook "farm_optimization (1).ipynb"
+```
+
+Or on Google Colab: upload the notebook and run all cells (installs happen automatically in Section 1).

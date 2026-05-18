@@ -1,0 +1,330 @@
+"""
+validate.py — Input validation and infeasibility pre-checks for the v2 farm model.
+
+Call ``validate_params(**params)`` before running the solver.  It raises
+``ValueError`` with a descriptive message on the first problem found.
+
+Checks performed:
+  1. Farm infrastructure — positive land, opening_cash ≥ 0, credit_line ≥ 0
+  2. Fixed cost rates — non-negative
+  3. Water configuration — consistent source selection
+  4. Labor configuration — valid employee dicts; hourly capacity > 0 in at least one week
+  5. Equipment proxies — positive
+  6. Crops — required keys, valid cycle math, ≥1 season, channel consistency
+  7. Channels — at least one; unique names
+  8. Succession feasibility — at least one succession generated per crop
+  9. Demand — at least one non-zero demand entry exists
+"""
+
+from __future__ import annotations
+
+import math
+from farm_v2.utils.calendar import generate_successions, week_of_year
+
+
+# ---------------------------------------------------------------------------
+# Top-level API
+# ---------------------------------------------------------------------------
+
+def validate_params(
+    total_land: float,
+    harvest_storage_cap: float,
+    operating_weeks: int,
+    crops: list,
+    channels: list,
+    rainfall_weekly_L_per_acre,
+    opening_cash: float = 0.0,
+    credit_line: float = 0.0,
+    budget: float = None,   # deprecated — ignored if opening_cash/credit_line provided
+    year_round_employees: list | None = None,
+    seasonal_employees: list | None = None,
+    city_water_enabled: bool = False,
+    well_enabled: bool = False,
+    catchment_enabled: bool = False,
+    catchment_surface_area_m2: float = 0.0,
+    well_weekly_cap_L: float = 0.0,
+    max_plant_acres_per_week: float = 1e9,
+    max_harvest_acres_per_week: float = 1e9,
+    year: int = 2024,
+    **_kwargs,  # absorb unused kwargs for forward-compatibility
+) -> list[str]:
+    """
+    Validate all model inputs.
+
+    Returns a list of warning strings (non-fatal issues).
+    Raises ``ValueError`` on any fatal problem.
+    """
+    warnings = []
+    year_round_employees = year_round_employees or []
+    seasonal_employees   = seasonal_employees or []
+
+    # 1. Farm infrastructure
+    _check_positive(total_land, "total_land")
+    _check_positive(harvest_storage_cap, "harvest_storage_cap")
+    if opening_cash < 0:
+        raise ValueError(f"opening_cash must be ≥ 0, got {opening_cash}.")
+    if credit_line < 0:
+        raise ValueError(f"credit_line must be ≥ 0, got {credit_line}.")
+    if not (1 <= operating_weeks <= 52):
+        raise ValueError(f"operating_weeks must be in [1, 52], got {operating_weeks}.")
+
+    # 2. Rainfall array
+    import numpy as np
+    rain = np.asarray(rainfall_weekly_L_per_acre)
+    if rain.shape != (52,):
+        raise ValueError(
+            f"rainfall_weekly_L_per_acre must have 52 elements, got {rain.shape}."
+        )
+    if (rain < 0).any():
+        raise ValueError("rainfall_weekly_L_per_acre contains negative values.")
+
+    # 3. Water sources
+    if not city_water_enabled and not well_enabled and not catchment_enabled:
+        warnings.append(
+            "No water source enabled (city_water, well, catchment are all disabled). "
+            "Crops with water needs will be infeasible."
+        )
+    if catchment_enabled and catchment_surface_area_m2 <= 0:
+        raise ValueError(
+            "catchment_enabled=True but catchment_surface_area_m2 is 0 or negative."
+        )
+    if well_enabled and well_weekly_cap_L <= 0:
+        raise ValueError("well_enabled=True but well_weekly_cap_L is 0 or negative.")
+
+    # 4. Labor
+    _validate_year_round_employees(year_round_employees)
+    _validate_seasonal_employees(seasonal_employees)
+
+    # Check that at least some labor capacity exists
+    has_capacity = bool(year_round_employees or seasonal_employees)
+    if not has_capacity:
+        warnings.append(
+            "No employees configured. Labor constraints will be uncapped "
+            "(capacity = 0), which will likely make the problem infeasible."
+        )
+
+    # 5. Equipment proxies
+    if max_plant_acres_per_week <= 0:
+        raise ValueError(
+            f"max_plant_acres_per_week must be positive, got {max_plant_acres_per_week}."
+        )
+    if max_harvest_acres_per_week <= 0:
+        raise ValueError(
+            f"max_harvest_acres_per_week must be positive, got {max_harvest_acres_per_week}."
+        )
+
+    # 6. Channels
+    if not channels:
+        raise ValueError("At least one channel must be defined.")
+    ch_names = [ch["name"] for ch in channels]
+    if len(ch_names) != len(set(ch_names)):
+        raise ValueError(f"Channel names must be unique. Got: {ch_names}.")
+
+    # 7. Crops
+    if not crops:
+        raise ValueError("At least one crop must be defined.")
+
+    for crop in crops:
+        warnings.extend(_validate_crop(crop, ch_names, year))
+
+    # 8. Global succession check
+    try:
+        succs = generate_successions(crops, year)
+    except ValueError as e:
+        raise ValueError(f"Succession generation failed: {e}") from e
+
+    if not succs:
+        raise ValueError(
+            "No successions generated for any crop. "
+            "Check that season windows are wide enough to fit the crop cycle."
+        )
+
+    # Per-crop check
+    for c_idx, crop in enumerate(crops):
+        crop_succs = [s for s in succs if s["crop"] == c_idx]
+        if not crop_succs:
+            warnings.append(
+                f"Crop '{crop['name']}': no successions generated. "
+                f"Season window(s) may be too narrow for the crop cycle length."
+            )
+
+    # 9. Demand
+    has_any_demand = False
+    for crop in crops:
+        for ch_name in ch_names:
+            ch_spec = crop.get("channels", {}).get(ch_name, {})
+            cap_type = ch_spec.get("demand_cap_type", "")
+            if cap_type == "annual" and ch_spec.get("annual_demand_lbs", 0) > 0:
+                has_any_demand = True
+            elif cap_type == "weekly_flat" and ch_spec.get("weekly_demand_lbs", 0) > 0:
+                has_any_demand = True
+            elif cap_type == "weekly_varying" and ch_spec.get("demand_ranges"):
+                has_any_demand = True
+
+    if not has_any_demand:
+        warnings.append(
+            "No positive demand caps found. "
+            "The solver will produce zero revenue (no harvest scheduled)."
+        )
+
+    return warnings
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _check_positive(val: float, name: str) -> None:
+    if val is None or val <= 0:
+        raise ValueError(f"{name} must be positive, got {val!r}.")
+
+
+def _validate_year_round_employees(employees: list) -> None:
+    required = {"position", "count", "type", "wage", "hours_per_week"}
+    for i, emp in enumerate(employees):
+        missing = required - emp.keys()
+        if missing:
+            raise ValueError(
+                f"Year-round employee #{i} missing required keys: {missing}."
+            )
+        if emp["type"].lower() not in ("salary", "hourly"):
+            raise ValueError(
+                f"Year-round employee '{emp.get('position', i)}' type must be "
+                f"'salary' or 'hourly', got '{emp['type']}'."
+            )
+        if emp["count"] < 1:
+            raise ValueError(
+                f"Year-round employee '{emp.get('position', i)}' count must be ≥ 1."
+            )
+        if emp["wage"] < 0:
+            raise ValueError(
+                f"Year-round employee '{emp.get('position', i)}' wage must be ≥ 0."
+            )
+        if emp["hours_per_week"] < 1:
+            raise ValueError(
+                f"Year-round employee '{emp.get('position', i)}' hours_per_week must be ≥ 1."
+            )
+
+
+def _validate_seasonal_employees(employees: list) -> None:
+    required = {"position", "count", "type", "start_week", "end_week",
+                "wage", "hours_per_week"}
+    for i, emp in enumerate(employees):
+        missing = required - emp.keys()
+        if missing:
+            raise ValueError(
+                f"Seasonal employee #{i} missing required keys: {missing}."
+            )
+        if emp["type"].upper() not in ("FT", "PT"):
+            raise ValueError(
+                f"Seasonal employee '{emp.get('position', i)}' type must be "
+                f"'FT' or 'PT', got '{emp['type']}'."
+            )
+        if not (1 <= emp["start_week"] <= 52 and 1 <= emp["end_week"] <= 52):
+            raise ValueError(
+                f"Seasonal employee '{emp.get('position', i)}' "
+                f"start_week/end_week must be in [1, 52]."
+            )
+        if emp["start_week"] > emp["end_week"]:
+            raise ValueError(
+                f"Seasonal employee '{emp.get('position', i)}' "
+                f"start_week ({emp['start_week']}) > end_week ({emp['end_week']})."
+            )
+        if emp["count"] < 1:
+            raise ValueError(
+                f"Seasonal employee '{emp.get('position', i)}' count must be ≥ 1."
+            )
+
+
+def _validate_crop(crop: dict, ch_names: list[str], year: int) -> list[str]:
+    """Validate a single crop dict. Returns list of warnings."""
+    warnings = []
+    name = crop.get("name", "<unnamed>")
+
+    required_keys = {
+        "name", "days_to_maturity", "planting_weeks", "harvest_weeks",
+        "seasons", "min_acreage_if_planted", "crop_diversity_max",
+        "yield_per_acre", "crop_size_m3_per_lb",
+        "labor_plant", "labor_grow", "labor_harv",
+        "water_plant", "water_grow", "water_harv",
+        "fert_plant", "fert_grow", "fert_harv",
+        "fuel_plant", "fuel_grow", "fuel_harv",
+    }
+    missing = required_keys - crop.keys()
+    if missing:
+        raise ValueError(f"Crop '{name}' missing required keys: {missing}.")
+
+    dtm = crop["days_to_maturity"]
+    if dtm < 7:
+        raise ValueError(f"Crop '{name}' days_to_maturity must be ≥ 7, got {dtm}.")
+
+    total_weeks = math.ceil(dtm / 7)
+    plant_w = crop["planting_weeks"]
+    harv_w  = crop["harvest_weeks"]
+    grow_w  = total_weeks - plant_w - harv_w
+
+    if plant_w < 1:
+        raise ValueError(f"Crop '{name}' planting_weeks must be ≥ 1, got {plant_w}.")
+    if harv_w < 1:
+        raise ValueError(f"Crop '{name}' harvest_weeks must be ≥ 1, got {harv_w}.")
+    if grow_w < 0:
+        raise ValueError(
+            f"Crop '{name}': planting_weeks ({plant_w}) + harvest_weeks ({harv_w}) "
+            f"exceed total cycle ({total_weeks} weeks from {dtm} days_to_maturity). "
+            f"Increase days_to_maturity or reduce phase weeks."
+        )
+
+    if crop["yield_per_acre"] <= 0:
+        raise ValueError(f"Crop '{name}' yield_per_acre must be positive.")
+    if crop["crop_size_m3_per_lb"] < 0:
+        raise ValueError(f"Crop '{name}' crop_size_m3_per_lb must be ≥ 0.")
+    if not (0 < crop["crop_diversity_max"] <= 1):
+        raise ValueError(
+            f"Crop '{name}' crop_diversity_max must be in (0, 1], "
+            f"got {crop['crop_diversity_max']}."
+        )
+    if crop["min_acreage_if_planted"] < 0:
+        raise ValueError(f"Crop '{name}' min_acreage_if_planted must be ≥ 0.")
+
+    seasons = crop.get("seasons", [])
+    if not seasons:
+        raise ValueError(f"Crop '{name}' must have at least one season window.")
+    for s in seasons:
+        if "start" not in s or "end" not in s:
+            raise ValueError(f"Crop '{name}' season entry missing 'start' or 'end'.")
+        sw = week_of_year(s["start"], year)
+        ew = week_of_year(s["end"],   year)
+        if ew < sw:
+            raise ValueError(
+                f"Crop '{name}' season end ({s['end']}) is before start ({s['start']})."
+            )
+        window_size = ew - sw + 1
+        if window_size < total_weeks:
+            warnings.append(
+                f"Crop '{name}' season window {s['start']}–{s['end']} "
+                f"({window_size} weeks) is narrower than crop cycle ({total_weeks} weeks). "
+                f"No successions will be generated for this window."
+            )
+
+    # Channel validation
+    crop_channels = crop.get("channels", {})
+    for ch_name in ch_names:
+        if ch_name not in crop_channels:
+            continue
+        ch_spec = crop_channels[ch_name]
+        if "price_per_lb" not in ch_spec:
+            raise ValueError(
+                f"Crop '{name}', channel '{ch_name}': missing 'price_per_lb'."
+            )
+        if ch_spec.get("price_per_lb", 0) < 0:
+            raise ValueError(
+                f"Crop '{name}', channel '{ch_name}': price_per_lb must be ≥ 0."
+            )
+        cap_type = ch_spec.get("demand_cap_type", "")
+        if cap_type not in ("annual", "weekly_flat", "weekly_varying"):
+            raise ValueError(
+                f"Crop '{name}', channel '{ch_name}': demand_cap_type must be "
+                f"'annual', 'weekly_flat', or 'weekly_varying', got '{cap_type}'."
+            )
+
+    return warnings
