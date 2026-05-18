@@ -394,15 +394,17 @@ def solve_farm_v2(
     #       Caps the total across the window to the actual harvest volume.
     #   C1 (land/field occupancy) is unchanged — spread window is post-harvest.
     #
-    # Pre-compute per-succession spread and last harvest week.
-    succ_spread    = []  # int S ∈ [1,8]
-    succ_last_harv = []  # last harvest week (or None if no harvest phase)
+    # Pre-compute per-succession spread, last harvest week, and harvest week count.
+    succ_spread       = []  # int S ∈ [1,8]
+    succ_last_harv    = []  # last harvest week (or None if no harvest phase)
+    succ_n_harv_weeks = []  # number of harvest-phase weeks per succession
     for i in range(N_S):
         crop_i = crops[successions[i]["crop"]]
         S = max(1, min(8, int(crop_i.get("sales_spread_weeks", 1) or 1)))
         succ_spread.append(S)
         harv_wks = [w for w in successions[i]["weeks"] if phase_table[i][w] == 2]
         succ_last_harv.append(harv_wks[-1] if harv_wks else None)
+        succ_n_harv_weeks.append(max(1, len(harv_wks)))  # max(1,...) avoids div-by-zero
 
     # Build spread_window[i] = set of weeks where succession i can sell (post-harvest window)
     # For spread=1 this equals the harvest weeks.  For spread>1 it is [H .. H+S-1].
@@ -432,10 +434,16 @@ def solve_farm_v2(
                 if successions[i]["crop"] != c_idx:
                     continue
                 if w in spread_window[i]:
-                    # This succession can supply sales in week w
-                    col_v.append(
-                        (idx_x_start + i, -total_land * crop["yield_per_acre"])
-                    )
+                    if succ_spread[i] <= 1:
+                        # Spread evenly across harvest weeks so total supply = yield_per_acre.
+                        # Without this division each harvest week independently allows the full
+                        # yield, letting the optimizer sell n_harv_weeks × yield_per_acre total.
+                        supply = total_land * crop["yield_per_acre"] / succ_n_harv_weeks[i]
+                    else:
+                        # spread>1: cumulative constraint (C5b) caps the total; per-week
+                        # supply stays at full yield so any week in the window can clear it.
+                        supply = total_land * crop["yield_per_acre"]
+                    col_v.append((idx_x_start + i, -supply))
             add_row(col_v, -np.inf, 0.0)
 
     # (b) Cumulative window rows — one per spread>1 succession
@@ -463,12 +471,12 @@ def solve_farm_v2(
                 flat_idx = idx_v_start + _vcw_index(c_idx, ch_idx, w, n_channels, N_WEEKS)
                 add_row([(flat_idx, 1.0)], -np.inf, cap_w)
 
-    # C7 — Production ≤ total market
+    # C7 — Production ≤ total market (consistent with C5 even-spread fix)
     for c_idx in range(n_crops):
         crop = crops[c_idx]
         for w in range(1, N_WEEKS + 1):
             cols = [
-                (idx_x_start + i, total_land * crop["yield_per_acre"])
+                (idx_x_start + i, total_land * crop["yield_per_acre"] / succ_n_harv_weeks[i])
                 for i in range(N_S)
                 if successions[i]["crop"] == c_idx and phase_table[i][w] == 2
             ]
