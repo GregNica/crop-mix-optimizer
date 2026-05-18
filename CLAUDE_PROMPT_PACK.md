@@ -2888,6 +2888,393 @@ At the end, report:
 
 ---
 
+## Phase 4.3.3 Prompt — Progressive Disclosure Refinement + Depreciation Model
+
+Companion implementation guide: see PHASE_4_3_3_IMPLEMENTATION.md for implementation-level decomposition, wiring expectations, and verification structure.
+
+```text
+Implement a strict Phase 4.3.3 refinement immediately after Phase 4.3.2.
+
+Primary goals:
+1. Apply 11 post-4.3.2 user-feedback fixes across progressive disclosure, parameter omission behavior, and fixed-cost depreciation modeling.
+2. Keep guided flow behavior and solver core optimization logic unchanged.
+3. Improve correctness of optional-field handling so hidden/off controls are truly omitted from run payloads.
+
+Hard scope guardrails:
+1. Do not modify solver objective, constraints structure, or What-If/Monte Carlo scenario math.
+2. Keep deterministic baseline behavior backward-compatible (all-toggle-enabled path should match Phase 4.3.2 within floating tolerance).
+3. Keep existing saved/default inputs compatible; add migration-safe defaults for any new fields.
+
+Required updates (all 11 required):
+
+1. Progressive-disclosure toggle defaults:
+- Set all required PD toggles to unchecked by default on fresh load.
+- Hidden groups must start visually hidden and remain non-blocking until enabled.
+- Include at minimum:
+  a) pd-cash
+  b) pd-machinery
+  c) pd-harvest-storage
+  d) pd-irrig-fert
+  e) pd-machinery-rates
+  f) pd-ch-vardetail
+  g) pd-phase-detail
+
+2. Harvest-storage group relocation and depreciation:
+- Move harvest-storage controls into a toggle-controlled group: "Account for harvest storage and refrigeration costs?"
+- Reveal fields when enabled:
+  a) harvest_storage_cap
+  b) harvest_storage_cost_per_m3 (capital cost basis)
+  c) depreciation_harvest_years (default 25)
+- Add helper text: weekly equivalent cost is capital basis divided by (years x 52).
+
+3. Water tank depreciation model in Water section:
+- Add/relocate controls under Water:
+  a) water_tank_capacity_L
+  b) water_tank_cost_per_L
+  c) depreciation_water_years (default 20)
+- Show helper formula:
+  Weekly cost = (Capacity x Cost/L) / (Depreciation Years x 52)
+- Use this weekly-equivalent value in fixed-cost accounting.
+
+4. Depreciation model for irrigation/equipment/fuel storage:
+- Replace simple weekly-rate-only assumptions for these assets with capital+depreciation inputs:
+  a) irrigation_cost_per_acre + depreciation_irrigation_years
+  b) equip_storage_cost_per_m3 + depreciation_equip_years
+  c) fuel_storage_cost_per_L + depreciation_fuel_years
+- Compute weekly equivalents and include in fixed-cost total consistently.
+
+5. Optimize affordance relocation:
+- Move per-section Optimize affordance to the top section control zone (below stepper/nav context).
+- Keep lock-state parity with global/top Optimize behavior.
+- Optional bottom reminder affordance is allowed only if lock-state and copy remain identical.
+
+6. Sales-channel detail hiding when OFF:
+- Ensure channel variable/fixed cost detail fields are hidden by default when pd-ch-vardetail is OFF.
+- Reveal/hide must be wired to one canonical container and toggle handler.
+
+7. Crop section dual-toggle structure:
+- Provide two independent crop toggles (both unchecked by default):
+  a) Crop-specific variable costs (fertilizer/pesticide/fuel style controls)
+  b) Phase-specific resource usage splits (planting/growing/harvesting)
+- Labor and water baseline requirements must remain present per existing required-minimum rules.
+
+8. MC naming refinement in crop section:
+- Rename user-facing MC wording from narrow "yield uncertainty" framing to broader historical uncertainty framing (yield/price/demand scope).
+
+9. Uncertainty suggestion pills near key crop inputs:
+- Add non-intrusive historical-data suggestion pills beside demand, price, and yield controls.
+- Clicking a pill should focus/open/highlight the relevant historical upload area.
+
+10. Parameter omission correctness when toggles are OFF (P0):
+- Hidden/off groups must be omitted from run params payload, not merely hidden visually.
+- In params assembly, use conditional inclusion so optional groups are absent when toggle OFF.
+- Solver must gracefully accept missing optional params via defaults.
+
+11. Comprehensive combination testing:
+- Validate all-on, all-off, and mixed-toggle combinations.
+- Validate depreciation edge values (for example 1 year and 100 years) do not crash.
+- Validate old saved-input paths still load and run.
+
+Required fixed-cost expression alignment:
+1. Convert capital inputs to weekly equivalents via:
+   weekly_component = capital_basis / (depreciation_years x 52)
+2. Apply this to harvest storage, water tank, irrigation, equipment storage, and fuel storage components.
+3. Include weekly components consistently in fixed-cost totals and cash-flow-related fixed charges.
+
+Testing requirements:
+1. Toggle-default test:
+- Fresh load shows target toggles unchecked; revealed groups hidden.
+
+2. Parameter-omission test:
+- OFF toggles produce payloads that omit their optional fields.
+- ON toggles include those fields.
+
+3. Depreciation-calculation test:
+- Each new depreciation-mode component computes expected weekly equivalent values.
+
+4. UI-visibility test:
+- Section top Optimize button is visible and lock-state synchronized with global Optimize.
+- Channel detail fields and crop optional groups show/hide correctly.
+
+5. Naming-and-pill test:
+- Updated historical uncertainty naming appears.
+- Pills render near demand/price/yield and route users to upload area.
+
+6. Compatibility/regression test:
+- Deterministic baseline solve unchanged when equivalent settings are provided.
+- What-If, MC run flow, and exports remain functional.
+
+Acceptance criteria:
+1. All 11 feedback items are implemented and verifiable.
+2. Toggle OFF means field omission from payload, not just hidden UI.
+3. Depreciation model is applied consistently across required fixed-cost assets.
+4. Per-section Optimize placement and lock-state behavior are consistent.
+5. Existing solver behavior remains stable under equivalent parameter settings.
+6. Existing tests pass; new targeted tests for this phase pass.
+
+At the end, report:
+1. Files changed
+2. Confirmation status for each of the 11 required updates
+3. New depreciation fields and defaults introduced
+4. Final optional-parameter omission rule implemented
+5. Fixed-cost depreciation formula summary
+6. Test summary (toggle matrix + depreciation + regression)
+7. Any deferred items with explicit reason
+8. Cross-reference confirmation against PHASE_4_3_3_IMPLEMENTATION.md
+```
+
+---
+
+## Phase 4.3.3.1 Patch — Post-Feedback UX Corrections (Prompt-Only)
+
+```text
+Implement a strict Phase 4.3.3.1 correction pass immediately after Phase 4.3.3 based on direct user feedback.
+
+Primary goals:
+1. Correct unresolved progressive-disclosure behavior and toggle wiring defects from 4.3.3 implementation.
+2. Improve Farm Basics grouping clarity and reduce depreciation input burden.
+3. Keep solver objective/constraints and scenario math unchanged.
+
+Hard scope guardrails:
+1. Do not modify solver objective, constraint set, or Monte Carlo/What-If math.
+2. This phase is UX wiring + parameter exposure logic only.
+3. Keep backward compatibility for existing saved inputs.
+
+Required updates (address all 11 feedback items):
+
+1. Sales-channel toggle default visibility fix:
+- "Add variable and fixed selling costs per channel?" may remain unchecked by default.
+- When unchecked on first render, all dependent channel cost fields must be hidden immediately (no first-toggle-needed state).
+- Ensure initial render path and toggle-change path share one canonical hide/show function.
+
+2. Farm Basics machinery-rate layout grouping:
+- Under "Set custom machinery, fuel, and equipment storage rates", reorganize controls into logical grouped rows/blocks.
+- Group by asset type and keep labels/units visually aligned.
+- Remove jumpy ordering that mixes unrelated fields.
+
+3. New Farm Basics toggle for fertilizer+pesticide/herbicide variable costs:
+- Add toggle label: "Incorporate variable costs of fertilizer and pesticide/herbicides".
+- Toggle ON reveals:
+  a) fertilizer cost field,
+  b) pesticide/herbicide cost field.
+- Toggle OFF hides both.
+
+4. Cross-section linkage for the new variable-cost toggle:
+- Farm Basics variable-cost toggle and Crop-section variable-cost toggle must be synchronized.
+- Turning ON/OFF in either section updates the other section state and revealed fields accordingly.
+
+5. Fix non-functional crop variable-cost toggle:
+- "Add crop-specific variable costs?" must actively control visibility of intended crop-level fields.
+- Remove any dead toggle state where UI label changes but no fields are affected.
+
+6. Phase-split behavior for labor/water (always available):
+- Labor and water inputs must always be present.
+- If phase-specific splits are OFF: show single baseline value per resource.
+- If phase-specific splits are ON: replace single baseline field with planting/growing/harvesting fields.
+
+7. Phase-split behavior for fertilizer+pesticide/herbicide (conditional availability):
+- Fertilizer and pesticide/herbicide controls are available only when variable-cost toggle is ON (from either linked section).
+- When available and phase-split OFF: show one baseline field each.
+- When available and phase-split ON: replace each with planting/growing/harvesting fields.
+
+8. Depreciation input simplification:
+- Remove user-facing custom depreciation-year editing for these fixed assets in this phase.
+- Use fixed industry-standard defaults (research-backed) in implementation.
+- Document those fixed defaults in tooltip "?" pop-outs and assumptions/limitations copy.
+- Keep values deterministic and clearly disclosed.
+
+9. Historical-data icon parity for channel inputs:
+- Keep yield historical-data icon behavior.
+- Add equivalent icon affordance to price and demand inputs for each channel entry.
+- Icon action should route/focus users to the historical upload workflow.
+
+10. Water tank placement cleanup:
+- Remove water tank cost/capacity controls from Farm Basics now that canonical ownership is in Water.
+- Keep water tank controls only in Water section to avoid duplicated/conflicting inputs.
+- Ensure params payload is sourced from Water section fields only.
+
+11. Cash-toggle feasibility/constraint behavior fix:
+- If "Is cash a constraint?" is OFF, cash constraints must be disabled in optimizer behavior (not forced through zero-value inputs).
+- Do not create infeasibility by setting opening_cash=0/credit_line=0 while still enforcing cash constraints.
+- OFF state must allow optimization to run without cash-constraint gating.
+- ON state must preserve existing cash-constraint behavior.
+
+Testing requirements:
+1. Initial-render visibility test:
+- Channel cost fields are hidden on first load when channel variable-cost toggle is unchecked.
+
+2. Toggle-sync test (cross-section):
+- Farm Basics variable-cost toggle and Crop toggle stay synchronized both directions.
+
+3. Crop-toggle functional test:
+- "Add crop-specific variable costs?" now reveals/hides the intended crop fields.
+
+4. Phase-split matrix test:
+- Validate 4 states:
+  a) variable-cost OFF + phase-split OFF,
+  b) variable-cost ON + phase-split OFF,
+  c) variable-cost ON + phase-split ON,
+  d) variable-cost OFF + phase-split ON (fert/pesticide hidden; labor/water logic intact).
+
+5. Depreciation-default lock test:
+- User cannot freely edit depreciation years in this phase.
+- Tooltips/assumptions show fixed standard values and rationale.
+
+6. Icon placement test:
+- Historical-data icons appear for yield, per-channel price, and per-channel demand.
+
+7. Water-tank-single-source test:
+- Farm Basics no longer renders water tank controls.
+- Water section remains the only UI location for water tank cost/capacity controls.
+
+8. Cash-toggle feasibility test:
+- With cash toggle OFF, optimizer run remains feasible and completes successfully.
+- With cash toggle ON, cash constraints activate and are enforced as designed.
+
+9. Regression test:
+- Deterministic baseline solve unchanged.
+- Existing What-If, MC, and export flows remain functional.
+
+Acceptance criteria:
+1. All 11 feedback items are resolved and demonstrable.
+2. First-render toggle behavior matches visual state (no stale exposed fields).
+3. Cross-section variable-cost toggles are synchronized and deterministic.
+4. Labor/water always available with flat-vs-phase replacement behavior.
+5. Fertilizer/pesticide controls obey variable-cost and phase-split interaction rules.
+6. Depreciation is simplified to fixed standards with clear disclosure.
+7. Historical-data affordances are present on yield/price/demand inputs.
+
+At the end, report:
+1. Files changed
+2. Root cause and fix for each of the 11 feedback items
+3. Final toggle state model (including cross-section sync rules)
+4. Final resource-field display matrix (flat vs phase-split)
+5. Fixed depreciation standards used and disclosure text
+6. Water-tank single-source-of-truth confirmation (Water-only)
+7. Cash-toggle OFF behavior confirmation (constraint disabled, run feasible)
+8. Test summary (9 areas + regression)
+```
+
+---
+
+## Phase 4.3.3.2 Patch — Evidence-Locked Toggle/Visibility Remediation
+
+```text
+Implement a strict Phase 4.3.3.2 remediation pass immediately after 4.3.3.1.
+
+Purpose:
+Resolve the gap between reported completion and observed UI behavior by requiring runtime-evidence validation for each critical toggle/visibility rule.
+
+Critical context:
+1. Prior report marked several items complete.
+2. User-observed behavior still indicates unresolved defects.
+3. This phase is mandatory evidence-locked remediation, not checklist-only completion.
+
+Hard scope guardrails:
+1. Do not change solver objective/constraints or Monte Carlo/What-If math.
+2. Focus on UI state wiring, first-render behavior, and cross-section synchronization.
+3. Do not declare completion if any runtime behavior still fails user-observed scenarios.
+
+Required corrections (must pass at runtime):
+
+1. Sales-channel first-render bug must be fully eliminated:
+- If "Add variable and fixed selling costs per channel?" is unchecked on first load, dependent fields are hidden immediately.
+- No "toggle once then works" behavior is allowed.
+
+2. Farm Basics machinery/fuel/equipment grouping must be logically organized:
+- Related fields grouped by asset type with stable visual order.
+- No interleaving/jumpiness across unrelated fields.
+
+3. Farm Basics variable-cost toggle must exist and function:
+- "Incorporate variable costs of fertilizer and pesticide/herbicides" controls fertilizer and pesticide/herbicide cost fields.
+
+4. Farm Basics and Crop variable-cost toggles must be linked:
+- ON/OFF in either section synchronizes the other deterministically.
+- No stale or one-way state updates.
+
+5. Crop "Add crop-specific variable costs?" must actively toggle real fields:
+- Must not be a no-op.
+- Must show/hide intended crop-level variable-cost inputs.
+
+6. Labor/water phase-split logic must follow required baseline behavior:
+- Always available.
+- OFF = one baseline field per resource.
+- ON = planting/growing/harvesting fields replace baseline field.
+
+7. Fertilizer/pesticide phase-split behavior must be conditional and coherent:
+- Only visible when variable-cost toggle is ON (either linked section).
+- With phase-split OFF: one baseline field each.
+- With phase-split ON: three phase fields each.
+
+8. Depreciation inputs must be simplified to fixed standards:
+- User-facing free-form depreciation-year editing removed/locked for this phase.
+- Tooltip and assumptions text must disclose fixed standards and rationale.
+
+9. Historical-data icons must be complete:
+- Keep yield icon.
+- Add same affordance to per-channel price and per-channel demand.
+
+10. Water tank controls must be Water-only:
+- Remove water tank cost/capacity controls from Farm Basics.
+- Confirm Water section is the only rendered/editable source for water tank inputs.
+- Confirm payload wiring reads water tank values from Water section source only.
+
+11. Cash-toggle OFF must disable cash constraints (P0):
+- If "Is cash a constraint?" is OFF, cash-related constraints are not enforced.
+- OFF must not rely on zeroing opening_cash/credit_line while leaving constraints active.
+- Verify optimization remains feasible and runs to completion with cash toggle OFF.
+- Verify ON path still enforces cash constraints.
+
+Mandatory evidence format (required):
+1. State table for each relevant toggle:
+- Toggle name | default state | first-render dependent visibility | ON visibility | OFF visibility | synced counterpart (if any)
+
+2. Runtime proof snapshots (or equivalent DOM-state captures):
+- Initial load before any toggle interaction.
+- After ON then OFF cycle.
+- Cross-section toggle sync both directions.
+
+3. Explicit contradiction check against prior completion claims:
+- For each previously marked "complete", report PASS/FAIL under real runtime validation.
+
+4. Resource-display matrix proof:
+- variable-cost toggle x phase-split toggle matrix with visible field sets for:
+  a) labor,
+  b) water,
+  c) fertilizer,
+  d) pesticide/herbicide.
+
+Testing requirements:
+1. First-render regression test for sales-channel dependent fields.
+2. Bidirectional toggle-sync test (Farm Basics <-> Crop).
+3. No-op guard test for crop variable-cost toggle.
+4. 4-state matrix tests for variable-cost x phase-split combinations.
+5. Depreciation lock/disclosure tests.
+6. Icon presence and click-routing tests for yield/price/demand.
+7. Water-tank single-source test (Farm Basics absent, Water present, payload source verified).
+8. Cash-toggle constraint-mode test (OFF=constraints disabled and feasible, ON=constraints enforced).
+9. Deterministic baseline regression test (no solver-math changes).
+
+Acceptance criteria:
+1. All 11 issues pass runtime behavior checks, not only static code checks.
+2. No unresolved UI state mismatch remains from user-reported scenarios.
+3. Completion is blocked if any "first-load vs after-toggle" inconsistency remains.
+4. Existing deterministic solve outputs remain unchanged.
+
+At the end, report:
+1. Files changed
+2. PASS/FAIL for each of the 11 issues under runtime validation
+3. Toggle/state truth table
+4. Resource-display matrix outcomes
+5. Water-tank placement verification (Farm Basics removed, Water retained)
+6. Depreciation fixed-standards values and disclosure text
+7. Evidence artifacts summary (what was captured and where)
+8. Cash-toggle OFF evidence summary (feasible run + constraint mode)
+9. Final regression summary
+```
+
+---
+
 ## Phase 5 Prompt — Optional Labor Flex as Decision Variable
 
 ```text
