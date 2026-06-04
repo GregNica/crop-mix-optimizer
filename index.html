@@ -5298,7 +5298,7 @@ function stopProgress(timers, fillEl, labelEl, success) {
 function validateParams(params) {
   const errors = [];
   if (!(params.total_land > 0)) errors.push('Total land must be > 0 acres.');
-  if (!(params.opening_cash >= 0)) errors.push('Opening cash must be ≥ 0.');
+  if ('opening_cash' in params && !(params.opening_cash >= 0)) errors.push('Opening cash must be ≥ 0.');
   if (!params.employees || params.employees.length === 0) errors.push('Add at least one labor position.');
   if (!params.channels || params.channels.length === 0) errors.push('Add at least one sales channel.');
   if (!params.crops || params.crops.length === 0) errors.push('Add at least one crop.');
