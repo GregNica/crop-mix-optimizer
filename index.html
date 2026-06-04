@@ -1590,6 +1590,13 @@
     <!-- Right: scrollable results -->
     <div id="results-main">
 
+      <!-- Land-rent nudge banner (shown once per session when property rent = $0) -->
+      <div id="land-rent-nudge" style="display:none;align-items:flex-start;gap:0.6rem;background:#fffbeb;border:1.5px solid #d97706;border-radius:9px;padding:0.65rem 1rem;margin-bottom:0.8rem;font-size:0.79rem;color:#92400e">
+        <span style="font-size:1.1rem;line-height:1">⚠</span>
+        <span style="flex:1"><strong>Land rent/mortgage is set to $0.</strong> If you lease this land or carry a mortgage, add the weekly cost in <em>Farm Basics → Fixed Costs</em> — omitting it will overstate profit. Typical range: $500–$3,000/week for a 150-acre leased or financed operation.</span>
+        <button onclick="document.getElementById('land-rent-nudge').style.display='none'" style="background:none;border:none;cursor:pointer;color:#92400e;font-size:1rem;line-height:1;padding:0">✕</button>
+      </div>
+
       <!-- Phase 3.5.1: sales-spread caveat banner (hidden unless spread>1 crop present) -->
       <div id="spread-caveat-banner" style="display:none;background:#fffbeb;border:1.5px solid #d97706;border-radius:9px;padding:0.65rem 1rem;margin-bottom:0.8rem;font-size:0.79rem;color:#92400e">
         <strong>&#9432; Sales Spread active</strong> — one or more crops use a multi-week sales window.
@@ -2121,29 +2128,29 @@ function diversitySelect(val) {
 
 const CROP_TEMPLATES = {
   "— Select Template —": null,
-  "Spinach":         {days_to_maturity:42,  planting_weeks:1, harvest_weeks:2, s1_start:"02-01",s1_end:"06-15",s2_start:"08-01",s2_end:"11-15", min_acreage_if_planted:2,  crop_diversity_max:0.50, yield_per_acre:3250,  lbs_per_tote:31, planting_type:"seed",      seed_transplant_cost_per_acre:280, labor_plant:15.0, labor_grow:4.0, labor_harv:50.0, water_plant:10400,water_grow:12700,water_harv:9200,  fert_plant:0.46,fert_grow:0.35,fert_harv:0.23, fuel_plant:3.5,fuel_grow:1.8,fuel_harv:4.6, channels_data:{"Wholesale":{price:1.10,pkg:0.09,demand_type:"weekly_flat",demand_value:25000,demand_season:""},"Farmers Market":{price:2.10,pkg:0.18,demand_type:"weekly_varying",demand_value:6000,demand_season:"W10-W48"}}},
+  "Spinach":         {days_to_maturity:42,  planting_weeks:1, harvest_weeks:2, s1_start:"02-01",s1_end:"06-15",s2_start:"08-01",s2_end:"11-15", min_acreage_if_planted:2,  crop_diversity_max:0.50, yield_per_acre:5000,  lbs_per_tote:31, planting_type:"seed",      seed_transplant_cost_per_acre:280, labor_plant:15.0, labor_grow:4.0, labor_harv:50.0, water_plant:10400,water_grow:12700,water_harv:9200,  fert_plant:0.46,fert_grow:0.35,fert_harv:0.23, fuel_plant:3.5,fuel_grow:1.8,fuel_harv:4.6, channels_data:{"Wholesale":{price:1.00,pkg:0.09,demand_type:"weekly_flat",demand_value:25000,demand_season:""},"Farmers Market":{price:2.75,pkg:0.18,demand_type:"weekly_varying",demand_value:6000,demand_season:"W10-W48"}}},
   "Lettuce (Head)":  {days_to_maturity:70,  planting_weeks:1, harvest_weeks:1, s1_start:"02-01",s1_end:"06-01",s2_start:"08-01",s2_end:"11-15", min_acreage_if_planted:2,  crop_diversity_max:0.45, yield_per_acre:16000, lbs_per_tote:50, planting_type:"transplant", seed_transplant_cost_per_acre:350, labor_plant:3.5, labor_grow:2.5, labor_harv:16.0, water_plant:9200, water_grow:11500,water_harv:8100,  fert_plant:0.35,fert_grow:0.28,fert_harv:0.15, fuel_plant:3.5,fuel_grow:1.5,fuel_harv:4.0, channels_data:{"Wholesale":{price:0.70,pkg:0.06,demand_type:"weekly_flat",demand_value:32000,demand_season:""},"Farmers Market":{price:1.50,pkg:0.12,demand_type:"weekly_varying",demand_value:4000,demand_season:"W10-W48"}}},
   "Kale":            {days_to_maturity:60,  planting_weeks:1, harvest_weeks:3, s1_start:"02-01",s1_end:"06-01",s2_start:"07-15",s2_end:"12-01", min_acreage_if_planted:2,  crop_diversity_max:0.40, yield_per_acre:7500,  lbs_per_tote:20, planting_type:"transplant", seed_transplant_cost_per_acre:300, labor_plant:3.0, labor_grow:2.5, labor_harv:22.0, water_plant:9200, water_grow:11500,water_harv:8100,  fert_plant:0.40,fert_grow:0.30,fert_harv:0.20, fuel_plant:3.5,fuel_grow:1.5,fuel_harv:4.0, channels_data:{"Wholesale":{price:0.90,pkg:0.08,demand_type:"weekly_flat",demand_value:15000,demand_season:""},"Farmers Market":{price:2.00,pkg:0.16,demand_type:"weekly_varying",demand_value:3500,demand_season:"W10-W48"}}},
   "Swiss Chard":     {days_to_maturity:60,  planting_weeks:1, harvest_weeks:4, s1_start:"03-01",s1_end:"07-01",s2_start:"07-15",s2_end:"11-15", min_acreage_if_planted:1,  crop_diversity_max:0.35, yield_per_acre:8000,  lbs_per_tote:18, planting_type:"seed",      seed_transplant_cost_per_acre:220, labor_plant:2.8, labor_grow:2.2, labor_harv:20.0, water_plant:9200, water_grow:11500,water_harv:8100,  fert_plant:0.38,fert_grow:0.28,fert_harv:0.18, fuel_plant:3.2,fuel_grow:1.5,fuel_harv:3.8, channels_data:{"Wholesale":{price:0.80,pkg:0.07,demand_type:"weekly_flat",demand_value:16000,demand_season:""},"Farmers Market":{price:1.80,pkg:0.15,demand_type:"weekly_varying",demand_value:2800,demand_season:"W12-W46"}}},
   "Arugula":         {days_to_maturity:40,  planting_weeks:1, harvest_weeks:2, s1_start:"03-01",s1_end:"06-01",s2_start:"08-01",s2_end:"11-01", min_acreage_if_planted:1,  crop_diversity_max:0.30, yield_per_acre:2800,  lbs_per_tote:15, planting_type:"seed",      seed_transplant_cost_per_acre:200, labor_plant:2.5, labor_grow:2.0, labor_harv:20.0, water_plant:8100, water_grow:9200, water_harv:8100,  fert_plant:0.30,fert_grow:0.23,fert_harv:0.15, fuel_plant:2.8,fuel_grow:1.4,fuel_harv:3.5, channels_data:{"Wholesale":{price:1.20,pkg:0.10,demand_type:"weekly_flat",demand_value:5500,demand_season:""},"Farmers Market":{price:2.50,pkg:0.20,demand_type:"weekly_varying",demand_value:1800,demand_season:"W12-W46"}}},
   "Broccoli":        {days_to_maturity:70,  planting_weeks:1, harvest_weeks:2, s1_start:"02-15",s1_end:"06-01",s2_start:"07-15",s2_end:"11-01", min_acreage_if_planted:2,  crop_diversity_max:0.40, yield_per_acre:8500,  lbs_per_tote:40, planting_type:"transplant", seed_transplant_cost_per_acre:380, labor_plant:4.0, labor_grow:2.5, labor_harv:18.0, water_plant:11500,water_grow:15000,water_harv:11500, fert_plant:0.58,fert_grow:0.46,fert_harv:0.23, fuel_plant:4.0,fuel_grow:2.0,fuel_harv:4.5, channels_data:{"Wholesale":{price:0.75,pkg:0.07,demand_type:"weekly_flat",demand_value:17000,demand_season:""},"Farmers Market":{price:1.60,pkg:0.14,demand_type:"weekly_varying",demand_value:3500,demand_season:"W10-W46"}}},
   "Cabbage":         {days_to_maturity:70,  planting_weeks:1, harvest_weeks:1, s1_start:"03-01",s1_end:"07-01",s2_start:"07-15",s2_end:"11-01", min_acreage_if_planted:2,  crop_diversity_max:0.35, yield_per_acre:25000, lbs_per_tote:55, planting_type:"transplant", seed_transplant_cost_per_acre:320, labor_plant:3.5, labor_grow:2.2, labor_harv:16.0, water_plant:10400,water_grow:13800,water_harv:10400, fert_plant:0.46,fert_grow:0.35,fert_harv:0.23, fuel_plant:3.8,fuel_grow:1.8,fuel_harv:4.2, channels_data:{"Wholesale":{price:0.30,pkg:0.04,demand_type:"weekly_flat",demand_value:50000,demand_season:""},"Farmers Market":{price:0.75,pkg:0.10,demand_type:"weekly_varying",demand_value:6000,demand_season:"W12-W46"}}},
-  "Napa Cabbage":    {days_to_maturity:70,  planting_weeks:1, harvest_weeks:2, s1_start:"03-01",s1_end:"07-01",s2_start:"07-15",s2_end:"11-01", min_acreage_if_planted:2,  crop_diversity_max:0.40, yield_per_acre:10000, lbs_per_tote:27, planting_type:"seed",      seed_transplant_cost_per_acre:160, labor_plant:8.0,  labor_grow:0.7, labor_harv:30.0, water_plant:9000, water_grow:12000,water_harv:10000, fert_plant:0.40,fert_grow:0.28,fert_harv:0.18, fuel_plant:3.0,fuel_grow:1.5,fuel_harv:3.8, channels_data:{"Wholesale":{price:0.65,pkg:0.07,demand_type:"weekly_flat",demand_value:14600,demand_season:""},"Farmers Market":{price:1.25,pkg:0.14,demand_type:"weekly_flat",demand_value:3600,demand_season:""}}},
+  "Napa Cabbage":    {days_to_maturity:70,  planting_weeks:1, harvest_weeks:2, s1_start:"03-01",s1_end:"07-01",s2_start:"07-15",s2_end:"11-01", min_acreage_if_planted:2,  crop_diversity_max:0.40, yield_per_acre:18000, lbs_per_tote:27, planting_type:"seed",      seed_transplant_cost_per_acre:160, labor_plant:8.0,  labor_grow:0.7, labor_harv:30.0, water_plant:9000, water_grow:12000,water_harv:10000, fert_plant:0.40,fert_grow:0.28,fert_harv:0.18, fuel_plant:3.0,fuel_grow:1.5,fuel_harv:3.8, channels_data:{"Wholesale":{price:0.70,pkg:0.07,demand_type:"weekly_flat",demand_value:14600,demand_season:""},"Farmers Market":{price:1.60,pkg:0.14,demand_type:"weekly_flat",demand_value:3600,demand_season:""}}},
   "Carrots":         {days_to_maturity:75,  planting_weeks:1, harvest_weeks:2, s1_start:"03-01",s1_end:"07-01",s2_start:"07-15",s2_end:"11-01", min_acreage_if_planted:2,  crop_diversity_max:0.40, yield_per_acre:25000, lbs_per_tote:50, planting_type:"seed",      seed_transplant_cost_per_acre:180, labor_plant:2.5, labor_grow:1.5, labor_harv:22.0, water_plant:9200, water_grow:11500,water_harv:9200,  fert_plant:0.35,fert_grow:0.25,fert_harv:0.15, fuel_plant:3.5,fuel_grow:1.5,fuel_harv:5.0, channels_data:{"Wholesale":{price:0.40,pkg:0.05,demand_type:"weekly_flat",demand_value:50000,demand_season:""},"Farmers Market":{price:1.00,pkg:0.10,demand_type:"weekly_varying",demand_value:5000,demand_season:"W15-W48"}}},
   "Beets":           {days_to_maturity:60,  planting_weeks:1, harvest_weeks:2, s1_start:"03-15",s1_end:"06-15",s2_start:"07-15",s2_end:"10-15", min_acreage_if_planted:1,  crop_diversity_max:0.35, yield_per_acre:17000, lbs_per_tote:45, planting_type:"seed",      seed_transplant_cost_per_acre:150, labor_plant:2.5, labor_grow:1.5, labor_harv:20.0, water_plant:9200, water_grow:11500,water_harv:9200,  fert_plant:0.35,fert_grow:0.25,fert_harv:0.15, fuel_plant:3.2,fuel_grow:1.4,fuel_harv:4.5, channels_data:{"Wholesale":{price:0.50,pkg:0.05,demand_type:"weekly_flat",demand_value:34000,demand_season:""},"Farmers Market":{price:1.25,pkg:0.12,demand_type:"weekly_varying",demand_value:3000,demand_season:"W15-W45"}}},
   "Radishes":        {days_to_maturity:28,  planting_weeks:1, harvest_weeks:1, s1_start:"03-01",s1_end:"06-01",s2_start:"08-01",s2_end:"10-15", min_acreage_if_planted:1,  crop_diversity_max:0.25, yield_per_acre:14000, lbs_per_tote:35, planting_type:"seed",      seed_transplant_cost_per_acre:120, labor_plant:2.0, labor_grow:1.0, labor_harv:18.0, water_plant:6900, water_grow:8100, water_harv:6900,  fert_plant:0.25,fert_grow:0.18,fert_harv:0.10, fuel_plant:2.8,fuel_grow:1.2,fuel_harv:3.5, channels_data:{"Wholesale":{price:0.60,pkg:0.05,demand_type:"weekly_flat",demand_value:28000,demand_season:""},"Farmers Market":{price:1.40,pkg:0.10,demand_type:"weekly_varying",demand_value:2500,demand_season:"W12-W43"}}},
-  "Garlic":          {days_to_maturity:196, planting_weeks:3, harvest_weeks:1, s1_start:"01-01",s1_end:"08-01",s2_start:"",    s2_end:"",      min_acreage_if_planted:5,  crop_diversity_max:0.60, yield_per_acre:834,   lbs_per_tote:57, planting_type:"seed",      seed_transplant_cost_per_acre:380, labor_plant:6.7, labor_grow:0.3, labor_harv:75.0, water_plant:13900,water_grow:9200, water_harv:8100,  fert_plant:0.46,fert_grow:0.23,fert_harv:0.12, fuel_plant:4.6,fuel_grow:1.8,fuel_harv:3.5, channels_data:{"Wholesale":{price:3.00,pkg:0.20,demand_type:"weekly_flat",demand_value:4200,demand_season:""},"Farmers Market":{price:5.20,pkg:0.40,demand_type:"weekly_varying",demand_value:1000,demand_season:"W22-W35"}}},
+  "Garlic":          {days_to_maturity:196, planting_weeks:3, harvest_weeks:1, s1_start:"01-01",s1_end:"08-01",s2_start:"",    s2_end:"",      min_acreage_if_planted:5,  crop_diversity_max:0.60, yield_per_acre:10000,   lbs_per_tote:57, planting_type:"seed",      seed_transplant_cost_per_acre:380, labor_plant:6.7, labor_grow:0.3, labor_harv:75.0, water_plant:13900,water_grow:9200, water_harv:8100,  fert_plant:0.46,fert_grow:0.23,fert_harv:0.12, fuel_plant:4.6,fuel_grow:1.8,fuel_harv:3.5, channels_data:{"Wholesale":{price:2.75,pkg:0.20,demand_type:"weekly_flat",demand_value:4200,demand_season:""},"Farmers Market":{price:6.00,pkg:0.40,demand_type:"weekly_varying",demand_value:1000,demand_season:"W22-W35"}}},
   "Onions":          {days_to_maturity:110, planting_weeks:2, harvest_weeks:2, s1_start:"03-01",s1_end:"08-15",s2_start:"",    s2_end:"",      min_acreage_if_planted:3,  crop_diversity_max:0.40, yield_per_acre:28000, lbs_per_tote:50, planting_type:"transplant", seed_transplant_cost_per_acre:290, labor_plant:4.5, labor_grow:1.5, labor_harv:14.0, water_plant:11500,water_grow:13800,water_harv:11500, fert_plant:0.46,fert_grow:0.35,fert_harv:0.23, fuel_plant:4.0,fuel_grow:1.8,fuel_harv:4.5, channels_data:{"Wholesale":{price:0.35,pkg:0.04,demand_type:"weekly_flat",demand_value:56000,demand_season:""},"Farmers Market":{price:0.90,pkg:0.10,demand_type:"weekly_varying",demand_value:5000,demand_season:"W18-W40"}}},
   "Tomatoes":        {days_to_maturity:85,  planting_weeks:2, harvest_weeks:8, s1_start:"04-15",s1_end:"10-15",s2_start:"",    s2_end:"",      min_acreage_if_planted:2,  crop_diversity_max:0.50, yield_per_acre:22000, lbs_per_tote:40, planting_type:"transplant", seed_transplant_cost_per_acre:450, labor_plant:5.5, labor_grow:3.5, labor_harv:35.0, water_plant:17300,water_grow:23100,water_harv:19600, fert_plant:0.69,fert_grow:0.58,fert_harv:0.35, fuel_plant:4.5,fuel_grow:3.0,fuel_harv:5.5, channels_data:{"Wholesale":{price:0.65,pkg:0.06,demand_type:"weekly_flat",demand_value:44000,demand_season:""},"Farmers Market":{price:1.80,pkg:0.15,demand_type:"weekly_varying",demand_value:7000,demand_season:"W25-W42"}}},
   "Bell Peppers":    {days_to_maturity:75,  planting_weeks:2, harvest_weeks:6, s1_start:"05-01",s1_end:"10-01",s2_start:"",    s2_end:"",      min_acreage_if_planted:2,  crop_diversity_max:0.45, yield_per_acre:12000, lbs_per_tote:35, planting_type:"transplant", seed_transplant_cost_per_acre:400, labor_plant:4.6, labor_grow:3.5, labor_harv:18.5, water_plant:16200,water_grow:21000,water_harv:17300, fert_plant:0.69,fert_grow:0.52,fert_harv:0.30, fuel_plant:4.2,fuel_grow:2.5,fuel_harv:5.0, channels_data:{"Wholesale":{price:0.80,pkg:0.07,demand_type:"weekly_flat",demand_value:24000,demand_season:""},"Farmers Market":{price:1.90,pkg:0.16,demand_type:"weekly_varying",demand_value:5000,demand_season:"W22-W42"}}},
-  "Hot Peppers":     {days_to_maturity:147, planting_weeks:2, harvest_weeks:10, s1_start:"04-01",s1_end:"10-15",s2_start:"",    s2_end:"",      min_acreage_if_planted:2,  crop_diversity_max:0.55, yield_per_acre:8000,  lbs_per_tote:38, planting_type:"transplant", seed_transplant_cost_per_acre:420, labor_plant:10.0, labor_grow:1.7, labor_harv:24.0, water_plant:16200,water_grow:23100,water_harv:19600, fert_plant:0.69,fert_grow:0.46,fert_harv:0.35, fuel_plant:4.2,fuel_grow:2.8,fuel_harv:5.8, channels_data:{"Wholesale":{price:1.80,pkg:0.14,demand_type:"weekly_flat",demand_value:6250,demand_season:""},"Farmers Market":{price:3.20,pkg:0.25,demand_type:"weekly_varying",demand_value:1600,demand_season:"W22-W44"}}},
-  "Cucumbers":       {days_to_maturity:70,  planting_weeks:1, harvest_weeks:3, s1_start:"05-01",s1_end:"09-01",s2_start:"",    s2_end:"",      min_acreage_if_planted:2,  crop_diversity_max:0.40, yield_per_acre:12000, lbs_per_tote:23, planting_type:"seed",      seed_transplant_cost_per_acre:190, labor_plant:15.0, labor_grow:2.0, labor_harv:43.0, water_plant:13900,water_grow:19600,water_harv:17300, fert_plant:0.69,fert_grow:0.46,fert_harv:0.23, fuel_plant:4.2,fuel_grow:2.3,fuel_harv:5.1, channels_data:{"Wholesale":{price:0.55,pkg:0.06,demand_type:"weekly_flat",demand_value:18750,demand_season:""},"Farmers Market":{price:1.05,pkg:0.12,demand_type:"weekly_varying",demand_value:4000,demand_season:"W18-W40"}}},
+  "Hot Peppers":     {days_to_maturity:147, planting_weeks:2, harvest_weeks:10, s1_start:"04-01",s1_end:"10-15",s2_start:"",    s2_end:"",      min_acreage_if_planted:2,  crop_diversity_max:0.55, yield_per_acre:12000,  lbs_per_tote:38, planting_type:"transplant", seed_transplant_cost_per_acre:420, labor_plant:10.0, labor_grow:1.7, labor_harv:24.0, water_plant:16200,water_grow:23100,water_harv:19600, fert_plant:0.69,fert_grow:0.46,fert_harv:0.35, fuel_plant:4.2,fuel_grow:2.8,fuel_harv:5.8, channels_data:{"Wholesale":{price:1.50,pkg:0.14,demand_type:"weekly_flat",demand_value:6250,demand_season:""},"Farmers Market":{price:3.75,pkg:0.25,demand_type:"weekly_varying",demand_value:1600,demand_season:"W22-W44"}}},
+  "Cucumbers":       {days_to_maturity:70,  planting_weeks:1, harvest_weeks:3, s1_start:"05-01",s1_end:"09-01",s2_start:"",    s2_end:"",      min_acreage_if_planted:2,  crop_diversity_max:0.40, yield_per_acre:12000, lbs_per_tote:23, planting_type:"seed",      seed_transplant_cost_per_acre:190, labor_plant:15.0, labor_grow:2.0, labor_harv:43.0, water_plant:13900,water_grow:19600,water_harv:17300, fert_plant:0.69,fert_grow:0.46,fert_harv:0.23, fuel_plant:4.2,fuel_grow:2.3,fuel_harv:5.1, channels_data:{"Wholesale":{price:0.55,pkg:0.06,demand_type:"weekly_flat",demand_value:18750,demand_season:""},"Farmers Market":{price:1.25,pkg:0.12,demand_type:"weekly_varying",demand_value:4000,demand_season:"W18-W40"}}},
   "Zucchini":        {days_to_maturity:55,  planting_weeks:1, harvest_weeks:4, s1_start:"05-01",s1_end:"10-01",s2_start:"",    s2_end:"",      min_acreage_if_planted:2,  crop_diversity_max:0.40, yield_per_acre:25000, lbs_per_tote:30, planting_type:"seed",      seed_transplant_cost_per_acre:170, labor_plant:3.0, labor_grow:2.5, labor_harv:28.0, water_plant:12700,water_grow:17300,water_harv:15000, fert_plant:0.52,fert_grow:0.40,fert_harv:0.23, fuel_plant:3.8,fuel_grow:2.0,fuel_harv:4.8, channels_data:{"Wholesale":{price:0.45,pkg:0.05,demand_type:"weekly_flat",demand_value:50000,demand_season:""},"Farmers Market":{price:1.10,pkg:0.12,demand_type:"weekly_varying",demand_value:6000,demand_season:"W20-W42"}}},
   "Eggplant":        {days_to_maturity:80,  planting_weeks:2, harvest_weeks:6, s1_start:"05-01",s1_end:"10-01",s2_start:"",    s2_end:"",      min_acreage_if_planted:2,  crop_diversity_max:0.35, yield_per_acre:15000, lbs_per_tote:35, planting_type:"transplant", seed_transplant_cost_per_acre:390, labor_plant:4.5, labor_grow:3.0, labor_harv:25.0, water_plant:15000,water_grow:19600,water_harv:16200, fert_plant:0.58,fert_grow:0.46,fert_harv:0.28, fuel_plant:4.0,fuel_grow:2.3,fuel_harv:5.0, channels_data:{"Wholesale":{price:0.65,pkg:0.07,demand_type:"weekly_flat",demand_value:30000,demand_season:""},"Farmers Market":{price:1.60,pkg:0.15,demand_type:"weekly_varying",demand_value:4000,demand_season:"W22-W42"}}},
-  "Sweet Corn":      {days_to_maturity:84,  planting_weeks:1, harvest_weeks:2, s1_start:"04-15",s1_end:"09-01",s2_start:"",    s2_end:"",      min_acreage_if_planted:3,  crop_diversity_max:0.35, yield_per_acre:6000,  lbs_per_tote:45, planting_type:"seed",      seed_transplant_cost_per_acre:120, labor_plant:10.0, labor_grow:0.7, labor_harv:20.0,  water_plant:11500,water_grow:18500,water_harv:15000, fert_plant:0.58,fert_grow:0.46,fert_harv:0.35, fuel_plant:4.6,fuel_grow:2.3,fuel_harv:5.8, channels_data:{"Wholesale":{price:0.38,pkg:0.04,demand_type:"weekly_flat",demand_value:12500,demand_season:""},"Farmers Market":{price:0.82,pkg:0.10,demand_type:"weekly_varying",demand_value:3000,demand_season:"W25-W38"}}},
-  "Green Beans":     {days_to_maturity:56,  planting_weeks:1, harvest_weeks:3, s1_start:"05-01",s1_end:"09-15",s2_start:"",    s2_end:"",      min_acreage_if_planted:2,  crop_diversity_max:0.35, yield_per_acre:4000,  lbs_per_tote:28, planting_type:"seed",      seed_transplant_cost_per_acre:160, labor_plant:2.5, labor_grow:1.5, labor_harv:32.0, water_plant:10400,water_grow:13800,water_harv:11500, fert_plant:0.40,fert_grow:0.30,fert_harv:0.18, fuel_plant:3.5,fuel_grow:1.8,fuel_harv:4.5, channels_data:{"Wholesale":{price:0.60,pkg:0.06,demand_type:"weekly_flat",demand_value:8000,demand_season:""},"Farmers Market":{price:1.40,pkg:0.12,demand_type:"weekly_varying",demand_value:2500,demand_season:"W20-W38"}}},
+  "Sweet Corn":      {days_to_maturity:84,  planting_weeks:1, harvest_weeks:2, s1_start:"04-15",s1_end:"09-01",s2_start:"",    s2_end:"",      min_acreage_if_planted:3,  crop_diversity_max:0.35, yield_per_acre:9000,  lbs_per_tote:45, planting_type:"seed",      seed_transplant_cost_per_acre:120, labor_plant:10.0, labor_grow:0.7, labor_harv:20.0,  water_plant:11500,water_grow:18500,water_harv:15000, fert_plant:0.58,fert_grow:0.46,fert_harv:0.35, fuel_plant:4.6,fuel_grow:2.3,fuel_harv:5.8, channels_data:{"Wholesale":{price:0.50,pkg:0.04,demand_type:"weekly_flat",demand_value:12500,demand_season:""},"Farmers Market":{price:1.15,pkg:0.10,demand_type:"weekly_varying",demand_value:3000,demand_season:"W25-W38"}}},
+  "Green Beans":     {days_to_maturity:56,  planting_weeks:1, harvest_weeks:3, s1_start:"05-01",s1_end:"09-15",s2_start:"",    s2_end:"",      min_acreage_if_planted:2,  crop_diversity_max:0.35, yield_per_acre:6500,  lbs_per_tote:28, planting_type:"seed",      seed_transplant_cost_per_acre:160, labor_plant:2.5, labor_grow:1.5, labor_harv:32.0, water_plant:10400,water_grow:13800,water_harv:11500, fert_plant:0.40,fert_grow:0.30,fert_harv:0.18, fuel_plant:3.5,fuel_grow:1.8,fuel_harv:4.5, channels_data:{"Wholesale":{price:0.60,pkg:0.06,demand_type:"weekly_flat",demand_value:8000,demand_season:""},"Farmers Market":{price:1.40,pkg:0.12,demand_type:"weekly_varying",demand_value:2500,demand_season:"W20-W38"}}},
   "Basil":           {days_to_maturity:35,  planting_weeks:1, harvest_weeks:3, s1_start:"05-01",s1_end:"09-15",s2_start:"",    s2_end:"",      min_acreage_if_planted:1,  crop_diversity_max:0.25, yield_per_acre:3500,  lbs_per_tote:12, planting_type:"transplant", seed_transplant_cost_per_acre:280, labor_plant:3.2, labor_grow:2.5, labor_harv:18.0, water_plant:9200, water_grow:11500,water_harv:9200,  fert_plant:0.30,fert_grow:0.23,fert_harv:0.15, fuel_plant:2.8,fuel_grow:1.4,fuel_harv:3.5, channels_data:{"Wholesale":{price:2.00,pkg:0.18,demand_type:"weekly_flat",demand_value:7000,demand_season:""},"Farmers Market":{price:4.00,pkg:0.30,demand_type:"weekly_varying",demand_value:1500,demand_season:"W20-W40"}}},
-  "Strawberries":    {days_to_maturity:90,  planting_weeks:2, harvest_weeks:8, s1_start:"03-01",s1_end:"07-01",s2_start:"",    s2_end:"",      min_acreage_if_planted:2,  crop_diversity_max:0.40, yield_per_acre:10000, lbs_per_tote:18, planting_type:"transplant", seed_transplant_cost_per_acre:850, labor_plant:6.5, labor_grow:3.5, labor_harv:50.0, water_plant:13800,water_grow:17300,water_harv:13800, fert_plant:0.52,fert_grow:0.40,fert_harv:0.23, fuel_plant:3.8,fuel_grow:2.0,fuel_harv:4.5, channels_data:{"Wholesale":{price:1.20,pkg:0.14,demand_type:"weekly_flat",demand_value:20000,demand_season:""},"Farmers Market":{price:3.00,pkg:0.25,demand_type:"weekly_varying",demand_value:5000,demand_season:"W14-W26"}}},
+  "Strawberries":    {days_to_maturity:90,  planting_weeks:2, harvest_weeks:8, s1_start:"03-01",s1_end:"07-01",s2_start:"",    s2_end:"",      min_acreage_if_planted:2,  crop_diversity_max:0.40, yield_per_acre:25000, lbs_per_tote:18, planting_type:"transplant", seed_transplant_cost_per_acre:850, labor_plant:6.5, labor_grow:3.5, labor_harv:50.0, water_plant:13800,water_grow:17300,water_harv:13800, fert_plant:0.52,fert_grow:0.40,fert_harv:0.23, fuel_plant:3.8,fuel_grow:2.0,fuel_harv:4.5, channels_data:{"Wholesale":{price:1.20,pkg:0.14,demand_type:"weekly_flat",demand_value:20000,demand_season:""},"Farmers Market":{price:3.00,pkg:0.25,demand_type:"weekly_varying",demand_value:5000,demand_season:"W14-W26"}}},
   "Potatoes":        {days_to_maturity:90,  planting_weeks:2, harvest_weeks:3, s1_start:"03-15",s1_end:"08-15",s2_start:"",    s2_end:"",      min_acreage_if_planted:5,  crop_diversity_max:0.45, yield_per_acre:30000, lbs_per_tote:55, planting_type:"seed",      seed_transplant_cost_per_acre:550, labor_plant:3.0, labor_grow:1.0, labor_harv:10.0, water_plant:11500,water_grow:15000,water_harv:11500, fert_plant:0.58,fert_grow:0.46,fert_harv:0.28, fuel_plant:5.0,fuel_grow:2.0,fuel_harv:6.0, channels_data:{"Wholesale":{price:0.25,pkg:0.03,demand_type:"weekly_flat",demand_value:60000,demand_season:""},"Farmers Market":{price:0.70,pkg:0.08,demand_type:"weekly_varying",demand_value:6000,demand_season:"W20-W40"}}},
 };
 
@@ -2183,12 +2190,12 @@ function loadCropTemplate(idx, templateName) {
 // Crop management
 // ============================================================
 const CROP_DEFAULTS = [
-  { name:"Spinach",     days_to_maturity:42,  planting_weeks:1, harvest_weeks:2,  s1_start:"02-01", s1_end:"06-15", s2_start:"08-01", s2_end:"11-15", min_acreage_if_planted:2.0, crop_diversity_max:0.50, yield_per_acre:3250,  lbs_per_tote:31, planting_type:"seed",      seed_transplant_cost_per_acre:280, labor_plant:15.0, labor_grow:4.0, labor_harv:50.0, water_plant:10400, water_grow:12700, water_harv:9200,  fert_plant:0.46, fert_grow:0.35, fert_harv:0.23, fuel_plant:3.5, fuel_grow:1.8, fuel_harv:4.6, channels_data:{"Wholesale":{price:1.80,pkg:0.09,demand_type:"weekly_flat",demand_value:25000,demand_season:""},"Farmers Market":{price:4.50,pkg:0.18,demand_type:"weekly_varying",demand_value:6000,demand_season:"W10-W48"}} },
-  { name:"Cucumbers",   days_to_maturity:70,  planting_weeks:1, harvest_weeks:3,  s1_start:"05-01", s1_end:"09-01", s2_start:"",      s2_end:"",      min_acreage_if_planted:2.0, crop_diversity_max:0.40, yield_per_acre:12000, lbs_per_tote:23, planting_type:"seed",      seed_transplant_cost_per_acre:190, labor_plant:12.0, labor_grow:1.8, labor_harv:38.0, water_plant:12000, water_grow:17000, water_harv:15000, fert_plant:0.55, fert_grow:0.38, fert_harv:0.20, fuel_plant:3.5, fuel_grow:2.0, fuel_harv:4.5, channels_data:{"Wholesale":{price:0.55,pkg:0.06,demand_type:"weekly_flat",demand_value:50000,demand_season:""},"Farmers Market":{price:1.50,pkg:0.12,demand_type:"weekly_varying",demand_value:6000,demand_season:"W18-W40"}} },
-  { name:"Sweet Corn",  days_to_maturity:84,  planting_weeks:1, harvest_weeks:2,  s1_start:"04-15", s1_end:"09-01", s2_start:"",      s2_end:"",      min_acreage_if_planted:3.0, crop_diversity_max:0.35, yield_per_acre:6000,  lbs_per_tote:45, planting_type:"seed",      seed_transplant_cost_per_acre:120, labor_plant:8.0, labor_grow:0.6, labor_harv:20.0, water_plant:10000, water_grow:16000, water_harv:13000, fert_plant:0.46, fert_grow:0.38, fert_harv:0.28, fuel_plant:3.5, fuel_grow:2.0, fuel_harv:4.5, channels_data:{"Wholesale":{price:0.75,pkg:0.04,demand_type:"weekly_flat",demand_value:30000,demand_season:""},"Farmers Market":{price:1.80,pkg:0.10,demand_type:"weekly_varying",demand_value:4000,demand_season:"W25-W38"}} },
-  { name:"Napa Cabbage",days_to_maturity:70,  planting_weeks:1, harvest_weeks:2,  s1_start:"03-01", s1_end:"07-01", s2_start:"07-15", s2_end:"11-01", min_acreage_if_planted:2.0, crop_diversity_max:0.40, yield_per_acre:10000, lbs_per_tote:27, planting_type:"seed",      seed_transplant_cost_per_acre:160, labor_plant:8.0, labor_grow:0.7, labor_harv:30.0, water_plant:9000, water_grow:12000, water_harv:10000, fert_plant:0.40, fert_grow:0.28, fert_harv:0.18, fuel_plant:3.0, fuel_grow:1.5, fuel_harv:3.8, channels_data:{"Wholesale":{price:1.20,pkg:0.07,demand_type:"weekly_flat",demand_value:50000,demand_season:""},"Farmers Market":{price:2.50,pkg:0.14,demand_type:"weekly_flat",demand_value:8000,demand_season:""}} },
-  { name:"Hot Peppers", days_to_maturity:147, planting_weeks:2, harvest_weeks:10, s1_start:"04-01", s1_end:"10-15", s2_start:"",      s2_end:"",      min_acreage_if_planted:2.0, crop_diversity_max:0.55, yield_per_acre:8000,  lbs_per_tote:38, planting_type:"transplant", seed_transplant_cost_per_acre:420, labor_plant:8.0, labor_grow:1.4, labor_harv:20.0,  water_plant:14000, water_grow:19000, water_harv:16000, fert_plant:0.55, fert_grow:0.38, fert_harv:0.28, fuel_plant:3.5, fuel_grow:2.3, fuel_harv:4.8, channels_data:{"Wholesale":{price:2.50,pkg:0.14,demand_type:"weekly_flat",demand_value:15000,demand_season:""},"Farmers Market":{price:6.00,pkg:0.25,demand_type:"weekly_varying",demand_value:3000,demand_season:"W22-W44"}} },
-  { name:"Garlic",      days_to_maturity:196, planting_weeks:3, harvest_weeks:1,  s1_start:"01-01", s1_end:"08-01", s2_start:"",      s2_end:"",      min_acreage_if_planted:5.0, crop_diversity_max:0.60, yield_per_acre:834,   lbs_per_tote:57, planting_type:"seed",      seed_transplant_cost_per_acre:380, labor_plant:6.7,  labor_grow:0.3, labor_harv:75.0, water_plant:13900, water_grow:9200,  water_harv:8100,  fert_plant:0.46, fert_grow:0.23, fert_harv:0.12, fuel_plant:4.6, fuel_grow:1.8, fuel_harv:3.5, channels_data:{"Wholesale":{price:4.50,pkg:0.20,demand_type:"weekly_flat",demand_value:4200,demand_season:""},"Farmers Market":{price:7.00,pkg:0.40,demand_type:"weekly_varying",demand_value:1000,demand_season:"W22-W35"}} },
+  { name:"Spinach",     days_to_maturity:42,  planting_weeks:1, harvest_weeks:2,  s1_start:"02-01", s1_end:"06-15", s2_start:"08-01", s2_end:"11-15", min_acreage_if_planted:2.0, crop_diversity_max:0.50, yield_per_acre:5000,  lbs_per_tote:31, planting_type:"seed",      seed_transplant_cost_per_acre:280, labor_plant:15.0, labor_grow:4.0, labor_harv:50.0, water_plant:10400, water_grow:12700, water_harv:9200,  fert_plant:0.46, fert_grow:0.35, fert_harv:0.23, fuel_plant:3.5, fuel_grow:1.8, fuel_harv:4.6, channels_data:{"Wholesale":{price:1.00,pkg:0.09,demand_type:"weekly_flat",demand_value:25000,demand_season:""},"Farmers Market":{price:2.75,pkg:0.18,demand_type:"weekly_varying",demand_value:6000,demand_season:"W10-W48"}} },
+  { name:"Cucumbers",   days_to_maturity:70,  planting_weeks:1, harvest_weeks:3,  s1_start:"05-01", s1_end:"09-01", s2_start:"",      s2_end:"",      min_acreage_if_planted:2.0, crop_diversity_max:0.40, yield_per_acre:12000, lbs_per_tote:23, planting_type:"seed",      seed_transplant_cost_per_acre:190, labor_plant:12.0, labor_grow:1.8, labor_harv:38.0, water_plant:12000, water_grow:17000, water_harv:15000, fert_plant:0.55, fert_grow:0.38, fert_harv:0.20, fuel_plant:3.5, fuel_grow:2.0, fuel_harv:4.5, channels_data:{"Wholesale":{price:0.55,pkg:0.06,demand_type:"weekly_flat",demand_value:50000,demand_season:""},"Farmers Market":{price:1.25,pkg:0.12,demand_type:"weekly_varying",demand_value:6000,demand_season:"W18-W40"}} },
+  { name:"Sweet Corn",  days_to_maturity:84,  planting_weeks:1, harvest_weeks:2,  s1_start:"04-15", s1_end:"09-01", s2_start:"",      s2_end:"",      min_acreage_if_planted:3.0, crop_diversity_max:0.35, yield_per_acre:9000,  lbs_per_tote:45, planting_type:"seed",      seed_transplant_cost_per_acre:120, labor_plant:8.0, labor_grow:0.6, labor_harv:20.0, water_plant:10000, water_grow:16000, water_harv:13000, fert_plant:0.46, fert_grow:0.38, fert_harv:0.28, fuel_plant:3.5, fuel_grow:2.0, fuel_harv:4.5, channels_data:{"Wholesale":{price:0.50,pkg:0.04,demand_type:"weekly_flat",demand_value:30000,demand_season:""},"Farmers Market":{price:1.15,pkg:0.10,demand_type:"weekly_varying",demand_value:4000,demand_season:"W25-W38"}} },
+  { name:"Napa Cabbage",days_to_maturity:70,  planting_weeks:1, harvest_weeks:2,  s1_start:"03-01", s1_end:"07-01", s2_start:"07-15", s2_end:"11-01", min_acreage_if_planted:2.0, crop_diversity_max:0.40, yield_per_acre:18000, lbs_per_tote:27, planting_type:"seed",      seed_transplant_cost_per_acre:160, labor_plant:8.0, labor_grow:0.7, labor_harv:30.0, water_plant:9000, water_grow:12000, water_harv:10000, fert_plant:0.40, fert_grow:0.28, fert_harv:0.18, fuel_plant:3.0, fuel_grow:1.5, fuel_harv:3.8, channels_data:{"Wholesale":{price:0.70,pkg:0.07,demand_type:"weekly_flat",demand_value:50000,demand_season:""},"Farmers Market":{price:1.60,pkg:0.14,demand_type:"weekly_flat",demand_value:8000,demand_season:""}} },
+  { name:"Hot Peppers", days_to_maturity:147, planting_weeks:2, harvest_weeks:10, s1_start:"04-01", s1_end:"10-15", s2_start:"",      s2_end:"",      min_acreage_if_planted:2.0, crop_diversity_max:0.55, yield_per_acre:12000,  lbs_per_tote:38, planting_type:"transplant", seed_transplant_cost_per_acre:420, labor_plant:8.0, labor_grow:1.4, labor_harv:20.0,  water_plant:14000, water_grow:19000, water_harv:16000, fert_plant:0.55, fert_grow:0.38, fert_harv:0.28, fuel_plant:3.5, fuel_grow:2.3, fuel_harv:4.8, channels_data:{"Wholesale":{price:1.50,pkg:0.14,demand_type:"weekly_flat",demand_value:15000,demand_season:""},"Farmers Market":{price:3.75,pkg:0.25,demand_type:"weekly_varying",demand_value:3000,demand_season:"W22-W44"}} },
+  { name:"Garlic",      days_to_maturity:196, planting_weeks:3, harvest_weeks:1,  s1_start:"01-01", s1_end:"08-01", s2_start:"",      s2_end:"",      min_acreage_if_planted:5.0, crop_diversity_max:0.60, yield_per_acre:10000,   lbs_per_tote:57, planting_type:"seed",      seed_transplant_cost_per_acre:380, labor_plant:6.7,  labor_grow:0.3, labor_harv:75.0, water_plant:13900, water_grow:9200,  water_harv:8100,  fert_plant:0.46, fert_grow:0.23, fert_harv:0.12, fuel_plant:4.6, fuel_grow:1.8, fuel_harv:3.5, channels_data:{"Wholesale":{price:2.75,pkg:0.20,demand_type:"weekly_flat",demand_value:4200,demand_season:""},"Farmers Market":{price:6.00,pkg:0.40,demand_type:"weekly_varying",demand_value:1000,demand_season:"W22-W35"}} },
 ];
 
 const BLANK_CROP = {
@@ -2237,7 +2244,7 @@ function renderCrop(c, idx) {
       <div class="form-group"><label>Seed/Transplant Cost ($/acre) <span class="tip" data-tip="Seed: $100–$600/acre. Transplant plugs/starts: $250–$900/acre.">?</span></label><input type="number" class="cf" data-f="seed_transplant_cost_per_acre" value="${v('seed_transplant_cost_per_acre',0)}" min="0" step="10" placeholder="e.g. 280"></div>
 
       <div class="crop-section-label">Agronomy &amp; Diversity</div>
-      <div class="form-group"><label>Yield per Acre (lbs) <span class="tip" data-tip="Expected lbs harvested per acre per planting. Typical: Spinach 3,000–4,000 · Lettuce 14,000–18,000 · Tomatoes 18,000–25,000 · Corn 5,000–8,000 · Garlic 800–1,200.">?</span><span class="pill-upload-hint" onclick="document.getElementById('mc-xlsx-crops-input')?.closest('label')?.click()" title="Upload historical yield data">📊</span></label><input type="number" class="cf" data-f="yield_per_acre" value="${v('yield_per_acre',2000)}" min="1" step="50" placeholder="e.g. 3250"></div>
+      <div class="form-group"><label>Yield per Acre (lbs) <span class="tip" data-tip="Expected lbs harvested per acre per planting. Typical: Spinach 4,000–6,000 · Lettuce 14,000–18,000 · Tomatoes 18,000–25,000 · Corn 7,000–12,000 · Garlic 8,000–12,000.">?</span><span class="pill-upload-hint" onclick="document.getElementById('mc-xlsx-crops-input')?.closest('label')?.click()" title="Upload historical yield data">📊</span></label><input type="number" class="cf" data-f="yield_per_acre" value="${v('yield_per_acre',2000)}" min="1" step="50" placeholder="e.g. 3250"></div>
       <div class="form-group"><label>Max Land Fraction <span class="tip" data-tip="Crop diversity cap: limits what share of total farm acreage this crop (all plantings combined) can occupy. 50% = max 75 acres on a 150-acre farm.">?</span></label>${diversitySelect(v('crop_diversity_max',0.5))}</div>
       <div class="form-group"><label>Lbs per 18-gal Tote <span class="tip" data-tip="How many lbs fit in one standard 18-gallon harvest tote. Used to compute harvest storage needs. Typical: leafy greens 12–25 lbs · root veg 40–60 lbs · cucumbers/peppers 20–40 lbs.">?</span></label><input type="number" class="cf" data-f="lbs_per_tote" value="${lbsPerTote}" min="1" step="1" placeholder="e.g. 30"></div>
 
@@ -4198,7 +4205,7 @@ CROPS = [
                     {"start": "08-01", "end": "11-15"}],
         "min_acreage_if_planted": 2,
         "crop_diversity_max": 0.50,
-        "yield_per_acre": 3250,
+        "yield_per_acre": 5000,
         "crop_size_m3_per_lb": 0.0022,
         "seed_transplant_cost_per_acre": 280,
         "labor_plant": 15.0, "labor_grow": 4.0, "labor_harv": 50.0,
@@ -4207,13 +4214,13 @@ CROPS = [
         "fuel_plant": 3.5, "fuel_grow": 1.8, "fuel_harv": 4.6,
         "channels": {
             "Wholesale": {
-                "price_per_lb": 1.10,
+                "price_per_lb": 1.00,
                 "packaging_cost_per_lb": 0.09,
                 "demand_cap_type": "annual",
                 "annual_demand_lbs": 1200000,
             },
             "Farmers Market": {
-                "price_per_lb": 2.10,
+                "price_per_lb": 2.75,
                 "packaging_cost_per_lb": 0.18,
                 "demand_cap_type": "weekly_flat",
                 "weekly_demand_lbs": 6000,
@@ -4243,7 +4250,7 @@ CROPS = [
                 "annual_demand_lbs": 900000,
             },
             "Farmers Market": {
-                "price_per_lb": 1.05,
+                "price_per_lb": 1.25,
                 "packaging_cost_per_lb": 0.12,
                 "demand_cap_type": "weekly_varying",
                 "demand_ranges": [{"weeks": "W18-W40", "weekly_lbs": 4000}],
@@ -4258,7 +4265,7 @@ CROPS = [
         "seasons": [{"start": "04-15", "end": "09-01"}],
         "min_acreage_if_planted": 3,
         "crop_diversity_max": 0.35,
-        "yield_per_acre": 6000,
+        "yield_per_acre": 9000,
         "crop_size_m3_per_lb": 0.0015,
         "seed_transplant_cost_per_acre": 120,
         "labor_plant": 10.0, "labor_grow": 0.7, "labor_harv": 20.0,
@@ -4267,13 +4274,13 @@ CROPS = [
         "fuel_plant": 4.6, "fuel_grow": 2.3, "fuel_harv": 5.8,
         "channels": {
             "Wholesale": {
-                "price_per_lb": 0.38,
+                "price_per_lb": 0.50,
                 "packaging_cost_per_lb": 0.04,
                 "demand_cap_type": "annual",
                 "annual_demand_lbs": 600000,
             },
             "Farmers Market": {
-                "price_per_lb": 0.82,
+                "price_per_lb": 1.15,
                 "packaging_cost_per_lb": 0.10,
                 "demand_cap_type": "weekly_varying",
                 "demand_ranges": [{"weeks": "W25-W38", "weekly_lbs": 3000}],
@@ -4289,7 +4296,7 @@ CROPS = [
                     {"start": "07-15", "end": "11-01"}],
         "min_acreage_if_planted": 2,
         "crop_diversity_max": 0.40,
-        "yield_per_acre": 10000,
+        "yield_per_acre": 18000,
         "crop_size_m3_per_lb": 0.0025,
         "seed_transplant_cost_per_acre": 160,
         "labor_plant": 8.0, "labor_grow": 0.7, "labor_harv": 30.0,
@@ -4298,13 +4305,13 @@ CROPS = [
         "fuel_plant": 3.0, "fuel_grow": 1.5, "fuel_harv": 3.8,
         "channels": {
             "Wholesale": {
-                "price_per_lb": 0.65,
+                "price_per_lb": 0.70,
                 "packaging_cost_per_lb": 0.07,
                 "demand_cap_type": "annual",
                 "annual_demand_lbs": 700000,
             },
             "Farmers Market": {
-                "price_per_lb": 1.25,
+                "price_per_lb": 1.60,
                 "packaging_cost_per_lb": 0.14,
                 "demand_cap_type": "weekly_flat",
                 "weekly_demand_lbs": 3600,
@@ -4319,7 +4326,7 @@ CROPS = [
         "seasons": [{"start": "04-01", "end": "10-15"}],
         "min_acreage_if_planted": 2,
         "crop_diversity_max": 0.55,
-        "yield_per_acre": 8000,
+        "yield_per_acre": 12000,
         "crop_size_m3_per_lb": 0.0018,
         "seed_transplant_cost_per_acre": 420,
         "labor_plant": 10.0, "labor_grow": 1.7, "labor_harv": 24.0,
@@ -4328,13 +4335,13 @@ CROPS = [
         "fuel_plant": 4.2, "fuel_grow": 2.8, "fuel_harv": 5.8,
         "channels": {
             "Wholesale": {
-                "price_per_lb": 1.80,
+                "price_per_lb": 1.50,
                 "packaging_cost_per_lb": 0.14,
                 "demand_cap_type": "annual",
                 "annual_demand_lbs": 300000,
             },
             "Farmers Market": {
-                "price_per_lb": 3.20,
+                "price_per_lb": 3.75,
                 "packaging_cost_per_lb": 0.25,
                 "demand_cap_type": "weekly_varying",
                 "demand_ranges": [{"weeks": "W22-W44", "weekly_lbs": 1600}],
@@ -4349,7 +4356,7 @@ CROPS = [
         "seasons": [{"start": "01-01", "end": "08-01"}],
         "min_acreage_if_planted": 5,
         "crop_diversity_max": 0.60,
-        "yield_per_acre": 834,
+        "yield_per_acre": 10000,
         "crop_size_m3_per_lb": 0.0012,
         "seed_transplant_cost_per_acre": 380,
         "labor_plant": 6.7, "labor_grow": 0.3, "labor_harv": 75.0,
@@ -4358,13 +4365,13 @@ CROPS = [
         "fuel_plant": 4.6, "fuel_grow": 1.8, "fuel_harv": 3.5,
         "channels": {
             "Wholesale": {
-                "price_per_lb": 3.00,
+                "price_per_lb": 2.75,
                 "packaging_cost_per_lb": 0.20,
                 "demand_cap_type": "annual",
                 "annual_demand_lbs": 200000,
             },
             "Farmers Market": {
-                "price_per_lb": 5.20,
+                "price_per_lb": 6.00,
                 "packaging_cost_per_lb": 0.40,
                 "demand_cap_type": "weekly_varying",
                 "demand_ranges": [{"weeks": "W22-W35", "weekly_lbs": 1000}],
@@ -4837,6 +4844,16 @@ async function runOptimizer() {
     const topTexts = btnTop ? btnTop.querySelectorAll('span:not(.spinner)') : [];
     topTexts.forEach(s => { s.textContent = running ? 'Solving…' : 'Optimize'; });
   };
+
+  // One-time nudge if land rent is $0 (common omission that inflates profit)
+  if (!window._landRentNudgeDone) {
+    const rentVal = parseFloat((document.getElementById('rate_property_mortgage_rent') || {}).value) || 0;
+    if (rentVal === 0) {
+      window._landRentNudgeDone = true;
+      const nudge = document.getElementById('land-rent-nudge');
+      if (nudge) nudge.style.display = 'flex';
+    }
+  }
 
   setRunning(true);
   errBox.style.display = 'none';
@@ -7658,7 +7675,7 @@ window._testWhatIf = function() {
     const mockParams = {
       crops: [{
         name: 'Spinach',
-        yield_per_acre: 3250,
+        yield_per_acre: 5000,
         channels_data: {
           'Wholesale':      { price: 1.10, demand_value: 25000 },
           'Farmers Market': { price: 2.10, demand_value: 6000  },
@@ -8410,7 +8427,7 @@ window._testWhatIf = function() {
     const fields90 = {
       days_to_maturity: 196, planting_weeks: 3, harvest_weeks: 1,
       min_acreage_if_planted: 5, crop_diversity_max: 0.6,
-      yield_per_acre: 834, lbs_per_tote: 57,
+      yield_per_acre: 10000, lbs_per_tote: 57,
       planting_type: 'seed', seed_transplant_cost_per_acre: 380,
       labor_plant: 6.7, labor_grow: 0.3, labor_harv: 75,
       water_plant: 13900, water_grow: 9200, water_harv: 8100,
