@@ -1447,7 +1447,7 @@
 
     <!-- 5. Labor -->
     <div class="card span-3">
-      <h2>Labor</h2>
+      <h2>Labor <span class="tip" data-tip="Defaults are sized for a 100–150 acre operation (2 managers + 15 seasonal + 10 harvest crew).&#10;&#10;Scale down for smaller farms:&#10;• Under 75 acres: remove Operations Manager (owner-operated model)&#10;• Under 50 acres: reduce seasonal crew to 3–5 and harvest crew to 2–3&#10;&#10;Labor is the largest variable cost — over-staffing a small farm will show a loss even with good crops.">?</span></h2>
       <p style="font-size:0.73rem;color:#6b7280;margin:0 0 0.6rem"><strong>Salary</strong> = year-round fixed cost. <strong>Hourly (Seasonal)</strong> = variable rate applied against weekly crop-phase hours; the hourly rate you enter applies to seasonal workers. <strong>Seasonal</strong> = crew billed only between Start–End week.</p>
       <div id="labor-list"></div>
       <button type="button" id="add-labor-btn" onclick="addLaborPosition()">+ Add Position</button>
@@ -1616,6 +1616,13 @@
 
       <!-- Profit back-check panel (state 1 nudge / state 2 confirmation / state 3 diagnostic) -->
       <div id="backcheck-panel" style="margin-bottom:0.6rem"></div>
+
+      <!-- Small-farm staffing nudge (shown once when farm < 75 acres with 2+ managers) -->
+      <div id="staffing-nudge" style="display:none;align-items:flex-start;gap:0.6rem;background:#fffbeb;border:1.5px solid #d97706;border-radius:9px;padding:0.65rem 1rem;margin-bottom:0.8rem;font-size:0.79rem;color:#92400e">
+        <span style="font-size:1.1rem;line-height:1">⚠</span>
+        <span style="flex:1"><strong>Small farm staffing check.</strong> Your farm is under 75 acres but the default staffing includes two salaried managers ($167k+/yr). Farms this size are usually owner-operated — consider removing the Operations Manager in the <em>Labor section</em> to get a more realistic cost structure. The default staffing is sized for 100–150 acre operations.</span>
+        <button onclick="document.getElementById('staffing-nudge').style.display='none'" style="background:none;border:none;cursor:pointer;color:#92400e;font-size:1rem;line-height:1;padding:0">✕</button>
+      </div>
 
       <!-- Land-rent nudge banner (shown once per session when property rent = $0) -->
       <div id="land-rent-nudge" style="display:none;align-items:flex-start;gap:0.6rem;background:#fffbeb;border:1.5px solid #d97706;border-radius:9px;padding:0.65rem 1rem;margin-bottom:0.8rem;font-size:0.79rem;color:#92400e">
@@ -5339,6 +5346,17 @@ async function runOptimizer() {
     if (rentVal === 0) {
       window._landRentNudgeDone = true;
       const nudge = document.getElementById('land-rent-nudge');
+      if (nudge) nudge.style.display = 'flex';
+    }
+  }
+
+  // Small-farm staffing nudge: fires once when farm < 75 acres.
+  // Default setup always has 2 salaried managers sized for 100-150 acres.
+  if (!window._staffingNudgeDone) {
+    const landVal = parseFloat((document.getElementById('total_land') || {}).value) || 150;
+    if (landVal < 75) {
+      window._staffingNudgeDone = true;
+      const nudge = document.getElementById('staffing-nudge');
       if (nudge) nudge.style.display = 'flex';
     }
   }
