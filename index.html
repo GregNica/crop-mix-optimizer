@@ -1141,6 +1141,30 @@
             </div>
           </div>
         </div>
+        <!-- Past Profit History — optional upload for profit back-check -->
+        <div class="form-group full" style="grid-column:1/-1;margin-top:0.4rem">
+          <details id="profit-history-details" class="csv-import-section" onchange="document.getElementById('profit-history-arrow').textContent=this.open?'▼':'▶'">
+            <summary class="csv-import-summary">
+              <span id="profit-history-arrow">▶</span> Past Profit History <span style="font-weight:400;color:#6b7280">(optional — enables diagnostic reality-check on results)</span>
+            </summary>
+            <div class="csv-import-body">
+              <p style="font-size:0.79rem;color:#4b5563;margin:0.3rem 0 0.5rem">
+                Upload 1+ years of actual farm profits. With 3+ years the model computes a trend forecast and 80% confidence range — results outside that range trigger a diagnostic audit.
+              </p>
+              <div class="csv-upload-row">
+                <button class="section-toggle-btn" onclick="downloadProfitHistoryXLSX()">↓ Download Template</button>
+                <label style="cursor:pointer;font-size:0.8rem;background:#f0faf4;border:1px solid #86efac;border-radius:6px;padding:3px 10px">
+                  ↑ Upload Profit History
+                  <input type="file" id="profit-history-input" accept=".xlsx"
+                         style="display:none" onchange="handleProfitHistoryUpload(this)">
+                </label>
+                <button id="profit-history-delete" onclick="deleteProfitHistory()" style="display:none;background:none;border:none;color:#dc2626;cursor:pointer;font-size:0.8rem">✕ Remove</button>
+              </div>
+              <div id="profit-history-status" style="margin-top:0.4rem;font-size:0.78rem"></div>
+            </div>
+          </details>
+        </div>
+
         <!-- PD Group (b) — machinery/fuel capacity fields in Farm Infrastructure -->
         <div class="form-group full" style="grid-column:1/-1">
           <label class="pd-toggle-row" for="pd-machinery">
@@ -1589,6 +1613,9 @@
 
     <!-- Right: scrollable results -->
     <div id="results-main">
+
+      <!-- Profit back-check panel (state 1 nudge / state 2 confirmation / state 3 diagnostic) -->
+      <div id="backcheck-panel" style="margin-bottom:0.6rem"></div>
 
       <!-- Land-rent nudge banner (shown once per session when property rent = $0) -->
       <div id="land-rent-nudge" style="display:none;align-items:flex-start;gap:0.6rem;background:#fffbeb;border:1.5px solid #d97706;border-radius:9px;padding:0.65rem 1rem;margin-bottom:0.8rem;font-size:0.79rem;color:#92400e">
@@ -2410,6 +2437,40 @@ const APP_STATE = {
   _pdChannelVarDetail: false,  // Phase 4.3.2: Group (c) show var/fixed sell in channels
   _pdPhaseDetail: false,       // Phase 4.3.2: Group (d) show phase-specific resource splits
   _pdCropVarCosts: false,      // Phase 4.3.3: Group (d1) show crop-specific variable costs
+  profitHistory: null,         // { years[], profits[], revenues[], fixedCosts[], excludedYears[] }
+  profitForecast: null,        // { forecast, ci80Low, ci80High, growthRate, label, nYears }
+};
+
+// ============================================================
+// Benchmark yield ranges — UC Cooperative Extension California
+// Used by the profit back-check diagnostic to flag implausible user inputs.
+// Keys are lowercase crop name fragments; values are {low, high} lbs/acre/succession.
+// ============================================================
+const BENCHMARK_YIELD_RANGES = {
+  'spinach':      { low: 4000,  high: 6000  },
+  'lettuce':      { low: 14000, high: 25000 },
+  'kale':         { low: 6000,  high: 12000 },
+  'swiss chard':  { low: 7000,  high: 12000 },
+  'arugula':      { low: 2000,  high: 4500  },
+  'broccoli':     { low: 5000,  high: 10000 },
+  'cabbage':      { low: 20000, high: 40000 },
+  'napa cabbage': { low: 15000, high: 25000 },
+  'carrots':      { low: 20000, high: 30000 },
+  'beets':        { low: 15000, high: 25000 },
+  'radishes':     { low: 8000,  high: 14000 },
+  'garlic':       { low: 8000,  high: 12000 },
+  'onions':       { low: 25000, high: 40000 },
+  'tomatoes':     { low: 18000, high: 30000 },
+  'bell peppers': { low: 10000, high: 20000 },
+  'hot peppers':  { low: 10000, high: 15000 },
+  'cucumbers':    { low: 10000, high: 20000 },
+  'zucchini':     { low: 20000, high: 35000 },
+  'eggplant':     { low: 12000, high: 25000 },
+  'sweet corn':   { low: 7000,  high: 14000 },
+  'green beans':  { low: 5000,  high: 9000  },
+  'basil':        { low: 3000,  high: 6000  },
+  'strawberries': { low: 20000, high: 35000 },
+  'potatoes':     { low: 30000, high: 50000 },
 };
 
 // ============================================================
@@ -3524,6 +3585,367 @@ function handleRainfallXLSXUpload(input) {
   });
 }
 
+// ============================================================
+// PROFIT HISTORY XLSX (Trust & Calibration — Part 2)
+// ============================================================
+
+/** Download a profit history XLSX template. */
+function downloadProfitHistoryXLSX() {
+  _loadSheetJS(() => {
+    const wb = XLSX.utils.book_new();
+    const EX_YEARS = [2020, 2021, 2022, 2023, 2024];
+
+    const instrRows = [
+      ['Past Profit History — Instructions'],
+      [],
+      ['PURPOSE'],
+      ['Enables a reality-check on optimization results.'],
+      ['With 3+ years the model computes a trend forecast and 80% confidence range.'],
+      ['Results outside that range trigger a diagnostic audit.'],
+      [],
+      ['HOW TO FILL'],
+      ['• Year: calendar year (e.g. 2022).'],
+      ['• Total Profit: net income after all costs ($). Required.'],
+      ['• Total Revenue: gross sales ($). Optional — enables revenue-side diagnostics.'],
+      ['• Total Fixed Cost: all fixed costs ($). Optional.'],
+      ['• Total Variable Cost: seed, labor, water, packaging ($). Optional.'],
+      ['• Notes: type "atypical" in any row to exclude it from the trend line (e.g. a drought year).'],
+      [],
+      ['The more years you provide, the tighter the confidence range will be.'],
+      ['At least 3 years are needed to compute a trend; fewer years show an informal average only.'],
+    ];
+    const wsInstr = XLSX.utils.aoa_to_sheet(instrRows);
+    wsInstr['!cols'] = [{ wch: 60 }];
+    XLSX.utils.book_append_sheet(wb, wsInstr, 'Instructions');
+
+    const hdr  = ['Year', 'Total Profit ($)', 'Total Revenue ($)', 'Total Fixed Cost ($)', 'Total Variable Cost ($)', 'Notes'];
+    const unit = ['e.g. 2022', 'required', 'optional', 'optional', 'optional', 'type "atypical" to exclude from trend'];
+    const ex   = [
+      [2020, 95000,  1250000, 480000, 675000, ''],
+      [2021, 82000,  1180000, 478000, 620000, 'atypical — drought year'],
+      [2022, 115000, 1380000, 482000, 683000, ''],
+      [2023, 128000, 1450000, 485000, 837000, ''],
+      [2024, 141000, 1520000, 490000, 889000, ''],
+    ];
+    const ws = XLSX.utils.aoa_to_sheet([hdr, unit, ...ex]);
+    ws['!cols'] = [{ wch: 8 }, { wch: 18 }, { wch: 18 }, { wch: 20 }, { wch: 22 }, { wch: 30 }];
+    XLSX.utils.book_append_sheet(wb, ws, 'Profit History');
+
+    XLSX.writeFile(wb, 'profit_history.xlsx');
+  });
+}
+
+/** File-input onchange handler for profit history XLSX. */
+function handleProfitHistoryUpload(input) {
+  const file = input.files[0];
+  if (!file) return;
+  input.value = '';
+  const statusEl = document.getElementById('profit-history-status');
+  if (statusEl) statusEl.innerHTML = '<span style="color:#6b7280">Reading file…</span>';
+  _loadSheetJS(() => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+        const { history, errors } = parseProfitHistoryXLSX(wb);
+        if (errors && errors.length && !history) {
+          if (statusEl) statusEl.innerHTML = errors.map(err =>
+            `<div class="csv-error-item">⚠ ${err}</div>`).join('');
+          return;
+        }
+        APP_STATE.profitHistory  = history;
+        APP_STATE.profitForecast = computeProfitForecast(history);
+        renderProfitHistoryStatus();
+        // If results already showing, re-render back-check panel
+        if (window._lastRes) renderBackCheckPanel(window._lastRes);
+      } catch(err) {
+        if (statusEl) statusEl.innerHTML =
+          `<div class="csv-error-item">⚠ Could not parse XLSX: ${err.message}</div>`;
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+/** Parse profit history XLSX → { history, errors }. */
+function parseProfitHistoryXLSX(wb) {
+  // Accept first non-Instructions sheet, or sheet named "Profit History"
+  const sheetName = wb.SheetNames.find(n => n.toLowerCase().includes('profit') || n.toLowerCase().includes('history'))
+                    || wb.SheetNames.find(n => !n.toLowerCase().includes('instruct'))
+                    || wb.SheetNames[0];
+  const ws  = wb.Sheets[sheetName];
+  const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+  if (raw.length < 2) return { history: null, errors: ['No data rows found.'] };
+
+  const norm = h => String(h || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  const hdrs = raw[0].map(norm);
+
+  const iYear    = hdrs.findIndex(h => h.includes('year'));
+  const iProfit  = hdrs.findIndex(h => h.includes('profit'));
+  const iRev     = hdrs.findIndex(h => h.includes('revenue'));
+  const iFixed   = hdrs.findIndex(h => h.includes('fixed'));
+  const iVar     = hdrs.findIndex(h => h.includes('variable'));
+  const iNotes   = hdrs.findIndex(h => h.includes('note') || h.includes('atypical'));
+
+  if (iYear < 0)   return { history: null, errors: ['Missing "Year" column.'] };
+  if (iProfit < 0) return { history: null, errors: ['Missing "Total Profit" column.'] };
+
+  const rows   = raw.slice(1).filter(r => r.some(c => String(c || '').trim() !== ''));
+  const years = [], profits = [], revenues = [], fixedCosts = [], varCosts = [], excludedYears = [];
+  const errors = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const row  = rows[i];
+    const yr   = parseInt(row[iYear]);
+    const prof = parseFloat(String(row[iProfit]).replace(/[$,]/g, ''));
+    if (isNaN(yr) || yr < 1900 || yr > 2100) { errors.push(`Row ${i+2}: invalid year "${row[iYear]}"`); continue; }
+    if (isNaN(prof)) { errors.push(`Row ${i+2}: invalid profit "${row[iProfit]}"`); continue; }
+
+    const note = iNotes >= 0 ? String(row[iNotes] || '').trim().toLowerCase() : '';
+    const atypical = note.includes('atypical') || note.includes('exclud') || note === 'yes' || note === 'x';
+    if (atypical) { excludedYears.push(yr); continue; }
+
+    years.push(yr);
+    profits.push(prof);
+    revenues.push(iRev  >= 0 ? (parseFloat(String(row[iRev]  || '').replace(/[$,]/g,'')) || null) : null);
+    fixedCosts.push(iFixed >= 0 ? (parseFloat(String(row[iFixed]|| '').replace(/[$,]/g,'')) || null) : null);
+    varCosts.push(iVar  >= 0 ? (parseFloat(String(row[iVar]  || '').replace(/[$,]/g,'')) || null) : null);
+  }
+
+  if (years.length === 0) return { history: null, errors: errors.length ? errors : ['No valid data rows after exclusions.'] };
+
+  // Sort by year ascending
+  const zipped = years.map((y,i) => ({ y, p: profits[i], r: revenues[i], f: fixedCosts[i], v: varCosts[i] }))
+                      .sort((a,b) => a.y - b.y);
+  return {
+    history: {
+      years:       zipped.map(z => z.y),
+      profits:     zipped.map(z => z.p),
+      revenues:    zipped.map(z => z.r),
+      fixedCosts:  zipped.map(z => z.f),
+      varCosts:    zipped.map(z => z.v),
+      excludedYears,
+    },
+    errors: errors.length ? errors : null,
+  };
+}
+
+/**
+ * computeProfitForecast — linear regression on profit history.
+ * Returns forecast for next year + 80% CI (±1.28σ of residuals).
+ * Falls back to mean if fewer than 3 years of data.
+ */
+function computeProfitForecast(history) {
+  const { years, profits } = history;
+  const n = years.length;
+  const nextYear = Math.max(...years) + 1;
+
+  if (n < 3) {
+    const mean = profits.reduce((s,v) => s + v, 0) / n;
+    return { forecast: mean, ci80Low: null, ci80High: null, growthRate: null, label: 'historical average', nYears: n, nextYear };
+  }
+
+  // OLS: profit = a + b*year
+  const meanY = years.reduce((s,v)  => s + v, 0) / n;
+  const meanP = profits.reduce((s,v) => s + v, 0) / n;
+  const ssXX  = years.reduce((s,y)   => s + (y - meanY)**2, 0);
+  const ssXY  = years.reduce((s,y,i) => s + (y - meanY) * (profits[i] - meanP), 0);
+  const b = ssXY / ssXX;
+  const a = meanP - b * meanY;
+
+  const forecast = a + b * nextYear;
+
+  // Residual std (n-2 degrees of freedom)
+  const residuals   = years.map((y,i) => profits[i] - (a + b*y));
+  const residualVar = residuals.reduce((s,r) => s + r**2, 0) / Math.max(1, n - 2);
+  const residualStd = Math.sqrt(residualVar);
+
+  // 80% CI: ±1.28σ (z-approximation; fine for farm planning purposes)
+  const ci80 = 1.28 * residualStd;
+  const growthRatePct = meanP !== 0 ? (b / Math.abs(meanP)) * 100 : 0;
+
+  return {
+    forecast,
+    ci80Low:      forecast - ci80,
+    ci80High:     forecast + ci80,
+    growthRate:   growthRatePct,
+    label:        'trend forecast',
+    nYears:       n,
+    nextYear,
+  };
+}
+
+/** Render profit history upload status chip in the Farm Basics card. */
+function renderProfitHistoryStatus() {
+  const statusEl = document.getElementById('profit-history-status');
+  const deleteBtn = document.getElementById('profit-history-delete');
+  const hist = APP_STATE.profitHistory;
+  const fc   = APP_STATE.profitForecast;
+  if (!hist || !fc) {
+    if (statusEl)  statusEl.innerHTML  = '';
+    if (deleteBtn) deleteBtn.style.display = 'none';
+    return;
+  }
+  const { years, excludedYears } = hist;
+  const { forecast, ci80Low, ci80High, growthRate, label, nYears } = fc;
+  const fmt = n => n == null ? '—' : '$' + Math.round(n).toLocaleString();
+  let summary = `<span class="csv-success-msg">✓ ${nYears} year${nYears>1?'s':''} loaded (${years[0]}–${years[years.length-1]}).</span> `;
+  if (ci80Low != null) {
+    summary += `<span style="color:#374151">Trend: ${growthRate >= 0 ? '+' : ''}${growthRate.toFixed(1)}%/yr · ${label} ${fc.nextYear}: ${fmt(forecast)} <span style="color:#6b7280">(80% range ${fmt(ci80Low)}–${fmt(ci80High)})</span></span>`;
+  } else {
+    summary += `<span style="color:#374151">Historical average: ${fmt(forecast)} — upload 3+ years for a trend.</span>`;
+  }
+  if (excludedYears.length) summary += ` <span style="color:#d97706">${excludedYears.length} year(s) excluded (marked atypical).</span>`;
+  if (statusEl)  statusEl.innerHTML  = summary;
+  if (deleteBtn) deleteBtn.style.display = 'inline';
+}
+
+/** Clear profit history upload. */
+function deleteProfitHistory() {
+  APP_STATE.profitHistory  = null;
+  APP_STATE.profitForecast = null;
+  renderProfitHistoryStatus();
+  if (window._lastRes) renderBackCheckPanel(window._lastRes);
+}
+
+/**
+ * renderBackCheckPanel — three-state back-check in results view.
+ *
+ * State 1 (no history): small nudge linking to the upload.
+ * State 2 (within CI):  green confirmation.
+ * State 3 (outside CI): amber diagnostic with fired checks only.
+ */
+function renderBackCheckPanel(res) {
+  const panel = document.getElementById('backcheck-panel');
+  if (!panel) return;
+
+  const hist = APP_STATE.profitHistory;
+  const fc   = APP_STATE.profitForecast;
+  const modelProfit = res && res.profit != null ? res.profit : null;
+  if (modelProfit == null) { panel.innerHTML = ''; return; }
+
+  const fmtDollar = n => n == null ? '—' : '$' + Math.round(Math.abs(n)).toLocaleString();
+  const baseStyle = 'border-radius:9px;padding:0.65rem 1rem;margin-bottom:0.6rem;font-size:0.79rem;';
+
+  // ── State 1: no history uploaded ─────────────────────────────────────────
+  if (!hist || !fc) {
+    panel.innerHTML = `<div style="${baseStyle}background:#f0faf4;border:1px solid #86efac;color:#166534;display:flex;align-items:center;gap:0.5rem">
+      <span>💡</span>
+      <span>If these results seem different than expected, <button onclick="document.getElementById('profit-history-details').open=true;document.getElementById('profit-history-details').scrollIntoView({behavior:'smooth',block:'center'})" style="background:none;border:none;cursor:pointer;color:#166534;text-decoration:underline;padding:0;font-size:inherit">upload past years' profits</button> for a diagnostic reality-check.</span>
+    </div>`;
+    return;
+  }
+
+  const { forecast, ci80Low, ci80High, label, nYears, nextYear } = fc;
+
+  // ── Informal comparison (< 3 years) ──────────────────────────────────────
+  if (ci80Low == null) {
+    const diff = modelProfit - forecast;
+    const pct  = forecast !== 0 ? Math.abs(diff / forecast * 100).toFixed(0) : '—';
+    const dir  = diff >= 0 ? 'above' : 'below';
+    panel.innerHTML = `<div style="${baseStyle}background:#f0faf4;border:1px solid #86efac;color:#166534">
+      📊 <strong>Reality check</strong> — Our forecast (${fmtDollar(modelProfit)}) is ${pct}% ${dir} your ${label} of ${fmtDollar(forecast)}.
+      Not enough history (${nYears} year${nYears>1?'s':''}) for a confidence range — upload 3+ years for a full diagnostic.
+    </div>`;
+    return;
+  }
+
+  // ── State 2: within CI ───────────────────────────────────────────────────
+  if (modelProfit >= ci80Low && modelProfit <= ci80High) {
+    panel.innerHTML = `<div style="${baseStyle}background:#f0faf4;border:1px solid #86efac;color:#166534">
+      ✅ <strong>Reality check passed</strong> — Our forecast (${fmtDollar(modelProfit)}) falls within your expected range of ${fmtDollar(ci80Low)}–${fmtDollar(ci80High)}, based on ${nYears} years of history.
+    </div>`;
+    return;
+  }
+
+  // ── State 3: outside CI — run diagnostics ────────────────────────────────
+  const isHigh = modelProfit > ci80High;
+  const diagnostics = [];
+
+  if (isHigh) {
+    // Diagnostic 1: Missing land cost
+    const rentVal = parseFloat((document.getElementById('rate_property_mortgage_rent') || {}).value) || 0;
+    if (rentVal === 0) {
+      diagnostics.push('Land rent/mortgage is set to $0. If you lease or carry a mortgage, add it in <em>Farm Basics → Fixed Costs</em> — typical range $500–$3,000/week for 150 acres.');
+    }
+
+    // Diagnostic 2: Yield outside audit-verified benchmark range
+    try {
+      const formCrops = typeof getCropsFromForm === 'function' ? getCropsFromForm() : [];
+      formCrops.forEach(crop => {
+        const name  = String(crop.name || '').trim().toLowerCase();
+        const range = Object.entries(BENCHMARK_YIELD_RANGES).find(([k]) => name.includes(k) || k.includes(name));
+        if (!range) return;
+        const ypa = parseFloat(crop.yield_per_acre) || 0;
+        if (ypa > range[1].high * 1.4) {
+          diagnostics.push(`<em>${crop.name}</em> yield (${ypa.toLocaleString()} lbs/ac) is above the typical range (${range[1].low.toLocaleString()}–${range[1].high.toLocaleString()} lbs/ac per UC Extension). Double-check this value.`);
+        }
+      });
+    } catch(e) { /* skip if getCropsFromForm unavailable */ }
+
+    // Diagnostic 3: Outlier years in uploaded crop data
+    const mcData = APP_STATE.mcMultiTabData;
+    if (mcData) {
+      Object.entries(mcData).forEach(([cropName, cdata]) => {
+        const vals = (cdata.yieldByYear || []).filter(v => v > 0);
+        if (vals.length < 3) return;
+        const mean = vals.reduce((s,v) => s+v, 0) / vals.length;
+        const std  = Math.sqrt(vals.reduce((s,v) => s + (v-mean)**2, 0) / vals.length);
+        vals.forEach(v => {
+          if (Math.abs(v - mean) > 1.75 * std) {
+            diagnostics.push(`Your historical <em>${cropName}</em> yield data has an outlier (${Math.round(v).toLocaleString()} lbs/ac vs avg ${Math.round(mean).toLocaleString()} lbs/ac). The model uses the mean including this value — consider marking that year as "atypical" in your profit history upload, or focus on the P50 Monte Carlo result.`);
+          }
+        });
+      });
+    }
+
+    // Diagnostic 4: Very high Farmers Market demand caps (could allow unrealistic FM allocation)
+    try {
+      const formCrops = typeof getCropsFromForm === 'function' ? getCropsFromForm() : [];
+      formCrops.forEach(crop => {
+        const chData = crop.channels_data || {};
+        const fmEntry = chData['Farmers Market'] || chData['FarmersMarket'] || chData['FM'];
+        if (!fmEntry) return;
+        const fmDemand = parseFloat(fmEntry.demand_value) || 0;
+        const wsDemand = parseFloat((chData['Wholesale'] || {}).demand_value) || 1;
+        if (fmDemand > wsDemand * 3 && fmDemand > 10000) {
+          diagnostics.push(`<em>${crop.name}</em> Farmers Market demand cap (${fmDemand.toLocaleString()} lbs/wk) is much higher than Wholesale — the optimizer may be routing most sales to FM. If your FM capacity hasn't grown, tighten this cap.`);
+        }
+      });
+    } catch(e) { /* skip */ }
+
+  } else {
+    // Model is BELOW CI lower bound
+    diagnostics.push('Your actual profits may have included one-time income (equipment sale, insurance payout, land lease) not captured in a recurring model.');
+    diagnostics.push('The model only includes the crops you\'ve configured. If you grew additional crops in those years, add them for a complete comparison.');
+  }
+
+  const dirWord    = isHigh ? 'above' : 'below';
+  const boundStr   = isHigh ? `upper bound of ${fmtDollar(ci80High)}` : `lower bound of ${fmtDollar(ci80Low)}`;
+  const headerText = isHigh
+    ? `Our forecast (${fmtDollar(modelProfit)}) is above your expected range of ${fmtDollar(ci80Low)}–${fmtDollar(ci80High)}, based on ${nYears} years of history.`
+    : `Our forecast (${fmtDollar(modelProfit)}) is below your expected range of ${fmtDollar(ci80Low)}–${fmtDollar(ci80High)}, based on ${nYears} years of history.`;
+  const footerText = isHigh
+    ? 'Please double-check the flagged inputs and re-run the simulation.'
+    : 'Review the possible explanations below.';
+
+  const diagHTML = diagnostics.length
+    ? `<ul style="margin:0.5rem 0 0 1rem;padding:0;list-style:disc">${diagnostics.map(d => `<li style="margin:0.25rem 0">${d}</li>`).join('')}</ul>`
+    : '<p style="margin:0.4rem 0 0">No specific inputs flagged — the gap may reflect genuine improvement or a year-to-year swing outside your historical range.</p>';
+
+  panel.innerHTML = `<div style="${baseStyle}background:#fffbeb;border:1.5px solid #d97706;color:#92400e">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:0.5rem">
+      <div style="flex:1">
+        <strong>⚠ Reality check — outside expected range</strong><br>
+        <span style="font-size:0.77rem">${headerText}</span>
+        ${diagnostics.length ? `<div style="font-size:0.77rem;margin-top:0.3rem"><strong>${isHigh ? 'Inputs that may be causing the result to be exaggerated' : 'Possible explanations'}:</strong>${diagHTML}</div>` : diagHTML}
+        <div style="font-size:0.75rem;margin-top:0.4rem;color:#b45309">${footerText}</div>
+      </div>
+      <button onclick="document.getElementById('backcheck-panel').innerHTML=''" style="background:none;border:none;cursor:pointer;color:#b45309;font-size:1rem;line-height:1;padding:0;flex-shrink:0">✕</button>
+    </div>
+  </div>`;
+}
+
 /**
  * renderMCUploadStatus() — refresh the #mc-upload-files panel in the MC card
  * and the #mc-results-files panel in the results-page upload block.
@@ -3578,6 +4000,8 @@ function deleteRainfallHistory() {
   APP_STATE.rainfallFileName    = null;
   APP_STATE.rainfallHistory     = null;
   APP_STATE.rainfallComputedCV  = null;
+  APP_STATE.profitHistory       = null;
+  APP_STATE.profitForecast      = null;
   // Reset MC rainfall CV input to default fallback
   const rainInput = document.getElementById('mc-cv-rain');
   if (rainInput) { rainInput.value = 15; rainInput.style.border = '1.5px solid #d1d5db'; }
@@ -5002,6 +5426,9 @@ async function runOptimizer() {
 function renderResults(res, total_land) {
   // Waterfall chart — KPI grid removed; Peak Borrowing lives in exec summary only
   document.getElementById('chart-waterfall').src = 'data:image/png;base64,' + res.waterfall_png;
+
+  // Profit back-check panel (state 1/2/3 depending on uploaded history)
+  renderBackCheckPanel(res);
 
   // Constraint summary (kept hidden but data populated for CSV export)
   renderConstraintSummary(res, window._lastParams);
