@@ -96,6 +96,8 @@ def solve_farm_v2(
     # --- Equipment proxy ---
     max_plant_acres_per_week: float = 1e9,
     max_harvest_acres_per_week: float = 1e9,
+    # --- Additional fixed costs ---
+    rate_property_mortgage_rent: float = 0.0,  # $/week — land lease or mortgage payment
     # --- Variable cost rates ---
     cost_fert_per_lb: float = 0.0,
     cost_fuel_per_L: float = 0.0,
@@ -254,6 +256,7 @@ def solve_farm_v2(
         + equip_storage * rate_equip_storage * operating_weeks
         + fuel_storage * rate_fuel_storage * operating_weeks
         + rate_machinery * operating_weeks
+        + rate_property_mortgage_rent * operating_weeks
         + salaried_weekly_cost * N_WEEKS
     )
     if city_water_enabled and city_water_fixed_fee_per_week > 0:
