@@ -6133,8 +6133,14 @@ function renderContributionMargins(params) {
     });
   });
 
-  // Phase 4.3.1: Sort by $/ac/week planted (desc) as primary comparator, then channel order.
-  allRows.sort((a, b) => b.marginPerAcWeek - a.marginPerAcWeek || a.ci - b.ci);
+  // Keep each crop's channels contiguous (so a crop's label appears once): rank crops by their
+  // best channel's $/ac/wk, then group that crop's rows together in channel order.
+  const cropBest = {};
+  allRows.forEach(r => { const k = r.crop.name; cropBest[k] = Math.max(cropBest[k] ?? -Infinity, r.marginPerAcWeek); });
+  allRows.sort((a, b) =>
+    (cropBest[b.crop.name] - cropBest[a.crop.name]) ||
+    (a.cropIdx - b.cropIdx) ||
+    (a.ci - b.ci));
 
   // No rowspan — repeat crop label per row for structural stability.
   // (Rowspan + sort caused non-contiguous same-crop rows → column drift. Fixed by flat layout.)
