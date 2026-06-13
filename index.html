@@ -6118,7 +6118,7 @@ function renderContributionMargins(params) {
       // $/ac/week = contribution margin ÷ weeks the crop occupies the field (not just planting weeks)
       const marginPerAcWeek = occWeeks > 0 ? margin / occWeeks : margin;
       const chColor = chColors[chNames.indexOf(chName) % chColors.length] || '#6b7280';
-      allRows.push({ crop, cropIdx, pw, gw, hw, dtm, ypa, cyclesPerYear, chName, chData, ci, chEntries, vcBreakdown, pkgCost, totalVC, grossRev, margin, annualMargin, marginPctRaw, marginPerAcWeek, chColor });
+      allRows.push({ crop, cropIdx, pw, gw, hw, dtm, ypa, stFrac, soldLbs, cyclesPerYear, chName, chData, ci, chEntries, vcBreakdown, pkgCost, totalVC, grossRev, margin, annualMargin, marginPctRaw, marginPerAcWeek, chColor });
     });
   });
 
@@ -6130,7 +6130,7 @@ function renderContributionMargins(params) {
   let tableRows = '';
   let prevCropName = null;
   allRows.forEach(row => {
-    const { crop, pw, gw, hw, dtm, ypa, cyclesPerYear, chName, vcBreakdown, pkgCost, totalVC, grossRev, margin, annualMargin, marginPctRaw, marginPerAcWeek, chColor } = row;
+    const { crop, pw, gw, hw, dtm, ypa, stFrac, soldLbs, cyclesPerYear, chName, vcBreakdown, pkgCost, totalVC, grossRev, margin, annualMargin, marginPctRaw, marginPerAcWeek, chColor } = row;
 
     const isNewCrop    = (crop.name !== prevCropName);
     prevCropName       = crop.name;
@@ -6154,7 +6154,7 @@ function renderContributionMargins(params) {
         <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${chColor};margin-right:3px;flex-shrink:0"></span>${chName}
       </td>
       <td style="${cellBase}padding:4px 8px;font-size:0.76rem;text-align:right">$${parseFloat(row.chData.price_per_lb||0).toFixed(2)}</td>
-      <td style="${cellBase}padding:4px 8px;font-size:0.76rem;text-align:right">$${grossRev.toFixed(0)}</td>
+      <td style="${cellBase}padding:4px 8px;font-size:0.76rem;text-align:right" title="Yield ${ypa.toLocaleString()} lb/ac × sell-through ${(stFrac*100).toFixed(0)}% = ${soldLbs.toLocaleString(undefined,{maximumFractionDigits:0})} lb sold&#10;× $${parseFloat(row.chData.price_per_lb||0).toFixed(2)}/lb = $${grossRev.toFixed(0)}&#10;&#10;Sell-through = share of harvest that converts to cash (shrink / grade-out / unsold). You grow the full yield but are paid only on the sold share.">$${grossRev.toFixed(0)} <span style="font-size:0.65rem;color:#9ca3af">ⓘ</span></td>
       <td style="${cellBase}padding:4px 8px;font-size:0.75rem;text-align:right;color:#6b7280" title="${vcBreakdown}&#10;Packaging: $${pkgCost.toFixed(0)}&#10;Total VC: $${totalVC.toFixed(0)}">$${totalVC.toFixed(0)} <span style="font-size:0.65rem;color:#9ca3af">ⓘ</span></td>
       <td style="${cellBase}padding:4px 8px;font-size:0.78rem;text-align:right;${mStyle}">$${margin.toFixed(0)}</td>
       <td style="${cellBase}padding:4px 8px;font-size:0.78rem;text-align:right;${wpStyle}" title="$/ac/wk = CM/ac ÷ field-occupancy weeks (${pw + gw + hw} wk = ${pw} plant + ${gw} grow + ${hw} harvest). Revenue reflects this crop's sell-through. Primary sort: return per week the crop ties up the land.">$${marginPerAcWeek.toFixed(0)}</td>
