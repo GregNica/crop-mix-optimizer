@@ -2048,7 +2048,9 @@ function getChannelsFromForm() {
   }));
 }
 
-function updateCropChannels(card, chDefs, cropDefaults) {
+function updateCropChannels(card, chDefs, cropDefaults, forceOverride) {
+  // forceOverride = true: passed cropDefaults win over existing field values (loading a template /
+  // applying new data). Default (false): existing values are preserved (re-render on channel change).
   let container = card.querySelector('.crop-channels-container');
   if (!container) return;
   const prev = {};
@@ -2069,11 +2071,16 @@ function updateCropChannels(card, chDefs, cropDefaults) {
   container.innerHTML = chDefs.map(ch => {
     const p = prev[ch.name];
     const cd = (cropDefaults && cropDefaults[ch.name]) || {};
-    const price  = (p?.price  !== undefined && p.price  !== '') ? p.price  : (cd.price  !== undefined ? cd.price  : '');
-    const pkg    = (p?.pkg    !== undefined && p.pkg    !== '') ? p.pkg    : (cd.pkg    !== undefined ? cd.pkg    : ch.default_pkg);
-    const dtype  = p?.demand_type  || cd.demand_type  || 'weekly_flat';
-    const dval   = (p?.demand_value !== undefined && p.demand_value !== '') ? p.demand_value : (cd.demand_value !== undefined ? cd.demand_value : '0');
-    const dseas  = p?.demand_season !== undefined ? p.demand_season : (cd.demand_season || '');
+    // pick(cdVal, prevVal, fallback): cd wins when forceOverride, else prev wins, else cd, else fallback.
+    const pick = (c, pv, fb) => (forceOverride && c !== undefined && c !== '') ? c
+                              : (pv !== undefined && pv !== '') ? pv
+                              : (c !== undefined ? c : fb);
+    const price  = pick(cd.price, p?.price, '');
+    const pkg    = pick(cd.pkg,   p?.pkg,   ch.default_pkg);
+    const dtype  = (forceOverride && cd.demand_type) ? cd.demand_type : (p?.demand_type || cd.demand_type || 'weekly_flat');
+    const dval   = pick(cd.demand_value, p?.demand_value, '0');
+    const dseas  = (forceOverride && cd.demand_season !== undefined) ? cd.demand_season
+                 : (p?.demand_season !== undefined ? p.demand_season : (cd.demand_season || ''));
     const mx     = dseas.match(/W?(\d+)-W?(\d+)/i);
     const ssVal  = mx ? mx[1] : '';
     const seVal  = mx ? mx[2] : '';
@@ -2229,7 +2236,7 @@ function loadCropTemplate(idx, templateName) {
   }
   setMMDD('s1_start', t.s1_start); setMMDD('s1_end', t.s1_end);
   setMMDD('s2_start', t.s2_start || ''); setMMDD('s2_end', t.s2_end || '');
-  updateCropChannels(card, getChannelDefs(), t.channels_data || {});
+  updateCropChannels(card, getChannelDefs(), t.channels_data || {}, true);  // template load → override channel values
 }
 
 // ============================================================
