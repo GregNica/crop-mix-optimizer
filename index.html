@@ -11301,7 +11301,7 @@ function renderMCSetup(params) {
         <th style="text-align:center;padding:4px 8px;border-bottom:2px solid #d1d5db">
           Price spread${tipSpan('How much selling prices vary year to year. 15% means the price you get is typically within ±15% of average.')}</th>
         <th style="text-align:center;padding:4px 8px;border-bottom:2px solid #d1d5db">
-          Sales-loss risk${tipSpan('Sales-side risk — how much your sellable volume swings year to year from competition, market gluts, and demand shifts. Higher = more volatile sales. This is the variance around your deterministic sell-through.')}</th>
+          Sell-through variability${tipSpan('Year-to-year swing in the share of harvest you actually sell — competition, market gluts, demand shifts. This is the SAME concept as the sell-through % you set per crop: that is the average level, this dial is its variability. 0% = always exactly your sell-through; higher = more volatile.')}</th>
         <th style="text-align:left;padding:4px 8px;border-bottom:2px solid #d1d5db;font-weight:400;color:#6b7280;font-size:0.72rem">Source</th>
       </tr></thead>
       <tbody>${crops.map((c, i) => {
