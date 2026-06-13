@@ -1638,7 +1638,7 @@
       <!-- Land-rent nudge banner (shown once per session when property rent = $0) -->
       <div id="land-rent-nudge" style="display:none;align-items:flex-start;gap:0.6rem;background:#fffbeb;border:1.5px solid #d97706;border-radius:9px;padding:0.65rem 1rem;margin-bottom:0.8rem;font-size:0.79rem;color:#92400e">
         <span style="font-size:1.1rem;line-height:1">⚠</span>
-        <span style="flex:1"><strong>Land rent/mortgage is set to $0.</strong> If you lease this land or carry a mortgage, add the weekly cost in <em>Farm Basics → Fixed Costs</em> — omitting it will overstate profit. Typical range: $500–$3,000/week for a 150-acre leased or financed operation.</span>
+        <span style="flex:1"><strong>Land rent/mortgage is set to $0.</strong> If you lease this land or carry a mortgage, add the weekly cost in <a onclick="jumpToSetup('farm-basics','rate_property_mortgage_rent')" style="color:#b45309;text-decoration:underline;cursor:pointer">Farm Basics → Fixed Costs</a> — omitting it will overstate profit. Typical range: $500–$3,000/week for a 150-acre leased or financed operation.</span>
         <button onclick="document.getElementById('land-rent-nudge').style.display='none'" style="background:none;border:none;cursor:pointer;color:#92400e;font-size:1rem;line-height:1;padding:0">✕</button>
       </div>
 
@@ -1648,7 +1648,8 @@
         The <strong>harvest storage cap</strong> is enforced at harvest time only and does not track
         post-harvest inventory carryover. Ensure your storage cap is large enough to hold the full
         harvest volume for any crop with Sales Spread Weeks &gt; 1.
-        <a style="color:#b45309;text-decoration:underline;cursor:pointer" onclick="this.closest('#spread-caveat-banner').style.display='none'">Dismiss</a>
+        <a style="color:#b45309;text-decoration:underline;cursor:pointer" onclick="jumpToSetup('crops','crop-list')">Review crops →</a>
+        &nbsp;<a style="color:#b45309;text-decoration:underline;cursor:pointer" onclick="this.closest('#spread-caveat-banner').style.display='none'">Dismiss</a>
       </div>
 
       <!-- Executive Summary (rendered after solve) -->
@@ -3893,7 +3894,7 @@ function renderBackCheckPanel(res) {
   if (!hist || !fc) {
     panel.innerHTML = `<div style="${baseStyle}background:#f0faf4;border:1px solid #86efac;color:#166534;display:flex;align-items:center;gap:0.5rem">
       <span>💡</span>
-      <span>If these results seem different than expected, <button onclick="document.getElementById('profit-history-details').open=true;document.getElementById('profit-history-details').scrollIntoView({behavior:'smooth',block:'center'})" style="background:none;border:none;cursor:pointer;color:#166534;text-decoration:underline;padding:0;font-size:inherit">upload past years' profits</button> for a diagnostic reality-check.</span>
+      <span>If these results seem different than expected, <button onclick="jumpToSetup('farm-basics','profit-history-details')" style="background:none;border:none;cursor:pointer;color:#166534;text-decoration:underline;padding:0;font-size:inherit">upload past years' profits</button> for a diagnostic reality-check.</span>
     </div>`;
     return;
   }
@@ -3928,7 +3929,7 @@ function renderBackCheckPanel(res) {
     // Diagnostic 1: Missing land cost
     const rentVal = parseFloat((document.getElementById('rate_property_mortgage_rent') || {}).value) || 0;
     if (rentVal === 0) {
-      diagnostics.push('Land rent/mortgage is set to $0. If you lease or carry a mortgage, add it in <em>Farm Basics → Fixed Costs</em> — typical range $500–$3,000/week for 150 acres.');
+      diagnostics.push('Land rent/mortgage is set to $0. If you lease or carry a mortgage, add it in <a onclick="jumpToSetup(\'farm-basics\',\'rate_property_mortgage_rent\')" style="color:#166534;text-decoration:underline;cursor:pointer">Farm Basics → Fixed Costs</a> — typical range $500–$3,000/week for 150 acres.');
     }
 
     // Diagnostic 2: Yield outside audit-verified benchmark range
@@ -4600,7 +4601,7 @@ function renderExecutiveSummary(res, params) {
   const _uploadedCrops = (APP_STATE.mcUploadSummary || []).length;
   const provenanceBanner = _uploadedCrops > 0
     ? `<div style="margin:0.2rem 0 0.7rem;padding:0.45rem 0.7rem;border-radius:8px;background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46;font-size:0.78rem">✓ <strong>Backed by your data</strong> for ${_uploadedCrops} crop(s) — your historical averages set this plan and the year-to-year spread drives the risk view.</div>`
-    : `<div style="margin:0.2rem 0 0.7rem;padding:0.45rem 0.7rem;border-radius:8px;background:#fffbeb;border:1px solid #fcd34d;color:#92400e;font-size:0.78rem">⚠ <strong>Benchmark-driven estimate.</strong> This plan uses regional benchmark defaults. Upload your <strong>Past Data</strong> (yields, prices, sales, sell-through) in the Crops section to make it specific to your farm.</div>`;
+    : `<div style="margin:0.2rem 0 0.7rem;padding:0.45rem 0.7rem;border-radius:8px;background:#fffbeb;border:1px solid #fcd34d;color:#92400e;font-size:0.78rem">⚠ <strong>Benchmark-driven estimate.</strong> This plan uses regional benchmark defaults. Upload your <strong>Past Data</strong> (yields, prices, sales, sell-through) in the <a onclick="jumpToSetup('crops','crop-list')" style="color:#92400e;text-decoration:underline;cursor:pointer">Crops section</a> to make it specific to your farm.</div>`;
 
   el.innerHTML = `
     <h2>Executive Summary</h2>
@@ -5642,10 +5643,12 @@ function exportPLCSV() {
   const grossProfit   = grossRevenue - cogs;
   const fixedOpex     = res.fixed_cost;       // infrastructure fixed costs
   const totalOpex     = fixedOpex + fixedSell;
-  const operatingIncome = grossProfit - totalOpex;
+  // Anchor the headline totals to the solver's own figures so the P&L reconciles with the waterfall.
+  const operatingIncome = (res.operating_profit != null) ? res.operating_profit : (grossProfit - totalOpex);
   const overheadCost  = res.overhead_cost || 0;   // indirect overhead (% of revenue)
   const interestCost  = res.interest_cost || 0;   // interest on operating borrowing
-  const netProfit     = operatingIncome - overheadCost - interestCost;
+  const netProfit     = (res.profit != null) ? res.profit : (operatingIncome - overheadCost - interestCost);
+  const opReconcile   = operatingIncome - (grossProfit - totalOpex);  // city water / overtime / rounding bridge
 
   // Build per-channel revenue estimate (from solver result if available, else compute fallback).
   // Phase 3.4.2: avoid "N/A" by summing computeWeeklySalesLbs × channel price across all weeks.
@@ -5726,6 +5729,7 @@ function exportPLCSV() {
     ['  Fixed Selling & Overhead', (-fixedSell).toFixed(2)],
     ...chOpexRows,
     ['  Total Operating Expenses', (-totalOpex).toFixed(2)],
+    ...(Math.abs(opReconcile) > 0.5 ? [['  Adjustment — items outside the optimizer (channel fixed-selling, city water, overtime)', opReconcile.toFixed(2)]] : []),
     [''],
     ['OPERATING INCOME', operatingIncome.toFixed(2)],
     [''],
@@ -6097,17 +6101,22 @@ function renderContributionMargins(params) {
 
     // cropIdx = stable index of crop in params.crops (used for ordering)
     const cropIdx = params.crops.indexOf(crop);
+    // Per-crop sell-through (fraction) → fall back to the farm-wide default, then 1.0
+    const stFrac = (crop.sell_through_fraction != null ? crop.sell_through_fraction
+                    : (params.sell_through_fraction != null ? params.sell_through_fraction : 1));
+    const occWeeks = pw + gw + hw;   // weeks the crop occupies the field (plant+grow+harvest)
     chEntries.forEach(([chName, chData], ci) => {
       const price    = parseFloat(chData.price_per_lb || 0);
       const pkg      = parseFloat(chData.packaging_cost_per_lb || 0);
-      const pkgCost  = ypa * pkg;
-      const totalVC   = nonPkgVC + pkgCost;
-      const grossRev  = ypa * price;
+      const soldLbs  = ypa * stFrac;          // only this share of harvest converts to cash
+      const pkgCost  = soldLbs * pkg;          // package what you actually sell
+      const totalVC   = nonPkgVC + pkgCost;    // grow full yield, package sold lbs
+      const grossRev  = soldLbs * price;       // revenue on sold lbs (sell-through applied)
       const margin    = grossRev - totalVC;
       const annualMargin = margin * cyclesPerYear;
       const marginPctRaw = grossRev > 0 ? margin / grossRev * 100 : null;
-      // Phase 4.3.1: $/ac/week planted = contribution margin ÷ planting weeks
-      const marginPerAcWeek = pw > 0 ? margin / pw : margin;
+      // $/ac/week = contribution margin ÷ weeks the crop occupies the field (not just planting weeks)
+      const marginPerAcWeek = occWeeks > 0 ? margin / occWeeks : margin;
       const chColor = chColors[chNames.indexOf(chName) % chColors.length] || '#6b7280';
       allRows.push({ crop, cropIdx, pw, gw, hw, dtm, ypa, cyclesPerYear, chName, chData, ci, chEntries, vcBreakdown, pkgCost, totalVC, grossRev, margin, annualMargin, marginPctRaw, marginPerAcWeek, chColor });
     });
@@ -6148,7 +6157,7 @@ function renderContributionMargins(params) {
       <td style="${cellBase}padding:4px 8px;font-size:0.76rem;text-align:right">$${grossRev.toFixed(0)}</td>
       <td style="${cellBase}padding:4px 8px;font-size:0.75rem;text-align:right;color:#6b7280" title="${vcBreakdown}&#10;Packaging: $${pkgCost.toFixed(0)}&#10;Total VC: $${totalVC.toFixed(0)}">$${totalVC.toFixed(0)} <span style="font-size:0.65rem;color:#9ca3af">ⓘ</span></td>
       <td style="${cellBase}padding:4px 8px;font-size:0.78rem;text-align:right;${mStyle}">$${margin.toFixed(0)}</td>
-      <td style="${cellBase}padding:4px 8px;font-size:0.78rem;text-align:right;${wpStyle}" title="$/ac/wk planted = CM/ac ÷ planting weeks (${pw} wk). Primary sort. Normalizes intensity: fast crops with short planting windows rank higher.">$${marginPerAcWeek.toFixed(0)}</td>
+      <td style="${cellBase}padding:4px 8px;font-size:0.78rem;text-align:right;${wpStyle}" title="$/ac/wk = CM/ac ÷ field-occupancy weeks (${pw + gw + hw} wk = ${pw} plant + ${gw} grow + ${hw} harvest). Revenue reflects this crop's sell-through. Primary sort: return per week the crop ties up the land.">$${marginPerAcWeek.toFixed(0)}</td>
       <td style="${cellBase}padding:4px 8px;font-size:0.76rem;text-align:right;${pStyle}">${marginPctStr}</td>
       ${annualize ? `<td style="${cellBase}padding:4px 8px;font-size:0.78rem;text-align:right;${aStyle}" title="${cyclesPerYear.toFixed(2)} cycles/year (365÷${dtm}d)">$${annualMargin.toFixed(0)}</td>` : ''}
     </tr>`;
@@ -6173,14 +6182,14 @@ function renderContributionMargins(params) {
       <th style="text-align:right;padding:5px 8px;border-bottom:2px solid #d1d5db;color:#374151;overflow:hidden;white-space:nowrap">Rev/ac</th>
       <th style="text-align:right;padding:5px 8px;border-bottom:2px solid #d1d5db;color:#374151;overflow:hidden;white-space:nowrap" title="All variable costs: packaging + labor + water + fertilizer + fuel + seed">VC/ac ⓘ</th>
       <th style="text-align:right;padding:5px 8px;border-bottom:2px solid #d1d5db;color:#374151;overflow:hidden;white-space:nowrap">CM/ac</th>
-      <th style="text-align:right;padding:5px 8px;border-bottom:2px solid #d1d5db;color:#1b4332;overflow:hidden;white-space:nowrap;background:#f0faf4" title="$/ac/wk planted = CM/ac ÷ planting weeks. Primary sort: normalizes contribution by planting-duration intensity — shorter-cycle crops (spinach, lettuce) rank higher per week committed.">$/ac/wk ★ ⓘ</th>
+      <th style="text-align:right;padding:5px 8px;border-bottom:2px solid #d1d5db;color:#1b4332;overflow:hidden;white-space:nowrap;background:#f0faf4" title="$/ac/wk = CM/ac ÷ field-occupancy weeks (plant+grow+harvest). Primary sort: return per week the crop ties up the land. Revenue reflects each crop's sell-through.">$/ac/wk ★ ⓘ</th>
       <th style="text-align:right;padding:5px 8px;border-bottom:2px solid #d1d5db;color:#374151;overflow:hidden;white-space:nowrap" title="Margin % = Contribution Margin ÷ Gross Revenue × 100. N/A when price is zero.">Margin% ⓘ</th>
       ${annualHeader}
     </tr></thead>
     <tbody>${tableRows}</tbody>
   </table></div>
   <p style="font-size:0.7rem;color:#9ca3af;margin-top:0.5rem">
-    <strong style="color:#1b4332">★ $/ac/wk planted</strong> = CM/ac ÷ planting weeks — default sort. Normalizes contribution by planting-duration intensity: a fast crop that takes 2 planting weeks scores higher per week of commitment than a slow crop with equal CM but 8 planting weeks.
+    <strong style="color:#1b4332">★ $/ac/wk</strong> = CM/ac ÷ the weeks the crop occupies the field (plant+grow+harvest) — default sort: return per week of land committed. A long-season crop that ties up land for months scores lower per week than a fast crop with the same per-cycle margin. Revenue reflects each crop's sell-through (you're only paid for what sells).
     <strong>CM/ac</strong> = Gross Revenue − Total Variable Cost (per acre, one crop cycle).
     ${annualize ? '<strong>Annual $/ac</strong> = CM/ac × (365 ÷ days to maturity) — time-normalized annual return. ' : ''}
     <strong>Margin % of Rev</strong> = CM/ac ÷ Gross Revenue × 100.
@@ -6253,6 +6262,16 @@ function switchToInput() {
   document.getElementById('results-view').style.display = 'none';
   // Return to hub so user can navigate to any section
   showHub();
+}
+
+// Jump from the results view back into a specific setup section, optionally opening
+// and scrolling to a target element (a <details> is expanded). Used by results-page links.
+function jumpToSetup(sectionId, targetId) {
+  if (typeof showSection === 'function') showSection(sectionId);
+  setTimeout(() => {
+    const t = targetId && document.getElementById(targetId);
+    if (t) { if (t.tagName === 'DETAILS') t.open = true; t.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+  }, 60);
 }
 
 // ============================================================
