@@ -3066,7 +3066,7 @@ function downloadMCXLSX() {
       ['TAB STRUCTURE'],
       ['Tab',          'Rows',                    'Year columns',               'Value'],
       ['Harvest', 'One row per crop',         'Year_YYYY (e.g. Year_2018)', 'TOTAL lbs harvested that year'],
-      ['Acres',   'One row per crop',         'Year_YYYY',                  'acres planted that year'],
+      ['Acres',   'One row per crop',         'Year_YYYY',                  'acres planted that year — COUNT EACH SUCCESSION (10 ac planted twice = 20)'],
       ['Sales',   'One row per crop+channel', 'Revenue_YYYY + Price_YYYY',  'total $ sold, and avg $/lb, that year'],
       [],
       ['DERIVED FOR YOU (do not enter)'],
@@ -3078,7 +3078,8 @@ function downloadMCXLSX() {
       ['• Add Year_YYYY columns for each year of data you have (e.g. Year_2015, Year_2016…).'],
       ['• Delete any year columns you do not have data for — the parser accepts whatever is present.'],
       ['• Blank cells in year columns are skipped (treated as missing data for that year).'],
-      ['• avg and stddev columns are optional reference columns — re-computed from your data on upload.'],
+      ['• ACRES = total acres planted across the year. If you plant the same ground twice (successions), add them up: 10 ac planted twice = 20.'],
+      ['• Averages and variability are computed automatically on upload — no need to add summary columns.'],
       [],
       ['BACKWARD COMPATIBILITY'],
       ['A legacy "Data" tab (year, week, rainfall_mm format) is also accepted if present.'],
@@ -3093,27 +3094,27 @@ function downloadMCXLSX() {
     XLSX.utils.book_append_sheet(wb, wsInstr, 'Instructions');
 
     // ── Harvest tab (per crop; TOTAL lbs harvested) ───────────────────────────
-    const hHdr  = ['crop_name', ...EX_YEARS.map(y => 'Year_' + y), 'avg', 'stddev'];
-    const hUnit = ['(text)',    ...EX_YEARS.map(() => 'total lbs'), '(auto)', '(auto)'];
+    const hHdr  = ['crop_name', ...EX_YEARS.map(y => 'Year_' + y)];
+    const hUnit = ['(text)',    ...EX_YEARS.map(() => 'total lbs')];
     const hEx   = [
-      ['Spinach',    82000, 78000, 85000, 81000, 79500, 81100, 2480],
-      ['Garlic',     21000, 19500, 22000, 20500, 21500, 20900, 950],
-      ['Cucumbers',  58000, 55000, 61000, 57500, 59000, 58100, 2100],
+      ['Spinach',    82000, 78000, 85000, 81000, 79500],
+      ['Garlic',     21000, 19500, 22000, 20500, 21500],
+      ['Cucumbers',  58000, 55000, 61000, 57500, 59000],
     ];
     const wsHarvest = XLSX.utils.aoa_to_sheet([hHdr, hUnit, ...hEx]);
-    wsHarvest['!cols'] = [{ wch: 16 }, ...EX_YEARS.map(() => ({ wch: 11 })), { wch: 9 }, { wch: 10 }];
+    wsHarvest['!cols'] = [{ wch: 16 }, ...EX_YEARS.map(() => ({ wch: 11 }))];
     XLSX.utils.book_append_sheet(wb, wsHarvest, 'Harvest');
 
     // ── Acres tab (per crop; acres planted → yield = harvest ÷ acres) ──────────
-    const aHdr  = ['crop_name', ...EX_YEARS.map(y => 'Year_' + y), 'avg', 'stddev'];
-    const aUnit = ['(text)',    ...EX_YEARS.map(() => 'acres'),    '(auto)', '(auto)'];
+    const aHdr  = ['crop_name', ...EX_YEARS.map(y => 'Year_' + y)];
+    const aUnit = ['(text)',    ...EX_YEARS.map(() => 'acres (sum successions)')];
     const aEx   = [
-      ['Spinach',    10, 10, 10, 10, 10, 10, 0],
-      ['Garlic',     10, 10, 10, 10, 10, 10, 0],
-      ['Cucumbers',  10, 10, 10, 10, 10, 10, 0],
+      ['Spinach',    10, 10, 10, 10, 10],
+      ['Garlic',     10, 10, 10, 10, 10],
+      ['Cucumbers',  10, 10, 10, 10, 10],
     ];
     const wsAcres = XLSX.utils.aoa_to_sheet([aHdr, aUnit, ...aEx]);
-    wsAcres['!cols'] = [{ wch: 16 }, ...EX_YEARS.map(() => ({ wch: 11 })), { wch: 9 }, { wch: 10 }];
+    wsAcres['!cols'] = [{ wch: 16 }, ...EX_YEARS.map(() => ({ wch: 11 }))];
     XLSX.utils.book_append_sheet(wb, wsAcres, 'Acres');
 
     // ── Sales tab (per crop+channel; paired Revenue ($) + Price ($/lb) per year)
@@ -4589,12 +4590,22 @@ function renderExecutiveSummary(res, params) {
     }
   } catch(e) {}
 
-  // ── 5. Peak Borrowing ───────────────────────────────────────
+  // ── 5. Peak Borrowing / Working Capital ─────────────────────
+  // When the cash constraint is OFF there is no credit line, so frame the figure as the
+  // working capital the plan needs (the pre-harvest cash gap), not a "borrowing" draw.
+  const cashModeled = !!(params && (params.credit_line != null || params.opening_cash != null));
+  const creditLine  = params && params.credit_line != null ? parseFloat(params.credit_line) : 0;
+  let peakBorrowLabel = cashModeled ? 'Peak Borrowing' : 'Working Capital Needed';
   let peakBorrow = 'Borrowing data unavailable';
   if (res.peak_borrowing != null && !isNaN(res.peak_borrowing)) {
-    peakBorrow = res.peak_borrowing > 0
-      ? `${fmtD(res.peak_borrowing)} credit draw at seasonal cash low`
-      : 'No credit line draw — cash stays positive all season';
+    if (res.peak_borrowing > 0) {
+      peakBorrow = cashModeled
+        ? `${fmtD(res.peak_borrowing)} drawn at seasonal cash low${creditLine > 0 ? ` (of ${fmtD(creditLine)} line)` : ''}`
+        : `${fmtD(res.peak_borrowing)} to bridge the pre-harvest cash gap — no credit line is set (cash constraint off)`;
+    } else {
+      peakBorrow = cashModeled ? 'No credit draw — cash stays positive all season'
+                               : 'None — revenue covers costs as they occur';
+    }
   }
 
   // Provenance/confidence signal — does this plan rest on the farm's own data or on benchmarks?
@@ -4611,8 +4622,8 @@ function renderExecutiveSummary(res, params) {
       <div class="exec-item"><div class="exec-label">Highest-Margin Option</div><div class="exec-value">${topCrop}</div></div>
       ${lowCrop ? `<div class="exec-item"><div class="exec-label">Lowest-Margin Option</div><div class="exec-value">${lowCrop}</div></div>` : ''}
       <div class="exec-item"><div class="exec-label">Peak Labor Week</div><div class="exec-value">${peakLaborStr}</div></div>
-      <div class="exec-item"><div class="exec-label">Peak Land-Use Week</div><div class="exec-value">${peakLandStr}</div></div>
-      <div class="exec-item"><div class="exec-label">Peak Borrowing</div><div class="exec-value">${peakBorrow}</div></div>
+      <div class="exec-item"><div class="exec-label" title="Land rarely hits 100% in any single week — and that's expected, not idle ground. Succession planting staggers crops in and out, so the field is never fully occupied at one instant. When utilization is well below 100%, the binding limit is usually crop diversity/rotation caps, water, labor, or sales capacity — not land. The What-If panel below identifies which constraint is actually binding.">Peak Land-Use Week ⓘ</div><div class="exec-value">${peakLandStr}</div></div>
+      <div class="exec-item"><div class="exec-label">${peakBorrowLabel}</div><div class="exec-value">${peakBorrow}</div></div>
     </div>`;
 }
 
