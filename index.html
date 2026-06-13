@@ -3289,16 +3289,16 @@ window._parseMCRows = _parseMCRows; // expose for unit tests
  */
 function parseMCXLSX(wb) {
   const sheetNames = wb.SheetNames.map(n => n.toLowerCase());
-  const hasYield   = sheetNames.includes('yield');
-  const hasPrice   = sheetNames.includes('price');
-  const hasDemand  = sheetNames.includes('demand');
+  // Current tabs: Harvest / Acres / Sales. (Yield/Price/Demand kept for backward compatibility.)
+  const hasMultiTab = ['harvest', 'acres', 'sales', 'yield', 'price', 'demand']
+    .some(n => sheetNames.includes(n));
 
-  if (hasYield || hasPrice || hasDemand) return parseMCMultiTab(wb);
+  if (hasMultiTab) return parseMCMultiTab(wb);
 
   // Legacy: single "Data" tab
   const dataIdx = sheetNames.indexOf('data');
   if (dataIdx === -1)
-    return { rows: [], errors: [{ row: 1, field: '', msg: 'No "Yield", "Price", "Demand", or "Data" sheet found. Use the template.' }] };
+    return { rows: [], errors: [{ row: 1, field: '', msg: 'No Harvest / Acres / Sales sheet found. Download the Past Data template and fill it in.' }] };
 
   const ws  = wb.Sheets[wb.SheetNames[dataIdx]];
   const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
