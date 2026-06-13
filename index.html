@@ -4971,14 +4971,16 @@ def _fig_to_b64(fig, dpi=96):
     return b64
 
 
-def make_waterfall_chart(revenue, variable_cost, fixed_cost, overhead_cost, interest_cost, profit):
+def make_waterfall_chart(revenue, variable_cost, fixed_cost, overhead_cost, interest_cost, selling_cost, profit):
     # Page-palette colors: green revenue, red/amber costs, green/red profit.
-    # profit is NET (after overhead + interest). Overhead/Interest rows appear only when nonzero.
+    # profit is NET (after overhead + interest + selling). Below-the-line rows appear only when nonzero.
     c_green = '#2d6a4f'; c_red = '#dc2626'; c_amber = '#b45309'
     labels = ['Revenue', 'Variable Cost', 'Fixed Cost']
     values = [revenue, -variable_cost, -fixed_cost]
     colors = [c_green, c_red, c_amber]
-    if overhead_cost >= 5000:   # only show material lines (avoids a "$0.00M" sliver)
+    if selling_cost >= 5000:    # only show material lines (avoids a "$0.00M" sliver)
+        labels.append('Selling');   values.append(-selling_cost);   colors.append(c_amber)
+    if overhead_cost >= 5000:
         labels.append('Overhead');  values.append(-overhead_cost);  colors.append(c_amber)
     if interest_cost >= 5000:
         labels.append('Interest');  values.append(-interest_cost);  colors.append(c_amber)
@@ -5232,6 +5234,11 @@ def run_from_js(params_json):
         peak_borrow       = float(result['peak_borrowing'])
         weekly_cash_flow  = result.get('weekly_cash_flow', [])
 
+        # Channel fixed-selling (market stall fees, distributor retainers): a real recurring cost
+        # the optimizer does not allocate over. Deduct it below the line so net profit reflects it.
+        fixed_selling_cost = ch_fixed_per_wk * operating_weeks
+        profit = profit - fixed_selling_cost
+
         # Build successions table (planted only, sorted by acres desc)
         succs_table = []
         for i, s in enumerate(succs):
@@ -5250,7 +5257,7 @@ def run_from_js(params_json):
         succs_table.sort(key=lambda r: r['acres'], reverse=True)
 
         # Charts
-        waterfall_png = make_waterfall_chart(revenue, variable_cost, fixed_cost, overhead_cost, interest_cost, profit)
+        waterfall_png = make_waterfall_chart(revenue, variable_cost, fixed_cost, overhead_cost, interest_cost, fixed_selling_cost, profit)
         heatmap_png   = make_heatmap_chart(x_sol, succs, cr, total_land)
 
         # Succession schedule for Gantt calendar and pie chart
@@ -5333,6 +5340,7 @@ def run_from_js(params_json):
             'operating_profit': operating_profit,
             'overhead_cost': overhead_cost,
             'interest_cost': interest_cost,
+            'fixed_selling_cost': fixed_selling_cost,
             'sell_through_fraction': sell_through_frac,
             'revenue':       revenue,
             'variable_cost': variable_cost,
@@ -5653,12 +5661,13 @@ function exportPLCSV() {
   const cogs          = res.variable_cost;    // seed, water, fert, labor, fuel
   const grossProfit   = grossRevenue - cogs;
   const fixedOpex     = res.fixed_cost;       // infrastructure fixed costs
-  const totalOpex     = fixedOpex + fixedSell;
+  const totalOpex     = fixedOpex;            // channel fixed-selling now sits below the line
   // Anchor the headline totals to the solver's own figures so the P&L reconciles with the waterfall.
   const operatingIncome = (res.operating_profit != null) ? res.operating_profit : (grossProfit - totalOpex);
   const overheadCost  = res.overhead_cost || 0;   // indirect overhead (% of revenue)
   const interestCost  = res.interest_cost || 0;   // interest on operating borrowing
-  const netProfit     = (res.profit != null) ? res.profit : (operatingIncome - overheadCost - interestCost);
+  const sellingCost   = (res.fixed_selling_cost != null) ? res.fixed_selling_cost : fixedSell;  // channel fixed selling
+  const netProfit     = (res.profit != null) ? res.profit : (operatingIncome - overheadCost - interestCost - sellingCost);
   const opReconcile   = operatingIncome - (grossProfit - totalOpex);  // city water / overtime / rounding bridge
 
   // Build per-channel revenue estimate (from solver result if available, else compute fallback).
@@ -5737,15 +5746,15 @@ function exportPLCSV() {
     ['OPERATING EXPENSES', ''],
     ['  Fixed Infrastructure Cost', (-fixedOpex).toFixed(2)],
     ...fixedBreakdown,
-    ['  Fixed Selling & Overhead', (-fixedSell).toFixed(2)],
-    ...chOpexRows,
     ['  Total Operating Expenses', (-totalOpex).toFixed(2)],
-    ...(Math.abs(opReconcile) > 0.5 ? [['  Adjustment — items outside the optimizer (channel fixed-selling, city water, overtime)', opReconcile.toFixed(2)]] : []),
+    ...(Math.abs(opReconcile) > 0.5 ? [['  Adjustment — items outside the optimizer (city water, overtime, rounding)', opReconcile.toFixed(2)]] : []),
     [''],
     ['OPERATING INCOME', operatingIncome.toFixed(2)],
     [''],
-    ['OVERHEAD & FINANCING', ''],
+    ['OVERHEAD, SELLING & FINANCING', ''],
     ['  Overhead (insurance, tax, admin, utilities, R&M, vehicles)', (-overheadCost).toFixed(2)],
+    ['  Channel fixed selling (market fees, retainers)', (-sellingCost).toFixed(2)],
+    ...chOpexRows,
     ['  Interest on operating borrowing', (-interestCost).toFixed(2)],
     [''],
     ['NET PROFIT', netProfit.toFixed(2)],
@@ -10191,7 +10200,7 @@ window._testWhatIf = function() {
     const pageHTML = document.documentElement.innerHTML;
     console.assert(pageHTML.includes('FancyBboxPatch'),        'T145a: waterfall uses FancyBboxPatch for rounded bars');
     console.assert(pageHTML.includes('dpi=150'),               'T145b: waterfall uses dpi=150 for sharp rendering');
-    console.assert(pageHTML.includes("figsize=(5.5, 2.4)"),    'T145c: waterfall uses compact figsize');
+    console.assert(pageHTML.includes("figsize=(5.5,"),         'T145c: waterfall uses compact width (height scales with rows)');
     console.assert(pageHTML.includes("c_green = '#2d6a4f'") || pageHTML.includes("'#2d6a4f'"),
       'T145d: waterfall uses page-palette green #2d6a4f');
     console.assert(pageHTML.includes('round,pad='), 'T145e: FancyBboxPatch uses round boxstyle');
