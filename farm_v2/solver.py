@@ -101,7 +101,7 @@ def solve_farm_v2(
     # --- Cash flow constraint ---
     cash_constraint_enabled: bool = True,  # if False, skip C13 weekly cash floor entirely
     # --- Realism factors (sell-through in-objective; overhead & interest below the line) ---
-    sell_through_fraction: float = 1.0,    # fraction of harvest that converts to sellable product (shrink/grade-out/spoilage). Scales C5/C7 production→sales link, so the farm grows more to deliver the cap.
+    sell_through_fraction: float = 1.0,    # FARM-WIDE DEFAULT fraction of harvest that converts to sellable product (shrink/grade-out/spoilage). Per-crop override via crop["sell_through_fraction"]. Scales C5/C7 production→sales link, so the farm grows more to deliver the cap.
     overhead_pct_of_revenue: float = 0.0,  # indirect overhead (insurance, tax, admin, utilities, R&M, vehicle/office) as a share of revenue; deducted post-solve
     interest_rate_apr: float = 0.0,        # APR charged on the solved weekly operating borrowing; deducted post-solve
     # --- Variable cost rates ---
@@ -451,11 +451,11 @@ def solve_farm_v2(
                         # yield, letting the optimizer sell n_harv_weeks × yield_per_acre total.
                         # sell_through_fraction: only this share of harvest is sellable, so the
                         # farm must grow more (higher x) to deliver a given sales/cap volume.
-                        supply = sell_through_fraction * total_land * crop["yield_per_acre"] / succ_n_harv_weeks[i]
+                        supply = crop.get("sell_through_fraction", sell_through_fraction) * total_land * crop["yield_per_acre"] / succ_n_harv_weeks[i]
                     else:
                         # spread>1: cumulative constraint (C5b) caps the total; per-week
                         # supply stays at full yield so any week in the window can clear it.
-                        supply = sell_through_fraction * total_land * crop["yield_per_acre"]
+                        supply = crop.get("sell_through_fraction", sell_through_fraction) * total_land * crop["yield_per_acre"]
                     col_v.append((idx_x_start + i, -supply))
             add_row(col_v, -np.inf, 0.0)
 
@@ -473,7 +473,7 @@ def solve_farm_v2(
             for w in sorted(spread_window[i])
             for ch_idx in range(n_channels)
         ]
-        col_w.append((idx_x_start + i, -sell_through_fraction * total_land * crop["yield_per_acre"]))
+        col_w.append((idx_x_start + i, -crop.get("sell_through_fraction", sell_through_fraction) * total_land * crop["yield_per_acre"]))
         add_row(col_w, -np.inf, 0.0)
 
     # C6 — Channel sales ≤ demand cap
@@ -490,7 +490,7 @@ def solve_farm_v2(
         crop = crops[c_idx]
         for w in range(1, N_WEEKS + 1):
             cols = [
-                (idx_x_start + i, sell_through_fraction * total_land * crop["yield_per_acre"] / succ_n_harv_weeks[i])
+                (idx_x_start + i, crop.get("sell_through_fraction", sell_through_fraction) * total_land * crop["yield_per_acre"] / succ_n_harv_weeks[i])
                 for i in range(N_S)
                 if successions[i]["crop"] == c_idx and phase_table[i][w] == 2
             ]
