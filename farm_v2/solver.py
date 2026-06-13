@@ -15,9 +15,9 @@ Constraint order (rows of A):
   C2   labor (52)
   C3   water (52)
   C4   harvest storage (52)
-  C5   sales ≤ harvest (n_crops × 52)
-  C6   sales ≤ demand cap (n_crops × n_channels × 52)
-  C7   production ≤ market (n_crops × 52)
+  C5   sales ≤ sell_through × production (n_crops × 52)   [production = harvest = x×land×yield]
+  C6   sales ≤ sales-capacity cap (n_crops × n_channels × 52)
+  C7   sell_through × production ≤ sales-capacity (n_crops × 52)
   C8   crop diversity — annual acre-weeks per crop (n_crops)
   C9   binary linkage upper x[i] ≤ y[i]  (N_S)
   C10  min acreage lower   x[i] ≥ y[i]×min_frac  (N_S)
@@ -98,6 +98,12 @@ def solve_farm_v2(
     max_harvest_acres_per_week: float = 1e9,
     # --- Additional fixed costs ---
     rate_property_mortgage_rent: float = 0.0,  # $/week — land lease or mortgage payment
+    # --- Cash flow constraint ---
+    cash_constraint_enabled: bool = True,  # if False, skip C13 weekly cash floor entirely
+    # --- Realism factors (sell-through in-objective; overhead & interest below the line) ---
+    sell_through_fraction: float = 1.0,    # fraction of harvest that converts to sellable product (shrink/grade-out/spoilage). Scales C5/C7 production→sales link, so the farm grows more to deliver the cap.
+    overhead_pct_of_revenue: float = 0.0,  # indirect overhead (insurance, tax, admin, utilities, R&M, vehicle/office) as a share of revenue; deducted post-solve
+    interest_rate_apr: float = 0.0,        # APR charged on the solved weekly operating borrowing; deducted post-solve
     # --- Variable cost rates ---
     cost_fert_per_lb: float = 0.0,
     cost_fuel_per_L: float = 0.0,
@@ -382,7 +388,9 @@ def solve_farm_v2(
                 cols.append((idx_x_start + i, coeff))
         add_row(cols, -np.inf, harvest_storage_cap)
 
-    # C5 — Channel sales ≤ harvest production (Phase 3.5.1: sales_spread_weeks)
+    # C5 — Channel sales ≤ sell_through × production (Phase 3.5.1: sales_spread_weeks)
+    #   "production" = "harvest" = x[i]×total_land×yield_per_acre (physical lbs off the field).
+    #   Only sell_through_fraction of it is sellable; the supply coefficient below carries that factor.
     #
     # spread=1 (default, backward-compatible):
     #   Per-week:  Σ_ch v[c,ch,w] ≤ Σ_{i: harvest phase in w} x[i]×land×yield
@@ -441,11 +449,13 @@ def solve_farm_v2(
                         # Spread evenly across harvest weeks so total supply = yield_per_acre.
                         # Without this division each harvest week independently allows the full
                         # yield, letting the optimizer sell n_harv_weeks × yield_per_acre total.
-                        supply = total_land * crop["yield_per_acre"] / succ_n_harv_weeks[i]
+                        # sell_through_fraction: only this share of harvest is sellable, so the
+                        # farm must grow more (higher x) to deliver a given sales/cap volume.
+                        supply = sell_through_fraction * total_land * crop["yield_per_acre"] / succ_n_harv_weeks[i]
                     else:
                         # spread>1: cumulative constraint (C5b) caps the total; per-week
                         # supply stays at full yield so any week in the window can clear it.
-                        supply = total_land * crop["yield_per_acre"]
+                        supply = sell_through_fraction * total_land * crop["yield_per_acre"]
                     col_v.append((idx_x_start + i, -supply))
             add_row(col_v, -np.inf, 0.0)
 
@@ -463,7 +473,7 @@ def solve_farm_v2(
             for w in sorted(spread_window[i])
             for ch_idx in range(n_channels)
         ]
-        col_w.append((idx_x_start + i, -total_land * crop["yield_per_acre"]))
+        col_w.append((idx_x_start + i, -sell_through_fraction * total_land * crop["yield_per_acre"]))
         add_row(col_w, -np.inf, 0.0)
 
     # C6 — Channel sales ≤ demand cap
@@ -474,12 +484,13 @@ def solve_farm_v2(
                 flat_idx = idx_v_start + _vcw_index(c_idx, ch_idx, w, n_channels, N_WEEKS)
                 add_row([(flat_idx, 1.0)], -np.inf, cap_w)
 
-    # C7 — Production ≤ total market (consistent with C5 even-spread fix)
+    # C7 — sell_through × production ≤ total sales-capacity  (i.e. production ≤ capacity / sell_through)
+    #   Lets the farm grow more than the cap so the SELLABLE share still fits the market.
     for c_idx in range(n_crops):
         crop = crops[c_idx]
         for w in range(1, N_WEEKS + 1):
             cols = [
-                (idx_x_start + i, total_land * crop["yield_per_acre"] / succ_n_harv_weeks[i])
+                (idx_x_start + i, sell_through_fraction * total_land * crop["yield_per_acre"] / succ_n_harv_weeks[i])
                 for i in range(N_S)
                 if successions[i]["crop"] == c_idx and phase_table[i][w] == 2
             ]
@@ -547,7 +558,11 @@ def solve_farm_v2(
                          if overtime_enabled else np.zeros(N_WEEKS))
     floor = -(opening_cash + credit_line)
 
-    for W in range(1, N_WEEKS + 1):
+    # Skip the cash floor entirely when disabled (UI "cash off" → optimize
+    # purely for profit). Applying it with a zero buffer would force revenue ≥
+    # cost from week 1, which is infeasible given week-1 salaried/fixed costs.
+    c13_weeks = range(1, N_WEEKS + 1) if cash_constraint_enabled else range(0)
+    for W in c13_weeks:
         cols = []
         # Revenue from sales up to week W
         for c_idx in range(n_crops):
@@ -660,7 +675,7 @@ def solve_farm_v2(
         overtime_cost = float(np.dot(ot_sol, ot_extra))
 
     total_cost = fixed_cost + variable_cost + city_water_cost + overtime_cost
-    profit = revenue - total_cost
+    operating_profit = revenue - total_cost  # what the solver maximized (before overhead + interest)
 
     # Weekly cash flow for reporting
     # weekly_rev[w]      = net revenue received in week w
@@ -692,9 +707,22 @@ def solve_farm_v2(
 
     peak_borrowing = max(0.0, -float(weekly_cash_flow[1:].min()))
 
+    # Below-the-line realism deductions — applied to the optimized plan, do NOT reshape it:
+    #   overhead — indirect business costs as a share of revenue (insurance, tax, admin, etc.)
+    #   interest — APR on the average weekly operating borrowing the plan implies
+    overhead_cost = overhead_pct_of_revenue * revenue
+    borrowed_weekly = np.maximum(0.0, -weekly_cash_flow[1:])
+    avg_borrowing = float(borrowed_weekly.mean()) if borrowed_weekly.size else 0.0
+    interest_cost = interest_rate_apr * avg_borrowing
+    profit = operating_profit - overhead_cost - interest_cost  # net profit (honest headline)
+
     return {
         "status":           status,
         "profit":           profit,
+        "operating_profit": operating_profit,
+        "overhead_cost":    overhead_cost,
+        "interest_cost":    interest_cost,
+        "sell_through_fraction": sell_through_fraction,
         "revenue":          revenue,
         "variable_cost":    variable_cost,
         "fixed_cost":       fixed_cost,
