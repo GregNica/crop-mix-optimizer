@@ -1710,7 +1710,7 @@
           <h2>Weekly Crop Breakdown</h2>
           <button class="section-toggle-btn" onclick="exportWeeklySalesCSV()" style="font-size:0.72rem;padding:2px 8px">↓ Export Sales CSV</button>
         </div>
-        <p style="font-size:0.78rem;color:#6b7280;margin-bottom:0.8rem">Drag the slider to see land use and estimated sales activity for any given week. Sales are estimated from harvest lbs distributed across channels in proportion to demand caps — not exact solver allocations.</p>
+        <p style="font-size:0.78rem;color:#6b7280;margin-bottom:0.8rem">Drag the slider to see land use, harvested volume, and estimated sales activity for any given week. Harvested volume is physical lbs off the field; sales are estimated from that harvest distributed across channels in proportion to demand caps — not exact solver allocations.</p>
         <div id="pie-container">
           <div style="display:flex;align-items:center;gap:0.8rem;width:100%;max-width:520px">
             <span style="font-size:0.75rem;color:#6b7280;white-space:nowrap">Wk 1</span>
@@ -1723,6 +1723,12 @@
           <div id="pie-chart-area">
             <div id="pie-svg-wrap"></div>
             <div id="pie-legend"></div>
+          </div>
+          <!-- Harvested volume pie -->
+          <div style="font-size:0.8rem;font-weight:600;color:#374151;margin:0.8rem 0 0.2rem">🧺 Harvested Volume (lbs by crop)</div>
+          <div id="harvest-pie-area">
+            <div id="harvest-pie-svg-wrap"></div>
+            <div id="harvest-pie-legend"></div>
           </div>
           <!-- Per-channel sales pies -->
           <div id="channel-pies-area" style="margin-top:0.8rem"></div>
@@ -6626,6 +6632,33 @@ function isHarvestPhase(p) {
   return s === '2' || s === 'h' || s === 'harvest';
 }
 
+// Physical lbs a single succession harvests in a given week: acres × yield/acre spread
+// evenly across its harvest-phase weeks. This is supply off the field — before sell-through
+// or channel allocation. Shared by the sales estimate and the harvest pie/CSV.
+function successionWeekHarvestLbs(s, crop) {
+  const ypa        = parseFloat(crop.yield_per_acre) || 0;
+  const harvestWks = Math.max(1, (s.phases || []).filter(p => isHarvestPhase(p)).length);
+  return s.acres * ypa / harvestWks;
+}
+
+// Harvested volume per crop for a week: { cropName: lbs }. Sums every succession in its
+// harvest phase that week. This is physical supply, distinct from lbs sold (sell-through
+// and sales-spread can make sold ≠ harvested).
+function computeWeeklyHarvestLbs(week, res, params) {
+  const result     = {};
+  const sched      = (res && res.succession_schedule) || [];
+  const cropByName = {};
+  ((params && params.crops) || []).forEach(c => { cropByName[c.name] = c; });
+  sched.forEach(s => {
+    const idx = s.weeks ? s.weeks.indexOf(week) : -1;
+    if (idx < 0 || !isHarvestPhase((s.phases || [])[idx])) return;
+    const crop = cropByName[s.crop];
+    if (!crop) return;
+    result[s.crop] = (result[s.crop] || 0) + successionWeekHarvestLbs(s, crop);
+  });
+  return result;
+}
+
 function computeWeeklySalesLbs(week, res, params) {
   const result = {};
   const sched  = (res && res.succession_schedule) || [];
@@ -6642,9 +6675,7 @@ function computeWeeklySalesLbs(week, res, params) {
     const crop = cropByName[s.crop];
     if (!crop) return;
 
-    const ypa        = parseFloat(crop.yield_per_acre) || 0;
-    const harvestWks = Math.max(1, phases.filter(p => isHarvestPhase(p)).length);
-    const weekLbs    = s.acres * ypa / harvestWks;
+    const weekLbs = successionWeekHarvestLbs(s, crop);
 
     // Support both channels_data (current schema) and legacy channels (price_per_lb / weekly_demand_lbs)
     const chMap = crop.channels_data || crop.channels || {};
@@ -6700,6 +6731,12 @@ function updatePieChart(week) {
     .map(([name, acres]) => ({ name, acres, color: color(name) }))
     .sort((a, b) => b.acres - a.acres);
   drawPie(landSlices, 'pie-svg-wrap', 'pie-legend', v => `${v.toFixed(1)} ac`, 'acres');
+
+  // ── Harvested volume pie (physical lbs off the field this week) ────────────
+  const harvestSlices = Object.entries(computeWeeklyHarvestLbs(week, res, params))
+    .map(([name, lbs]) => ({ name, lbs, color: color(name) }))
+    .sort((a, b) => b.lbs - a.lbs);
+  drawPie(harvestSlices, 'harvest-pie-svg-wrap', 'harvest-pie-legend', v => `${Math.round(v).toLocaleString()} lbs`, 'lbs');
 
   // ── Per-channel sales pies ────────────────────────────────────────────────
   const channelArea = document.getElementById('channel-pies-area');
@@ -6809,6 +6846,7 @@ function exportWeeklySalesCSV() {
     const s = computeWeeklySalesLbs(w, res, params);
     Object.keys(s).forEach(ch => channelSet.add(ch));
     Object.values(s).forEach(cl => Object.keys(cl).forEach(c => cropSet.add(c)));
+    Object.keys(computeWeeklyHarvestLbs(w, res, params)).forEach(c => cropSet.add(c));
   }
 
   // Deterministic channel order: wholesale first, farmers_market second, rest alpha
@@ -6824,15 +6862,18 @@ function exportWeeklySalesCSV() {
   const colHeaders = channels.map(ch => 'lbs_sold_' + channelSlug(ch));
   const cropNames  = [...cropSet].sort();
 
-  const rows = [['week', 'crop', ...colHeaders]];
+  const rows = [['week', 'crop', 'lbs_harvested', ...colHeaders]];
   for (let w = 1; w <= opWeeks; w++) {
     const salesByChannel = computeWeeklySalesLbs(w, res, params);
+    const harvestByCrop  = computeWeeklyHarvestLbs(w, res, params);
     cropNames.forEach(crop => {
       const vals = channels.map(ch => {
         const lbs = ((salesByChannel[ch] || {})[crop] || 0);
         return lbs >= 0.5 ? Math.round(lbs) : 0;
       });
-      if (vals.some(v => v > 0)) rows.push([w, crop, ...vals]);
+      const harv = harvestByCrop[crop] || 0;
+      const harvR = harv >= 0.5 ? Math.round(harv) : 0;
+      if (harvR > 0 || vals.some(v => v > 0)) rows.push([w, crop, harvR, ...vals]);
     });
   }
 
