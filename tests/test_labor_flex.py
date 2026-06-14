@@ -67,6 +67,36 @@ def test_hired_labor_used_before_overtime(minimal_params):
     assert flex["total_overtime_hours"] == pytest.approx(0.0, abs=1e-6)
 
 
+def _with_payroll_load(params, load):
+    """Mirror run_from_js: stamp benefits_pct (the payroll load) onto every employee."""
+    p = copy.deepcopy(params)
+    for e in p["year_round_employees"] + p["seasonal_employees"]:
+        e["benefits_pct"] = load
+    return p
+
+
+def test_payroll_load_reduces_profit(minimal_params):
+    no_load = solve_farm_v2(**_with_payroll_load(minimal_params, 0.0))
+    loaded  = solve_farm_v2(**_with_payroll_load(minimal_params, 0.25))
+    assert no_load["status"] == "optimal" and loaded["status"] == "optimal"
+    # A 25% payroll load makes labor more expensive → profit can only fall (or hold).
+    assert loaded["operating_profit"] <= no_load["operating_profit"] + 1.0
+
+
+def test_payroll_load_flows_into_bought_labor(minimal_params):
+    # Tight labor + flex on: with a payroll load, the base wage on hired hours is higher,
+    # so the same flex plan costs more (lower profit) than with no load.
+    tight = _labor_tight(minimal_params)
+    flex_kwargs = dict(
+        hire_enabled=True, max_hire_hrs_per_week=2000.0, hire_wage_markup=0.0,
+        overtime_enabled=True, overtime_rate_multiplier=1.5, max_overtime_hrs_per_week=2000.0,
+    )
+    no_load = solve_farm_v2(**_with_payroll_load(tight, 0.0),  **flex_kwargs)
+    loaded  = solve_farm_v2(**_with_payroll_load(tight, 0.30), **flex_kwargs)
+    assert no_load["status"] == "optimal" and loaded["status"] == "optimal"
+    assert loaded["operating_profit"] <= no_load["operating_profit"] + 1.0
+
+
 def test_hire_cap_forces_overtime_overflow(minimal_params):
     # Tiny hire cap + tight labor → overflow must spill into overtime.
     p = _labor_tight(minimal_params)

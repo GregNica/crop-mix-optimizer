@@ -1460,6 +1460,10 @@
     <div class="card span-3">
       <h2>Labor <span class="tip" data-tip="Defaults are sized for a 100–150 acre operation (2 managers + 15 seasonal + 10 harvest crew).&#10;&#10;Scale down for smaller farms:&#10;• Under 75 acres: remove Operations Manager (owner-operated model)&#10;• Under 50 acres: reduce seasonal crew to 3–5 and harvest crew to 2–3&#10;&#10;Labor is the largest variable cost — over-staffing a small farm will show a loss even with good crops.">?</span></h2>
       <p style="font-size:0.73rem;color:#6b7280;margin:0 0 0.6rem"><strong>Salary</strong> = year-round fixed cost. <strong>Hourly (Seasonal)</strong> = variable rate applied against weekly crop-phase hours; the hourly rate you enter applies to seasonal workers. <strong>Seasonal</strong> = crew billed only between Start–End week.</p>
+      <div class="form-group" style="margin-bottom:0.7rem;max-width:320px">
+        <label>Payroll load (% on wages) <span class="tip" data-tip="Employer payroll burden ON TOP of the base wages entered below — payroll taxes (FICA, FUTA/SUTA), workers' comp, health benefits, unemployment insurance.&#10;&#10;Applied to ALL staff (salaried and hourly), so any extra hiring or overtime carries it too. Set 0 only if the wages you entered already include the full burden.&#10;&#10;Typical: 15–35%.">?</span></label>
+        <input type="number" id="payroll_load_pct" value="25" min="0" max="100" step="1">
+      </div>
       <div id="labor-list"></div>
       <button type="button" id="add-labor-btn" onclick="addLaborPosition()">+ Add Position</button>
 
@@ -1475,7 +1479,7 @@
           <div style="font-size:0.78rem;font-weight:700;color:#374151;margin-bottom:0.35rem">Hiring — extra seasonal labor</div>
           <label class="pd-toggle-row" for="labor_flex_hire" style="margin-bottom:0.3rem"><input type="checkbox" id="labor_flex_hire" checked> Allow hiring extra labor</label>
           <div class="form-group"><label>Max extra labor (hrs/week) <span class="tip" data-tip="The most additional labor-hours per week you could realistically hire (workers × hours). Caps how far the optimizer can staff up.">?</span></label><input type="number" id="max_hire_hrs_per_week" value="400" min="0" step="40"></div>
-          <div class="form-group"><label>Hired wage markup (%) <span class="tip" data-tip="Extra cost above your base hourly wage for hired labor (temp-agency markup, onboarding, lower productivity). 0% = paid the same base wage; the cap is the real constraint.">?</span></label><input type="number" id="hire_wage_markup_pct" value="0" min="0" max="100" step="5"></div>
+          <div class="form-group"><label>Hired wage markup (%) <span class="tip" data-tip="All-in extra cost of HIRED labor above your base hourly wage: temp-agency fees, onboarding/training, lower productivity, extra supervision/management of the added crew, and any benefits beyond the farm-wide payroll load. 0% = paid the same all-in rate as your existing crew; the hiring cap is then the only constraint.&#10;&#10;(Step costs like needing a whole new foreman are not modeled here — that's discrete staffing.)">?</span></label><input type="number" id="hire_wage_markup_pct" value="0" min="0" max="100" step="5"></div>
           <div style="font-size:0.78rem;font-weight:700;color:#374151;margin:0.7rem 0 0.35rem">Overtime — existing crew, premium pay</div>
           <label class="pd-toggle-row" for="labor_flex_overtime" style="margin-bottom:0.3rem"><input type="checkbox" id="labor_flex_overtime" checked> Allow overtime</label>
           <div class="form-group"><label>Overtime pay multiplier <span class="tip" data-tip="Pay rate for overtime hours as a multiple of base wage (1.5 = time-and-a-half). Overtime is used beyond the hiring cap.">?</span></label><input type="number" id="overtime_rate_multiplier" value="1.5" min="1" max="3" step="0.1"></div>
@@ -5237,6 +5241,12 @@ def run_from_js(params_json):
         _max_ot                  = p.get('max_overtime_hrs_per_week', None)
         max_overtime_hrs_per_week = float(_max_ot) if _max_ot not in (None, '') else None
 
+        # Payroll load: employer burden on top of wages (payroll taxes, workers' comp,
+        # benefits, unemployment). Applied to every employee below as benefits_pct, so it
+        # lifts both salaried fixed cost and the blended hourly rate — which means hired
+        # and overtime hours inherit it automatically.
+        payroll_load = max(0.0, float(p.get('payroll_load_pct', 0.0)))
+
         rainfall = get_rainfall_weekly(climate_zone=climate_zone)
 
         # Phase 3.3: Monte Carlo rainfall multiplier pathway
@@ -5270,6 +5280,10 @@ def run_from_js(params_json):
                                     {"position":"Equipment Operator","count":2,"type":"hourly","wage":26,"hours_per_week":40}]
             seasonal_employees   = [{"position":"Seasonal Field Crew","count":15,"type":"FT","wage":20,"hours_per_week":40,"start_week":10,"end_week":42},
                                     {"position":"Harvest Crew","count":10,"type":"FT","wage":19,"hours_per_week":40,"start_week":14,"end_week":40}]
+
+        # Apply the farm-wide payroll load to every position (UI-defined and fallback).
+        for _e in year_round_employees + seasonal_employees:
+            _e["benefits_pct"] = payroll_load
 
         # --- Channels from UI ---
         channels_from_ui = p.get('channels', None)
@@ -5653,6 +5667,8 @@ async function runOptimizer() {
     city_water_cost_per_L:     parseFloat(g('city_water_cost_per_L').value),
     // Labor positions (fully dynamic)
     employees: getLaborFromForm(),
+    // Payroll load (employer burden on wages) — applies to all staff, bought labor included
+    payroll_load_pct:          Math.max(0, (parseFloat(g('payroll_load_pct')?.value) || 0) / 100),
     // Labor flexibility (Phase 5 Advanced; off by default → labor is a fixed constraint)
     labor_flex_enabled:        pdOn('labor_flex_enabled'),
     hire_enabled:              pdOn('labor_flex_hire'),
