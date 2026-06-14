@@ -3481,6 +3481,9 @@ function applyMCParams(rows) {
   const warnings = [];
   let pairsApplied = 0;
 
+  // Mark a field as sourced from the uploaded Past Data: green left accent + tooltip.
+  const markData = (el) => { if (el) { el.style.boxShadow = 'inset 3px 0 0 #059669'; el.title = '✓ Set from your uploaded Past Data'; } };
+
   // Group rows by cropName for batch channel update
   const byCrop = {};
   rows.forEach(r => { if (!byCrop[r.cropName]) byCrop[r.cropName] = []; byCrop[r.cropName].push(r); });
@@ -3495,11 +3498,11 @@ function applyMCParams(rows) {
 
     // Yield (derived = harvest ÷ acres) — set directly so it overrides the default.
     const yv = cropRows[0].yieldVal;
-    if (yv != null && yv > 0) { const el = card.querySelector('input[data-f="yield_per_acre"]'); if (el) el.value = Math.round(yv); }
+    if (yv != null && yv > 0) { const el = card.querySelector('input[data-f="yield_per_acre"]'); if (el) { el.value = Math.round(yv); markData(el); } }
 
     // Per-crop sell-through (derived). Blank → keeps inheriting the farm-wide default.
     const stp = cropRows[0].sellThroughPct;
-    if (stp != null && stp > 0) { const el = card.querySelector('input[data-f="sell_through_pct"]'); if (el) el.value = stp; }
+    if (stp != null && stp > 0) { const el = card.querySelector('input[data-f="sell_through_pct"]'); if (el) { el.value = stp; markData(el); } }
 
     // Channels: set price + ANNUAL sales cap directly on the matching channel section so imported
     // data overrides defaults (updateCropChannels keeps existing values, so we don't use it here).
@@ -3507,11 +3510,11 @@ function applyMCParams(rows) {
       if (!r.channelName) return;
       const sec = [...card.querySelectorAll('.crop-channel-section')].find(s => s.getAttribute('data-ch') === r.channelName);
       if (!sec) { warnings.push(`${cropName}: channel "${r.channelName}" not configured in the app — add it under Channels to import its data.`); return; }
-      if (r.price != null && r.price > 0) { const e = sec.querySelector('[data-f="ch_price"]'); if (e) e.value = r.price; }
+      if (r.price != null && r.price > 0) { const e = sec.querySelector('[data-f="ch_price"]'); if (e) { e.value = r.price; markData(e); } }
       const typeEl = sec.querySelector('[data-f="ch_demand_type"]');
       const valEl  = sec.querySelector('[data-f="ch_demand_value"]');
-      if (typeEl) { typeEl.value = 'annual'; if (typeof toggleDemandSeason === 'function') { try { toggleDemandSeason(typeEl); } catch (e) {} } }
-      if (valEl && r.annualSold > 0) valEl.value = Math.round(r.annualSold);
+      if (typeEl) { typeEl.value = 'annual'; if (typeof toggleDemandSeason === 'function') { try { toggleDemandSeason(typeEl); } catch (e) {} } markData(typeEl); }
+      if (valEl && r.annualSold > 0) { valEl.value = Math.round(r.annualSold); markData(valEl); }
       pairsApplied++;
     });
   });
