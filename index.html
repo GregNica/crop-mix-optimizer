@@ -1471,10 +1471,10 @@
       <div style="margin-top:0.9rem;border-top:1px solid #e5e7eb;padding-top:0.6rem">
         <label class="pd-toggle-row" for="labor_flex_enabled" style="margin-bottom:0.3rem">
           <input type="checkbox" id="labor_flex_enabled" onchange="toggleLaborFlex(this.checked)">
-          <strong>Advanced:</strong>&nbsp;let the optimizer decide extra labor (hiring + overtime)
-          <span class="tip" data-tip="Default OFF = labor is FIXED: the optimizer plans crops around the staff you defined above.&#10;&#10;ON = the optimizer may BUY extra labor to lift a labor bottleneck — it answers 'how much should I staff up to reach the best plan?'. It fills cheaper hired labor (up to your cap) first, then overtime. Results show how much it used, what it cost, and the profit gain vs your fixed staff.">?</span>
+          <strong>Labor flexibility assumptions</strong>&nbsp;(for the What-If “Plan optimal labor” tool)
+          <span class="tip" data-tip="Your main plan always uses the FIXED staff you defined above. These settings feed the What-If 'Plan optimal labor' tool in the Results section, which answers 'how much should I staff up to reach the best plan?'&#10;&#10;That tool lets the optimizer buy extra labor to lift a labor bottleneck — cheaper hired labor (up to your cap) first, then overtime — and reports the staffing recommendation, cost, and profit gain vs your fixed staff.">?</span>
         </label>
-        <div id="labor-flex-helper" class="pd-helper">Off: labor is a fixed constraint (your set staff). On: the optimizer buys hiring then overtime within the limits you set, and reports the tradeoff.</div>
+        <div id="labor-flex-helper" class="pd-helper">Open to set how much labor you could realistically add and at what cost. These feed the “Plan optimal labor” tool under What-If — they don’t change your main (fixed-staff) plan.</div>
         <div id="labor-flex-controls" style="display:none;margin-top:0.5rem;padding:0.6rem;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px">
           <div style="font-size:0.78rem;font-weight:700;color:#374151;margin-bottom:0.35rem">Hiring — extra seasonal labor</div>
           <label class="pd-toggle-row" for="labor_flex_hire" style="margin-bottom:0.3rem"><input type="checkbox" id="labor_flex_hire" checked> Allow hiring extra labor</label>
@@ -1705,6 +1705,16 @@
         </div>
         <p style="font-size:0.78rem;color:#6b7280;margin-bottom:0.6rem">Ranks all constraints by peak utilization. Click a pill to auto-run +10/+20/+40% scenarios. Select multiple pills and click <em>Run Combined</em> for a joint scenario in one solve.</p>
         <div id="bottleneck-content"><div style="color:#9ca3af;font-size:0.85rem">Run optimizer to see scenario analysis.</div></div>
+
+        <!-- Phase 5: Plan optimal labor (labor flexibility as a What-If scenario) -->
+        <div id="labor-plan-panel" style="margin-top:1rem;border-top:1px solid #e5e7eb;padding-top:0.7rem">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem">
+            <div style="font-size:0.92rem;font-weight:700;color:#374151">🧑‍🌾 Plan optimal labor</div>
+            <button onclick="runLaborPlanScenario()" id="labor-plan-btn" style="padding:0.3rem 0.9rem;background:#2d6a4f;border:none;color:#fff;border-radius:7px;font-size:0.78rem;font-weight:700;cursor:pointer">Plan optimal labor →</button>
+          </div>
+          <p style="font-size:0.78rem;color:#6b7280;margin:0.3rem 0 0">Your plan above uses your fixed staff. This re-solves letting the optimizer buy extra labor (hiring then overtime, within the limits set in <a onclick="jumpToSetup('labor-channels','labor_flex_enabled')" style="color:#2d6a4f;text-decoration:underline;cursor:pointer">Labor → Labor flexibility assumptions</a>) and tells you how much to staff up — and what it's worth.</p>
+          <div id="labor-plan-result" style="margin-top:0.6rem"></div>
+        </div>
       </div>
 
       <!-- Zone: Diagnostic -->
@@ -5669,14 +5679,8 @@ async function runOptimizer() {
     employees: getLaborFromForm(),
     // Payroll load (employer burden on wages) — applies to all staff, bought labor included
     payroll_load_pct:          Math.max(0, (parseFloat(g('payroll_load_pct')?.value) || 0) / 100),
-    // Labor flexibility (Phase 5 Advanced; off by default → labor is a fixed constraint)
-    labor_flex_enabled:        pdOn('labor_flex_enabled'),
-    hire_enabled:              pdOn('labor_flex_hire'),
-    max_hire_hrs_per_week:     parseFloat(g('max_hire_hrs_per_week')?.value) || 0,
-    hire_wage_markup:          Math.max(0, (parseFloat(g('hire_wage_markup_pct')?.value) || 0) / 100),
-    overtime_enabled:          pdOn('labor_flex_overtime'),
-    overtime_rate_multiplier:  Math.max(1, parseFloat(g('overtime_rate_multiplier')?.value) || 1.5),
-    max_overtime_hrs_per_week: (g('max_overtime_hrs_per_week')?.value ?? '') === '' ? null : parseFloat(g('max_overtime_hrs_per_week').value),
+    // NOTE: the main run is always fixed-staff (labor flexibility OFF). Labor flexibility is
+    // delivered on-demand via the What-If "Plan optimal labor" scenario (buildLaborFlexParams).
     // Sales channels
     channels: getChannelsFromForm(),
     // Crops (fully dynamic from form)
@@ -7525,6 +7529,98 @@ function runCombinedWhatIf() {
  * factor: scale factor e.g. 1.20 for +20%.
  * Applies all constraints composably, runs one solver call, records result.
  */
+// ── Phase 5: "Plan optimal labor" — labor flexibility as an on-demand What-If scenario ──
+const HRS_PER_WORKER_WK = 40;  // standard full-time week, for translating bought hours → headcount
+
+// Deep-copy the baseline params and switch labor flexibility ON, reading the assumptions
+// (caps, markup, overtime multiplier) from the Labor section. The main run never sets these.
+function buildLaborFlexParams(base) {
+  const g = id => document.getElementById(id);
+  const on = id => { const el = g(id); return el ? el.checked : false; };
+  const sp = JSON.parse(JSON.stringify(base));
+  sp.labor_flex_enabled       = true;
+  sp.hire_enabled             = on('labor_flex_hire');
+  sp.max_hire_hrs_per_week    = parseFloat(g('max_hire_hrs_per_week')?.value) || 0;
+  sp.hire_wage_markup         = Math.max(0, (parseFloat(g('hire_wage_markup_pct')?.value) || 0) / 100);
+  sp.overtime_enabled         = on('labor_flex_overtime');
+  sp.overtime_rate_multiplier = Math.max(1, parseFloat(g('overtime_rate_multiplier')?.value) || 1.5);
+  const otCap = g('max_overtime_hrs_per_week')?.value ?? '';
+  sp.max_overtime_hrs_per_week = otCap === '' ? null : parseFloat(otCap);
+  return sp;
+}
+
+async function runLaborPlanScenario() {
+  const params = window._lastParams;
+  const res    = window._lastRes;
+  const out    = document.getElementById('labor-plan-result');
+  const btn    = document.getElementById('labor-plan-btn');
+  if (!out) return;
+  if (!params || !res || !pyReady) {
+    out.innerHTML = '<div style="font-size:0.82rem;color:#9ca3af">Run the optimizer first, then plan labor.</div>';
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.textContent = 'Solving…'; }
+  out.innerHTML = '<div style="font-size:0.82rem;color:#6b7280">Re-solving with flexible labor…</div>';
+  try {
+    const sp = buildLaborFlexParams(params);
+    const r  = await pyodide.runPythonAsync(`run_from_js(${JSON.stringify(JSON.stringify(sp))})`);
+    const sr = JSON.parse(r);
+    out.innerHTML = (sr.status === 'optimal')
+      ? renderLaborPlan(sr, res, sp)
+      : `<div style="font-size:0.82rem;color:#b91c1c">Labor-plan solve failed: ${sr.error || sr.status}</div>`;
+  } catch (e) {
+    out.innerHTML = `<div style="font-size:0.82rem;color:#b91c1c">Error: ${e.message || e}</div>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Plan optimal labor →'; }
+  }
+}
+
+// Translate the flex solve's weekly hired/overtime hours into an actionable staffing
+// recommendation (peak headcount + season window) and the net profit gain vs fixed staff.
+function renderLaborPlan(sr, baseRes, sp) {
+  const hw = sr.hired_hours_weekly || [];
+  const ow = sr.overtime_hours_weekly || [];
+  let totHire = 0, peakHire = 0, peakHireWk = 0, firstW = 0, lastW = 0;
+  let totOT = 0, peakOT = 0, peakOTWk = 0;
+  for (let w = 1; w < hw.length; w++) {
+    const h = hw[w] || 0; totHire += h;
+    if (h > peakHire) { peakHire = h; peakHireWk = w; }
+    if (h > 0.5) { if (!firstW) firstW = w; lastW = w; }
+  }
+  for (let w = 1; w < ow.length; w++) {
+    const o = ow[w] || 0; totOT += o;
+    if (o > peakOT) { peakOT = o; peakOTWk = w; }
+  }
+  const delta = (sr.profit || 0) - (baseRes.profit || 0);
+  const usedAny = totHire > 0.5 || totOT > 0.5;
+
+  if (!usedAny || delta <= 1) {
+    return `<div style="padding:0.6rem 0.8rem;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:8px;font-size:0.82rem;color:#065f46">
+      ✓ <strong>Your current staff is sufficient.</strong> Letting the optimizer buy extra labor doesn't improve the plan — labor isn't the binding constraint here. See the pills above for the real bottleneck.</div>`;
+  }
+
+  const peakWorkers = Math.ceil(peakHire / HRS_PER_WORKER_WK);
+  const fmtPct = baseRes.profit > 0 ? ` (+${(delta / baseRes.profit * 100).toFixed(1)}%)` : '';
+  const markup = Math.round((sp.hire_wage_markup || 0) * 100);
+  const mult   = sp.overtime_rate_multiplier || 1.5;
+  const load   = Math.round((sp.payroll_load_pct || 0) * 100);
+
+  const hireLine = totHire > 0.5
+    ? `<li><strong>Hire up to ~${peakWorkers} extra worker${peakWorkers === 1 ? '' : 's'}</strong> at peak (week ${peakHireWk}), active roughly <strong>weeks ${firstW}–${lastW}</strong> — about ${Math.round(totHire).toLocaleString()} added labor-hours over the season.</li>`
+    : '';
+  const otLine = totOT > 0.5
+    ? `<li><strong>~${Math.round(totOT).toLocaleString()} overtime hours</strong> from your existing crew (peak week ${peakOTWk}: ${Math.round(peakOT)} hrs).</li>`
+    : '';
+
+  return `
+    <div style="padding:0.7rem 0.9rem;background:#f0fdf4;border:1px solid #86efac;border-radius:9px">
+      <div style="font-size:0.95rem;font-weight:800;color:#166534;margin-bottom:0.35rem">+${fmt(delta)}${fmtPct} profit vs your fixed-staff plan</div>
+      <div style="font-size:0.8rem;color:#374151;margin-bottom:0.25rem">To capture it, plan to:</div>
+      <ul style="margin:0 0 0.45rem 1.1rem;padding:0;font-size:0.82rem;color:#374151;line-height:1.5">${hireLine}${otLine}</ul>
+      <div style="font-size:0.72rem;color:#6b7280">New plan profit ${fmt(sr.profit)} vs ${fmt(baseRes.profit)} fixed-staff. Headcount assumes ${HRS_PER_WORKER_WK} hrs/worker/week; hires at base wage +${markup}%, overtime at ${mult}×, payroll load ${load}%. Adjust under Labor → Labor flexibility assumptions.</div>
+    </div>`;
+}
+
 async function runScenario(constraints, factor) {
   const cArr   = Array.isArray(constraints) ? constraints : [constraints];
   const params = window._lastParams;
