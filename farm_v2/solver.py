@@ -93,6 +93,10 @@ def solve_farm_v2(
     overtime_enabled: bool = False,
     overtime_threshold_hrs: float = 40.0,
     overtime_rate_multiplier: float = 1.5,
+    max_overtime_hrs_per_week: float | None = None,
+    hire_enabled: bool = False,
+    max_hire_hrs_per_week: float = 0.0,
+    hire_wage_markup: float = 0.0,
     # --- Equipment proxy ---
     max_plant_acres_per_week: float = 1e9,
     max_harvest_acres_per_week: float = 1e9,
@@ -277,15 +281,18 @@ def solve_farm_v2(
     idx_x_start   = 0
     idx_y_start   = N_S
     idx_v_start   = 2 * N_S
-    idx_cw_start  = idx_v_start + V_off  if city_water_enabled else None
-    idx_ot_start  = (idx_cw_start + N_WEEKS if city_water_enabled else idx_v_start + V_off) \
-                    if overtime_enabled else None
-
-    n_vars = 2 * N_S + V_off
+    # Sequentially lay out the optional weekly variable blocks after the v[] block.
+    _next = idx_v_start + V_off
+    idx_cw_start = None
     if city_water_enabled:
-        n_vars += N_WEEKS
+        idx_cw_start = _next; _next += N_WEEKS
+    idx_ot_start = None
     if overtime_enabled:
-        n_vars += N_WEEKS
+        idx_ot_start = _next; _next += N_WEEKS
+    idx_hire_start = None
+    if hire_enabled:
+        idx_hire_start = _next; _next += N_WEEKS
+    n_vars = _next
 
     # -----------------------------------------------------------------------
     # Step 6 — Objective (scipy.milp minimises, so negate profit)
@@ -312,12 +319,23 @@ def solve_farm_v2(
         ot_extra_rate = hourly_labor_rate * (overtime_rate_multiplier - 1.0)
         c_obj[idx_ot_start : idx_ot_start + N_WEEKS] = ot_extra_rate
 
+    # Hired-labor cost: only the wage markup above base wage (base wage on every used
+    # hour is already in var_cost_coeff). Default markup 0 → hired labor costs base wage.
+    if hire_enabled and idx_hire_start is not None:
+        c_obj[idx_hire_start : idx_hire_start + N_WEEKS] = hourly_labor_rate * hire_wage_markup
+
     # -----------------------------------------------------------------------
     # Step 7 — Bounds
     # -----------------------------------------------------------------------
     lb = np.zeros(n_vars)
     ub = np.full(n_vars, np.inf)
     ub[idx_x_start : idx_x_start + N_S] = 1.0  # x[i] ∈ [0, 1]
+
+    # Per-week caps on the labor-flex levers (the "max additional capacity by period").
+    if overtime_enabled and idx_ot_start is not None and max_overtime_hrs_per_week is not None:
+        ub[idx_ot_start : idx_ot_start + N_WEEKS] = max_overtime_hrs_per_week
+    if hire_enabled and idx_hire_start is not None:
+        ub[idx_hire_start : idx_hire_start + N_WEEKS] = max_hire_hrs_per_week
 
     # -----------------------------------------------------------------------
     # Step 8 — Integrality
@@ -361,6 +379,8 @@ def solve_farm_v2(
         rhs = labor_capacity[w - 1]
         if overtime_enabled and idx_ot_start is not None:
             cols.append((idx_ot_start + w - 1, -1.0))
+        if hire_enabled and idx_hire_start is not None:
+            cols.append((idx_hire_start + w - 1, -1.0))
         add_row(cols, -np.inf, rhs)
 
     # C3 — Water
@@ -556,6 +576,8 @@ def solve_farm_v2(
     #   overtime[w]   for w ≤ W  (coefficient: -ot_extra_rate[w-1])
     ot_extra_rate_arr = (hourly_labor_rate * (overtime_rate_multiplier - 1.0)
                          if overtime_enabled else np.zeros(N_WEEKS))
+    hire_extra_rate_arr = (hourly_labor_rate * hire_wage_markup
+                           if hire_enabled else np.zeros(N_WEEKS))
     floor = -(opening_cash + credit_line)
 
     # Skip the cash floor entirely when disabled (UI "cash off" → optimize
@@ -586,11 +608,16 @@ def solve_farm_v2(
         if overtime_enabled and idx_ot_start is not None:
             for w in range(W):
                 cols.append((idx_ot_start + w, -ot_extra_rate_arr[w]))
+        # Hired-labor markup cost up to W
+        if hire_enabled and idx_hire_start is not None:
+            for w in range(W):
+                cols.append((idx_hire_start + w, -hire_extra_rate_arr[w]))
 
         rhs_lo = floor + W * fixed_weekly
         add_row(cols, rhs_lo, np.inf)
 
-    # C14 — Overtime lower bound (if enabled)
+    # C14 — Hourly-tier ceiling (if overtime enabled): hours beyond the regular hourly
+    # capacity must be covered by overtime and/or hired labor.
     if overtime_enabled and idx_ot_start is not None:
         for w in range(1, N_WEEKS + 1):
             cols = [
@@ -599,6 +626,8 @@ def solve_farm_v2(
                 if phase_table[i][w] is not None
             ]
             cols.append((idx_ot_start + w - 1, -1.0))
+            if hire_enabled and idx_hire_start is not None:
+                cols.append((idx_hire_start + w - 1, -1.0))
             add_row(cols, -np.inf, labor_capacity_hourly[w - 1])
 
     # -----------------------------------------------------------------------
@@ -668,13 +697,39 @@ def solve_farm_v2(
         cw_sol = z[idx_cw_start : idx_cw_start + N_WEEKS]
         city_water_cost = cw_sol.sum() * city_water_cost_per_L
 
-    overtime_cost = 0.0
-    if overtime_enabled and idx_ot_start is not None:
-        ot_sol = z[idx_ot_start : idx_ot_start + N_WEEKS]
-        ot_extra = hourly_labor_rate * (overtime_rate_multiplier - 1.0)
-        overtime_cost = float(np.dot(ot_sol, ot_extra))
+    # Labor-flex reporting (hired + overtime). The hire/overtime split is recomputed
+    # deterministically from the labor actually used, rather than read from the raw
+    # decision variables, because when hire is cheaper than overtime the LP split is
+    # degenerate (many equal-cost splits). The cost-optimal split is: fill hired labor
+    # up to its cap first, then overtime — which is exactly what we reconstruct here, so
+    # the recomputed costs equal the objective's labor-flex cost.
+    labor_used_weekly = np.zeros(N_WEEKS + 1)
+    for i in range(N_S):
+        if x_sol[i] <= 1e-9:
+            continue
+        for w in range(1, N_WEEKS + 1):
+            labor_used_weekly[w] += total_land * labor_rate[i][w] * x_sol[i]
 
-    total_cost = fixed_cost + variable_cost + city_water_cost + overtime_cost
+    hired_hours_weekly    = np.zeros(N_WEEKS + 1)
+    overtime_hours_weekly = np.zeros(N_WEEKS + 1)
+    if overtime_enabled or hire_enabled:
+        # Hours beyond this tier must be bought. With overtime on, the regular tier is the
+        # hourly-only capacity (salaried excluded, matching C14); otherwise it's total capacity.
+        regular_tier = labor_capacity_hourly if overtime_enabled else labor_capacity
+        for w in range(1, N_WEEKS + 1):
+            extra = max(0.0, labor_used_weekly[w] - regular_tier[w - 1])
+            hired = min(extra, max_hire_hrs_per_week) if hire_enabled else 0.0
+            hired_hours_weekly[w]    = hired
+            overtime_hours_weekly[w] = (extra - hired) if overtime_enabled else 0.0
+
+    overtime_cost = float(np.dot(overtime_hours_weekly[1:],
+                                 hourly_labor_rate * (overtime_rate_multiplier - 1.0))) \
+                    if overtime_enabled else 0.0
+    hire_cost     = float(np.dot(hired_hours_weekly[1:],
+                                 hourly_labor_rate * hire_wage_markup)) \
+                    if hire_enabled else 0.0
+
+    total_cost = fixed_cost + variable_cost + city_water_cost + overtime_cost + hire_cost
     operating_profit = revenue - total_cost  # what the solver maximized (before overhead + interest)
 
     # Weekly cash flow for reporting
@@ -728,6 +783,12 @@ def solve_farm_v2(
         "fixed_cost":       fixed_cost,
         "city_water_cost":  city_water_cost,
         "overtime_cost":    overtime_cost,
+        "hire_cost":        hire_cost,
+        "labor_flex_enabled": bool(overtime_enabled or hire_enabled),
+        "total_hired_hours":    float(hired_hours_weekly.sum()),
+        "total_overtime_hours": float(overtime_hours_weekly.sum()),
+        "hired_hours_weekly":    hired_hours_weekly,
+        "overtime_hours_weekly": overtime_hours_weekly,
         "weekly_cash_flow": weekly_cash_flow,
         "peak_borrowing":   peak_borrowing,
         "opening_cash":     opening_cash,
