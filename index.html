@@ -1648,10 +1648,10 @@
         The <strong>harvest storage cap</strong> is enforced at harvest time only and does not track
         post-harvest inventory carryover. Ensure your storage cap is large enough to hold the full
         harvest volume for any crop with Sales Spread Weeks &gt; 1.
-        Each planting's sales window is also treated independently: if two plantings of the same crop
-        harvest closer together than the spread length, the shared weeks count against both, so the
-        model may <strong>understate</strong> sellable volume — it never oversells. Space plantings of
-        a spread crop at least the spread length apart for accurate multi-harvest results.
+        Each planting's sales window is also modeled independently: when a crop's plantings harvest
+        closer together than the spread length, the shared weeks count against both, so the model may
+        <strong>understate</strong> sellable volume — it never oversells. The optimizer already
+        accounts for this in the plan it chooses, so reported figures stay conservative.
         <a style="color:#b45309;text-decoration:underline;cursor:pointer" onclick="jumpToSetup('crops','crop-list')">Review crops →</a>
         &nbsp;<a style="color:#b45309;text-decoration:underline;cursor:pointer" onclick="this.closest('#spread-caveat-banner').style.display='none'">Dismiss</a>
       </div>
@@ -2092,7 +2092,7 @@ function updateCropChannels(card, chDefs, cropDefaults, forceOverride) {
     return `
     <div class="crop-channel-section" data-ch="${ch.name}">
       <div class="crop-section-label">${ch.name} Channel <span class="tip" data-tip="Price: what this channel pays per lb. Packaging: cost to pack for this channel. Demand cap: max this channel can absorb.">?</span></div>
-      <div class="form-group"><label>Price ($/lb) <span class="pill-upload-hint" onclick="document.getElementById('mc-xlsx-crops-input')?.closest('label')?.click()" title="Upload historical price data">📊</span></label>
+      <div class="form-group"><label>Price ($/lb) ${uploadPill('Upload historical price data')}</label>
         <input type="number" class="cf" data-f="ch_price" value="${price}" min="0" step="0.01" placeholder="0.00"></div>
       <div class="form-group"><label>Packaging ($/lb) <span class="tip" data-tip="Default from channel definition: $${ch.default_pkg}/lb. Override per crop here.">?</span></label>
         <input type="number" class="cf" data-f="ch_pkg" value="${pkg}" min="0" step="0.01"></div>
@@ -2102,7 +2102,7 @@ function updateCropChannels(card, chDefs, cropDefaults, forceOverride) {
           <option value="weekly_varying" ${dtype==='weekly_varying'?'selected':''}>Weekly cap + active season (lbs/wk)</option>
           <option value="annual"         ${dtype==='annual'        ?'selected':''}>Annual total cap (lbs/yr)</option>
         </select></div>
-      <div class="form-group"><label>Sales Capacity (lbs) <span class="tip" data-tip="The quantity you can reliably move through this channel in the chosen period — i.e. your sellable volume, from your own sales history where available.">?</span> <span class="pill-upload-hint" onclick="document.getElementById('mc-xlsx-crops-input')?.closest('label')?.click()" title="Upload historical sales data">📊</span></label>
+      <div class="form-group"><label>Sales Capacity (lbs) <span class="tip" data-tip="The quantity you can reliably move through this channel in the chosen period — i.e. your sellable volume, from your own sales history where available.">?</span> ${uploadPill('Upload historical sales data')}</label>
         <input type="number" class="cf" data-f="ch_demand_value" value="${dval}" min="0" step="500"></div>
       <div class="form-group demand-season-group" style="${showSeason}">
         <label>Active Season <span class="tip" data-tip="Week numbers when this channel is open. E.g. a farmers market open late April–Oct = start 18, end 42.">?</span></label>
@@ -2126,49 +2126,53 @@ function toggleDemandSeason(sel) {
   if (note) note.style.display = show;
 }
 
-// Weeks this channel is actually open for sales, used to convert annual ↔ weekly caps.
-// weekly_varying → active-season span (end − start + 1); everything else → full 52.
-function _seasonWeeks(sec) {
-  const s = parseInt(sec?.querySelector('[data-f="ch_season_start"]')?.value);
-  const e = parseInt(sec?.querySelector('[data-f="ch_season_end"]')?.value);
-  if (s >= 1 && e >= s && e <= 52) return e - s + 1;
-  return 52; // season not set yet → fall back to all-year
-}
-function _weeksForType(type, sec) {
-  return type === 'weekly_varying' ? _seasonWeeks(sec) : 52;
+// One source for the 📊 "upload your past data" pill shown on importable fields.
+function uploadPill(title) {
+  return `<span class="pill-upload-hint" onclick="document.getElementById('mc-xlsx-crops-input')?.closest('label')?.click()" title="${title}">📊</span>`;
 }
 
-// Sales Capacity Type change handler: when the user crosses the annual ↔ weekly
-// boundary, auto-convert the value field so the underlying volume stays consistent
-// (annual ÷ weeks-open → weekly cap, or weekly × weeks-open → annual total). Switching
-// between the two weekly modes keeps the per-week rate as-is. Then show/hide the season row.
+// Weeks a channel is open for sales, used to convert annual ↔ weekly caps.
+// weekly_varying → active-season span (end − start + 1); everything else → full 52.
+function _weeksForType(type, sec) {
+  if (type !== 'weekly_varying') return 52;
+  const s = parseInt(sec?.querySelector('[data-f="ch_season_start"]')?.value);
+  const e = parseInt(sec?.querySelector('[data-f="ch_season_end"]')?.value);
+  return (s >= 1 && e >= s && e <= 52) ? e - s + 1 : 52; // unset season → all-year
+}
+
+// Single source of truth for converting a sales-capacity value between types.
+// Crossing the annual↔weekly boundary rescales by weeks-open; weekly↔weekly keeps
+// the per-week rate (only the active weeks change); same-type is a no-op.
+function convertCapacity(value, fromType, toType, sec) {
+  if ((fromType === 'annual') === (toType === 'annual')) return value;
+  return fromType === 'annual'
+    ? value / _weeksForType(toType, sec)    // annual total → weekly cap
+    : value * _weeksForType(fromType, sec); // weekly cap → annual total
+}
+
+// Sales Capacity Type change handler: auto-convert the value so the underlying
+// volume stays consistent, then show/hide the season row.
 function onDemandTypeChange(sel) {
   const sec      = sel.closest('.crop-channel-section');
   const valEl    = sec?.querySelector('[data-f="ch_demand_value"]');
   const prevType = sel.dataset.prevType || sel.value;
   const newType  = sel.value;
-  const prevWeekly = prevType !== 'annual';
-  const newWeekly  = newType  !== 'annual';
-  if (valEl && prevType !== newType && prevWeekly !== newWeekly) {
-    const cur = parseFloat(valEl.value);
-    if (!isNaN(cur) && cur > 0) {
-      const next = (prevType === 'annual')
-        ? cur / _weeksForType(newType, sec)   // annual → weekly cap
-        : cur * _weeksForType(prevType, sec); // weekly cap → annual total
-      valEl.value = Math.round(next);
-    }
+  const cur      = parseFloat(valEl?.value);
+  if (valEl && !isNaN(cur) && cur > 0) {
+    valEl.value = Math.round(convertCapacity(cur, prevType, newType, sec));
   }
   sel.dataset.prevType = newType;
   toggleDemandSeason(sel);
 }
 
-// Keep each per-crop Sell-through placeholder showing the live farm-wide default,
-// so a blank field visibly reflects what it will inherit.
+// The placeholder shown on a blank per-crop Sell-through field: the live farm-wide
+// default, so a blank field advertises what it inherits. One owner for render + sync.
+function sellThroughPlaceholder() {
+  return `${document.getElementById('sell_through_pct')?.value || 85} (farm default)`;
+}
 function syncSellThroughPlaceholders() {
-  const farm = document.getElementById('sell_through_pct')?.value || 85;
-  document.querySelectorAll('input.st-pct-field').forEach(el => {
-    el.placeholder = `${farm} (farm default)`;
-  });
+  const ph = sellThroughPlaceholder();
+  document.querySelectorAll('input.st-pct-field').forEach(el => { el.placeholder = ph; });
 }
 
 function updateAllCropChannels() {
@@ -2338,8 +2342,8 @@ function renderCrop(c, idx) {
       <div class="form-group"><label>Planting Weeks</label><input type="number" class="cf" data-f="planting_weeks" value="${v('planting_weeks',1)}" min="1" step="1" placeholder="usually 1–3"></div>
       <div class="form-group"><label>Harvest Weeks</label><input type="number" class="cf" data-f="harvest_weeks" value="${v('harvest_weeks',2)}" min="1" step="1" placeholder="usually 1–8"></div>
       <div class="form-group"><label>Min Acres if Planted</label><input type="number" class="cf" data-f="min_acreage_if_planted" value="${v('min_acreage_if_planted',1)}" min="0" step="0.5" placeholder="e.g. 2"></div>
-      <div class="form-group"><label>Sell-through % <span class="tip" data-tip="Share of THIS crop's harvest that converts to cash (shrink/grade-out/spoilage vary a lot by crop — garlic ~95%, leafy greens ~80%). Blank = use the farm-wide default from Overhead, Financing &amp; Risk. Auto-filled from your Past Data upload.">?</span> <span class="opt-marker">(opt)</span> <span class="pill-upload-hint" onclick="document.getElementById('mc-xlsx-crops-input')?.closest('label')?.click()" title="Upload historical sales data to derive sell-through">📊</span></label><input type="number" class="cf st-pct-field" data-f="sell_through_pct" value="${v('sell_through_pct','')}" min="1" max="100" step="1" placeholder="${(document.getElementById('sell_through_pct')?.value)||85} (farm default)"></div>
-      <div class="form-group"><label>Sales Spread Weeks <span class="tip" data-tip="Post-harvest selling window (1–8 weeks, default 1). For shelf-stable crops (garlic, dry beans, onions), set >1 to let the optimizer sell across multiple weeks of demand capacity rather than all in the harvest week. The crop leaves the field on schedule — this only extends the sales window.&#10;&#10;Storage caveat: the harvest storage cap is checked at harvest time only; ensure it can hold the full harvest volume for spread crops.&#10;&#10;Overlap caveat: each planting's sales window is treated independently. If two plantings of the same crop harvest closer together than the spread length, their windows overlap and the shared weeks are counted against BOTH — so the model may understate how much of that crop you can sell. It never oversells: this only ever errs cautious. For accurate multi-harvest planning, keep plantings of a spread crop spaced at least the spread length apart.">?</span> <span class="opt-marker">(opt)</span></label><input type="number" class="cf" data-f="sales_spread_weeks" value="${v('sales_spread_weeks','')}" min="1" max="8" step="1" placeholder="1"></div>
+      <div class="form-group"><label>Sell-through % <span class="tip" data-tip="Share of THIS crop's harvest that converts to cash (shrink/grade-out/spoilage vary a lot by crop — garlic ~95%, leafy greens ~80%). Blank = use the farm-wide default from Overhead, Financing &amp; Risk. Auto-filled from your Past Data upload.">?</span> <span class="opt-marker">(opt)</span> ${uploadPill('Upload historical sales data to derive sell-through')}</label><input type="number" class="cf st-pct-field" data-f="sell_through_pct" value="${v('sell_through_pct','')}" min="1" max="100" step="1" placeholder="${sellThroughPlaceholder()}"></div>
+      <div class="form-group"><label>Sales Spread Weeks <span class="tip" data-tip="Post-harvest selling window (1–8 weeks, default 1). For shelf-stable crops (garlic, dry beans, onions), set >1 to let the optimizer sell across multiple weeks of demand capacity rather than all in the harvest week. The crop leaves the field on schedule — this only extends the sales window.&#10;&#10;Storage caveat: the harvest storage cap is checked at harvest time only; ensure it can hold the full harvest volume for spread crops.&#10;&#10;Overlap caveat: each planting's sales window is modeled independently. When a crop's plantings harvest closer together than the spread length, their windows overlap and the shared weeks are counted against BOTH — so the model can understate how much of that crop is sellable. The optimizer already factors this into the plan it chooses, so results stay conservative: sellable volume and profit are never overstated, only possibly understated a little when storage-crop harvests fall close together.">?</span> <span class="opt-marker">(opt)</span></label><input type="number" class="cf" data-f="sales_spread_weeks" value="${v('sales_spread_weeks','')}" min="1" max="8" step="1" placeholder="1"></div>
       <div class="form-group"><label>Planting Type</label>
         <select class="cf" data-f="planting_type">
           <option value="seed" ${v('planting_type')==='seed'?'selected':''}>Seed</option>
@@ -2348,7 +2352,7 @@ function renderCrop(c, idx) {
       <div class="form-group"><label>Seed/Transplant Cost ($/acre) <span class="tip" data-tip="Seed: $100–$600/acre. Transplant plugs/starts: $250–$900/acre.">?</span></label><input type="number" class="cf" data-f="seed_transplant_cost_per_acre" value="${v('seed_transplant_cost_per_acre',0)}" min="0" step="10" placeholder="e.g. 280"></div>
 
       <div class="crop-section-label">Agronomy &amp; Diversity</div>
-      <div class="form-group"><label>Yield per Acre (lbs) <span class="tip" data-tip="Expected lbs harvested per acre per planting. Typical: Spinach 4,000–6,000 · Lettuce 14,000–18,000 · Tomatoes 18,000–25,000 · Corn 7,000–12,000 · Garlic 8,000–12,000. For storage crops (garlic, onions, potatoes) that harvest in 1–2 weeks, set the wholesale demand cap to at least yield × min_acreage ÷ sales_spread_weeks to allow meaningful planting.">?</span><span class="pill-upload-hint" onclick="document.getElementById('mc-xlsx-crops-input')?.closest('label')?.click()" title="Upload historical yield data">📊</span></label><input type="number" class="cf" data-f="yield_per_acre" value="${v('yield_per_acre',2000)}" min="1" step="50" placeholder="e.g. 3250"></div>
+      <div class="form-group"><label>Yield per Acre (lbs) <span class="tip" data-tip="Expected lbs harvested per acre per planting. Typical: Spinach 4,000–6,000 · Lettuce 14,000–18,000 · Tomatoes 18,000–25,000 · Corn 7,000–12,000 · Garlic 8,000–12,000. For storage crops (garlic, onions, potatoes) that harvest in 1–2 weeks, set the wholesale demand cap to at least yield × min_acreage ÷ sales_spread_weeks to allow meaningful planting.">?</span>${uploadPill('Upload historical yield data')}</label><input type="number" class="cf" data-f="yield_per_acre" value="${v('yield_per_acre',2000)}" min="1" step="50" placeholder="e.g. 3250"></div>
       <div class="form-group"><label>Max Land Fraction <span class="tip" data-tip="Crop diversity cap: limits what share of total farm acreage this crop (all plantings combined) can occupy. 50% = max 75 acres on a 150-acre farm.">?</span></label>${diversitySelect(v('crop_diversity_max',0.5))}</div>
       <div class="form-group"><label>Lbs per 18-gal Tote <span class="tip" data-tip="How many lbs fit in one standard 18-gallon harvest tote. Used to compute harvest storage needs. Typical: leafy greens 12–25 lbs · root veg 40–60 lbs · cucumbers/peppers 20–40 lbs.">?</span></label><input type="number" class="cf" data-f="lbs_per_tote" value="${lbsPerTote}" min="1" step="1" placeholder="e.g. 30"></div>
 
@@ -3566,11 +3570,8 @@ function applyMCParams(rows) {
       const typeEl = sec.querySelector('[data-f="ch_demand_type"]');
       const valEl  = sec.querySelector('[data-f="ch_demand_value"]');
       if (valEl && r.annualSold > 0) {
-        const curType  = typeEl?.value || 'weekly_flat';
-        const imported = (curType === 'annual')
-          ? r.annualSold
-          : r.annualSold / _weeksForType(curType, sec);
-        valEl.value = Math.round(imported);
+        const curType = typeEl?.value || 'weekly_flat';
+        valEl.value = Math.round(convertCapacity(r.annualSold, 'annual', curType, sec));
         markData(valEl);
       }
       pairsApplied++;
@@ -3584,6 +3585,7 @@ function applyMCParams(rows) {
   if (APP_STATE.mcSellThroughAvg != null) {
     const stInp = document.getElementById('sell_through_pct');
     if (stInp) stInp.value = APP_STATE.mcSellThroughAvg;
+    syncSellThroughPlaceholders();  // keep per-crop "(farm default)" hints in step with the new global
   }
 
   if (warnings.length) {
