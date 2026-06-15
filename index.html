@@ -1116,7 +1116,7 @@
     <div class="card">
       <h2>Farm Infrastructure</h2>
       <div class="form-grid">
-        <div class="form-group"><label>Total Land (acres)<span class="req-marker" aria-hidden="true">*</span><span class="sr-only"> (required)</span></label><input type="number" id="total_land" value="150" min="1" step="1" placeholder="e.g. 150"></div>
+        <div class="form-group"><label>Total Land (acres)<span class="req-marker" aria-hidden="true">*</span><span class="sr-only"> (required)</span></label><input type="number" id="total_land" value="80" min="1" step="1" placeholder="e.g. 80"></div>
         <div class="form-group"><label>Operating Weeks <span class="tip" data-tip="How many weeks per year the farm operates. Affects the planning horizon, all cost totals, and how many crop successions can fit.&#10;&#10;52 = year-round operation (most CA vegetable farms).&#10;36–44 = seasonal operation (e.g. frost-limited regions, school-year markets).&#10;&#10;Shorter seasons reduce fixed-cost totals but also limit revenue potential.">?</span></label>
           <select id="operating_weeks">
             <option value="36">36 wks — spring+fall only</option>
@@ -1173,8 +1173,8 @@
           </label>
           <div id="pd-machinery-helper" class="pd-helper">Machinery and fuel/equipment storage costs are set to their default values but not shown. These fixed costs are still included in the model at benchmark rates.</div>
           <div id="pd-machinery-fields" class="pd-revealed pd-hidden form-grid" style="margin-top:0.3rem">
-            <div class="form-group"><label>Equip. Storage (m³) <span class="tip" data-tip="Enclosed capacity for tractors and implements. Drives Equipment Storage rate cost.">?</span></label><input type="number" id="equip_storage" value="500" min="50" step="50" placeholder="e.g. 500"></div>
-            <div class="form-group"><label>Fuel Storage (L)</label><input type="number" id="fuel_storage" value="25000" min="1000" step="1000" placeholder="e.g. 25000"></div>
+            <div class="form-group"><label>Equip. Storage (m³) <span class="tip" data-tip="Enclosed capacity for tractors and implements. Drives Equipment Storage rate cost.">?</span></label><input type="number" id="equip_storage" value="300" min="50" step="50" placeholder="e.g. 300"></div>
+            <div class="form-group"><label>Fuel Storage (L)</label><input type="number" id="fuel_storage" value="13000" min="1000" step="1000" placeholder="e.g. 13000"></div>
           </div>
         </div>
       </div>
@@ -1196,7 +1196,7 @@
           </label>
           <div id="pd-harvest-storage-helper" class="pd-helper">Harvest storage defaults to 10,000 m³ at $0.356/m³/wk. This constraint limits how much can be harvested in any week.</div>
           <div id="pd-harvest-storage-fields" class="pd-revealed pd-hidden form-grid" style="margin-top:0.3rem">
-            <div class="form-group"><label>Harvest Storage Capacity (m³) <span class="tip" data-tip="Cold/ambient storage for harvested produce. 10,000 m³ suits a 100–150 acre mixed vegetable farm.">?</span></label><input type="number" id="harvest_storage_cap" value="10000" min="100" step="100"></div>
+            <div class="form-group"><label>Harvest Storage Capacity (m³) <span class="tip" data-tip="Cold/ambient storage for harvested produce. 10,000 m³ suits a 100–150 acre mixed vegetable farm.">?</span></label><input type="number" id="harvest_storage_cap" value="5000" min="100" step="100"></div>
             <div class="form-group"><label>Capital Cost ($/m³) <span class="tip" data-tip="Construction or purchase cost per cubic metre of storage. Typical cold-storage building: $400–$600/m³.">?</span></label><input type="number" id="harvest_storage_cost_per_m3" value="463" min="0" step="10"></div>
             <div class="form-group"><label>Depreciation (years) <span class="tip" data-tip="Straight-line asset life. Buildings: 25–40 years.">?</span></label><input type="number" id="depreciation_harvest_years" value="25" min="1" step="1"></div>
             <div class="pd-formula-hint">Weekly cost = (Capacity × $/m³) ÷ (Years × 52)</div>
@@ -1225,11 +1225,11 @@
             <input type="checkbox" id="pd-machinery-rates" onchange="togglePD('pd-machinery-rates','pd-machinery-rates-fields','pd-machinery-rates-helper')">
             Set custom machinery, equipment, and fuel storage rates?
           </label>
-          <div id="pd-machinery-rates-helper" class="pd-helper">Using benchmark rates: Equip Storage $1.042/m³/wk, Fuel Storage $0.0208/L/wk, Machinery $1,500/wk. Enable to override.</div>
+          <div id="pd-machinery-rates-helper" class="pd-helper">Using benchmark rates: Equip Storage $1.042/m³/wk, Fuel Storage $0.0208/L/wk, Machinery $1,000/wk. Enable to override.</div>
           <div id="pd-machinery-rates-fields" class="pd-revealed pd-hidden form-grid" style="margin-top:0.3rem">
             <div class="form-group"><label>Equip Storage ($/m³/wk) <span class="tip" data-tip="Cost of barn/shed for equipment. Typical: $0.80–$1.50/m³/wk.">?</span></label><input type="number" id="rate_equip_storage" value="1.042" min="0" step="0.001"></div>
             <div class="form-group"><label>Fuel Storage ($/L/wk) <span class="tip" data-tip="Tank rental/depreciation for on-farm fuel storage. Typical: $0.01–$0.03/L/wk.">?</span></label><input type="number" id="rate_fuel_storage" value="0.0208" min="0" step="0.0001"></div>
-            <div class="form-group"><label>Avg. Machinery ($/wk) <span class="tip" data-tip="Blended weekly cost of all farm machinery + maintenance. Typical 150-acre vegetable farm: $1,500–$3,000/wk.&#10;&#10;Owned outright: use depreciation (purchase price ÷ useful life) + maintenance.&#10;Financed: use your loan payment (principal+interest) + maintenance — don't also depreciate it.&#10;&#10;Either way, enter the blended weekly figure.">?</span></label><input type="number" id="rate_machinery" value="1500" min="0" step="100"></div>
+            <div class="form-group"><label>Avg. Machinery ($/wk) <span class="tip" data-tip="Blended weekly cost of all farm machinery + maintenance. Typical 150-acre vegetable farm: $1,500–$3,000/wk.&#10;&#10;Owned outright: use depreciation (purchase price ÷ useful life) + maintenance.&#10;Financed: use your loan payment (principal+interest) + maintenance — don't also depreciate it.&#10;&#10;Either way, enter the blended weekly figure.">?</span></label><input type="number" id="rate_machinery" value="1000" min="0" step="100"></div>
             <div class="form-group"><label>Fuel ($/L) <span class="tip" data-tip="Diesel or gasoline cost per litre. Typical US diesel: $1.00–$1.50/L.">?</span></label><input type="number" id="cost_fuel_per_L" value="1.25" min="0" step="0.01" placeholder="e.g. 1.25"></div>
             <div class="form-group"><label>Equip. Storage Capital ($/m³) <span class="tip" data-tip="Building construction cost per m³. Typical ag barn: $300–$700/m³.">?</span></label><input type="number" id="equip_storage_cost_per_m3" value="500" min="0" step="50"></div>
             <div class="form-group"><label>Equip. Storage Depreciation (years)</label><input type="number" id="depreciation_equip_years" value="30" min="1" step="1"></div>
@@ -1363,7 +1363,7 @@
         <div class="water-source-row">
           <div class="water-source-toggle"><input type="checkbox" id="catchment_enabled"><label for="catchment_enabled">Rainwater Catchment</label></div>
           <div class="form-group"><label>Catchment Surface (m²)</label><input type="number" id="catchment_surface_area_m2" value="5000" min="0" step="100"></div>
-          <div class="form-group"><label>Storage Tank (L) <span class="tip" data-tip="Rainwater catchment storage tank capacity in litres.&#10;&#10;Typical sizes:&#10;• Small farm (50 ac): 100,000–250,000 L&#10;• Medium farm (150 ac): 400,000–600,000 L&#10;• Large farm (300+ ac): 1,000,000+ L&#10;&#10;Rainfall data and weekly catchment yield are set above. The depreciation cost rate for this tank is in Farm Basics → Fixed Cost Rates.">?</span> <button type="button" class="section-toggle-btn" id="toggle-wtank" onclick="toggleOptional('wtank-row','toggle-wtank')">hide</button></label><div id="wtank-row"><input type="number" id="water_storage_capacity" value="500000" min="0" step="10000"></div></div>
+          <div class="form-group"><label>Storage Tank (L) <span class="tip" data-tip="Rainwater catchment storage tank capacity in litres.&#10;&#10;Typical sizes:&#10;• Small farm (50 ac): 100,000–250,000 L&#10;• Medium farm (150 ac): 400,000–600,000 L&#10;• Large farm (300+ ac): 1,000,000+ L&#10;&#10;Rainfall data and weekly catchment yield are set above. The depreciation cost rate for this tank is in Farm Basics → Fixed Cost Rates.">?</span> <button type="button" class="section-toggle-btn" id="toggle-wtank" onclick="toggleOptional('wtank-row','toggle-wtank')">hide</button></label><div id="wtank-row"><input type="number" id="water_storage_capacity" value="270000" min="0" step="10000"></div></div>
         </div>
         <!-- City water -->
         <div class="water-source-row">
@@ -1459,7 +1459,7 @@
 
     <!-- 5. Labor -->
     <div class="card span-3">
-      <h2>Labor <span class="tip" data-tip="Defaults are sized for a 100–150 acre operation (2 managers + 15 seasonal + 10 harvest crew).&#10;&#10;Scale down for smaller farms:&#10;• Under 75 acres: remove Operations Manager (owner-operated model)&#10;• Under 50 acres: reduce seasonal crew to 3–5 and harvest crew to 2–3&#10;&#10;Labor is the largest variable cost — over-staffing a small farm will show a loss even with good crops.">?</span></h2>
+      <h2>Labor <span class="tip" data-tip="Defaults are sized for an ~80-acre diversified-veg operation (1 manager + 2 equipment operators + 12 seasonal + 8 harvest crew).&#10;&#10;Scale up for larger farms (add an operations manager and more crew); scale down for smaller.&#10;&#10;Labor is the largest variable cost — over-staffing a small farm will show a loss even with good crops.">?</span></h2>
       <p style="font-size:0.73rem;color:#6b7280;margin:0 0 0.6rem"><strong>Salary</strong> = year-round fixed cost. <strong>Hourly (Seasonal)</strong> = variable rate applied against weekly crop-phase hours; the hourly rate you enter applies to seasonal workers. <strong>Seasonal</strong> = crew billed only between Start–End week.</p>
       <div class="form-group" style="margin-bottom:0.7rem;max-width:320px">
         <label>Payroll load (% on wages) <span class="tip" data-tip="Employer payroll burden ON TOP of the base wages entered below — payroll taxes (FICA, FUTA/SUTA), workers' comp, health benefits, unemployment insurance.&#10;&#10;Applied to ALL staff (salaried and hourly), so any extra hiring or overtime carries it too. Set 0 only if the wages you entered already include the full burden.&#10;&#10;Typical: 15–35%.">?</span></label>
@@ -1656,7 +1656,7 @@
       <!-- Small-farm staffing nudge (shown once when farm < 75 acres with 2+ managers) -->
       <div id="staffing-nudge" style="display:none;align-items:flex-start;gap:0.6rem;background:#fffbeb;border:1.5px solid #d97706;border-radius:9px;padding:0.65rem 1rem;margin-bottom:0.8rem;font-size:0.79rem;color:#92400e">
         <span style="font-size:1.1rem;line-height:1">⚠</span>
-        <span style="flex:1"><strong>Small farm staffing check.</strong> Your farm is under 75 acres but the default staffing includes two salaried managers ($167k+/yr). Farms this size are usually owner-operated — consider removing the Operations Manager in the <em>Labor section</em> to get a more realistic cost structure. The default staffing is sized for 100–150 acre operations.</span>
+        <span style="flex:1"><strong>Small farm staffing check.</strong> Your farm is under 75 acres but carries two or more salaried managers. Farms this size are usually owner-operated — consider trimming salaried management in the <em>Labor section</em> for a more realistic cost structure.</span>
         <button onclick="document.getElementById('staffing-nudge').style.display='none'" style="background:none;border:none;cursor:pointer;color:#92400e;font-size:1rem;line-height:1;padding:0">✕</button>
       </div>
 
@@ -1914,10 +1914,9 @@ const FARM_V2_FILES = {"farm_v2/__init__.py": "", "farm_v2/utils/__init__.py": "
 // ============================================================
 const LABOR_DEFAULTS = [
   { position:"Farm Manager",           type:"salary",   count:1,  wage:95000, hours_per_week:45, field_time_pct:80, start_week:1,  end_week:52 },
-  { position:"Operations Manager",     type:"salary",   count:1,  wage:72000, hours_per_week:40, field_time_pct:80, start_week:1,  end_week:52 },
   { position:"Equipment Operator",     type:"hourly",   count:2,  wage:26,    hours_per_week:40, field_time_pct:90, start_week:1,  end_week:52 },
-  { position:"Seasonal Field Crew",    type:"seasonal", count:15, wage:20,    hours_per_week:40, field_time_pct:100, start_week:10, end_week:42 },
-  { position:"Harvest Crew",           type:"seasonal", count:10, wage:19,    hours_per_week:40, field_time_pct:100, start_week:14, end_week:40 },
+  { position:"Seasonal Field Crew",    type:"seasonal", count:12, wage:20,    hours_per_week:40, field_time_pct:100, start_week:10, end_week:42 },
+  { position:"Harvest Crew",           type:"seasonal", count:8,  wage:19,    hours_per_week:40, field_time_pct:100, start_week:14, end_week:40 },
 ];
 
 function renderLaborRow(e, idx) {
@@ -5639,11 +5638,13 @@ async function runOptimizer() {
     }
   }
 
-  // Small-farm staffing nudge: fires once when farm < 75 acres.
-  // Default setup always has 2 salaried managers sized for 100-150 acres.
+  // Small-farm staffing nudge: fires once when a small farm carries 2+ salaried managers
+  // (the default is now a single manager sized for ~80 acres, so this only triggers if the
+  // user has added extra salaried staff on a small farm).
   if (!window._staffingNudgeDone) {
-    const landVal = parseFloat((document.getElementById('total_land') || {}).value) || 150;
-    if (landVal < 75) {
+    const landVal = parseFloat((document.getElementById('total_land') || {}).value) || 80;
+    const salariedCount = getLaborFromForm().filter(e => e.type === 'salary').reduce((n, e) => n + (parseInt(e.count) || 0), 0);
+    if (landVal < 75 && salariedCount >= 2) {
       window._staffingNudgeDone = true;
       const nudge = document.getElementById('staffing-nudge');
       if (nudge) nudge.style.display = 'flex';
