@@ -2011,20 +2011,20 @@ const CHANNEL_DEFAULTS = [
 // confidence: high = peer-reviewed/govt survey, medium = industry survey, low = rough estimate
 // ============================================================
 const BENCHMARK_DEFAULTS = {
-  total_land:           { value: 150,      label: 'Total Land',           source: 'USDA NASS CA vegetable census',      vintage: '2022', confidence: 'medium' },
+  total_land:           { value: 80,       label: 'Total Land',           source: 'USDA NASS CA vegetable census',      vintage: '2022', confidence: 'medium' },
   opening_cash:         { value: 300000,   label: 'Opening Cash',         source: 'Farm Bureau operating capital guide', vintage: '2023', confidence: 'medium' },
   credit_line:          { value: 800000,   label: 'Credit Line',          source: 'AgriBank farm credit survey',         vintage: '2022', confidence: 'low'    },
-  harvest_storage_cap:  { value: 10000,    label: 'Harvest Storage',      source: 'Cornell Small Farm sizing guide',     vintage: '2020', confidence: 'medium' },
+  harvest_storage_cap:  { value: 5000,     label: 'Harvest Storage',      source: 'Cornell Small Farm sizing guide',     vintage: '2020', confidence: 'medium' },
   rate_harvest_storage: { value: 0.356,    label: 'Harvest Storage Rate', source: 'USDA AMS cold chain cost study',      vintage: '2021', confidence: 'high'   },
   rate_irrigation:      { value: 38.54,    label: 'Irrigation Rate',      source: 'UC Cooperative Extension',            vintage: '2022', confidence: 'high'   },
   rate_equip_storage:   { value: 1.042,    label: 'Equip. Storage Rate',  source: 'Farm Business Management avg',        vintage: '2021', confidence: 'medium' },
   rate_fuel_storage:    { value: 0.0208,   label: 'Fuel Storage Rate',    source: 'EIA fuel storage benchmark',          vintage: '2022', confidence: 'medium' },
   rate_water_storage:   { value: 0.0036,   label: 'Water Tank Rate',      source: 'Irrigation Association survey',       vintage: '2021', confidence: 'medium' },
-  rate_machinery:       { value: 1500,     label: 'Machinery ($/wk)',     source: 'USDA ERS machinery ownership model',  vintage: '2022', confidence: 'medium' },
+  rate_machinery:       { value: 1000,     label: 'Machinery ($/wk)',     source: 'USDA ERS machinery ownership model',  vintage: '2022', confidence: 'medium' },
   rate_property_mortgage_rent: { value: 0, label: 'Property Mortgage/Rent ($/wk)', source: 'USDA ERS land value survey — user override recommended', vintage: '2023', confidence: 'low' },
   cost_fert_per_lb:     { value: 0.82,     label: 'Fertilizer Rate',      source: 'USDA NASS fertilizer price survey',   vintage: '2023', confidence: 'high'   },
   cost_fuel_per_L:      { value: 1.25,     label: 'Fuel Rate ($/L)',      source: 'EIA diesel fuel CA avg',              vintage: '2023', confidence: 'medium' },
-  well_weekly_cap_L:    { value: 2500000,  label: 'Well Weekly Cap',      source: 'CA State Water Board (150 ac permit)', vintage: '2021', confidence: 'low'   },
+  well_weekly_cap_L:    { value: 2500000,  label: 'Well Weekly Cap',      source: 'CA State Water Board (~80 ac permit)', vintage: '2021', confidence: 'low'   },
 };
 
 function renderChannelRow(ch, idx) {
@@ -8339,7 +8339,7 @@ window._testWhatIf = function() {
     console.assert(['high','medium','low'].includes(d.confidence), `T30f[${k}]: confidence is high/medium/low, got "${d.confidence}"`);
   });
   // Spot-check known values match form defaults
-  console.assert(BENCHMARK_DEFAULTS.total_land.value   === 150,    'T30g: total_land=150');
+  console.assert(BENCHMARK_DEFAULTS.total_land.value   === 80,     'T30g: total_land=80');
   console.assert(BENCHMARK_DEFAULTS.cost_fert_per_lb.value === 0.82, 'T30h: fert=0.82');
   console.assert(BENCHMARK_DEFAULTS.cost_fuel_per_L.value  === 1.25, 'T30i: fuel=1.25');
   console.log('T30: BENCHMARK_DEFAULTS structure and provenance fields verified ✓');
@@ -8353,7 +8353,7 @@ window._testWhatIf = function() {
     const origVal = tLandEl.value;
     tLandEl.value = '999'; // simulate manual change
     applyBenchmarkDefaults();
-    console.assert(String(tLandEl.value) === '150', `T31a: total_land reset to 150, got ${tLandEl.value}`);
+    console.assert(String(tLandEl.value) === '80', `T31a: total_land reset to 80, got ${tLandEl.value}`);
     console.assert(APP_STATE.overriddenFields.size === 0, `T31b: overriddenFields cleared, got ${APP_STATE.overriddenFields.size}`);
     tLandEl.value = origVal;
   } else { console.warn('T31: total_land element not found — skipping DOM test'); }
