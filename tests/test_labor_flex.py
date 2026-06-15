@@ -126,13 +126,20 @@ def test_field_time_cap_reduces_capacity(two_crop_params):
     assert rh["operating_profit"] <= rf["operating_profit"] + 1.0
 
 
-def test_overhead_internalized_more_labor_never_lowers_net(two_crop_params):
-    # With overhead in the objective, relaxing labor (more crew) can never LOWER net profit.
-    base = _labor_bound(two_crop_params, crew=2)
-    base.update(overhead_pct_of_revenue=0.16, sell_through_fraction=0.85)
-    more = _labor_bound(two_crop_params, crew=12)
-    more.update(overhead_pct_of_revenue=0.16, sell_through_fraction=0.85)
-    r2 = solve_farm_v2(**base)
-    r12 = solve_farm_v2(**more)
-    assert r2["status"] == "optimal" and r12["status"] == "optimal"
-    assert r12["profit"] >= r2["profit"] - 1.0   # net profit monotonic in labor capacity
+def test_overhead_internalized_after_overhead_profit_is_monotonic(two_crop_params):
+    # Overhead is now IN the objective, which maximizes (operating - overhead). Relaxing labor
+    # (more crew) enlarges the feasible set, so that quantity can never fall. (Net profit also
+    # subtracts interest, which is the one cost still outside the objective, so net itself is
+    # not guaranteed monotonic — documented limitation.)
+    # Cash off (huge headroom) isolates the objective from cash-feasibility, so this purely
+    # tests that more labor capacity never lowers the maximized quantity.
+    def cfg(crew):
+        p = _labor_bound(two_crop_params, crew=crew)
+        p.update(overhead_pct_of_revenue=0.16, sell_through_fraction=0.85,
+                 opening_cash=1e12, credit_line=1e12)
+        return p
+    r_few  = solve_farm_v2(**cfg(4))
+    r_many = solve_farm_v2(**cfg(16))
+    assert r_few["status"] == "optimal" and r_many["status"] == "optimal"
+    after_oh = lambda r: r["operating_profit"] - r["overhead_cost"]
+    assert after_oh(r_many) >= after_oh(r_few) - 1.0

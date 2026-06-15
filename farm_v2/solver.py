@@ -91,7 +91,6 @@ def solve_farm_v2(
     year_round_employees: list | None = None,
     seasonal_employees: list | None = None,
     overtime_enabled: bool = False,
-    overtime_threshold_hrs: float = 40.0,
     overtime_rate_multiplier: float = 1.5,
     max_overtime_hrs_per_week: float | None = None,
     hire_enabled: bool = False,
@@ -102,6 +101,7 @@ def solve_farm_v2(
     max_harvest_acres_per_week: float = 1e9,
     # --- Additional fixed costs ---
     rate_property_mortgage_rent: float = 0.0,  # $/week — land lease or mortgage payment
+    fixed_selling_per_week: float = 0.0,       # $/week — channel fixed selling (stall fees, retainers); in cash flow only, P&L handles it below the line
     # --- Cash flow constraint ---
     cash_constraint_enabled: bool = True,  # if False, skip C13 weekly cash floor entirely
     # --- Realism factors (sell-through in-objective; overhead & interest below the line) ---
@@ -182,7 +182,6 @@ def solve_farm_v2(
         year_round_employees, seasonal_employees, N_WEEKS,
     )
     labor_capacity         = labor_result["labor_capacity"]          # (52,)
-    labor_capacity_hourly  = labor_result["labor_capacity_hourly"]   # (52,)
     hourly_labor_rate      = labor_result["hourly_labor_rate"]       # (52,)
     salaried_weekly_cost   = labor_result["salaried_weekly_cost"]
 
@@ -255,6 +254,17 @@ def solve_farm_v2(
                 - ch_spec.get("packaging_cost_per_lb", 0.0)
             )
 
+    # Overhead is overhead_pct × gross revenue, so each lb sold carries this overhead share.
+    # net_after_price = revenue net of packaging AND overhead — used in the objective and the
+    # cash-flow floor (C13) so the optimizer and the solvency check both see overhead.
+    gross_price = np.zeros((n_crops, n_channels), dtype=float)
+    for c_idx, crop in enumerate(crops):
+        for ch_idx, ch in enumerate(channels):
+            gross_price[c_idx, ch_idx] = crop.get("channels", {}).get(
+                ch["name"], {}).get("price_per_lb", 0.0)
+    overhead_price  = overhead_pct_of_revenue * gross_price
+    net_after_price = net_price - overhead_price
+
     # -----------------------------------------------------------------------
     # Step 4 — Fixed cost
     # -----------------------------------------------------------------------
@@ -309,9 +319,7 @@ def solve_farm_v2(
     # stays below-the-line; post-solve accounting/reporting is unchanged.)
     for c_idx in range(n_crops):
         for ch_idx in range(n_channels):
-            ch_spec   = crops[c_idx].get("channels", {}).get(channels[ch_idx]["name"], {})
-            gross     = ch_spec.get("price_per_lb", 0.0)
-            net_after = net_price[c_idx, ch_idx] - overhead_pct_of_revenue * gross
+            net_after = net_after_price[c_idx, ch_idx]
             for w in range(1, N_WEEKS + 1):
                 flat_idx = idx_v_start + _vcw_index(c_idx, ch_idx, w, n_channels, N_WEEKS)
                 c_obj[flat_idx] -= net_after
@@ -592,10 +600,11 @@ def solve_farm_v2(
     c13_weeks = range(1, N_WEEKS + 1) if cash_constraint_enabled else range(0)
     for W in c13_weeks:
         cols = []
-        # Revenue from sales up to week W
+        # Revenue from sales up to week W, net of overhead (overhead is a real cash outflow
+        # ∝ revenue, so the solvency check must see it).
         for c_idx in range(n_crops):
             for ch_idx in range(n_channels):
-                np_val = net_price[c_idx, ch_idx]
+                np_val = net_after_price[c_idx, ch_idx]
                 if np_val == 0.0:
                     continue
                 for w in range(1, W + 1):
@@ -619,7 +628,8 @@ def solve_farm_v2(
             for w in range(W):
                 cols.append((idx_hire_start + w, -hire_extra_rate_arr[w]))
 
-        rhs_lo = floor + W * fixed_weekly
+        # Fixed selling (stall fees/retainers) is a steady weekly cash outflow → in the floor.
+        rhs_lo = floor + W * (fixed_weekly + fixed_selling_per_week)
         add_row(cols, rhs_lo, np.inf)
 
     # (Former C14 removed.) Overtime/hire are needed only beyond TOTAL labor capacity
@@ -751,10 +761,35 @@ def solve_farm_v2(
         for w in range(1, N_WEEKS + 1):
             weekly_vcost[w] += x_sol[i] * var_cost_weekly[i][w]
 
+    # Other weekly cash outflows the cumulative position must reflect so peak borrowing and
+    # interest are honest: city water, overtime/hire premiums, overhead (∝ revenue), and fixed
+    # selling. Packaging is already inside weekly_rev (net_price). (var costs + fixed are above.)
+    cw_weekly = z[idx_cw_start : idx_cw_start + N_WEEKS] if (city_water_enabled and idx_cw_start is not None) else None
+    ot_rate_w = hourly_labor_rate * (overtime_rate_multiplier - 1.0)
+    hr_rate_w = hourly_labor_rate * hire_wage_markup
+    weekly_gross_rev = np.zeros(N_WEEKS + 1)
+    for c_idx in range(n_crops):
+        for ch_idx in range(n_channels):
+            gp = gross_price[c_idx, ch_idx]
+            if gp == 0.0:
+                continue
+            for w in range(1, N_WEEKS + 1):
+                weekly_gross_rev[w] += v_sol[c_idx, ch_idx, w] * gp
+
+    weekly_other = np.zeros(N_WEEKS + 1)
+    for w in range(1, N_WEEKS + 1):
+        weekly_other[w] = (
+            (cw_weekly[w - 1] * city_water_cost_per_L if cw_weekly is not None else 0.0)
+            + overtime_hours_weekly[w] * ot_rate_w[w - 1]
+            + hired_hours_weekly[w]    * hr_rate_w[w - 1]
+            + overhead_pct_of_revenue  * weekly_gross_rev[w]
+            + fixed_selling_per_week
+        )
+
     weekly_cash_flow = np.zeros(N_WEEKS + 1)
     cum = opening_cash
     for w in range(1, N_WEEKS + 1):
-        cum += weekly_rev[w] - weekly_vcost[w] - fixed_weekly
+        cum += weekly_rev[w] - weekly_vcost[w] - fixed_weekly - weekly_other[w]
         weekly_cash_flow[w] = cum
 
     peak_borrowing = max(0.0, -float(weekly_cash_flow[1:].min()))
