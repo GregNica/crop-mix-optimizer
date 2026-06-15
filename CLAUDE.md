@@ -4,6 +4,8 @@
 
 This project translates a farm profit-maximization Excel Solver model ("Group 5_Baby Model_Final") into a Python Jupyter notebook (`farm_optimization.ipynb`). The model finds the optimal crop planting schedule for a 150-acre farm to maximize annual profit subject to land, water, labor, storage, demand, diversity, and budget constraints.
 
+> **Note:** the sections below document the *original* Excel/notebook model (150-acre, fixed parameters). The current deliverable is the in-browser web app (`index.html`, `farm_v2/` solver), which has evolved substantially — including a smaller **~80-acre** default farm, sell-through/overhead/interest realism, per-channel sales, and labor flexibility. Treat the 150-acre figures and the cost tables here as legacy reference for the source model, not the current app defaults.
+
 ---
 
 ## Files

@@ -1101,7 +1101,7 @@
   <div id="section-farm-basics" class="section-panel">
     <div class="section-guidance">
       <span class="sg-req">Required:</span> Total Land (acres) and Opening Cash set your core constraints. &nbsp;
-      <span class="sg-opt">Safe to leave at defaults:</span> all cost rates, storage sizes, and Operating Weeks — pre-calibrated for a 150-acre vegetable operation. &nbsp;
+      <span class="sg-opt">Safe to leave at defaults:</span> all cost rates, storage sizes, and Operating Weeks — pre-calibrated for an ~80-acre vegetable operation. &nbsp;
       <span class="sg-note">Tip: buttons labeled "hide" collapse optional fields (Equipment Storage, Fuel Storage, Credit Line) that have no effect unless you override them.</span>
     </div>
     <div id="section-val-farm-basics" class="section-val-banner" role="alert" aria-live="polite"></div>
@@ -1136,7 +1136,7 @@
           <div id="pd-cash-fields" class="pd-revealed pd-hidden form-grid" style="margin-top:0.3rem">
             <div class="form-group"><label>Opening Cash ($)<span class="req-marker" aria-hidden="true">*</span><span class="sr-only"> (required)</span></label><input type="number" id="opening_cash" value="300000" min="0" step="1000" placeholder="e.g. 300000"></div>
             <div class="form-group">
-              <label>Credit Line ($) <span class="tip" data-tip="Maximum short-term borrowing capacity (e.g. operating line of credit).&#10;&#10;This is a financing limit, not free profit — it is repaid with interest. The model uses this to check whether cash stays solvent through seasonal low-revenue weeks.&#10;&#10;Rule of thumb: 4–6× your largest monthly payroll. A $600–900k line is typical for a 150-acre mixed vegetable operation.&#10;&#10;Leave at default unless you have an actual credit agreement.">?</span></label>
+              <label>Credit Line ($) <span class="tip" data-tip="Maximum short-term borrowing capacity (e.g. operating line of credit).&#10;&#10;This is a financing limit, not free profit — it is repaid with interest. The model uses this to check whether cash stays solvent through seasonal low-revenue weeks.&#10;&#10;Rule of thumb: 4–6× your largest monthly payroll. A $300–500k line is typical for an ~80-acre mixed vegetable operation.&#10;&#10;Leave at default unless you have an actual credit agreement.">?</span></label>
               <input type="number" id="credit_line" value="800000" min="0" step="1000">
             </div>
           </div>
@@ -1185,7 +1185,7 @@
       <h2>Fixed Cost Rates</h2>
       <div class="form-grid">
         <div class="form-group"><label>Water Tank ($/L/wk) <span class="tip" data-tip="Weekly depreciation on water storage tanks or ponds.&#10;&#10;Typical rates: $0.002–$0.005/L/wk.&#10;&#10;Tank capacity, catchment surface area, and rainfall data are set in the Water section.">?</span></label><input type="number" id="rate_water_storage" value="0.0036" min="0" step="0.0001"></div>
-        <div class="form-group"><label>Property Mortgage/Rent ($/wk) <span class="tip" data-tip="Weekly property occupancy cost — mortgage principal+interest or land/facility rent paid on the farm property.&#10;&#10;Enter 0 if land is owned outright with no debt service.&#10;&#10;Typical range: $500–$3,000/wk for a 150-acre leased or financed vegetable farm.&#10;&#10;This is a fixed cost: it is incurred every week regardless of which crops are planted.">?</span></label><input type="number" id="rate_property_mortgage_rent" value="0" min="0" step="100"></div>
+        <div class="form-group"><label>Property Mortgage/Rent ($/wk) <span class="tip" data-tip="Weekly property occupancy cost — mortgage principal+interest or land/facility rent paid on the farm property.&#10;&#10;Enter 0 if land is owned outright with no debt service.&#10;&#10;Typical range: $300–$1,500/wk for an ~80-acre leased or financed vegetable farm.&#10;&#10;This is a fixed cost: it is incurred every week regardless of which crops are planted.">?</span></label><input type="number" id="rate_property_mortgage_rent" value="0" min="0" step="100"></div>
         <div class="form-group"><label>Other Debt Service ($/wk) <span class="tip" data-tip="Weekly principal+interest on OTHER long-term loans not already counted in the Machinery or Property lines — e.g. a building/barn loan, land-improvement loan, or operating debt carried over from a prior year.&#10;&#10;Enter the actual loan payment (you don't need to split interest from principal). Don't also depreciate the same financed asset — the payment stands in for it.&#10;&#10;Note: for non-depreciating assets (land/buildings) the principal portion slightly overstates accrual cost, but it reflects the real cash you must cover. Enter 0 if no other debt.">?</span></label><input type="number" id="other_debt_service_per_week" value="0" min="0" step="100"></div>
 
         <!-- PD Group (e): Harvest storage constraint rates -->
@@ -1196,7 +1196,7 @@
           </label>
           <div id="pd-harvest-storage-helper" class="pd-helper">Harvest storage defaults to 10,000 m³ at $0.356/m³/wk. This constraint limits how much can be harvested in any week.</div>
           <div id="pd-harvest-storage-fields" class="pd-revealed pd-hidden form-grid" style="margin-top:0.3rem">
-            <div class="form-group"><label>Harvest Storage Capacity (m³) <span class="tip" data-tip="Cold/ambient storage for harvested produce. 10,000 m³ suits a 100–150 acre mixed vegetable farm.">?</span></label><input type="number" id="harvest_storage_cap" value="5000" min="100" step="100"></div>
+            <div class="form-group"><label>Harvest Storage Capacity (m³) <span class="tip" data-tip="Cold/ambient storage for harvested produce. 5,000 m³ suits an ~80-acre mixed vegetable farm.">?</span></label><input type="number" id="harvest_storage_cap" value="5000" min="100" step="100"></div>
             <div class="form-group"><label>Capital Cost ($/m³) <span class="tip" data-tip="Construction or purchase cost per cubic metre of storage. Typical cold-storage building: $400–$600/m³.">?</span></label><input type="number" id="harvest_storage_cost_per_m3" value="463" min="0" step="10"></div>
             <div class="form-group"><label>Depreciation (years) <span class="tip" data-tip="Straight-line asset life. Buildings: 25–40 years.">?</span></label><input type="number" id="depreciation_harvest_years" value="25" min="1" step="1"></div>
             <div class="pd-formula-hint">Weekly cost = (Capacity × $/m³) ÷ (Years × 52)</div>
@@ -1229,7 +1229,7 @@
           <div id="pd-machinery-rates-fields" class="pd-revealed pd-hidden form-grid" style="margin-top:0.3rem">
             <div class="form-group"><label>Equip Storage ($/m³/wk) <span class="tip" data-tip="Cost of barn/shed for equipment. Typical: $0.80–$1.50/m³/wk.">?</span></label><input type="number" id="rate_equip_storage" value="1.042" min="0" step="0.001"></div>
             <div class="form-group"><label>Fuel Storage ($/L/wk) <span class="tip" data-tip="Tank rental/depreciation for on-farm fuel storage. Typical: $0.01–$0.03/L/wk.">?</span></label><input type="number" id="rate_fuel_storage" value="0.0208" min="0" step="0.0001"></div>
-            <div class="form-group"><label>Avg. Machinery ($/wk) <span class="tip" data-tip="Blended weekly cost of all farm machinery + maintenance. Typical 150-acre vegetable farm: $1,500–$3,000/wk.&#10;&#10;Owned outright: use depreciation (purchase price ÷ useful life) + maintenance.&#10;Financed: use your loan payment (principal+interest) + maintenance — don't also depreciate it.&#10;&#10;Either way, enter the blended weekly figure.">?</span></label><input type="number" id="rate_machinery" value="1000" min="0" step="100"></div>
+            <div class="form-group"><label>Avg. Machinery ($/wk) <span class="tip" data-tip="Blended weekly cost of all farm machinery + maintenance. Typical ~80-acre vegetable farm: $800–$1,500/wk.&#10;&#10;Owned outright: use depreciation (purchase price ÷ useful life) + maintenance.&#10;Financed: use your loan payment (principal+interest) + maintenance — don't also depreciate it.&#10;&#10;Either way, enter the blended weekly figure.">?</span></label><input type="number" id="rate_machinery" value="1000" min="0" step="100"></div>
             <div class="form-group"><label>Fuel ($/L) <span class="tip" data-tip="Diesel or gasoline cost per litre. Typical US diesel: $1.00–$1.50/L.">?</span></label><input type="number" id="cost_fuel_per_L" value="1.25" min="0" step="0.01" placeholder="e.g. 1.25"></div>
             <div class="form-group"><label>Equip. Storage Capital ($/m³) <span class="tip" data-tip="Building construction cost per m³. Typical ag barn: $300–$700/m³.">?</span></label><input type="number" id="equip_storage_cost_per_m3" value="500" min="0" step="50"></div>
             <div class="form-group"><label>Equip. Storage Depreciation (years)</label><input type="number" id="depreciation_equip_years" value="30" min="1" step="1"></div>
@@ -1250,15 +1250,15 @@
         <p style="margin-bottom:0.4rem;color:#6b7280">Pre-filled default values come from the sources below. Override any field; overridden fields are tracked in the Optimize run summary.</p>
         <table class="sources-table">
           <tbody>
-            <tr><td>Total Land (150 ac)</td><td>USDA NASS CA vegetable census — median small vegetable farm size</td><td class="sources-conf-medium">medium · 2022</td></tr>
+            <tr><td>Total Land (80 ac)</td><td>USDA NASS CA vegetable census — typical diversified vegetable farm size</td><td class="sources-conf-medium">medium · 2022</td></tr>
             <tr><td>Opening Cash ($300k)</td><td>Farm Bureau operating capital guide — CA mixed vegetable startup</td><td class="sources-conf-medium">medium · 2023</td></tr>
-            <tr><td>Credit Line ($800k)</td><td>AgriBank farm credit survey — 150-acre vegetable operation</td><td class="sources-conf-low">low · 2022</td></tr>
+            <tr><td>Credit Line ($800k)</td><td>AgriBank farm credit survey — ~80-acre vegetable operation</td><td class="sources-conf-low">low · 2022</td></tr>
             <tr><td>Harvest Storage (10,000 m³)</td><td>Cornell Small Farm sizing guide</td><td class="sources-conf-medium">medium · 2020</td></tr>
             <tr><td>Harvest Storage Rate ($/m³)</td><td>USDA AMS cold chain cost study</td><td class="sources-conf-high">high · 2021</td></tr>
             <tr><td>Irrigation Rate ($/1000 L)</td><td>UC Cooperative Extension irrigation cost benchmarks</td><td class="sources-conf-high">high · 2022</td></tr>
             <tr><td>Equip. Storage Rate</td><td>Farm Business Management average — CA farm equipment facilities</td><td class="sources-conf-medium">medium · 2021</td></tr>
             <tr><td>Fuel Storage Rate</td><td>EIA fuel storage benchmark</td><td class="sources-conf-medium">medium · 2022</td></tr>
-            <tr><td>Machinery ($/wk)</td><td>USDA ERS machinery ownership model — 150-acre scale</td><td class="sources-conf-medium">medium · 2022</td></tr>
+            <tr><td>Machinery ($/wk)</td><td>USDA ERS machinery ownership model — ~80-acre scale</td><td class="sources-conf-medium">medium · 2022</td></tr>
             <tr><td>Property Mortgage/Rent ($/wk)</td><td>USDA ERS land value survey — default 0 (owned land). Override with your actual debt service or rent.</td><td class="sources-conf-low">low · 2023</td></tr>
             <tr><td>Fertilizer Rate ($/lb)</td><td>USDA NASS fertilizer price survey — CA specialty crops</td><td class="sources-conf-high">high · 2023</td></tr>
             <tr><td>Fuel Rate ($/L)</td><td>EIA diesel fuel CA average</td><td class="sources-conf-medium">medium · 2023</td></tr>
@@ -1356,7 +1356,7 @@
         <!-- Well -->
         <div class="water-source-row">
           <div class="water-source-toggle"><input type="checkbox" id="well_enabled" checked><label for="well_enabled">Well Water</label></div>
-          <div class="form-group"><label>Weekly Cap (L/wk) <span class="tip" data-tip="Max litres your well can supply per week. Typical 150-acre CA farm: 2–3.5M L/wk.">?</span></label><input type="number" id="well_weekly_cap_L" value="2500000" min="0" step="10000"></div>
+          <div class="form-group"><label>Weekly Cap (L/wk) <span class="tip" data-tip="Max litres your well can supply per week. Typical ~80-acre CA farm: 1.5–2.5M L/wk.">?</span></label><input type="number" id="well_weekly_cap_L" value="2500000" min="0" step="10000"></div>
           <div></div>
         </div>
         <!-- Catchment -->
@@ -1418,7 +1418,7 @@
       <div class="sources-body">
         <table class="sources-table">
           <tbody>
-            <tr><td>Well Cap (L/wk default)</td><td>CA State Water Resources Control Board — 150-acre vegetable permit typical yield</td><td class="sources-conf-low">low · 2021</td></tr>
+            <tr><td>Well Cap (L/wk default)</td><td>CA State Water Resources Control Board — ~80-acre vegetable permit typical yield</td><td class="sources-conf-low">low · 2021</td></tr>
             <tr><td>Zone rainfall defaults</td><td>NOAA NCEI 30-year climate normals (1991–2020) — weekly averages by US region</td><td class="sources-conf-high">high · 2020</td></tr>
             <tr><td>Irrigation efficiency rates</td><td>UC Davis Irrigation Management guidelines</td><td class="sources-conf-high">high · 2022</td></tr>
             <tr><td>Water tank rate ($/L)</td><td>Irrigation Association survey — small farm storage infrastructure</td><td class="sources-conf-medium">medium · 2021</td></tr>
@@ -1663,7 +1663,7 @@
       <!-- Land-rent nudge banner (shown once per session when property rent = $0) -->
       <div id="land-rent-nudge" style="display:none;align-items:flex-start;gap:0.6rem;background:#fffbeb;border:1.5px solid #d97706;border-radius:9px;padding:0.65rem 1rem;margin-bottom:0.8rem;font-size:0.79rem;color:#92400e">
         <span style="font-size:1.1rem;line-height:1">⚠</span>
-        <span style="flex:1"><strong>Land rent/mortgage is set to $0.</strong> If you lease this land or carry a mortgage, add the weekly cost in <a onclick="jumpToSetup('farm-basics','rate_property_mortgage_rent')" style="color:#b45309;text-decoration:underline;cursor:pointer">Farm Basics → Fixed Costs</a> — omitting it will overstate profit. Typical range: $500–$3,000/week for a 150-acre leased or financed operation.</span>
+        <span style="flex:1"><strong>Land rent/mortgage is set to $0.</strong> If you lease this land or carry a mortgage, add the weekly cost in <a onclick="jumpToSetup('farm-basics','rate_property_mortgage_rent')" style="color:#b45309;text-decoration:underline;cursor:pointer">Farm Basics → Fixed Costs</a> — omitting it will overstate profit. Typical range: $300–$1,500/week for an ~80-acre leased or financed operation.</span>
         <button onclick="document.getElementById('land-rent-nudge').style.display='none'" style="background:none;border:none;cursor:pointer;color:#92400e;font-size:1rem;line-height:1;padding:0">✕</button>
       </div>
 
@@ -2406,7 +2406,7 @@ function renderCrop(c, idx) {
 
       <div class="crop-section-label">Agronomy &amp; Diversity</div>
       <div class="form-group"><label>Yield per Acre (lbs) <span class="tip" data-tip="Expected lbs harvested per acre per planting. Typical: Spinach 4,000–6,000 · Lettuce 14,000–18,000 · Tomatoes 18,000–25,000 · Corn 7,000–12,000 · Garlic 8,000–12,000. For storage crops (garlic, onions, potatoes) that harvest in 1–2 weeks, set the wholesale demand cap to at least yield × min_acreage ÷ sales_spread_weeks to allow meaningful planting.">?</span>${uploadPill('Upload historical yield data')}</label><input type="number" class="cf" data-f="yield_per_acre" value="${v('yield_per_acre',2000)}" min="1" step="50" placeholder="e.g. 3250"></div>
-      <div class="form-group"><label>Max Land Fraction <span class="tip" data-tip="Crop diversity cap: limits what share of total farm acreage this crop (all plantings combined) can occupy. 50% = max 75 acres on a 150-acre farm.">?</span></label>${diversitySelect(v('crop_diversity_max',0.5))}</div>
+      <div class="form-group"><label>Max Land Fraction <span class="tip" data-tip="Crop diversity cap: limits what share of total farm acreage this crop (all plantings combined) can occupy. 50% = max 40 acres on an 80-acre farm.">?</span></label>${diversitySelect(v('crop_diversity_max',0.5))}</div>
       <div class="form-group"><label>Lbs per 18-gal Tote <span class="tip" data-tip="How many lbs fit in one standard 18-gallon harvest tote. Used to compute harvest storage needs. Typical: leafy greens 12–25 lbs · root veg 40–60 lbs · cucumbers/peppers 20–40 lbs.">?</span></label><input type="number" class="cf" data-f="lbs_per_tote" value="${lbsPerTote}" min="1" step="1" placeholder="e.g. 30"></div>
 
       <div class="crop-section-label">Season(s) <span class="tip" data-tip="Calendar windows when this crop can be planted. The optimizer generates one planting succession per eligible week inside these windows.">?</span></div>
@@ -4053,7 +4053,7 @@ function renderBackCheckPanel(res) {
     // Diagnostic 1: Missing land cost
     const rentVal = parseFloat((document.getElementById('rate_property_mortgage_rent') || {}).value) || 0;
     if (rentVal === 0) {
-      diagnostics.push('Land rent/mortgage is set to $0. If you lease or carry a mortgage, add it in <a onclick="jumpToSetup(\'farm-basics\',\'rate_property_mortgage_rent\')" style="color:#166534;text-decoration:underline;cursor:pointer">Farm Basics → Fixed Costs</a> — typical range $500–$3,000/week for 150 acres.');
+      diagnostics.push('Land rent/mortgage is set to $0. If you lease or carry a mortgage, add it in <a onclick="jumpToSetup(\'farm-basics\',\'rate_property_mortgage_rent\')" style="color:#166534;text-decoration:underline;cursor:pointer">Farm Basics → Fixed Costs</a> — typical range $300–$1,500/week for ~80 acres.');
     }
 
     // Diagnostic 2: Yield outside audit-verified benchmark range
