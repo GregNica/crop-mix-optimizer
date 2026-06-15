@@ -1287,6 +1287,7 @@
         <div class="form-group"><label>Sell-through (%) <span class="tip" data-tip="Share of harvested product that actually converts to cash — after spoilage, grade-outs, returns, and unsold perishables.&#10;&#10;Modeled IN the optimizer: the farm plans to GROW more to deliver a given sales volume (e.g. at 88%, grow ~100 to sell 88) and pays the full growing cost on what's lost — it is not a simple price discount.&#10;&#10;Typical for diversified perishables: 80–92%. Set 100% only if your sales figures already reflect net realized sales.">?</span></label><input type="number" id="sell_through_pct" value="85" min="1" max="100" step="1" oninput="syncSellThroughPlaceholders()"></div>
         <div class="form-group"><label>Overhead (% of revenue) <span class="tip" data-tip="Indirect business overhead as a share of revenue: insurance (crop/liability/property), property &amp; land taxes, administration (accounting, legal, office, software, licenses), non-irrigation utilities (electricity incl. cooling, comms), general repairs &amp; maintenance, and vehicle/office capital.&#10;&#10;EXCLUDES everything itemized elsewhere — land rent/mortgage, the machinery line, storage &amp; irrigation, all labor, and per-crop inputs (seed/water/fert/fuel/packaging). Never double-counted.&#10;&#10;Typical: 8–18% of revenue.">?</span></label><input type="number" id="overhead_pct" value="16" min="0" max="60" step="1"></div>
         <div class="form-group"><label>Interest Rate (APR %) <span class="tip" data-tip="Annual rate charged on the operating borrowing the plan implies — the seasonal cash-flow gap before harvest revenue arrives.&#10;&#10;Applied below the line to the solved plan's average weekly borrowing (currently the model would otherwise charge $0).&#10;&#10;Typical farm operating lines: 6–10% APR.">?</span></label><input type="number" id="interest_rate_pct" value="7" min="0" max="40" step="0.5"></div>
+        <div class="form-group"><label>Min. Viable Margin (%) <span class="tip" data-tip="A hurdle: the optimizer won't grow a crop/channel whose NET margin falls below this floor — it's 'not worth the effort/risk.' Net margin = contribution margin (on the table below) minus your Overhead %, computed behind the scenes. So at 16% overhead and an 8% floor, anything under a 24% contribution margin is dropped.&#10;&#10;This is margin on revenue, not return on capital — a rough 'worth-it' bar (e.g. a few points above the risk-free rate for effort + risk), not a literal bond comparison. It also keeps the plan stable: near-break-even crops are what make What-If land use jump around.&#10;&#10;Set 0 to disable. Applies per crop-channel, so a crop can be dropped on wholesale but kept on farmers market. Fixed costs/interest are NOT in this hurdle (they're sunk/plan-level, not per-crop).">?</span></label><input type="number" id="min_viable_margin_pct" value="8" min="0" max="60" step="1"></div>
       </div>
     </div>
 
@@ -2561,6 +2562,7 @@ const APP_STATE = {
   visitedSections: new Set(), // tracks which sections the user has opened at least once
   dataMode: 'benchmark',      // 'benchmark' | 'manual'
   overriddenFields: new Set(), // fields changed after benchmark defaults applied
+  hurdleExclusions: [],        // crop-channels dropped by the Min. Viable Margin floor
   rainfallHistory: null,       // populated by handleRainfallXLSXUpload; used in MC bootstrap
   mcMultiTabData:  null,       // populated by parseMCMultiTab; per-crop yearly arrays for MC
   mcComputedCVs:   null,       // populated by parseMCMultiTab; per-crop {yield, price, demand} CV% (0–100)
@@ -5734,6 +5736,11 @@ async function runOptimizer() {
     }),
   };
 
+  // Min. Viable Margin hurdle: drop crop-channels whose net margin is below the floor, so the
+  // optimizer won't grow "not worth it" crops. Applied to the canonical params here, so the
+  // baseline solve, the contribution sheet, and What-If scenarios all share the same exclusions.
+  APP_STATE.hurdleExclusions = applyMarginHurdle(params, parseFloat(g('min_viable_margin_pct')?.value) || 0);
+
   // Pre-flight validation
   const validationErrors = validateParams(params);
   if (validationErrors.length > 0) {
@@ -6260,6 +6267,52 @@ function renderConstraintSummary(res, params) {
 // ============================================================
 // Contribution Margin Table
 // ============================================================
+// Net margin % for a crop-channel = contribution margin % − overhead %. Mirrors the
+// per-channel calc in renderContributionMargins so the "Min. Viable Margin" hurdle uses
+// exactly the contribution numbers shown on that sheet (then nets out overhead).
+function channelNetMarginPct(crop, chData, params) {
+  const pw = parseInt(crop.planting_weeks || 1), hw = parseInt(crop.harvest_weeks || 1);
+  const gw = Math.max(0, Math.round((parseInt(crop.days_to_maturity || 42)) / 7) - pw - hw);
+  const ypa = parseFloat(crop.yield_per_acre || 0);
+  const LABOR = params.cost_labor_per_hr != null ? parseFloat(params.cost_labor_per_hr) : 20.0;
+  const WATER = params.cost_water_per_L  != null ? parseFloat(params.cost_water_per_L)  : 0.002;
+  const FERT  = params.cost_fert_per_lb  != null ? parseFloat(params.cost_fert_per_lb)  : 0.82;
+  const FUEL  = params.cost_fuel_per_L   != null ? parseFloat(params.cost_fuel_per_L)   : 1.25;
+  const nonPkgVC = ((crop.labor_plant||0)*pw + (crop.labor_grow||0)*gw + (crop.labor_harv||0)*hw) * LABOR
+                 + ((crop.water_plant||0)*pw + (crop.water_grow||0)*gw + (crop.water_harv||0)*hw) * WATER
+                 + ((crop.fert_plant ||0)*pw + (crop.fert_grow ||0)*gw + (crop.fert_harv ||0)*hw) * FERT
+                 + ((crop.fuel_plant ||0)*pw + (crop.fuel_grow ||0)*gw + (crop.fuel_harv ||0)*hw) * FUEL
+                 + parseFloat(crop.seed_transplant_cost_per_acre || 0);
+  const stFrac = crop.sell_through_fraction != null ? crop.sell_through_fraction
+               : (params.sell_through_fraction != null ? params.sell_through_fraction : 1);
+  const soldLbs = ypa * stFrac;
+  const grossRev = soldLbs * parseFloat(chData.price_per_lb || 0);
+  if (grossRev <= 0) return null;
+  const contribPct = (grossRev - (nonPkgVC + soldLbs * parseFloat(chData.packaging_cost_per_lb || 0))) / grossRev * 100;
+  return contribPct - (params.overhead_pct_of_revenue || 0) * 100;
+}
+
+// Min. Viable Margin hurdle: zero the demand of any crop-channel whose net margin is below
+// the floor, so the optimizer won't grow for it. Mutates params.crops; returns exclusions.
+// This both reflects a real "not worth it" business rule and removes the near-break-even
+// channels that make What-If land use swing erratically.
+function applyMarginHurdle(params, hurdlePct) {
+  const excluded = [];
+  if (!(hurdlePct > 0)) return excluded;
+  (params.crops || []).forEach(crop => {
+    Object.entries(crop.channels || {}).forEach(([chName, chData]) => {
+      const net = channelNetMarginPct(crop, chData, params);
+      if (net != null && net < hurdlePct) {
+        if ('weekly_demand_lbs' in chData) chData.weekly_demand_lbs = 0;
+        if ('annual_demand_lbs' in chData) chData.annual_demand_lbs = 0;
+        if (Array.isArray(chData.demand_ranges)) chData.demand_ranges.forEach(d => { d.weekly_lbs = 0; });
+        excluded.push({ crop: crop.name, channel: chName, netPct: net });
+      }
+    });
+  });
+  return excluded;
+}
+
 function renderContributionMargins(params) {
   const el = document.getElementById('contribution-margin-content');
   if (!el || !params || !params.crops || params.crops.length === 0) return;
@@ -6382,7 +6435,11 @@ function renderContributionMargins(params) {
     ? `<colgroup><col style="width:15%"><col style="width:12%"><col style="width:9%"><col style="width:10%"><col style="width:10%"><col style="width:11%"><col style="width:11%"><col style="width:9%"><col style="width:13%"></colgroup>`
     : `<colgroup><col style="width:16%"><col style="width:13%"><col style="width:10%"><col style="width:11%"><col style="width:11%"><col style="width:12%"><col style="width:13%"><col style="width:14%"></colgroup>`;
 
-  el.innerHTML = `<div style="width:100%;overflow-x:auto"><table style="border-collapse:collapse;width:100%;min-width:560px;table-layout:fixed;font-size:0.79rem">
+  const _hx = APP_STATE.hurdleExclusions || [];
+  const hurdleBanner = _hx.length ? `<div style="margin-bottom:0.6rem;padding:0.5rem 0.7rem;background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;font-size:0.78rem;color:#92400e">
+      <span style="font-size:1rem">&#9432;</span> <strong>${_hx.length} crop-channel${_hx.length>1?'s':''} dropped</strong> by your Min. Viable Margin floor — net margin (contribution − overhead) is below it, so the optimizer treats them as "not worth it": ${_hx.map(e => `${e.crop} / ${e.channel} (~${Math.round(e.netPct)}% net)`).join(', ')}. Adjust the floor in <a onclick="jumpToSetup('farm-basics','min_viable_margin_pct')" style="color:#b45309;text-decoration:underline;cursor:pointer">Overhead, Financing &amp; Risk</a>.
+    </div>` : '';
+  el.innerHTML = hurdleBanner + `<div style="width:100%;overflow-x:auto"><table style="border-collapse:collapse;width:100%;min-width:560px;table-layout:fixed;font-size:0.79rem">
     ${colGroup}
     <thead><tr style="background:#f9fafb">
       <th style="text-align:left;padding:5px 8px;border-bottom:2px solid #d1d5db;color:#374151;overflow:hidden;white-space:nowrap">Crop</th>
