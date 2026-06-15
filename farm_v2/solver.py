@@ -101,6 +101,7 @@ def solve_farm_v2(
     max_harvest_acres_per_week: float = 1e9,
     # --- Additional fixed costs ---
     rate_property_mortgage_rent: float = 0.0,  # $/week — land lease or mortgage payment
+    other_debt_service_per_week: float = 0.0,  # $/week — P&I on other long-term loans (buildings, land improvements, carried debt) not already in the machinery/property lines
     fixed_selling_per_week: float = 0.0,       # $/week — channel fixed selling (stall fees, retainers); in cash flow only, P&L handles it below the line
     # --- Cash flow constraint ---
     cash_constraint_enabled: bool = True,  # if False, skip C13 weekly cash floor entirely
@@ -277,6 +278,7 @@ def solve_farm_v2(
         + fuel_storage * rate_fuel_storage * operating_weeks
         + rate_machinery * operating_weeks
         + rate_property_mortgage_rent * operating_weeks
+        + other_debt_service_per_week * operating_weeks
         + salaried_weekly_cost * N_WEEKS
     )
     if city_water_enabled and city_water_fixed_fee_per_week > 0:

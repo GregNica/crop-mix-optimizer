@@ -92,6 +92,16 @@ def _with_payroll_load(params, load):
     return p
 
 
+def test_other_debt_service_is_a_fixed_cost(minimal_params):
+    base = solve_farm_v2(**minimal_params)
+    with_debt = solve_farm_v2(**minimal_params, other_debt_service_per_week=1000.0)
+    assert base["status"] == "optimal" and with_debt["status"] == "optimal"
+    wk = minimal_params["operating_weeks"]
+    # It's a flat fixed cost: fixed cost rises by payment × operating_weeks, nothing else shifts the plan.
+    assert with_debt["fixed_cost"] == pytest.approx(base["fixed_cost"] + 1000.0 * wk, abs=1.0)
+    assert with_debt["operating_profit"] == pytest.approx(base["operating_profit"] - 1000.0 * wk, abs=1.0)
+
+
 def test_payroll_load_reduces_profit(minimal_params):
     no_load = solve_farm_v2(**_with_payroll_load(minimal_params, 0.0))
     loaded  = solve_farm_v2(**_with_payroll_load(minimal_params, 0.25))
