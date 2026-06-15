@@ -302,13 +302,19 @@ def solve_farm_v2(
     # Succession variable costs (add to -profit)
     c_obj[idx_x_start : idx_x_start + N_S] = var_cost_coeff
 
-    # Channel sales revenue minus packaging cost (subtract from -profit)
+    # Channel sales revenue minus packaging cost, minus INTERNALIZED overhead.
+    # Overhead = overhead_pct × gross revenue, so each lb sold carries an overhead share of
+    # overhead_pct × price. Subtracting it here makes the optimizer maximize AFTER-overhead
+    # profit — it won't chase production whose margin doesn't clear its overhead bar. (Interest
+    # stays below-the-line; post-solve accounting/reporting is unchanged.)
     for c_idx in range(n_crops):
         for ch_idx in range(n_channels):
-            net = net_price[c_idx, ch_idx]
+            ch_spec   = crops[c_idx].get("channels", {}).get(channels[ch_idx]["name"], {})
+            gross     = ch_spec.get("price_per_lb", 0.0)
+            net_after = net_price[c_idx, ch_idx] - overhead_pct_of_revenue * gross
             for w in range(1, N_WEEKS + 1):
                 flat_idx = idx_v_start + _vcw_index(c_idx, ch_idx, w, n_channels, N_WEEKS)
-                c_obj[flat_idx] -= net
+                c_obj[flat_idx] -= net_after
 
     # City water cost
     if city_water_enabled and idx_cw_start is not None:
@@ -616,19 +622,11 @@ def solve_farm_v2(
         rhs_lo = floor + W * fixed_weekly
         add_row(cols, rhs_lo, np.inf)
 
-    # C14 — Hourly-tier ceiling (if overtime enabled): hours beyond the regular hourly
-    # capacity must be covered by overtime and/or hired labor.
-    if overtime_enabled and idx_ot_start is not None:
-        for w in range(1, N_WEEKS + 1):
-            cols = [
-                (idx_x_start + i, total_land * labor_rate[i][w])
-                for i in range(N_S)
-                if phase_table[i][w] is not None
-            ]
-            cols.append((idx_ot_start + w - 1, -1.0))
-            if hire_enabled and idx_hire_start is not None:
-                cols.append((idx_hire_start + w - 1, -1.0))
-            add_row(cols, -np.inf, labor_capacity_hourly[w - 1])
+    # (Former C14 removed.) Overtime/hire are needed only beyond TOTAL labor capacity
+    # (salaried + hourly + seasonal); C2 already enforces that ceiling and forces
+    # overtime+hire ≥ used − labor_capacity. The previous version measured against the
+    # hourly-only capacity, which wrongly excluded salaried staff and made flexibility
+    # "buy back" capacity the farm already had.
 
     # -----------------------------------------------------------------------
     # Step 10 — Assemble and solve
@@ -713,11 +711,10 @@ def solve_farm_v2(
     hired_hours_weekly    = np.zeros(N_WEEKS + 1)
     overtime_hours_weekly = np.zeros(N_WEEKS + 1)
     if overtime_enabled or hire_enabled:
-        # Hours beyond this tier must be bought. With overtime on, the regular tier is the
-        # hourly-only capacity (salaried excluded, matching C14); otherwise it's total capacity.
-        regular_tier = labor_capacity_hourly if overtime_enabled else labor_capacity
+        # Hours beyond TOTAL labor capacity (salaried + hourly + seasonal) must be bought —
+        # filled by cheaper hired labor up to its cap, then overtime. Matches C2.
         for w in range(1, N_WEEKS + 1):
-            extra = max(0.0, labor_used_weekly[w] - regular_tier[w - 1])
+            extra = max(0.0, labor_used_weekly[w] - labor_capacity[w - 1])
             hired = min(extra, max_hire_hrs_per_week) if hire_enabled else 0.0
             hired_hours_weekly[w]    = hired
             overtime_hours_weekly[w] = (extra - hired) if overtime_enabled else 0.0

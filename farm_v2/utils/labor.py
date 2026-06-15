@@ -85,8 +85,11 @@ def compute_labor_arrays(
         wage       = emp["wage"]
         hrs        = emp["hours_per_week"]
         bene       = emp.get("benefits_pct", 0.0)
+        # Max share of this worker's hours available for crop field work (cap, not average).
+        # A farm manager might cap at ~80% in slow weeks; field crew ~100%. Default 100%.
+        field      = max(0.0, min(1.0, emp.get("field_time_pct", 100.0) / 100.0))
 
-        total_hrs_per_week = count * hrs
+        total_hrs_per_week = count * hrs * field
         labor_capacity += total_hrs_per_week
 
         if emp_type == "salary":
@@ -117,6 +120,7 @@ def compute_labor_arrays(
         bene       = emp.get("benefits_pct", 0.0)
         min_hrs    = emp.get("min_guaranteed_hours", 0)
         piece_rate = emp.get("piece_rate_per_lb", None)
+        field      = max(0.0, min(1.0, emp.get("field_time_pct", 100.0) / 100.0))
 
         if emp_type not in ("FT", "PT"):
             raise ValueError(
@@ -134,7 +138,7 @@ def compute_labor_arrays(
             piece_rate_workers.append(emp)
 
         effective_rate = wage * (1 + bene)
-        total_hrs_per_week = count * hrs
+        total_hrs_per_week = count * hrs * field
 
         # Week indices are 0-based internally (week w → index w-1)
         for w_idx in range(start_w - 1, end_w):
