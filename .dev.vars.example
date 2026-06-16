@@ -1,0 +1,23 @@
+# Local secrets for `wrangler dev`. Copy this file to `.dev.vars` (gitignored) and fill in.
+# In production, set each with `wrangler secret put <NAME>` (never commit real values).
+#
+# Not all are needed for the hosting slice — the app + /api/health work with none set.
+# They're consumed as auth/DB/chat are wired in over Phase 1.
+
+# --- Database (Neon Postgres) ---
+DATABASE_URL="postgresql://USER:PASSWORD@HOST/DB?sslmode=require"
+
+# --- Better Auth ---
+# Generate the secret with:  openssl rand -base64 32
+BETTER_AUTH_SECRET=""
+BETTER_AUTH_URL="http://localhost:8787"
+
+# --- Google OAuth (Google Cloud Console → Credentials → OAuth client, type "Web") ---
+# Authorized redirect URI (local): http://localhost:8787/api/auth/callback/google
+GOOGLE_CLIENT_ID=""
+GOOGLE_CLIENT_SECRET=""
+
+# --- LLM proxy (chatbot step) — default: Upstage SolarPro 3 ---
+LLM_BASE_URL="https://api.upstage.ai/v1/solar"
+LLM_MODEL="solar-pro3-260126"
+LLM_API_KEY=""

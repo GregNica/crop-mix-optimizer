@@ -2580,6 +2580,272 @@ const APP_STATE = {
 };
 
 // ============================================================
+// Phase 0 — Form-state serialization + field registry
+// ------------------------------------------------------------
+// One JSON object capturing the FULL user-editable form state, so the LLM
+// chatbot (Phase 1) and save/resume (Phase 2) share a single representation.
+//
+// IMPORTANT: we serialize the RAW FORM (field values + UI/toggle state +
+// uploaded data), NOT the derived solver payload that runOptimizer() builds.
+// applyFormState() restores the form exactly; a subsequent solve re-derives
+// identical params. The three dynamic collections (labor/channels/crops) are
+// captured in their FORM shape (same shape the render* functions consume), not
+// the solver shape returned by get*FromForm().
+// ============================================================
+const FORM_STATE_VERSION = 1;
+
+// Dynamic collections are handled explicitly (variable row counts, data-* attrs);
+// their containers are excluded from the flat-field sweep.
+const COLLECTION_CONTAINER_IDS = ['labor-list', 'channel-list', 'crop-list'];
+
+/**
+ * Field registry — enumerates every flat (non-collection) editable field in the
+ * input view by introspecting the live DOM. This is the single source of truth
+ * that drives serialize/apply and, in Phase 1, the chatbot's set_form_fields tool
+ * schema + input grounding. Collections (labor/channels/crops) are structured
+ * sub-schemas handled separately (see serializeFormState).
+ *
+ * Returns: [{ id, kind: 'number'|'select'|'checkbox'|'text', label, options?, benchmark? }]
+ */
+function buildFieldRegistry() {
+  const view = document.getElementById('input-view');
+  if (!view) return [];
+  const out = [];
+  view.querySelectorAll('input, select, textarea').forEach(el => {
+    if (!el.id) return;                                            // only id'd controls
+    if (['file', 'button', 'submit', 'reset'].includes(el.type)) return;
+    if (COLLECTION_CONTAINER_IDS.some(cid => el.closest('#' + cid))) return; // skip collections
+    const kind = el.tagName === 'SELECT' ? 'select'
+               : el.type === 'checkbox'  ? 'checkbox'
+               : el.type === 'number'    ? 'number' : 'text';
+    let label = '';
+    const grp = el.closest('.form-group') || el.closest('div');
+    const lbl = grp ? grp.querySelector('label') : null;
+    if (lbl) label = lbl.textContent.replace(/\s+/g, ' ').trim();
+    const bench = (typeof BENCHMARK_DEFAULTS !== 'undefined') ? BENCHMARK_DEFAULTS[el.id] : null;
+    out.push({
+      id: el.id,
+      kind,
+      label: (bench && bench.label) || label || el.id,
+      ...(kind === 'select' ? { options: Array.from(el.options).map(o => o.value) } : {}),
+      ...(bench ? { benchmark: { default: bench.value, source: bench.source } } : {}),
+    });
+  });
+  return out;
+}
+
+/** Read the labor collection in FORM shape (matches LABOR_DEFAULTS / renderLaborRow). */
+function serializeLabor() {
+  const rows = [];
+  document.querySelectorAll('#labor-list .labor-row').forEach(row => {
+    const v = f => { const el = row.querySelector('[data-lf="' + f + '"]'); return el ? el.value : ''; };
+    rows.push({
+      position: v('position'), type: v('type'),
+      count: v('count'), wage: v('wage'),
+      hours_per_week: v('hours_per_week'), field_time_pct: v('field_time_pct'),
+      start_week: v('start_week'), end_week: v('end_week'),
+    });
+  });
+  return rows;
+}
+
+/** Read the crops collection in FORM shape (matches CROP_DEFAULTS / renderCrop). */
+function serializeCrops() {
+  const crops = [];
+  document.querySelectorAll('#crop-list .crop-detail').forEach(card => {
+    const nameEl = card.querySelector('.crop-name-inline');
+    const f = field => { const el = card.querySelector('[data-f="' + field + '"]'); return el ? el.value : ''; };
+    const mmdd = prefix => {
+      const m = card.querySelector('[data-f="' + prefix + '_m"]');
+      const d = card.querySelector('[data-f="' + prefix + '_d"]');
+      const mv = m ? m.value : '', dv = d ? d.value : '';
+      return (mv && dv) ? mv + '-' + dv : '';
+    };
+    const channels_data = {};
+    card.querySelectorAll('.crop-channel-section').forEach(sec => {
+      const ch = sec.getAttribute('data-ch');
+      if (!ch) return;
+      const cf = f2 => { const el = sec.querySelector('[data-f="' + f2 + '"]'); return el ? el.value : ''; };
+      const ss = cf('ch_season_start').trim(), se = cf('ch_season_end').trim();
+      channels_data[ch] = {
+        price: cf('ch_price'), pkg: cf('ch_pkg'),
+        demand_type: cf('ch_demand_type') || 'weekly_flat',
+        demand_value: cf('ch_demand_value'),
+        demand_season: (ss && se) ? `W${ss}-W${se}` : '',
+      };
+    });
+    crops.push({
+      name: nameEl ? nameEl.value : 'Crop',
+      days_to_maturity: f('days_to_maturity'), planting_weeks: f('planting_weeks'),
+      harvest_weeks: f('harvest_weeks'), min_acreage_if_planted: f('min_acreage_if_planted'),
+      sell_through_pct: f('sell_through_pct'), sales_spread_weeks: f('sales_spread_weeks'),
+      planting_type: f('planting_type'), seed_transplant_cost_per_acre: f('seed_transplant_cost_per_acre'),
+      yield_per_acre: f('yield_per_acre'), crop_diversity_max: f('crop_diversity_max'),
+      lbs_per_tote: f('lbs_per_tote'),
+      s1_start: mmdd('s1_start'), s1_end: mmdd('s1_end'),
+      s2_start: mmdd('s2_start'), s2_end: mmdd('s2_end'),
+      labor_plant: f('labor_plant'), labor_grow: f('labor_grow'), labor_harv: f('labor_harv'),
+      water_plant: f('water_plant'), water_grow: f('water_grow'), water_harv: f('water_harv'),
+      fert_plant: f('fert_plant'), fert_grow: f('fert_grow'), fert_harv: f('fert_harv'),
+      fuel_plant: f('fuel_plant'), fuel_grow: f('fuel_grow'), fuel_harv: f('fuel_harv'),
+      channels_data,
+    });
+  });
+  return crops;
+}
+
+/**
+ * Capture the entire user-editable form state as one JSON-serializable object.
+ * Flat fields come from the registry; collections in form shape; plus the UI
+ * toggle state and any uploaded data held in APP_STATE.
+ */
+function serializeFormState() {
+  const fields = {};
+  buildFieldRegistry().forEach(f => {
+    const el = document.getElementById(f.id);
+    if (!el) return;
+    fields[f.id] = (f.kind === 'checkbox') ? !!el.checked : el.value;
+  });
+  return {
+    version: FORM_STATE_VERSION,
+    fields,
+    labor:    serializeLabor(),
+    channels: getChannelDefs(),   // already returns form shape {name,default_pkg,var_sell,fixed_sell}
+    crops:    serializeCrops(),
+    ui: {
+      dataMode:            APP_STATE.dataMode,
+      _pdChannelVarDetail: APP_STATE._pdChannelVarDetail,
+      _pdPhaseDetail:      APP_STATE._pdPhaseDetail,
+      _pdCropVarCosts:     APP_STATE._pdCropVarCosts,
+      annualizeMargins:    APP_STATE.annualizeMargins,
+      overriddenFields:    Array.from(APP_STATE.overriddenFields || []),
+    },
+    uploads: {
+      rainfallHistory:       APP_STATE.rainfallHistory,
+      mcMultiTabData:        APP_STATE.mcMultiTabData,
+      mcComputedCVs:         APP_STATE.mcComputedCVs,
+      mcUploadSummary:       APP_STATE.mcUploadSummary,
+      rainfallComputedCV:    APP_STATE.rainfallComputedCV,
+      rainfallFileName:      APP_STATE.rainfallFileName,
+      mcUncertaintyFileName: APP_STATE.mcUncertaintyFileName,
+      profitHistory:         APP_STATE.profitHistory,
+      profitForecast:        APP_STATE.profitForecast,
+    },
+  };
+}
+
+/** Re-render the labor collection from a saved form-shape array. */
+function applyLabor(rows) {
+  const list = document.getElementById('labor-list');
+  if (!list) return;
+  list.innerHTML = (rows || []).map((e, i) => renderLaborRow(e, i)).join('');
+}
+
+/** Re-render the channels collection from a saved form-shape array. */
+function applyChannels(defs) {
+  const list = document.getElementById('channel-list');
+  if (!list) return;
+  list.innerHTML = (defs || []).map((ch, i) => renderChannelRow(ch, i)).join('');
+}
+
+/** Re-render the crops collection from a saved form-shape array (channels must be applied first). */
+function applyCrops(crops) {
+  const list = document.getElementById('crop-list');
+  if (!list) return;
+  list.innerHTML = (crops || []).map((c, i) => renderCrop(c, i)).join('');
+  const chDefs = getChannelDefs();
+  (crops || []).forEach((c, i) => {
+    const card = document.getElementById('crop-' + i);
+    if (card) updateCropChannels(card, chDefs, c.channels_data || {}, true); // forceOverride: saved values win
+  });
+}
+
+/**
+ * Restore the form from a serializeFormState() object. Order matters:
+ *  1) UI flags first (renderCrop reads APP_STATE._pdPhaseDetail at render time)
+ *  2) flat fields, dispatching input+change so dependent UI re-fires (PD reveals,
+ *     demand-type season toggles, water-tank row, wage labels, override tracking)
+ *  3) collections last (authoritative re-render)
+ *  4) re-assert the visual PD toggles, restore uploads + override set
+ */
+function applyFormState(state) {
+  if (!state || typeof state !== 'object') return;
+  const ui = state.ui || {};
+
+  // 1) UI flags
+  if (ui.dataMode) APP_STATE.dataMode = ui.dataMode;
+  APP_STATE._pdChannelVarDetail = !!ui._pdChannelVarDetail;
+  APP_STATE._pdPhaseDetail      = !!ui._pdPhaseDetail;
+  APP_STATE._pdCropVarCosts     = !!ui._pdCropVarCosts;
+  APP_STATE.annualizeMargins    = !!ui.annualizeMargins;
+
+  // 2) flat fields
+  Object.entries(state.fields || {}).forEach(([id, val]) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (el.type === 'checkbox') el.checked = !!val;
+    else el.value = val;
+    el.dispatchEvent(new Event('input',  { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+
+  // 3) collections (authoritative; channels before crops)
+  applyLabor(state.labor);
+  applyChannels(state.channels);
+  applyCrops(state.crops);
+
+  // 4) re-assert visual PD detail toggles now that collections re-rendered
+  if (typeof setPDChannelVarDetail === 'function') setPDChannelVarDetail(APP_STATE._pdChannelVarDetail);
+  if (typeof setPDPhaseDetail === 'function')      setPDPhaseDetail(APP_STATE._pdPhaseDetail);
+  if (typeof setPDCropVarCosts === 'function')     setPDCropVarCosts(APP_STATE._pdCropVarCosts);
+
+  // 5) uploaded data
+  const up = state.uploads || {};
+  ['rainfallHistory','mcMultiTabData','mcComputedCVs','mcUploadSummary','rainfallComputedCV',
+   'rainfallFileName','mcUncertaintyFileName','profitHistory','profitForecast'].forEach(k => {
+    if (k in up) APP_STATE[k] = up[k];
+  });
+
+  // 6) override set (also rebuilt by the input events in step 2; set explicitly for fidelity)
+  if (Array.isArray(ui.overriddenFields)) APP_STATE.overriddenFields = new Set(ui.overriddenFields);
+}
+
+// ── Console-accessible self-test: run window._testFormState() in the browser ──
+// Round-trip: serialize → apply → serialize must be byte-identical (idempotent),
+// which proves applyFormState faithfully restores everything serializeFormState
+// captured. DOM-dependent (needs the rendered form), so it can't run headlessly —
+// run it from the browser console after the page loads.
+window._testFormState = function() {
+  const a = serializeFormState();
+  applyFormState(a);
+  const b = serializeFormState();
+  const aJson = JSON.stringify(a), bJson = JSON.stringify(b);
+  console.assert(aJson === bJson, 'TFS1: serialize→apply→serialize must be idempotent');
+  if (aJson !== bJson) {
+    ['fields','labor','channels','crops','ui','uploads'].forEach(k => {
+      if (JSON.stringify(a[k]) !== JSON.stringify(b[k])) console.warn('TFS1 mismatch in section:', k, a[k], b[k]);
+    });
+  }
+  // TFS2: a mutation is captured and restored.
+  const land = document.getElementById('total_land');
+  if (land) {
+    const orig = land.value;
+    land.value = '123.5';
+    const snap = serializeFormState();
+    land.value = '1';
+    applyFormState(snap);
+    console.assert(document.getElementById('total_land').value === '123.5',
+      `TFS2: applyFormState must restore total_land, got ${document.getElementById('total_land').value}`);
+    land.value = orig;  // leave the form as we found it
+  }
+  // TFS3: registry covers every flat id'd control (no silent drift).
+  const regIds = new Set(buildFieldRegistry().map(f => f.id));
+  console.assert(regIds.size >= 20, `TFS3: field registry should enumerate the flat fields, got ${regIds.size}`);
+  console.log(`✓ Form-state round-trip OK (${regIds.size} flat fields, ${a.labor.length} labor, ${a.channels.length} channels, ${a.crops.length} crops).`);
+  return aJson === bJson;
+};
+
+// ============================================================
 // Benchmark yield ranges — UC Cooperative Extension California
 // Used by the profit back-check diagnostic to flag implausible user inputs.
 // Keys are lowercase crop name fragments; values are {low, high} lbs/acre/succession.

@@ -1,0 +1,23 @@
+{
+  // Cloudflare Worker + Static Assets. The Worker serves the static app (public/)
+  // and handles /api/* routes. Heavy compute (the Pyodide solver + Monte Carlo)
+  // stays 100% client-side in public/index.html — the Worker never solves.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "farm-optimizer",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-06-15",
+  // nodejs_compat is required by Better Auth + the Postgres/Drizzle stack (Phase 1).
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    // Run the Worker BEFORE serving static assets, so the login gate in worker/index.ts
+    // can guard every request (incl. the app shell). Without this, assets are served
+    // first and the gate is bypassed. The Worker delegates to env.ASSETS.fetch() once
+    // a session is present.
+    "run_worker_first": true
+  },
+  "observability": { "enabled": true }
+  // Secrets (DATABASE_URL, BETTER_AUTH_SECRET, GOOGLE_*, LLM_API_KEY) are NOT set here.
+  // Local dev: put them in .dev.vars (gitignored). Production: `wrangler secret put NAME`.
+}
