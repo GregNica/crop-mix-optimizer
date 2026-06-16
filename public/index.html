@@ -985,6 +985,56 @@
     <p>Plan your crops, channels, and labor — then find the mix that maximizes your annual profit.</p>
   </div>
 </header>
+<style>
+  #account-bar { display:flex; justify-content:space-between; align-items:center; gap:.75rem;
+    flex-wrap:wrap; padding:.45rem 1.25rem; background:#fff; border-bottom:1px solid #e5e7eb; }
+  #account-bar .acct-side { display:flex; align-items:center; gap:.55rem; }
+  #account-bar button.acct-btn { cursor:pointer; border:1px solid #d1d5db; background:#fff; color:#1f2937;
+    padding:.34rem .7rem; border-radius:8px; font-size:.82rem; font-weight:600; }
+  #account-bar button.acct-btn:hover { background:#f9fafb; }
+  #account-bar button.acct-btn.ghost { border-color:transparent; color:#6b7280; font-weight:500; }
+  #account-bar select.acct-select { padding:.34rem .6rem; border:1px solid #d1d5db; border-radius:8px;
+    font-size:.82rem; background:#fff; color:#1f2937; max-width:220px; }
+  #account-bar #acct-email { font-size:.8rem; color:#6b7280; }
+  #account-bar .acct-label { font-size:.8rem; color:#6b7280; }
+  #account-bar button.plan-name { font-weight:700; }
+  #account-bar .save-status { font-size:.78rem; color:#6b7280; min-width:6rem; }
+  #plans-modal { position:fixed; inset:0; z-index:1000; display:flex; align-items:center; justify-content:center; }
+  #plans-modal .plans-modal-backdrop { position:absolute; inset:0; background:rgba(0,0,0,.35); }
+  #plans-modal .plans-modal-card { position:relative; background:#fff; border-radius:12px; padding:1rem 1.25rem;
+    width:min(460px,92vw); max-height:80vh; overflow:auto; box-shadow:0 12px 40px rgba(0,0,0,.18); }
+  #plans-modal .plans-modal-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:.6rem; }
+  #plans-modal .plan-row { display:flex; align-items:center; justify-content:space-between; gap:.5rem;
+    padding:.45rem .2rem; border-bottom:1px solid #f0f0f0; }
+  #plans-modal .plan-row .pr-name { font-size:.88rem; color:#1f2937; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #plans-modal .plan-row.current .pr-name::after { content:" (current)"; color:#6b7280; font-size:.74rem; }
+  #plans-modal .plan-row .pr-actions { display:flex; gap:.4rem; flex:0 0 auto; }
+</style>
+<div id="account-bar">
+  <div class="acct-side">
+    <span class="acct-label">Plan:</span>
+    <button id="plan-name" class="acct-btn plan-name" onclick="renamePlan()" title="Click to rename this plan">Untitled (unsaved)</button>
+    <span id="save-status" class="save-status"></span>
+    <select id="scenario-select" class="acct-select" onchange="onScenarioSelect(this.value)" aria-label="Switch or create a plan">
+      <option value="">Switch plan…</option>
+      <option value="__new__">➕ New plan</option>
+    </select>
+  </div>
+  <div class="acct-side">
+    <span id="acct-email"></span>
+    <button class="acct-btn ghost" onclick="signOut()">Sign out</button>
+  </div>
+</div>
+<div id="plans-modal" style="display:none" role="dialog" aria-modal="true" aria-label="Manage plans">
+  <div class="plans-modal-backdrop" onclick="closePlansManager()"></div>
+  <div class="plans-modal-card">
+    <div class="plans-modal-head">
+      <strong>Manage plans</strong>
+      <button class="acct-btn ghost" onclick="closePlansManager()" aria-label="Close">✕</button>
+    </div>
+    <div id="plans-list"></div>
+  </div>
+</div>
 <div id="status-bar">Loading Pyodide and scientific packages… this may take 30–60 seconds on first load.</div>
 
 <main>
@@ -2844,6 +2894,288 @@ window._testFormState = function() {
   console.log(`✓ Form-state round-trip OK (${regIds.size} flat fields, ${a.labor.length} labor, ${a.channels.length} channels, ${a.crops.length} crops).`);
   return aJson === bJson;
 };
+
+// ============================================================
+// Saved plans — Phase 1 persistence + AUTO-SAVE (backed by /api/scenarios).
+// Modern auto-save model (like Docs/TurboTax): the working plan saves itself —
+// debounced on edits, flushed on screen switches and tab hide — into the
+// "current" plan, auto-creating an "Untitled — <date>" plan on first save. No
+// manual save button and no "unsaved changes" nag; a best-effort sendBeacon
+// flushes on unload. Uses the Phase 0 serializeFormState()/applyFormState() keystone.
+// ============================================================
+let _currentPlan = null;     // name of the plan being auto-saved (null until first save)
+let _planDirty = false;      // unsaved edits pending
+let _planSaving = false;     // a save is in flight
+let _suppressDirty = false;  // true while applyFormState() programmatically sets fields
+let _saveTimer = null;
+let _knownPlanNames = [];     // saved names, for unique Untitled naming
+let _defaultFormState = null; // pristine form captured at load, for "New plan" (true reset)
+
+function escHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+function setSaveStatus(msg) {
+  const el = document.getElementById('save-status');
+  if (el) el.textContent = msg || '';
+}
+function setPlanNameLabel() {
+  const el = document.getElementById('plan-name');
+  if (el) el.textContent = _currentPlan || 'Untitled (unsaved)';
+}
+
+async function loadCurrentUser() {
+  try {
+    const res = await fetch('/api/auth/get-session');
+    if (!res.ok) return;
+    const data = await res.json();
+    const email = data && data.user && data.user.email;
+    const el = document.getElementById('acct-email');
+    if (el && email) el.textContent = email;
+  } catch (_) { /* non-fatal */ }
+}
+
+async function refreshScenarios(selectName) {
+  try {
+    const res = await fetch('/api/scenarios');
+    if (!res.ok) return;
+    const { scenarios } = await res.json();
+    _knownPlanNames = (scenarios || []).map(s => s.name);
+    const sel = document.getElementById('scenario-select');
+    if (sel) {
+      sel.innerHTML = ['<option value="">Switch plan…</option>', '<option value="__new__">➕ New plan</option>', '<option value="__copy__">⧉ Copy current plan</option>', '<option value="__manage__">⚙️ Manage plans…</option>']
+        .concat((scenarios || []).map(s => `<option value="${escHtml(s.name)}">${escHtml(s.name)}</option>`))
+        .join('');
+      sel.value = '';  // a menu, not a persistent selection
+    }
+    if (selectName !== undefined) { _currentPlan = selectName; setPlanNameLabel(); }
+  } catch (_) { /* non-fatal */ }
+}
+
+// ── Auto-save engine ──
+function markDirty() {
+  if (_suppressDirty) return;
+  _planDirty = true;
+  setSaveStatus('Editing…');
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(saveNow, 2000);
+}
+
+function uniqueUntitledName() {
+  const base = 'Untitled — ' + new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  if (!_knownPlanNames.includes(base)) return base;
+  let n = 2;
+  while (_knownPlanNames.includes(base + ' (' + n + ')')) n++;
+  return base + ' (' + n + ')';
+}
+
+async function saveNow() {
+  clearTimeout(_saveTimer);
+  if (_planSaving) return;                 // in flight; the finally block reschedules if needed
+  if (!_planDirty && _currentPlan) return; // nothing to do
+  _planSaving = true;
+  setSaveStatus('Saving…');
+  const isNew = !_currentPlan;
+  const name = _currentPlan || uniqueUntitledName();
+  try {
+    const res = await fetch('/api/scenarios', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name, formState: serializeFormState() }),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    _currentPlan = name;
+    _planDirty = false;
+    setSaveStatus('Saved ✓');
+    setPlanNameLabel();
+    if (isNew) await refreshScenarios(name);
+  } catch (e) {
+    setSaveStatus('Save failed — retrying');
+    clearTimeout(_saveTimer);
+    _saveTimer = setTimeout(saveNow, 5000);
+  } finally {
+    _planSaving = false;
+    if (_planDirty) { clearTimeout(_saveTimer); _saveTimer = setTimeout(saveNow, 1500); }
+  }
+}
+
+// Flush a pending save immediately (called when switching screens).
+function autoSaveFlush() { if (_planDirty) saveNow(); }
+
+async function onScenarioSelect(value) {
+  const sel = document.getElementById('scenario-select');
+  if (sel) sel.value = '';
+  if (!value) return;
+  if (value === '__new__')    return newPlan();
+  if (value === '__copy__')   return copyPlan();
+  if (value === '__manage__') return openPlansManager();
+  // Load an existing plan.
+  setSaveStatus('Loading…');
+  try {
+    const res = await fetch('/api/scenarios?name=' + encodeURIComponent(value));
+    if (!res.ok) throw new Error(res.status === 404 ? 'Not found' : ('HTTP ' + res.status));
+    const { scenario } = await res.json();
+    _suppressDirty = true;
+    try { applyFormState(scenario.formState); } finally { _suppressDirty = false; }
+    _currentPlan = value;
+    _planDirty = false;
+    setPlanNameLabel();
+    setSaveStatus('Saved ✓');
+    // A loaded plan already has complete data — don't make the user re-walk the steps.
+    // Mark all sections visited so Optimize is unlocked, then land on the home page.
+    SECTION_ORDER.forEach(id => APP_STATE.visitedSections.add(id));
+    updateOptimizeBtn();
+    showHub();
+  } catch (e) { setSaveStatus('Load failed: ' + (e.message || e)); }
+}
+
+// New plan: reset to fresh defaults, start a new Untitled, return to the home page.
+async function newPlan() {
+  autoSaveFlush();
+  _suppressDirty = true;
+  try { if (_defaultFormState) applyFormState(_defaultFormState); } finally { _suppressDirty = false; }
+  APP_STATE.visitedSections = new Set();   // fresh start → review the sections again
+  _currentPlan = null;
+  _planDirty = true;
+  await saveNow();
+  updateOptimizeBtn();
+  showHub();
+}
+
+// Copy plan: duplicate the current form into a new Untitled, return to the home page.
+async function copyPlan() {
+  autoSaveFlush();
+  _currentPlan = null;
+  _planDirty = true;
+  await saveNow();
+  showHub();
+}
+
+// ── Manage plans (rename / delete any saved plan) ──
+async function openPlansManager() { await renderPlansList(); const m = document.getElementById('plans-modal'); if (m) m.style.display = 'flex'; }
+function closePlansManager() { const m = document.getElementById('plans-modal'); if (m) m.style.display = 'none'; }
+
+async function renderPlansList() {
+  const list = document.getElementById('plans-list');
+  if (!list) return;
+  list.innerHTML = '<div style="color:#6b7280;font-size:.85rem">Loading…</div>';
+  try {
+    const res = await fetch('/api/scenarios');
+    const { scenarios } = await res.json();
+    _knownPlanNames = (scenarios || []).map(s => s.name);
+    if (!scenarios || !scenarios.length) {
+      list.innerHTML = '<div style="color:#6b7280;font-size:.85rem">No saved plans yet.</div>';
+      return;
+    }
+    list.innerHTML = scenarios.map(s => `
+      <div class="plan-row${s.name === _currentPlan ? ' current' : ''}">
+        <span class="pr-name" title="${escHtml(s.name)}">${escHtml(s.name)}</span>
+        <span class="pr-actions">
+          <button class="acct-btn" data-act="rename" data-name="${escHtml(s.name)}">Rename</button>
+          <button class="acct-btn" data-act="delete" data-name="${escHtml(s.name)}">Delete</button>
+        </span>
+      </div>`).join('');
+    // Delegated handler (reads the raw name from data-name — safe against quotes).
+    list.onclick = (e) => {
+      const btn = e.target.closest('button[data-act]');
+      if (!btn) return;
+      const name = btn.getAttribute('data-name');
+      if (btn.dataset.act === 'rename') renamePlanByName(name);
+      else if (btn.dataset.act === 'delete') deletePlanByName(name);
+    };
+  } catch (e) {
+    list.innerHTML = '<div style="color:#b91c1c;font-size:.85rem">Failed to load plans.</div>';
+  }
+}
+
+async function renamePlanByName(oldName) {
+  const name = (prompt('Rename “' + oldName + '” to:', oldName) || '').trim();
+  if (!name || name === oldName) return;
+  if (_knownPlanNames.includes(name)) { alert('A plan named “' + name + '” already exists.'); return; }
+  try {
+    let formState;
+    if (oldName === _currentPlan) { autoSaveFlush(); formState = serializeFormState(); }
+    else {
+      const r = await fetch('/api/scenarios?name=' + encodeURIComponent(oldName));
+      if (!r.ok) throw new Error('load');
+      formState = (await r.json()).scenario.formState;
+    }
+    const s = await fetch('/api/scenarios', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name, formState }) });
+    if (!s.ok) throw new Error('save');
+    await fetch('/api/scenarios?name=' + encodeURIComponent(oldName), { method: 'DELETE' });
+    if (oldName === _currentPlan) _currentPlan = name;
+    await refreshScenarios();
+    setPlanNameLabel();
+    await renderPlansList();
+  } catch (e) { alert('Rename failed: ' + (e.message || e)); }
+}
+
+async function deletePlanByName(name) {
+  if (!confirm('Delete “' + name + '”? This cannot be undone.')) return;
+  try {
+    const res = await fetch('/api/scenarios?name=' + encodeURIComponent(name), { method: 'DELETE' });
+    if (!res.ok) throw new Error('delete');
+    if (name === _currentPlan) { _currentPlan = null; _planDirty = false; setPlanNameLabel(); setSaveStatus(''); }
+    await refreshScenarios();
+    await renderPlansList();
+  } catch (e) { alert('Delete failed: ' + (e.message || e)); }
+}
+
+async function renamePlan() {
+  const current = _currentPlan || '';
+  const name = (prompt('Name this plan:', current) || '').trim();
+  if (!name || name === current) return;
+  if (_knownPlanNames.includes(name)) { alert('A plan named “' + name + '” already exists — pick another name.'); return; }
+  setSaveStatus('Renaming…');
+  try {
+    const res = await fetch('/api/scenarios', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name, formState: serializeFormState() }),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    if (current) await fetch('/api/scenarios?name=' + encodeURIComponent(current), { method: 'DELETE' });
+    _currentPlan = name;
+    _planDirty = false;
+    await refreshScenarios(name);
+    setPlanNameLabel();
+    setSaveStatus('Saved ✓');
+  } catch (e) { setSaveStatus('Rename failed: ' + (e.message || e)); }
+}
+
+async function signOut() {
+  autoSaveFlush();
+  try { await fetch('/api/auth/sign-out', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); }
+  finally { window.location.href = '/'; }
+}
+
+// Wire auto-save triggers (called once on load).
+function initAutoSave() {
+  // Capture the pristine default form now (before any edits) for "New plan" — a true reset.
+  _defaultFormState = serializeFormState();
+  const view = document.getElementById('input-view');
+  if (view) {
+    view.addEventListener('input', markDirty, true);
+    view.addEventListener('change', markDirty, true);
+  }
+  // Leaving the tab → flush.
+  document.addEventListener('visibilitychange', () => { if (document.hidden) autoSaveFlush(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePlansManager(); });
+  // Closing/reloading → best-effort flush (no nag; auto-save already covers the rest).
+  window.addEventListener('beforeunload', () => {
+    if (!_planDirty && !_planSaving) return;
+    try {
+      const name = _currentPlan || uniqueUntitledName();
+      navigator.sendBeacon('/api/scenarios',
+        new Blob([JSON.stringify({ name, formState: serializeFormState() })], { type: 'application/json' }));
+    } catch (_) { /* best effort */ }
+  });
+  // Flush on in-app screen switches by wrapping the navigation functions.
+  ['showHub', 'showSection', 'switchToResults', 'switchToInput'].forEach(fn => {
+    const orig = window[fn];
+    if (typeof orig === 'function') {
+      window[fn] = function (...args) { autoSaveFlush(); return orig.apply(this, args); };
+    }
+  });
+}
 
 // ============================================================
 // Benchmark yield ranges — UC Cooperative Extension California
@@ -5054,6 +5386,12 @@ document.addEventListener('DOMContentLoaded', () => {
   initBenchmarkBadges();
   // Initialize to hub view
   showHub();
+  // Phase 1 persistence: signed-in email, saved-plans dropdown, and auto-save
+  // (independent of Pyodide; auth is enforced server-side).
+  loadCurrentUser();
+  refreshScenarios();
+  initAutoSave();
+  setPlanNameLabel();
 });
 
 // ============================================================
