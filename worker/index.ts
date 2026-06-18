@@ -3,7 +3,7 @@
  *
  * Routing model (Workers + Static Assets):
  *   /api/auth/*  → Better Auth handler (Google sign-in, callback, session, sign-out)
- *   /api/*       → app API (health, scenarios)
+ *   /api/*       → app API (health, scenarios, chat)
  *   else         → the static app (public/), gated behind login
  *
  * The solver + Monte Carlo run client-side in the browser (Pyodide); this Worker
@@ -11,6 +11,7 @@
  */
 import { createAuth } from "./auth";
 import { handleScenarios } from "./routes/scenarios";
+import { handleChat } from "./routes/chat";
 import { json } from "./http";
 
 export interface Env {
@@ -67,6 +68,9 @@ async function handleApi(
 
   if (url.pathname === "/api/scenarios") {
     return handleScenarios(request, env, session.user.id, url);
+  }
+  if (url.pathname === "/api/chat") {
+    return handleChat(request, env);
   }
 
   return json({ error: "Not found" }, 404);
