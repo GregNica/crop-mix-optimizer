@@ -2761,6 +2761,7 @@ function renderUnitLabels() {
 //  stay in canonical/US units, correctly labeled, so the solve is always right.)
 function setUnitSystem(newSys) {
   if (typeof UNITS === 'undefined' || (newSys !== 'us' && newSys !== 'metric')) return;
+  if (newSys === 'metric' && !METRIC_READY) return;  // gated until metric is wired end-to-end
   const oldSys = APP_STATE.unitSystem || 'canonical';
   Object.keys(UNITS.FIELD_REGISTRY).forEach(function (id) {
     const el = document.getElementById(id);
@@ -2799,11 +2800,22 @@ function initUnitInputSync() {
 
 // Called once at boot (after benchmark defaults are written in canonical units): pick the
 // saved system (default US customary — D2) and convert the canonical DOM into that display.
+// Metric is not yet wired end-to-end (crop/channel inputs + the results renderer are still
+// canonical), so a Metric run would show a mixed-unit UI. Keep the toggle US-only until the
+// conversion is complete, then flip this to true. US = canonical for land/mass, so US mode is
+// fully correct today.
+const METRIC_READY = false;
+
 function initUnitSystem() {
   let saved = 'us';
   try { const s = localStorage.getItem('farm_unit_system'); if (s === 'us' || s === 'metric') saved = s; } catch (e) {}
+  if (saved === 'metric' && !METRIC_READY) saved = 'us';   // don't restore a gated system
   APP_STATE.unitSystem = null;   // treat current DOM as canonical for the first conversion
   setUnitSystem(saved);
+  if (!METRIC_READY) {
+    const mb = document.querySelector('#unit-toggle [data-sys="metric"]');
+    if (mb) { mb.disabled = true; mb.title = 'Metric units — coming soon'; }
+  }
 }
 
 // ============================================================
