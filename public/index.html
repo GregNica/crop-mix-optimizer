@@ -1004,6 +1004,12 @@
   #account-bar .acct-label { font-size:.8rem; color:#6b7280; }
   #account-bar button.plan-name { font-weight:700; }
   #account-bar .save-status { font-size:.78rem; color:#6b7280; min-width:6rem; }
+  .unit-toggle { display:inline-flex; border:1px solid #d1d5db; border-radius:8px; overflow:hidden; }
+  .unit-toggle button { cursor:pointer; border:none; background:#fff; color:#6b7280; font-size:.76rem;
+    font-weight:600; padding:.3rem .6rem; }
+  .unit-toggle button + button { border-left:1px solid #d1d5db; }
+  .unit-toggle button.active { background:#2d6a4f; color:#fff; }
+  .unit-toggle button:not(.active):hover { background:#f0faf4; color:#2d6a4f; }
   #plans-modal { position:fixed; inset:0; z-index:1000; display:flex; align-items:center; justify-content:center; }
   #plans-modal .plans-modal-backdrop { position:absolute; inset:0; background:rgba(0,0,0,.35); }
   #plans-modal .plans-modal-card { position:relative; background:#fff; border-radius:12px; padding:1rem 1.25rem;
@@ -1051,6 +1057,10 @@
     </select>
   </div>
   <div class="acct-side">
+    <span id="unit-toggle" class="unit-toggle" role="group" aria-label="Measurement units">
+      <button type="button" data-sys="us" onclick="setUnitSystem('us')" title="US customary: acres, lb, gallons, ft³">US</button>
+      <button type="button" data-sys="metric" onclick="setUnitSystem('metric')" title="Metric: hectares, kg, liters, m³">Metric</button>
+    </span>
     <span id="acct-email"></span>
     <button class="acct-btn ghost" onclick="signOut()">Sign out</button>
   </div>
@@ -2688,13 +2698,112 @@ function toCanonicalActive(value, spec) {
   if (!spec || !sys || sys === 'canonical' || isNaN(value) || typeof UNITS === 'undefined') return value;
   return UNITS.toCanonical(value, spec, sys);
 }
+// A field's stored canonical source-of-truth (data-canon), or NaN if not yet seeded.
+function canonOf(el) {
+  const c = el && el.dataset ? el.dataset.canon : undefined;
+  return (c === undefined || c === '') ? NaN : parseFloat(c);
+}
 // Read a unit-bearing field BY ID and return it in canonical units. Drop-in for
-// parseFloat(el.value); routes through the id-keyed FIELD_REGISTRY.
+// parseFloat(el.value). Prefers the field's stored canonical value (data-canon, the
+// source of truth — kept exact so it never drifts under unit toggles); falls back to
+// converting the displayed value if data-canon hasn't been seeded yet.
 function readCanonical(id) {
   const el = document.getElementById(id);
-  const v = el ? parseFloat(el.value) : NaN;
+  if (!el) return NaN;
+  const canon = canonOf(el);
+  if (!isNaN(canon)) return canon;
   const spec = (typeof UNITS !== 'undefined') && UNITS.FIELD_REGISTRY[id];
-  return toCanonicalActive(v, spec || null);
+  return toCanonicalActive(parseFloat(el.value), spec || null);
+}
+
+// Round a converted display value to a sensible precision for its magnitude (avoids
+// showing "660430.1281448" after a unit conversion). Preserves small rates' precision.
+function roundForDisplay(v) {
+  if (!isFinite(v)) return v;
+  const a = Math.abs(v);
+  if (a === 0)      return 0;
+  if (a >= 1000)    return Math.round(v);
+  if (a >= 1)       return Math.round(v * 100) / 100;
+  if (a >= 0.01)    return Math.round(v * 10000) / 10000;
+  return Number(v.toPrecision(3));   // very small rates ($/L, $/m³/wk)
+}
+
+// Update each registry field's label to show the active system's unit.
+// INVARIANT: every registry field's label MUST carry its unit as the TRAILING parenthetical
+// (e.g. "Weekly Cap (L/wk)"). This function rewrites the text INSIDE that last parenthetical
+// only, in the label's text nodes, leaving tip <span>s and required-markers untouched.
+// A label with no parenthetical is silently skipped (its value still converts, just unlabeled).
+// Idempotent: re-running just replaces the parenthetical again.
+function renderUnitLabels() {
+  if (typeof UNITS === 'undefined') return;
+  const sys = APP_STATE.unitSystem || 'canonical';
+  Object.keys(UNITS.FIELD_REGISTRY).forEach(function (id) {
+    const el = document.getElementById(id);
+    const grp = el && el.closest('.form-group');
+    const label = grp && grp.querySelector('label');
+    if (!label) return;
+    const unit = UNITS.unitLabel(UNITS.FIELD_REGISTRY[id], sys);
+    for (let i = 0; i < label.childNodes.length; i++) {
+      const node = label.childNodes[i];
+      if (node.nodeType === 3 && /\([^)]*\)/.test(node.nodeValue)) {
+        // replace the LAST parenthetical in this text node (the unit is always last)
+        node.nodeValue = node.nodeValue.replace(/\(([^)]*)\)([^(]*)$/, '(' + unit + ')$2');
+        break;
+      }
+    }
+  });
+}
+
+// Switch the whole app's display units. Converts every registry field's DOM value from the
+// old system's display to the new system's, re-renders unit labels, persists the choice, and
+// updates APP_STATE. The solver is unaffected — readCanonical converts back at payload time.
+// (Crop/channel data-f fields and tooltip "typical" ranges are handled in a later step; they
+//  stay in canonical/US units, correctly labeled, so the solve is always right.)
+function setUnitSystem(newSys) {
+  if (typeof UNITS === 'undefined' || (newSys !== 'us' && newSys !== 'metric')) return;
+  const oldSys = APP_STATE.unitSystem || 'canonical';
+  Object.keys(UNITS.FIELD_REGISTRY).forEach(function (id) {
+    const el = document.getElementById(id);
+    if (!el || !el.dataset) return;
+    const spec = UNITS.FIELD_REGISTRY[id];
+    // Seed the canonical source-of-truth once (from the current display in the OLD system),
+    // then always re-derive the display FROM canonical — so toggling never accumulates
+    // rounding drift.
+    let canon = canonOf(el);
+    if (isNaN(canon)) canon = UNITS.toCanonical(parseFloat(el.value), spec, oldSys);
+    if (isNaN(canon)) return;
+    el.dataset.canon = canon;
+    el.value = roundForDisplay(UNITS.toDisplay(canon, spec, newSys));
+  });
+  APP_STATE.unitSystem = newSys;
+  try { localStorage.setItem('farm_unit_system', newSys); } catch (e) {}
+  renderUnitLabels();
+  const seg = document.getElementById('unit-toggle');
+  if (seg) seg.querySelectorAll('[data-sys]').forEach(function (b) {
+    b.classList.toggle('active', b.getAttribute('data-sys') === newSys);
+  });
+}
+
+// Keep a registry field's canonical source-of-truth in sync when the USER edits it.
+// Delegated so it also covers fields inside collapsed panels. Registered once at boot.
+function initUnitInputSync() {
+  document.addEventListener('input', function (e) {
+    const el = e.target;
+    if (!el || !el.id || !el.dataset || typeof UNITS === 'undefined') return;
+    const spec = UNITS.FIELD_REGISTRY[el.id];
+    if (!spec) return;
+    const v = parseFloat(el.value);
+    el.dataset.canon = isNaN(v) ? '' : UNITS.toCanonical(v, spec, APP_STATE.unitSystem || 'canonical');
+  });
+}
+
+// Called once at boot (after benchmark defaults are written in canonical units): pick the
+// saved system (default US customary — D2) and convert the canonical DOM into that display.
+function initUnitSystem() {
+  let saved = 'us';
+  try { const s = localStorage.getItem('farm_unit_system'); if (s === 'us' || s === 'metric') saved = s; } catch (e) {}
+  APP_STATE.unitSystem = null;   // treat current DOM as canonical for the first conversion
+  setUnitSystem(saved);
 }
 
 // ============================================================
@@ -3647,9 +3756,19 @@ function setDataMode(mode) {
 
 function applyBenchmarkDefaults() {
   APP_STATE.overriddenFields = new Set();
+  const sys = APP_STATE.unitSystem || 'canonical';
   Object.entries(BENCHMARK_DEFAULTS).forEach(([fieldId, def]) => {
     const el = document.getElementById(fieldId);
-    if (el) el.value = def.value;
+    if (el) {
+      // BENCHMARK_DEFAULTS values are CANONICAL; store canonical and write the display unit.
+      const spec = (typeof UNITS !== 'undefined') && UNITS.FIELD_REGISTRY[fieldId];
+      if (spec) {
+        if (el.dataset) el.dataset.canon = def.value;
+        el.value = roundForDisplay(UNITS.toDisplay(def.value, spec, sys));
+      } else {
+        el.value = def.value;
+      }
+    }
     const badge = document.getElementById('bench-badge-' + fieldId);
     if (badge) badge.classList.remove('overridden');
   });
@@ -5644,6 +5763,10 @@ document.addEventListener('DOMContentLoaded', () => {
   refreshScenarios();
   initAutoSave();
   setPlanNameLabel();
+  // Keep each field's canonical source-of-truth in sync on user edits, then convert the
+  // canonical DOM into the active display units (default US customary) + labels.
+  initUnitInputSync();
+  initUnitSystem();
 });
 
 // ============================================================

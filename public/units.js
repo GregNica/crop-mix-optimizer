@@ -51,6 +51,7 @@
    */
   function toDisplay(canonicalValue, spec, system) {
     if (canonicalValue == null || isNaN(canonicalValue)) return canonicalValue;
+    if (system === 'canonical') return canonicalValue;   // identity: DOM already holds canonical
     if (spec.num && spec.den) {
       // compound quantity: display = canonical × (den.perDisplay / num.perDisplay)
       return canonicalValue * (factor(spec.den, system) / factor(spec.num, system));
@@ -61,6 +62,7 @@
 
   function toCanonical(displayValue, spec, system) {
     if (displayValue == null || isNaN(displayValue)) return displayValue;
+    if (system === 'canonical') return displayValue;   // identity: value already canonical
     if (spec.num && spec.den) {
       return displayValue / (factor(spec.den, system) / factor(spec.num, system));
     }
@@ -70,7 +72,7 @@
 
   // Human-readable unit string for a field's spec in a system (for labels/tooltips).
   function unitLabel(spec, system) {
-    function u(m) { return DIMENSIONS[m][system].unit; }
+    function u(m) { return system === 'canonical' ? DIMENSIONS[m].canonical : DIMENSIONS[m][system].unit; }
     if (spec.num && spec.den) return u(spec.num) + '/' + u(spec.den);
     if (spec.inverse)        return '$/' + u(spec.measure) + (spec.perWeek ? '/wk' : '');
     return u(spec.measure) + (spec.perWeek ? '/wk' : '');
