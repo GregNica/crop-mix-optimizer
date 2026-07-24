@@ -253,7 +253,10 @@
   /* Labor rows */
   .labor-row {
     display: grid;
-    grid-template-columns: 1.6fr 0.9fr 0.6fr 0.8fr 0.6fr auto;
+    /* Non-seasonal: Position, Type, Wage, Hrs/Wk, Field%, ✕ (Count/Start/End are display:none).
+       5 data columns + auto for ✕. minmax(0,…) lets tracks shrink below min-content so long
+       labels can't force horizontal overflow. */
+    grid-template-columns: minmax(0,1.6fr) minmax(0,0.9fr) minmax(0,0.6fr) minmax(0,0.8fr) minmax(0,0.6fr) auto;
     gap: 0.4rem;
     align-items: end;
     margin-bottom: 0.5rem;
@@ -263,7 +266,9 @@
     border: 1px solid #e5e7eb;
   }
   .labor-row.seasonal {
-    grid-template-columns: 1.3fr 0.9fr 0.6fr 0.7fr 0.6fr 0.5fr 0.5fr auto;
+    /* Seasonal reveals 3 more fields → 8 data columns + ✕ = 9 tracks (was 8, so ✕ wrapped).
+       Order: Position, Type, Count, Wage, Hrs/Wk, Field%, Start Wk, End Wk, ✕ */
+    grid-template-columns: minmax(0,1.3fr) minmax(0,0.9fr) minmax(0,0.6fr) minmax(0,0.7fr) minmax(0,0.6fr) minmax(0,0.6fr) minmax(0,0.55fr) minmax(0,0.55fr) auto;
   }
   .labor-row label { font-size: 0.7rem; font-weight: 600; color: #6b7280; display: block; margin-bottom: 2px; }
   .labor-row input, .labor-row select { font-size: 0.78rem; padding: 0.28rem 0.4rem; border: 1.5px solid #d1d5db; border-radius: 5px; width: 100%; }
@@ -3766,7 +3771,7 @@ function downloadCropTemplate() {
   const csv = [CSV_TEMPLATE_HEADERS, UNITS, EX1, EX2, EX3]
     .map(row => row.map(esc).join(',')).join('\n');
   const a = document.createElement('a');
-  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(String.fromCharCode(0xFEFF) + csv);
   a.download = 'crop_import_template.csv';
   a.click();
 }
@@ -6779,7 +6784,7 @@ function exportPLCSV() {
 
   const csv = rows.map(r => r.map(x => '"' + String(x).replace(/"/g,'""') + '"').join(',')).join('\n');
   const a = document.createElement('a');
-  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(String.fromCharCode(0xFEFF) + csv);
   a.download = 'farm_pl.csv';
   a.click();
 }
@@ -6860,7 +6865,7 @@ function exportConstraintCSV() {
 
   const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
   const a   = document.createElement('a');
-  a.href     = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+  a.href     = 'data:text/csv;charset=utf-8,' + encodeURIComponent(String.fromCharCode(0xFEFF) + csv);
   a.download = 'constraint_utilization.csv';
   a.click();
 }
@@ -7590,7 +7595,7 @@ function exportGanttCSV() {
   const allRows = [header, landPctRow, ...dataRows];
   const csv = allRows.map(r => r.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(',')).join('\n');
   const a = document.createElement('a');
-  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(String.fromCharCode(0xFEFF) + csv);
   a.download = 'planting_calendar.csv';
   a.click();
 }
@@ -7863,7 +7868,7 @@ function exportWeeklySalesCSV() {
 
   const csv = rows.map(r => r.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(',')).join('\n');
   const a = document.createElement('a');
-  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(String.fromCharCode(0xFEFF) + csv);
   a.download = 'weekly_sales_by_channel.csv';
   a.click();
 }
