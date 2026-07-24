@@ -2769,6 +2769,35 @@ function roundForDisplay(v) {
   return Number(v.toPrecision(3));   // very small rates ($/L, $/m³/wk)
 }
 
+// ── Results display: canonical → active display units ────────────────────────
+// Solver results are ALWAYS in canonical units (acres, lb, m³, L). These helpers convert a
+// canonical result value to the active display system for rendering. `spec` is a UNITS spec.
+// Convenience specs for the dimensions that appear in results ($ stays as-is — out of scope):
+const U_ACRE = { measure: 'area_land' };            // acres ⇄ ha
+const U_LB   = { measure: 'mass' };                 // lbs ⇄ kg
+const U_M3   = { measure: 'vol_bulk' };             // m³ ⇄ ft³
+const U_L    = { measure: 'vol_liquid' };           // L ⇄ gal
+const U_LB_PER_ACRE = { num: 'mass', den: 'area_land' };   // lb/acre ⇄ kg/ha
+const U_PER_ACRE = { measure: 'area_land', inverse: true };// $/acre ⇄ $/ha
+const U_PER_LB   = { measure: 'mass', inverse: true };     // $/lb ⇄ $/kg
+// Convert a canonical result value to the active display system (number only).
+function dispVal(canonicalValue, spec) {
+  if (typeof UNITS === 'undefined' || canonicalValue == null || isNaN(canonicalValue)) return canonicalValue;
+  return UNITS.toDisplay(canonicalValue, spec, APP_STATE.unitSystem || 'canonical');
+}
+// The active-system unit string for a spec (e.g. "m³" or "ft³", "lbs"→"kg", "$/acre"→"$/ha").
+function unitStr(spec) {
+  return typeof UNITS !== 'undefined' ? UNITS.unitLabel(spec, APP_STATE.unitSystem || 'canonical') : '';
+}
+// Format a canonical result value as "<number> <unit>" in the active system. By default the
+// number is rounded + locale-grouped; pass decimals for fixed precision (e.g. rates).
+function fmtUnit(canonicalValue, spec, decimals) {
+  const v = dispVal(canonicalValue, spec);
+  if (v == null || isNaN(v)) return String(canonicalValue);
+  const n = (decimals != null) ? Number(v).toFixed(decimals) : Math.round(v).toLocaleString();
+  return n + ' ' + unitStr(spec);
+}
+
 // Update each registry field's label to show the active system's unit.
 // INVARIANT: every registry field's label MUST carry its unit as the TRAILING parenthetical
 // (e.g. "Weekly Cap (L/wk)"). This function rewrites the text INSIDE that last parenthetical
@@ -5747,8 +5776,8 @@ function renderExecutiveSummary(res, params) {
       let peakWkA = 0, peakFracA = 0;
       landFrac.forEach((f, i) => { if (f > peakFracA) { peakFracA = f; peakWkA = i + 1; } });
       const totalLandAc = parseFloat((params.total_land) || 150);
-      const acresUsed   = Math.round(peakFracA * totalLandAc);
-      peakLandStr = `Week ${peakWkA}: ${Math.round(peakFracA * 100)}% used (${acresUsed} of ${Math.round(totalLandAc)} acres)`;
+      const acresUsed   = Math.round(dispVal(peakFracA * totalLandAc, U_ACRE));
+      peakLandStr = `Week ${peakWkA}: ${Math.round(peakFracA * 100)}% used (${acresUsed} of ${fmtUnit(totalLandAc, U_ACRE)})`;
     }
   } catch(e) {}
 
@@ -7138,11 +7167,11 @@ function renderConstraintSummary(res, params) {
   const landRow = summaryRow('Land Utilization', slice(weeklyLand), new Array(opWeeks).fill(1.0), '(fraction of farm)', 'Weekly fraction of total farm acreage in active crop phases. 100% = fully planted.');
 
   // Harvest storage
-  const harvRow = summaryRow('Harvest / Cold Storage', slice(weeklyHarv), new Array(opWeeks).fill(harvestCap), `(cap ${harvestCap.toLocaleString()} m³)`, 'Weekly harvest volume vs cold storage capacity.');
+  const harvRow = summaryRow('Harvest / Cold Storage', slice(weeklyHarv), new Array(opWeeks).fill(harvestCap), `(cap ${fmtUnit(harvestCap, U_M3)})`, 'Weekly harvest volume vs cold storage capacity.');
 
   // Water utilization (vs supply)
   const waterRow = weeklyWaterS[0] != null
-    ? summaryRow('Irrigation Water', slice(weeklyWaterU), slice(weeklyWaterS), '(vs supply L/wk)', 'Weekly crop water demand vs total water supply (well + rainfall + catchment).')
+    ? summaryRow('Irrigation Water', slice(weeklyWaterU), slice(weeklyWaterS), `(vs supply ${unitStr(U_L)}/wk)`, 'Weekly crop water demand vs total water supply (well + rainfall + catchment).')
     : '';
 
   // Labor utilization (vs available hours)
@@ -7618,9 +7647,9 @@ function renderSummaryPane(params) {
     </div>
     <div class="summary-section">
       <h4>Storage</h4>
-      ${kv('Harvest', fmtN(params.harvest_storage_cap) + ' m³')}
-      ${kv('Equip.', params.equip_storage ? fmtN(params.equip_storage) + ' m³' : 'Off')}
-      ${kv('Fuel', params.fuel_storage ? fmtN(params.fuel_storage) + ' L' : 'Off')}
+      ${kv('Harvest', fmtUnit(params.harvest_storage_cap, U_M3))}
+      ${kv('Equip.', params.equip_storage ? fmtUnit(params.equip_storage, U_M3) : 'Off')}
+      ${kv('Fuel', params.fuel_storage ? fmtUnit(params.fuel_storage, U_L) : 'Off')}
     </div>
     <div class="summary-section">
       <h4>Water</h4>
@@ -7743,14 +7772,14 @@ function renderGanttCalendar(res) {
       html += '<tr>';
       if (isFirst) {
         // First succession in this crop group: show crop name above the succession label
-        html += `<td class="gantt-succ-label" style="font-size:0.62rem;padding:1px 7px 2px 8px;color:#374151;border-left:3px solid ${col};${topBorderStyle}"><span style="display:block;font-size:0.66rem;font-weight:800;color:${col};line-height:1.3">${cropName}</span>Wk&nbsp;${label}&nbsp;<span style="color:#9ca3af;font-weight:400">(${s.acres}ac)</span></td>`;
+        html += `<td class="gantt-succ-label" style="font-size:0.62rem;padding:1px 7px 2px 8px;color:#374151;border-left:3px solid ${col};${topBorderStyle}"><span style="display:block;font-size:0.66rem;font-weight:800;color:${col};line-height:1.3">${cropName}</span>Wk&nbsp;${label}&nbsp;<span style="color:#9ca3af;font-weight:400">(${roundForDisplay(dispVal(s.acres, U_ACRE))} ${unitStr(U_ACRE)})</span></td>`;
       } else {
-        html += `<td class="gantt-succ-label" style="font-size:0.62rem;padding:2px 7px 2px 18px;color:#374151;border-left:3px solid ${col}40">Wk&nbsp;${label}&nbsp;<span style="color:#9ca3af;font-weight:400">(${s.acres}ac)</span></td>`;
+        html += `<td class="gantt-succ-label" style="font-size:0.62rem;padding:2px 7px 2px 18px;color:#374151;border-left:3px solid ${col}40">Wk&nbsp;${label}&nbsp;<span style="color:#9ca3af;font-weight:400">(${roundForDisplay(dispVal(s.acres, U_ACRE))} ${unitStr(U_ACRE)})</span></td>`;
       }
       for (let w = 1; w <= 52; w++) {
         const ph = pm[w];
         const cls = ph ? 'ph-' + ph : 'ph-empty';
-        html += `<td class="${cls}" style="min-width:18px;width:18px;height:18px;padding:0;text-align:center;font-size:0.6rem;font-weight:700;border:1px solid #e5e7eb20;${topBorderStyle}">${ph ? Math.round(s.acres) : ''}</td>`;
+        html += `<td class="${cls}" style="min-width:18px;width:18px;height:18px;padding:0;text-align:center;font-size:0.6rem;font-weight:700;border:1px solid #e5e7eb20;${topBorderStyle}">${ph ? Math.round(dispVal(s.acres, U_ACRE)) : ''}</td>`;
       }
       html += '</tr>';
     });
@@ -7936,13 +7965,13 @@ function updatePieChart(week) {
   const landSlices = Object.entries(cropAcres)
     .map(([name, acres]) => ({ name, acres, color: color(name) }))
     .sort((a, b) => b.acres - a.acres);
-  drawPie(landSlices, 'pie-svg-wrap', 'pie-legend', v => `${v.toFixed(1)} ac`, 'acres');
+  drawPie(landSlices, 'pie-svg-wrap', 'pie-legend', v => `${dispVal(v, U_ACRE).toFixed(1)} ${unitStr(U_ACRE)}`, 'acres');
 
   // ── Harvested volume pie (physical lbs off the field this week) ────────────
   const harvestSlices = Object.entries(computeWeeklyHarvestLbs(week, res, params))
     .map(([name, lbs]) => ({ name, lbs, color: color(name) }))
     .sort((a, b) => b.lbs - a.lbs);
-  drawPie(harvestSlices, 'harvest-pie-svg-wrap', 'harvest-pie-legend', v => `${Math.round(v).toLocaleString()} lbs`, 'lbs');
+  drawPie(harvestSlices, 'harvest-pie-svg-wrap', 'harvest-pie-legend', v => fmtUnit(v, U_LB), 'lbs');
 
   // ── Per-channel sales pies ────────────────────────────────────────────────
   const channelArea = document.getElementById('channel-pies-area');
@@ -7964,7 +7993,7 @@ function updatePieChart(week) {
       .sort((a, b) => b.lbs - a.lbs);
     return `<div style="margin-bottom:0.9rem">
       <div style="font-size:0.8rem;font-weight:600;color:#374151;margin-bottom:0.25rem">
-        🛒 ${ch} — est. ${Math.round(total).toLocaleString()} lbs sold
+        🛒 ${ch} — est. ${fmtUnit(total, U_LB)} sold
       </div>
       <div id="ch-pie-wrap-${channelSlug(ch)}" style="display:flex;gap:1rem;align-items:flex-start;flex-wrap:wrap">
         <div id="ch-pie-svg-${channelSlug(ch)}"></div>
@@ -7982,7 +8011,7 @@ function updatePieChart(week) {
       .map(([name, lbs]) => ({ name, lbs, color: color(name) }))
       .sort((a, b) => b.lbs - a.lbs);
     drawPie(slices, `ch-pie-svg-${channelSlug(ch)}`, `ch-pie-leg-${channelSlug(ch)}`,
-      v => `${Math.round(v).toLocaleString()} lbs`, 'lbs');
+      v => fmtUnit(v, U_LB), 'lbs');
   });
 }
 
