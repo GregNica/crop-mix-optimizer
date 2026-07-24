@@ -2777,6 +2777,7 @@ const U_ACRE = { measure: 'area_land' };            // acres ⇄ ha
 const U_LB   = { measure: 'mass' };                 // lbs ⇄ kg
 const U_M3   = { measure: 'vol_bulk' };             // m³ ⇄ ft³
 const U_L    = { measure: 'vol_liquid' };           // L ⇄ gal
+const U_MM   = { measure: 'length' };               // mm ⇄ in (rainfall)
 const U_LB_PER_ACRE = { num: 'mass', den: 'area_land' };   // lb/acre ⇄ kg/ha
 const U_PER_ACRE = { measure: 'area_land', inverse: true };// $/acre ⇄ $/ha
 const U_PER_LB   = { measure: 'mass', inverse: true };     // $/lb ⇄ $/kg
@@ -3986,19 +3987,35 @@ const CSV_REQUIRED_COLS = new Set(['crop_name','channel_name','price_per_lb','de
 const CSV_DEMAND_TYPES  = new Set(['annual','weekly_flat','weekly_varying']);
 
 function downloadCropTemplate() {
-  const UNITS = [
+  // The template follows the active display system. CSV columns whose unit converts → their
+  // DATA_F_REGISTRY key (phase-resource cols stay canonical; they're deferred everywhere).
+  const CSV_COL_DATAF = {
+    yield_per_acre_lbs:'yield_per_acre', lbs_per_tote:'lbs_per_tote',
+    min_acreage_if_planted:'min_acreage_if_planted', seed_cost_per_ac:'seed_transplant_cost_per_acre',
+    price_per_lb:'ch_price', packaging_cost_per_lb:'ch_pkg',
+    demand_annual_lbs:'ch_demand_value', demand_weekly_lbs:'ch_demand_value',
+  };
+  const _sys = APP_STATE.unitSystem || 'canonical';
+  // Convert a canonical example row's numeric values to the active display system by column.
+  const toTemplateDisplay = row => row.map((v, i) => {
+    const dfk  = CSV_COL_DATAF[CSV_TEMPLATE_HEADERS[i]];
+    const spec = dfk && typeof UNITS !== 'undefined' && UNITS.DATA_F_REGISTRY[dfk];
+    const num  = parseFloat(v);
+    return (spec && !isNaN(num)) ? roundForDisplay(UNITS.toDisplay(num, spec, _sys)) : v;
+  });
+  const UNIT_ROW = [
     '(text)','MM-DD e.g. 3-15','MM-DD e.g. 9-1','MM-DD optional','MM-DD optional',
     'days int>0','weeks int>0','weeks int>0',
-    'lbs/acre','lbs per 18-gal tote',
-    'acres min','0.0–1.0 fraction',
+    unitStr(U_LB_PER_ACRE), unitStr(U_LB) + ' per 18-gal tote',
+    unitStr(U_ACRE) + ' min','0.0–1.0 fraction',
     'hr/ac/wk','hr/ac/wk','hr/ac/wk',
     'L/ac/wk','L/ac/wk','L/ac/wk',
     'lb/ac/wk','lb/ac/wk','lb/ac/wk',
     'L/ac/wk','L/ac/wk','L/ac/wk',
-    '$/ac',
-    '(text)','$/lb','$/lb',
+    '$/' + unitStr(U_ACRE),
+    '(text)','$/' + unitStr(U_LB),'$/' + unitStr(U_LB),
     'annual|weekly_flat|weekly_varying',
-    'lbs/yr (annual only)','lbs/wk (weekly* types)',
+    unitStr(U_LB) + '/yr (annual only)',unitStr(U_LB) + '/wk (weekly* types)',
     'wk# 1-52 (weekly_varying only)','wk# 1-52 (weekly_varying only)',
   ];
   // Example: Spinach Wholesale (annual demand)
@@ -4008,7 +4025,7 @@ function downloadCropTemplate() {
   // Example: Garlic (annual, one channel)
   const EX3 = ['Garlic','10-1','4-30','','','196','1','1','2000','40','5','0.6','5','1','10','8000','6000','5000','0.40','0.20','0.15','4.0','1.5','3.0','150','Wholesale','3.00','0.20','annual','200000','','',''];
   const esc = v => '"' + String(v).replace(/"/g,'""') + '"';
-  const csv = [CSV_TEMPLATE_HEADERS, UNITS, EX1, EX2, EX3]
+  const csv = [CSV_TEMPLATE_HEADERS, UNIT_ROW, toTemplateDisplay(EX1), toTemplateDisplay(EX2), toTemplateDisplay(EX3)]
     .map(row => row.map(esc).join(',')).join('\n');
   const a = document.createElement('a');
   a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(String.fromCharCode(0xFEFF) + csv);
@@ -4068,6 +4085,12 @@ function parseCSVLine(line) {
  */
 function parseCropCSV(text) {
   const errors = [];
+  // Imported values are in the active display units (the download template matches the active
+  // system); convert unit-bearing fields to CANONICAL so the rendered crops + solver are right.
+  const impC = (v, dataFKey) => {
+    const spec = (typeof UNITS !== 'undefined') && UNITS.DATA_F_REGISTRY[dataFKey];
+    return spec ? UNITS.toCanonical(v, spec, APP_STATE.unitSystem || 'canonical') : v;
+  };
   const lines  = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
   if (lines.length < 2)
     return { crops: [], errors: [{ row:1, field:'', msg:'File must have a header row and at least one data row.' }] };
@@ -4146,11 +4169,11 @@ function parseCropCSV(text) {
         days_to_maturity:              parseInt(get('days_to_maturity'))       || 42,
         planting_weeks:                parseInt(get('planting_weeks'))         || 1,
         harvest_weeks:                 parseInt(get('harvest_weeks'))          || 2,
-        yield_per_acre:                parseFloat(get('yield_per_acre_lbs'))   || 2000,
-        lbs_per_tote:                  parseFloat(get('lbs_per_tote'))         || 30,
-        min_acreage_if_planted:        parseFloat(get('min_acreage_if_planted')) || 1,
+        yield_per_acre:                impC(parseFloat(get('yield_per_acre_lbs'))   || 2000, 'yield_per_acre'),
+        lbs_per_tote:                  impC(parseFloat(get('lbs_per_tote'))         || 30, 'lbs_per_tote'),
+        min_acreage_if_planted:        impC(parseFloat(get('min_acreage_if_planted')) || 1, 'min_acreage_if_planted'),
         crop_diversity_max:            parseFloat(get('diversity_max_fraction')) || 0.5,
-        seed_transplant_cost_per_acre: parseFloat(get('seed_cost_per_ac'))     || 0,
+        seed_transplant_cost_per_acre: impC(parseFloat(get('seed_cost_per_ac'))     || 0, 'seed_transplant_cost_per_acre'),
         labor_plant: parseFloat(get('labor_plant_hr_ac')) || 0,
         labor_grow:  parseFloat(get('labor_grow_hr_ac'))  || 0,
         labor_harv:  parseFloat(get('labor_harv_hr_ac'))  || 0,
@@ -4166,16 +4189,17 @@ function parseCropCSV(text) {
         channels_data: {},
       };
     }
-    const pkg = parseFloat(get('packaging_cost_per_lb')) || 0;
+    const priceC = impC(price, 'ch_price');
+    const pkg = impC(parseFloat(get('packaging_cost_per_lb')) || 0, 'ch_pkg');
     const cd  = cropMap[cropName].channels_data;
     if (dtype === 'annual') {
-      cd[channelName] = { price, pkg, demand_type:'annual', demand_value: parseFloat(get('demand_annual_lbs')) || 0 };
+      cd[channelName] = { price: priceC, pkg, demand_type:'annual', demand_value: impC(parseFloat(get('demand_annual_lbs')) || 0, 'ch_demand_value') };
     } else if (dtype === 'weekly_varying') {
       const ss = parseInt(get('demand_season_start_week'));
       const se = parseInt(get('demand_season_end_week'));
-      cd[channelName] = { price, pkg, demand_type:'weekly_varying', demand_value: parseFloat(get('demand_weekly_lbs')) || 0, demand_season:`W${ss}-W${se}` };
+      cd[channelName] = { price: priceC, pkg, demand_type:'weekly_varying', demand_value: impC(parseFloat(get('demand_weekly_lbs')) || 0, 'ch_demand_value'), demand_season:`W${ss}-W${se}` };
     } else {
-      cd[channelName] = { price, pkg, demand_type:'weekly_flat', demand_value: parseFloat(get('demand_weekly_lbs')) || 0 };
+      cd[channelName] = { price: priceC, pkg, demand_type:'weekly_flat', demand_value: impC(parseFloat(get('demand_weekly_lbs')) || 0, 'ch_demand_value') };
     }
   });
   return { crops: Object.values(cropMap), errors: [] };
@@ -4660,14 +4684,16 @@ function applyMCParams(rows) {
     if (!el) return;
     el.style.boxShadow = 'inset 3px 0 0 #059669';
     el.title = '✓ Set from your uploaded Past Data';
-    // The just-written value is in the ACTIVE display units (the upload template matches the
-    // active system). Store its canonical equivalent so the solver reads the right number and
-    // it survives unit toggles — otherwise readCanonical returns the stale seeded data-canon.
+    // The multi-tab "Past Data" upload is in US/canonical units (its tabs are lbs/acres), so the
+    // just-written value IS canonical: store it as data-canon and convert the DISPLAY to the
+    // active system. Without this, readCanonical returns the stale seeded data-canon and the
+    // solver silently ignores the upload. (In US mode toDisplay is identity — pure repair.)
     if (typeof UNITS !== 'undefined' && el.dataset) {
       const spec = specForEl(el);
-      if (spec) {
-        const v = parseFloat(el.value);
-        el.dataset.canon = isNaN(v) ? '' : UNITS.toCanonical(v, spec, APP_STATE.unitSystem || 'canonical');
+      const canon = spec ? parseFloat(el.value) : NaN;
+      if (spec && !isNaN(canon)) {
+        el.dataset.canon = canon;
+        el.value = roundForDisplay(UNITS.toDisplay(canon, spec, APP_STATE.unitSystem || 'canonical'));
       }
     }
   };
@@ -5335,19 +5361,19 @@ function renderRainfallSummaryBox() {
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.4rem;margin-bottom:0.45rem">
         <div style="background:#fff;border:1px solid #dbeafe;border-radius:5px;padding:0.3rem 0.5rem;text-align:center">
-          <div style="font-size:1rem;font-weight:700;color:#1e40af">${meanVal.toFixed(1)}</div>
-          <div style="font-size:0.65rem;color:#6b7280">mm/week avg</div>
+          <div style="font-size:1rem;font-weight:700;color:#1e40af">${dispVal(meanVal, U_MM).toFixed(2)}</div>
+          <div style="font-size:0.65rem;color:#6b7280">${unitStr(U_MM)}/week avg</div>
         </div>
         <div style="background:#fff;border:1px solid #dbeafe;border-radius:5px;padding:0.3rem 0.5rem;text-align:center">
-          <div style="font-size:1rem;font-weight:700;color:#374151">${stdDev.toFixed(1)}</div>
-          <div style="font-size:0.65rem;color:#6b7280">mm/week std dev</div>
+          <div style="font-size:1rem;font-weight:700;color:#374151">${dispVal(stdDev, U_MM).toFixed(2)}</div>
+          <div style="font-size:0.65rem;color:#6b7280">${unitStr(U_MM)}/week std dev</div>
         </div>
         <div style="background:#fff;border:1px solid #dbeafe;border-radius:5px;padding:0.3rem 0.5rem;text-align:center">
           <div style="font-size:1rem;font-weight:700;color:${cvPct>30?'#d97706':'#374151'}">${meanVal>0?cvPct.toFixed(0):'–'}%</div>
           <div style="font-size:0.65rem;color:#6b7280">year-to-year CV%</div>
         </div>
       </div>
-      <div style="font-size:0.71rem;color:#374151;margin-bottom:0.35rem">${wetWeeks} of ${weekKeys.length} weeks have average rainfall &gt; 1 mm. Monte Carlo uses bootstrap sampling from these actual historical values — not a fixed ±15% estimate.</div>
+      <div style="font-size:0.71rem;color:#374151;margin-bottom:0.35rem">${wetWeeks} of ${weekKeys.length} weeks have average rainfall &gt; ${roundForDisplay(dispVal(1, U_MM))} ${unitStr(U_MM)}. Monte Carlo uses bootstrap sampling from these actual historical values — not a fixed ±15% estimate.</div>
       <button onclick="deleteRainfallHistory()" style="font-size:0.71rem;padding:1px 8px;background:#fee2e2;border:1px solid #fca5a5;border-radius:4px;color:#7f1d1d;cursor:pointer">Remove rainfall file</button>
     </div>`;
 }
@@ -12801,7 +12827,7 @@ function renderMCSetup(params) {
       <summary style="font-size:0.74rem;color:#374151;cursor:pointer">Show upload summary (${summary.length} crop${summary.length>1?'s':''})</summary>
       <div style="margin-top:0.4rem;padding:0.4rem 0.6rem;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:5px;font-size:0.74rem">
         ${summary.map(s => `<div style="margin-bottom:2px"><strong>${s.cropName}:</strong>
-          yield spread ${s.yieldCV}%${s.yieldMean>0?' (avg '+s.yieldMean.toFixed(0)+' lb/ac)':''};
+          yield spread ${s.yieldCV}%${s.yieldMean>0?' (avg '+dispVal(s.yieldMean, U_LB_PER_ACRE).toFixed(0)+' '+unitStr(U_LB_PER_ACRE)+')':''};
           price spread ${s.priceCV}%;
           demand spread ${s.demandCV}%${s.nYears?' — '+s.nYears+' years of data':''}</div>`).join('')}
       </div>
