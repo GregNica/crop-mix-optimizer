@@ -29,7 +29,9 @@
     // bulk/storage volume (produce cold storage) — canonical m³
     vol_bulk:   { canonical: 'm³',   us: { unit: 'ft³',  perDisplay: 0.02831685 },metric: { unit: 'm³', perDisplay: 1 } },
     // rainfall / length — canonical mm
-    length:     { canonical: 'mm',   us: { unit: 'in',   perDisplay: 25.4 },      metric: { unit: 'mm', perDisplay: 1 } }
+    length:     { canonical: 'mm',   us: { unit: 'in',   perDisplay: 25.4 },      metric: { unit: 'mm', perDisplay: 1 } },
+    // labor time — same in both systems; only its per-area denominator converts (hr/acre ⇄ hr/ha)
+    time:       { canonical: 'hr',   us: { unit: 'hr',   perDisplay: 1 },         metric: { unit: 'hr', perDisplay: 1 } }
   };
 
   var SYSTEMS = ['us', 'metric'];
@@ -73,7 +75,7 @@
   // Human-readable unit string for a field's spec in a system (for labels/tooltips).
   function unitLabel(spec, system) {
     function u(m) { return system === 'canonical' ? DIMENSIONS[m].canonical : DIMENSIONS[m][system].unit; }
-    if (spec.num && spec.den) return u(spec.num) + '/' + u(spec.den);
+    if (spec.num && spec.den) return u(spec.num) + '/' + u(spec.den) + (spec.perWeek ? '/wk' : '');
     if (spec.inverse)        return '$/' + u(spec.measure) + (spec.perWeek ? '/wk' : '');
     return u(spec.measure) + (spec.perWeek ? '/wk' : '');
   }
@@ -119,11 +121,22 @@
     ch_demand_value:            { measure: 'mass' },                 // lbs (a capacity quantity)
     lbs_per_tote:               { measure: 'mass' },                 // lbs
     min_acreage_if_planted:     { measure: 'area_land' },            // acres
-    seed_transplant_cost_per_acre: { measure: 'area_land', inverse: true } // $/acre
-    // DEFERRED (per-acre resource rates behind pd-phase-detail): water/fuel _plant/grow/harv
-    // are L/acre (vol_liquid/area_land), fert_* are lb/acre (mass/area_land), labor_* are
-    // hrs/acre (a non-currency numerator). These need a per-area rate form and are wired with
-    // the crop panel pass, not step 1.
+    seed_transplant_cost_per_acre: { measure: 'area_land', inverse: true }, // $/acre
+    // Per-phase resource rates (behind pd-phase-detail) — per-area rates, /wk. The denominator
+    // (area_land) converts acre⇄ha; the numerator converts by its own dimension (labor's is
+    // time, which is system-invariant, so only the /area factor applies).
+    labor_plant: { num: 'time',       den: 'area_land', perWeek: true },  // hr/acre/wk
+    labor_grow:  { num: 'time',       den: 'area_land', perWeek: true },
+    labor_harv:  { num: 'time',       den: 'area_land', perWeek: true },
+    water_plant: { num: 'vol_liquid', den: 'area_land', perWeek: true },  // L/acre/wk
+    water_grow:  { num: 'vol_liquid', den: 'area_land', perWeek: true },
+    water_harv:  { num: 'vol_liquid', den: 'area_land', perWeek: true },
+    fert_plant:  { num: 'mass',       den: 'area_land', perWeek: true },  // lb/acre/wk
+    fert_grow:   { num: 'mass',       den: 'area_land', perWeek: true },
+    fert_harv:   { num: 'mass',       den: 'area_land', perWeek: true },
+    fuel_plant:  { num: 'vol_liquid', den: 'area_land', perWeek: true },  // L/acre/wk
+    fuel_grow:   { num: 'vol_liquid', den: 'area_land', perWeek: true },
+    fuel_harv:   { num: 'vol_liquid', den: 'area_land', perWeek: true }
   };
 
   /* Boot self-check (dev only): every registry id must exist in the DOM, and no
