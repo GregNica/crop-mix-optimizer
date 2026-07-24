@@ -2265,6 +2265,7 @@ function updateCropChannels(card, chDefs, cropDefaults, forceOverride) {
       </div>
     </div>`;
   }).join('');
+  seedAndDisplayUnitFields();   // seed data-canon + display units on the freshly-rendered data-f inputs
 }
 
 // Phase 5: show/hide the Advanced labor-flexibility controls.
@@ -2428,7 +2429,13 @@ function loadCropTemplate(idx, templateName) {
   if (!card) return;
   const nameEl = card.querySelector('.crop-name-inline');
   if (nameEl) nameEl.value = templateName;
-  const set = (f, v) => { const el = card.querySelector('[data-f="' + f + '"]'); if (el && v !== undefined && v !== '') el.value = v; };
+  const set = (f, v) => {
+    const el = card.querySelector('[data-f="' + f + '"]');
+    if (!el || v === undefined || v === '') return;
+    const spec = (typeof UNITS !== 'undefined') && UNITS.DATA_F_REGISTRY[f];   // template values are CANONICAL
+    if (spec && el.dataset) { el.dataset.canon = v; el.value = roundForDisplay(UNITS.toDisplay(v, spec, APP_STATE.unitSystem || 'canonical')); }
+    else el.value = v;
+  };
   set('days_to_maturity', t.days_to_maturity);
   set('planting_weeks',   t.planting_weeks);
   set('harvest_weeks',    t.harvest_weeks);
@@ -2502,7 +2509,7 @@ function renderCrop(c, idx) {
       <div class="form-group"><label>Days to Maturity</label><input type="number" class="cf" data-f="days_to_maturity" value="${v('days_to_maturity',42)}" min="7" step="1" placeholder="e.g. 42–196"></div>
       <div class="form-group"><label>Planting Weeks</label><input type="number" class="cf" data-f="planting_weeks" value="${v('planting_weeks',1)}" min="1" step="1" placeholder="usually 1–3"></div>
       <div class="form-group"><label>Harvest Weeks</label><input type="number" class="cf" data-f="harvest_weeks" value="${v('harvest_weeks',2)}" min="1" step="1" placeholder="usually 1–8"></div>
-      <div class="form-group"><label>Min Acres if Planted</label><input type="number" class="cf" data-f="min_acreage_if_planted" value="${v('min_acreage_if_planted',1)}" min="0" step="0.5" placeholder="e.g. 2"></div>
+      <div class="form-group"><label>Min Land if Planted (acres)</label><input type="number" class="cf" data-f="min_acreage_if_planted" value="${v('min_acreage_if_planted',1)}" min="0" step="0.5" placeholder="e.g. 2"></div>
       <div class="form-group"><label>Sell-through % <span class="tip" data-tip="Share of THIS crop's harvest that converts to cash (shrink/grade-out/spoilage vary a lot by crop — garlic ~95%, leafy greens ~80%). Blank = use the farm-wide default from Overhead, Financing &amp; Risk. Auto-filled from your Past Data upload.">?</span> <span class="opt-marker">(opt)</span> ${uploadPill('Upload historical sales data to derive sell-through')}</label><input type="number" class="cf st-pct-field" data-f="sell_through_pct" value="${v('sell_through_pct','')}" min="1" max="100" step="1" placeholder="${sellThroughPlaceholder()}"></div>
       <div class="form-group"><label>Sales Spread Weeks <span class="tip" data-tip="Post-harvest selling window (1–8 weeks, default 1). For shelf-stable crops (garlic, dry beans, onions), set >1 to let the optimizer sell across multiple weeks of demand capacity rather than all in the harvest week. The crop leaves the field on schedule — this only extends the sales window.&#10;&#10;Storage caveat: the harvest storage cap is checked at harvest time only; ensure it can hold the full harvest volume for spread crops.&#10;&#10;Overlap caveat: each planting's sales window is modeled independently. When a crop's plantings harvest closer together than the spread length, their windows overlap and the shared weeks are counted against BOTH — so the model can understate how much of that crop is sellable. The optimizer already factors this into the plan it chooses, so results stay conservative: sellable volume and profit are never overstated, only possibly understated a little when storage-crop harvests fall close together.">?</span> <span class="opt-marker">(opt)</span></label><input type="number" class="cf" data-f="sales_spread_weeks" value="${v('sales_spread_weeks','')}" min="1" max="8" step="1" placeholder="1"></div>
       <div class="form-group"><label>Planting Type</label>
@@ -2515,7 +2522,7 @@ function renderCrop(c, idx) {
       <div class="crop-section-label">Agronomy &amp; Diversity</div>
       <div class="form-group"><label>Yield per Acre (lbs) <span class="tip" data-tip="Expected lbs harvested per acre per planting. Typical: Spinach 4,000–6,000 · Lettuce 14,000–18,000 · Tomatoes 18,000–25,000 · Corn 7,000–12,000 · Garlic 8,000–12,000. For storage crops (garlic, onions, potatoes) that harvest in 1–2 weeks, set the wholesale demand cap to at least yield × min_acreage ÷ sales_spread_weeks to allow meaningful planting.">?</span>${uploadPill('Upload historical yield data')}</label><input type="number" class="cf" data-f="yield_per_acre" value="${v('yield_per_acre',2000)}" min="1" step="50" placeholder="e.g. 3250"></div>
       <div class="form-group"><label>Max Land Fraction <span class="tip" data-tip="Crop diversity cap: limits what share of total farm acreage this crop (all plantings combined) can occupy. 50% = max 40 acres on an 80-acre farm.">?</span></label>${diversitySelect(v('crop_diversity_max',0.5))}</div>
-      <div class="form-group"><label>Lbs per 18-gal Tote <span class="tip" data-tip="How many lbs fit in one standard 18-gallon harvest tote. Used to compute harvest storage needs. Typical: leafy greens 12–25 lbs · root veg 40–60 lbs · cucumbers/peppers 20–40 lbs.">?</span></label><input type="number" class="cf" data-f="lbs_per_tote" value="${lbsPerTote}" min="1" step="1" placeholder="e.g. 30"></div>
+      <div class="form-group"><label>Produce per 18-gal Tote (lbs) <span class="tip" data-tip="How many lbs fit in one standard 18-gallon harvest tote. Used to compute harvest storage needs. Typical: leafy greens 12–25 lbs · root veg 40–60 lbs · cucumbers/peppers 20–40 lbs.">?</span></label><input type="number" class="cf" data-f="lbs_per_tote" value="${lbsPerTote}" min="1" step="1" placeholder="e.g. 30"></div>
 
       <div class="crop-section-label">Season(s) <span class="tip" data-tip="Calendar windows when this crop can be planted. The optimizer generates one planting succession per eligible week inside these windows.">?</span></div>
       ${monthDaySelects('s1_start', v('s1_start','03-01'), 'Season 1 Start')}
@@ -2587,7 +2594,12 @@ function getCropsFromForm() {
     const nameEl = card.querySelector('.crop-name-inline');
     const name = nameEl ? nameEl.value.trim() : 'Crop';
     const f  = field => { const el = card.querySelector('[data-f="' + field + '"]'); return el ? el.value : ''; };
-    const fn = (field, d=0) => { const n = parseFloat(f(field)); return isNaN(n) ? d : n; };
+    // readCanonicalEl returns canonical for unit fields (via data-canon/spec) and a plain
+    // parseFloat for the rest, so this one call covers both — matching cfnC below.
+    const fn = (field, d=0) => {
+      const n = readCanonicalEl(card.querySelector('[data-f="' + field + '"]'));
+      return isNaN(n) ? d : n;
+    };
     const fi = (field, d=1) => { const n = parseInt(f(field));   return isNaN(n) ? d : n; };
 
     function readMMDD(prefix) {
@@ -2610,14 +2622,15 @@ function getCropsFromForm() {
     card.querySelectorAll('.crop-channel-section').forEach(sec => {
       const chName = sec.getAttribute('data-ch');
       if (!chName) return;
-      const cfn = f2 => { const el = sec.querySelector('[data-f="' + f2 + '"]'); return el ? el.value : ''; };
+      const cfn  = f2 => { const el = sec.querySelector('[data-f="' + f2 + '"]'); return el ? el.value : ''; };
+      const cfnC = f2 => readCanonicalEl(sec.querySelector('[data-f="' + f2 + '"]'));  // canonical for unit fields
       const dtype  = cfn('ch_demand_type') || 'weekly_flat';
-      const dval   = parseFloat(cfn('ch_demand_value')) || 0;
+      const dval   = cfnC('ch_demand_value') || 0;
       const ssv    = cfn('ch_season_start').trim();
       const sev    = cfn('ch_season_end').trim();
       const dseas  = (ssv && sev) ? `W${ssv}-W${sev}` : '';
-      const price  = parseFloat(cfn('ch_price'))  || 0;
-      const pkg    = parseFloat(cfn('ch_pkg'))    || 0;
+      const price  = cfnC('ch_price')  || 0;
+      const pkg    = cfnC('ch_pkg')    || 0;
       if (dtype === 'annual') {
         channels[chName] = {price_per_lb: price, packaging_cost_per_lb: pkg,
                             demand_cap_type: 'annual', annual_demand_lbs: dval};
@@ -2703,17 +2716,45 @@ function canonOf(el) {
   const c = el && el.dataset ? el.dataset.canon : undefined;
   return (c === undefined || c === '') ? NaN : parseFloat(c);
 }
-// Read a unit-bearing field BY ID and return it in canonical units. Drop-in for
-// parseFloat(el.value). Prefers the field's stored canonical value (data-canon, the
-// source of truth — kept exact so it never drifts under unit toggles); falls back to
-// converting the displayed value if data-canon hasn't been seeded yet.
-function readCanonical(id) {
-  const el = document.getElementById(id);
+// Unit-bearing fields come in two flavors, handled uniformly by these helpers:
+//   • static setup fields — keyed by id in UNITS.FIELD_REGISTRY (one instance each)
+//   • per-crop/per-channel fields — keyed by data-f in UNITS.DATA_F_REGISTRY (many instances)
+function specForEl(el) {
+  if (!el || typeof UNITS === 'undefined') return null;
+  if (el.id && UNITS.FIELD_REGISTRY[el.id]) return UNITS.FIELD_REGISTRY[el.id];
+  const f = el.dataset && el.dataset.f;
+  return (f && UNITS.DATA_F_REGISTRY[f]) || null;
+}
+// Invoke cb(el, spec) for every unit-bearing field currently in the DOM (static + data-f).
+function forEachUnitField(cb) {
+  if (typeof UNITS === 'undefined') return;
+  Object.keys(UNITS.FIELD_REGISTRY).forEach(function (id) {
+    const el = document.getElementById(id);
+    if (el) cb(el, UNITS.FIELD_REGISTRY[id]);
+  });
+  document.querySelectorAll('[data-f]').forEach(function (el) {
+    const spec = UNITS.DATA_F_REGISTRY[el.getAttribute('data-f')];
+    if (spec) cb(el, spec);
+  });
+}
+// The <label> for a field — each unit-bearing field lives in its own .form-group.
+function labelFor(el) {
+  const grp = el && (el.closest('.form-group') || el.closest('div'));
+  return grp ? grp.querySelector('label') : null;
+}
+// Read ANY unit-bearing element in canonical units. Prefers data-canon (exact source of
+// truth, drift-free); falls back to converting the displayed value. Drop-in for
+// parseFloat(el.value).
+function readCanonicalEl(el) {
   if (!el) return NaN;
   const canon = canonOf(el);
   if (!isNaN(canon)) return canon;
-  const spec = (typeof UNITS !== 'undefined') && UNITS.FIELD_REGISTRY[id];
-  return toCanonicalActive(parseFloat(el.value), spec || null);
+  const spec = specForEl(el);
+  return spec ? toCanonicalActive(parseFloat(el.value), spec) : parseFloat(el.value);
+}
+// By-id convenience wrapper (static fields).
+function readCanonical(id) {
+  return readCanonicalEl(document.getElementById(id));
 }
 
 // Round a converted display value to a sensible precision for its magnitude (avoids
@@ -2737,21 +2778,38 @@ function roundForDisplay(v) {
 function renderUnitLabels() {
   if (typeof UNITS === 'undefined') return;
   const sys = APP_STATE.unitSystem || 'canonical';
-  Object.keys(UNITS.FIELD_REGISTRY).forEach(function (id) {
-    const el = document.getElementById(id);
-    const grp = el && el.closest('.form-group');
-    const label = grp && grp.querySelector('label');
-    if (!label) return;
-    const unit = UNITS.unitLabel(UNITS.FIELD_REGISTRY[id], sys);
-    for (let i = 0; i < label.childNodes.length; i++) {
-      const node = label.childNodes[i];
-      if (node.nodeType === 3 && /\([^)]*\)/.test(node.nodeValue)) {
-        // replace the LAST parenthetical in this text node (the unit is always last)
-        node.nodeValue = node.nodeValue.replace(/\(([^)]*)\)([^(]*)$/, '(' + unit + ')$2');
-        break;
-      }
-    }
+  forEachUnitField(function (el, spec) {
+    rewriteLabelUnit(labelFor(el), UNITS.unitLabel(spec, sys));
   });
+}
+// Rewrite the unit inside a label's TRAILING parenthetical, leaving tip <span>s/pills/markers
+// untouched (they follow the unit text node). No-op if the label has no parenthetical.
+function rewriteLabelUnit(label, unit) {
+  if (!label) return;
+  for (let i = 0; i < label.childNodes.length; i++) {
+    const node = label.childNodes[i];
+    if (node.nodeType === 3 && /\([^)]*\)/.test(node.nodeValue)) {
+      node.nodeValue = node.nodeValue.replace(/\(([^)]*)\)([^(]*)$/, '(' + unit + ')$2');
+      return;
+    }
+  }
+}
+// After crop/channel collections are (re)rendered, their data-f inputs hold CANONICAL template
+// values with no data-canon and no display conversion. Seed data-canon from that canonical
+// value and convert the display to the active system. Idempotent: already-seeded fields skip.
+// (In US mode this is a no-op for mass/land fields since US = canonical.)
+function seedAndDisplayUnitFields() {
+  if (typeof UNITS === 'undefined') return;
+  const sys = APP_STATE.unitSystem || 'canonical';
+  document.querySelectorAll('[data-f]').forEach(function (el) {
+    const spec = UNITS.DATA_F_REGISTRY[el.getAttribute('data-f')];
+    if (!spec || !el.dataset || (el.dataset.canon !== undefined && el.dataset.canon !== '')) return;
+    const raw = parseFloat(el.value);
+    if (isNaN(raw)) return;
+    el.dataset.canon = raw;                                    // freshly rendered = canonical
+    el.value = roundForDisplay(UNITS.toDisplay(raw, spec, sys));
+  });
+  renderUnitLabels();
 }
 
 // Switch the whole app's display units. Converts every registry field's DOM value from the
@@ -2763,10 +2821,8 @@ function setUnitSystem(newSys) {
   if (typeof UNITS === 'undefined' || (newSys !== 'us' && newSys !== 'metric')) return;
   if (newSys === 'metric' && !METRIC_READY) return;  // gated until metric is wired end-to-end
   const oldSys = APP_STATE.unitSystem || 'canonical';
-  Object.keys(UNITS.FIELD_REGISTRY).forEach(function (id) {
-    const el = document.getElementById(id);
-    if (!el || !el.dataset) return;
-    const spec = UNITS.FIELD_REGISTRY[id];
+  forEachUnitField(function (el, spec) {
+    if (!el.dataset) return;
     // Seed the canonical source-of-truth once (from the current display in the OLD system),
     // then always re-derive the display FROM canonical — so toggling never accumulates
     // rounding drift.
@@ -2790,8 +2846,8 @@ function setUnitSystem(newSys) {
 function initUnitInputSync() {
   document.addEventListener('input', function (e) {
     const el = e.target;
-    if (!el || !el.id || !el.dataset || typeof UNITS === 'undefined') return;
-    const spec = UNITS.FIELD_REGISTRY[el.id];
+    if (!el || !el.dataset || typeof UNITS === 'undefined') return;
+    const spec = specForEl(el);
     if (!spec) return;
     const v = parseFloat(el.value);
     el.dataset.canon = isNaN(v) ? '' : UNITS.toCanonical(v, spec, APP_STATE.unitSystem || 'canonical');
