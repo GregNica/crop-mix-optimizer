@@ -57,6 +57,22 @@ export const CHATBOT_FIELDS: ChatbotField[] = [
 
 const FIELD_BY_ID = new Map(CHATBOT_FIELDS.map((f) => [f.id, f]));
 
+/** Per-crop scalar fields the chatbot may update via update_crop. (Per-channel prices, seasons,
+ *  and the land-share cap are still form-only for now — they need special widgets.) */
+export const CROP_DETAIL_FIELDS: ChatbotField[] = [
+  { id: "yield_per_acre", label: "Yield per acre", type: "number", unit: "lbs/acre", min: 1, description: "Expected pounds harvested per acre per planting." },
+  { id: "days_to_maturity", label: "Days to maturity", type: "number", unit: "days", min: 7, description: "Days from planting to first harvest." },
+  { id: "planting_weeks", label: "Planting weeks", type: "number", min: 1, max: 8, description: "Weeks spent in the planting phase." },
+  { id: "harvest_weeks", label: "Harvest weeks", type: "number", min: 1, max: 20, description: "Weeks the crop yields harvestable produce." },
+  { id: "min_acreage_if_planted", label: "Min acreage if planted", type: "number", unit: "acres", min: 0, description: "Minimum acres to commit if this crop is planted at all." },
+  { id: "sell_through_pct", label: "Per-crop sell-through %", type: "number", unit: "%", min: 1, max: 100, description: "Share of THIS crop's harvest that sells (overrides the farm default). '15% doesn't sell' => 85." },
+  { id: "sales_spread_weeks", label: "Sales spread weeks", type: "number", min: 1, max: 8, description: "Weeks to spread sales of a storage crop after harvest (1 = sell in the harvest week)." },
+  { id: "seed_transplant_cost_per_acre", label: "Seed/transplant cost", type: "number", unit: "$/acre", min: 0, description: "Seed or transplant cost per acre." },
+  { id: "lbs_per_tote", label: "Lbs per tote", type: "number", min: 1, description: "Pounds per 18-gallon harvest tote (storage sizing)." },
+  { id: "planting_type", label: "Planting type", type: "enum", enum: ["seed", "transplant"], description: "Direct-seeded or transplanted." },
+];
+const CROP_FIELD_BY_ID = new Map(CROP_DETAIL_FIELDS.map((f) => [f.id, f]));
+
 /** OpenAI-compatible tool definition for proposing field values. */
 export function buildSetFormFieldsTool() {
   const properties: Record<string, unknown> = {};
@@ -88,9 +104,90 @@ export function buildSetFormFieldsTool() {
   };
 }
 
+/** OpenAI-compatible tools for adding/removing crops (template-driven, so the model picks a name, not 20 fields). */
+export function buildCropTools(cropTemplates: string[]) {
+  const templates = [...cropTemplates, "New Crop"];
+  return [
+    {
+      type: "function",
+      function: {
+        name: "add_crop",
+        description:
+          "Add a crop to the plan using the closest matching template (this fills realistic agronomy + default per-channel prices; the user fine-tunes in the form). Use 'New Crop' only if nothing matches.",
+        parameters: {
+          type: "object",
+          properties: {
+            template: { type: "string", enum: templates, description: "Closest matching crop template, or 'New Crop' for a blank one." },
+            name: { type: "string", description: "Optional custom name (defaults to the template name)." },
+          },
+          required: ["template"],
+          additionalProperties: false,
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "remove_crop",
+        description: "Remove a crop from the plan by its exact current name.",
+        parameters: {
+          type: "object",
+          properties: { name: { type: "string", description: "Exact name of the crop to remove." } },
+          required: ["name"],
+          additionalProperties: false,
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "update_crop",
+        description: "Change one or more details of an existing crop (by name). Include ONLY the fields you're changing.",
+        parameters: {
+          type: "object",
+          properties: (() => {
+            const p: Record<string, unknown> = { name: { type: "string", description: "Exact current name of the crop to update." } };
+            for (const f of CROP_DETAIL_FIELDS) {
+              p[f.id] = f.type === "enum"
+                ? { type: "string", enum: f.enum, description: f.description }
+                : { type: "number", description: `${f.description}${f.unit ? ` Unit: ${f.unit}.` : ""}` };
+            }
+            return p;
+          })(),
+          required: ["name"],
+          additionalProperties: false,
+        },
+      },
+    },
+  ];
+}
+
+/** Validate a update_crop tool call's detail fields (excludes `name`). */
+export function validateCropDetail(input: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!input || typeof input !== "object") return out;
+  for (const f of CROP_DETAIL_FIELDS) {
+    const raw = (input as Record<string, unknown>)[f.id];
+    if (raw === null || raw === undefined || raw === "") continue;
+    if (f.type === "enum") {
+      const s = String(raw);
+      if (f.enum!.includes(s)) out[f.id] = s;
+    } else {
+      const n = Number(raw);
+      if (!Number.isFinite(n)) continue;
+      if (f.min !== undefined && n < f.min) continue;
+      if (f.max !== undefined && n > f.max) continue;
+      out[f.id] = String(n);
+    }
+  }
+  return out;
+}
+
 /** System prompt: role, behavior, the interpret-don't-derive boundary, and the field guide with current values. */
-export function buildSystemPrompt(formState: unknown): string {
-  const fields = (formState && typeof formState === "object" && (formState as any).fields) || {};
+export function buildSystemPrompt(formState: unknown, cropTemplates: string[] = []): string {
+  const fs = formState && typeof formState === "object" ? (formState as any) : {};
+  const fields = fs.fields || {};
+  const currentCrops = Array.isArray(fs.crops) ? fs.crops.map((c: any) => c && c.name).filter(Boolean) : [];
   const guide = CHATBOT_FIELDS.map((f) => {
     const cur = fields[f.id];
     const curStr = cur === undefined || cur === "" ? "(not set)" : String(cur);
@@ -111,6 +208,12 @@ BE A PROACTIVE GUIDE (do not just react):
 - Track what's still "(not set)" in the field list below and steer toward filling it, skipping anything clearly irrelevant to this farm.
 - Only set a field when you're confident of the value AND its unit. If unsure, ask a short clarifying question instead of guessing.
 
+COACH — SANITY-CHECK VALUES (you are an expert advisor, not a passive form-filler):
+- When the user gives a numeric value — a field OR a crop detail (yield, days-to-maturity, a percent, a cost) — judge whether it's realistic using your agronomic/economic knowledge for THAT specific crop or item.
+- If it looks unusual — outside, or at the edge of, the typical real-world range — FLAG it in your message: state the typical range, note that their figure is high or low, and ask them to confirm (e.g. "Field tomato yields usually run ~20,000–40,000 lb/acre; 60,000 is very high — is that right, or did you mean a greenhouse/per-plant figure?").
+- Still propose the value anyway (the confirmation card lets them adjust or uncheck it). Coaching means flagging and double-checking, NOT refusing or withholding the proposal. But never silently accept a figure that looks wrong.
+- This complements ACT IMMEDIATELY below: you still call the tool in the same turn — you just add the sanity note to your message.
+
 CONVERSATION OUTLINE (work through it in order, skipping what's already set or irrelevant):
 1. Farm size & season — total_land (acres); operating_weeks (active weeks/year).
 2. Water sources — which of well / rainwater catchment / city water they use (set the *_enabled flags), then the detail for each they have: well_weekly_cap_L, catchment_surface_area_m2, city_water_cost_per_L.
@@ -129,14 +232,25 @@ INTERPRETATION RULES (get the logic right — this matters):
 - DON'T CONFLATE: rent/debt are payments, not interest rates; interest_rate_pct is the operating credit line, not a mortgage/equipment rate; payroll_load_pct is the % added to wages, not the wage itself.
 - ONLY include a field in set_form_fields if the user actually gave you enough to set it. OMIT every other field entirely — do NOT include a field with 0, null, blank, or a guessed placeholder just because it appears in the schema. (Omitted fields keep their current value.) Setting fewer, correct fields is always better than padding with zeros.
 - DON'T RE-PROPOSE DEFAULTS: every field already holds a sensible default (shown as [current: …]). Only propose a field when the user's input CHANGES it from its current value. You may mention a field is at its default and offer to adjust it, but never include in a proposal a value the field already has — that just looks like you assumed it.
-- OUT OF SCOPE: crops and their prices/yields, sales channels, and individual workers are NOT your fields. If the user describes them, acknowledge briefly and tell them to enter those in the crops / channels / labor sections of the form.
+- Sales channels and the labor roster are still entered in the form — you can't edit those yet, so if the user brings them up, say so. (Crops you CAN add and remove — see the CROPS section below.)
 - BE INQUISITIVE — DON'T ASSUME: when a value depends on something you're not sure of — how many hours a pump actually runs, a cost or rate the user hasn't stated, what they meant — ASK a short question instead of guessing or inventing a placeholder. A good clarifying question is better than a confident wrong value. Never plug in 0 for a cost/value you simply haven't been told.
 - AVAILABILITY ≠ USAGE: having a water source is not the same as preferring to use it. If the user HAS a source — even one they use sparingly or only as a backup ("it's expensive, I'd rather not") — set its *_enabled = true and capture its cost. Only set *_enabled = false if they genuinely do NOT have it.
 
 OUTPUT: When you set values, call set_form_fields and put your brief conversational reply (what you understood, what you're proposing, your next question) in its "message" field. When you're only asking a question, reply normally. Always keep it concise and friendly.
 
 FIELDS YOU CAN SET (id — meaning [current value]):
-${guide}`;
+${guide}
+
+CROPS — you can ADD, REMOVE, and UPDATE crops (channels and labor are still done in the form):
+- The farm STARTS with default crops (listed below as "Current crops"). When the user tells you which crops they grow, RECONCILE against that list: add_crop any they grow that aren't already present; and OFFER (via remove_crop) to remove current crops they did NOT mention. Don't silently keep defaults they don't grow, and don't add a crop that's already there.
+- ACT IMMEDIATELY: when the user asks to add, remove, or change a crop, call the matching tool right away IN THE SAME TURN. The review card the user then sees IS the confirmation — do NOT ask "are you sure?" or wait for a "yes" first. NEVER describe a crop change in prose without also making the tool call — if you mention adding/removing/changing a crop, the matching tool call MUST accompany it that turn, or no card appears and nothing happens.
+- ALWAYS KEEP TALKING after a crop action: in the SAME turn, also call set_form_fields with just your "message" (and no other fields) to confirm what you did and ask the next relevant question. A crop action must never end the turn silently or with a flat reply — stay a proactive guide.
+- add_crop: closest matching template (fills agronomy + default per-channel prices the user can fine-tune in the form); use "New Crop" only if nothing fits.
+- remove_crop: by exact current name.
+- update_crop: change a crop's details by name — yield, days to maturity, planting/harvest weeks, min acreage, per-crop sell-through, sales-spread weeks, seed cost, lbs per tote, planting type. Include only the fields being changed. (Per-channel prices, planting seasons, and the land-share cap are still set in the form for now — say so if asked.)
+- Never invent agronomy you weren't given — for adds, the template provides it.
+- Current crops: ${currentCrops.length ? currentCrops.join(", ") : "(none)"}.
+- Available templates: ${cropTemplates.length ? cropTemplates.join(", ") : "(none provided)"}.`;
 }
 
 /** Validate/coerce a tool-call's proposed fields against the allowlist. Returns string/boolean values ready for the form. */

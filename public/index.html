@@ -3205,22 +3205,31 @@ function clearProposal() {
   if (el) el.innerHTML = '';
 }
 
-function showProposal(updates, meta) {
-  _chatPending = updates;
-  meta = meta || {};
+function showProposal(data) {
+  const updates = data.fieldUpdates || {};
+  const meta = data.fieldMeta || {};
+  const cropOps = data.cropOps || [];
+  _chatPending = { fields: updates, cropOps };
   const el = document.getElementById('chat-proposal');
   if (!el) return;
-  const rows = Object.entries(updates)
-    .map(([k, v]) => {
-      const m = meta[k] || {};
-      const label = m.label || labelFor(k);
-      const unit = m.unit ? ' ' + escHtml(m.unit) : '';
-      return `<label class="prop-row"><input type="checkbox" class="prop-check" data-field="${escHtml(k)}" checked>
-        <span><strong>${escHtml(label)}</strong>: ${escHtml(String(v))}${unit}</span></label>`;
-    }).join('');
+  if (!Object.keys(updates).length && !cropOps.length) { el.innerHTML = ''; return; }
+  const fieldRows = Object.entries(updates).map(([k, v]) => {
+    const m = meta[k] || {};
+    const label = m.label || labelFor(k);
+    const unit = m.unit ? ' ' + escHtml(m.unit) : '';
+    return `<label class="prop-row"><input type="checkbox" class="prop-check" data-field="${escHtml(k)}" checked>
+      <span><strong>${escHtml(label)}</strong>: ${escHtml(String(v))}${unit}</span></label>`;
+  }).join('');
+  const cropRows = cropOps.map((o, i) => {
+    let txt;
+    if (o.op === 'add') txt = `Add crop: <strong>${escHtml(o.name || o.template)}</strong>${o.name && o.name !== o.template ? ` (from ${escHtml(o.template)})` : ''}`;
+    else if (o.op === 'remove') txt = `Remove crop: <strong>${escHtml(o.name)}</strong>`;
+    else txt = `Update <strong>${escHtml(o.name)}</strong>: ${escHtml(Object.entries(o.fields || {}).map(([k, v]) => `${k} = ${v}`).join(', '))}`;
+    return `<label class="prop-row"><input type="checkbox" class="prop-cropop" data-idx="${i}" checked> <span>${txt}</span></label>`;
+  }).join('');
   el.innerHTML = `<div class="prop-card">
     <div class="prop-title">Apply these to your setup? (uncheck anything that's off)</div>
-    ${rows}
+    ${fieldRows}${cropRows}
     <div class="prop-actions">
       <button class="acct-btn" onclick="applyProposal()">Apply checked</button>
       <button class="acct-btn ghost" onclick="clearProposal()">Dismiss</button>
@@ -3229,13 +3238,15 @@ function showProposal(updates, meta) {
 
 function applyProposal() {
   if (!_chatPending) return;
-  const checked = new Set(
-    Array.from(document.querySelectorAll('#chat-proposal .prop-check:checked'))
-      .map((c) => c.getAttribute('data-field')),
+  const checkedFields = new Set(
+    Array.from(document.querySelectorAll('#chat-proposal .prop-check:checked')).map((c) => c.getAttribute('data-field')),
+  );
+  const checkedOps = new Set(
+    Array.from(document.querySelectorAll('#chat-proposal .prop-cropop:checked')).map((c) => parseInt(c.getAttribute('data-idx'), 10)),
   );
   let n = 0;
-  for (const [id, val] of Object.entries(_chatPending)) {
-    if (!checked.has(id)) continue;            // only apply fields the user kept checked
+  for (const [id, val] of Object.entries(_chatPending.fields || {})) {
+    if (!checkedFields.has(id)) continue;       // only apply fields the user kept checked
     const el = document.getElementById(id);
     if (!el) continue;
     if (el.type === 'checkbox') el.checked = (val === true || val === 'true');
@@ -3244,8 +3255,52 @@ function applyProposal() {
     el.dispatchEvent(new Event('change', { bubbles: true }));
     n++;
   }
+  let cropChanged = false;
+  (_chatPending.cropOps || []).forEach((o, i) => {
+    if (!checkedOps.has(i)) return;
+    if (o.op === 'add') { addCropFromTemplate(o.template, o.name); cropChanged = true; n++; }
+    else if (o.op === 'remove') { if (removeCropByName(o.name)) { cropChanged = true; n++; } }
+    else if (o.op === 'update') { if (updateCropByName(o.name, o.fields || {})) { cropChanged = true; n++; } }
+  });
+  if (cropChanged) markDirty();  // add/remove don't fire input events, so trigger auto-save explicitly
   clearProposal();
-  addChatMsg('bot', n ? `Applied ${n} value${n === 1 ? '' : 's'} ✓ (auto-saved).` : 'Okay — nothing applied.');
+  addChatMsg('bot', n ? `Applied ${n} change${n === 1 ? '' : 's'} ✓ (auto-saved).` : 'Okay — nothing applied.');
+}
+
+function addCropFromTemplate(template, name) {
+  addCrop();  // appends a blank crop card at the end
+  const idx = document.querySelectorAll('#crop-list .crop-detail').length - 1;
+  if (idx < 0) return;
+  if (template && template !== 'New Crop') loadCropTemplate(idx, template);
+  if (name) {
+    const nameEl = document.getElementById('crop-' + idx)?.querySelector('.crop-name-inline');
+    if (nameEl) nameEl.value = name;
+  }
+}
+
+function removeCropByName(name) {
+  const cards = Array.from(document.querySelectorAll('#crop-list .crop-detail'));
+  const target = String(name).trim().toLowerCase();
+  const idx = cards.findIndex((c) => (c.querySelector('.crop-name-inline')?.value || '').trim().toLowerCase() === target);
+  if (idx >= 0) { deleteCrop(idx); return true; }
+  return false;
+}
+
+function updateCropByName(name, fields) {
+  const target = String(name).trim().toLowerCase();
+  const card = Array.from(document.querySelectorAll('#crop-list .crop-detail'))
+    .find((c) => (c.querySelector('.crop-name-inline')?.value || '').trim().toLowerCase() === target);
+  if (!card) return false;
+  let changed = false;
+  for (const [f, v] of Object.entries(fields)) {
+    const el = card.querySelector('[data-f="' + f + '"]');
+    if (!el) continue;
+    el.value = v;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    changed = true;
+  }
+  return changed;
 }
 
 async function sendChat(e) {
@@ -3263,7 +3318,11 @@ async function sendChat(e) {
   try {
     const res = await fetch('/api/chat', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ messages: _chatMessages.slice(-20), formState: serializeFormState() }),
+      body: JSON.stringify({
+        messages: _chatMessages.slice(-20),
+        formState: serializeFormState(),
+        cropTemplates: Object.keys(CROP_TEMPLATES).filter((k) => CROP_TEMPLATES[k]),
+      }),
     });
     const data = await res.json().catch(() => ({}));
     if (thinking) thinking.remove();
@@ -3272,7 +3331,7 @@ async function sendChat(e) {
     } else {
       addChatMsg('bot', data.reply || '…');
       _chatMessages.push({ role: 'assistant', content: data.reply || '' });
-      if (data.fieldUpdates && Object.keys(data.fieldUpdates).length) showProposal(data.fieldUpdates, data.fieldMeta || {});
+      if ((data.fieldUpdates && Object.keys(data.fieldUpdates).length) || (data.cropOps && data.cropOps.length)) showProposal(data);
     }
   } catch (err) {
     if (thinking) thinking.remove();
