@@ -8,6 +8,17 @@ This project translates a farm profit-maximization Excel Solver model ("Group 5_
 
 ---
 
+## Development Workflow — Review Before Committing (DEFAULT)
+
+Run the review skills before finalizing work — this is the project default, not optional:
+
+- **Before committing** non-trivial changes to a branch: run **`/simplify`** on the diff (reuse/simplification/efficiency cleanup — quality only, not a bug hunt). Apply its fixes, then commit.
+- **Before landing a branch** (opening a PR / merging to `master`): run **`/code-review`** (bug hunt) *and* `/simplify` across the branch diff. Use `/code-review ultra` for high-stakes landings (money-affecting solver/payload/accounting changes qualify).
+
+Trivial/mechanical edits (a one-line copy fix, a comment) may skip `/simplify`. Everything touching the solver, payload builder, cost/accounting math, or the unit system should get it. If the user is committing themselves, remind them to run these first.
+
+---
+
 ## Files
 
 | File | Description |
