@@ -5133,7 +5133,7 @@ function renderBackCheckPanel(res) {
         if (!range) return;
         const ypa = parseFloat(crop.yield_per_acre) || 0;
         if (ypa > range[1].high * 1.4) {
-          diagnostics.push(`<em>${crop.name}</em> yield (${ypa.toLocaleString()} lbs/ac) is above the typical range (${range[1].low.toLocaleString()}–${range[1].high.toLocaleString()} lbs/ac per UC Extension). Double-check this value.`);
+          diagnostics.push(`<em>${crop.name}</em> yield (${fmtUnit(ypa, U_LB_PER_ACRE)}) is above the typical range (${Math.round(dispVal(range[1].low, U_LB_PER_ACRE)).toLocaleString()}–${fmtUnit(range[1].high, U_LB_PER_ACRE)} per UC Extension). Double-check this value.`);
         }
       });
     } catch(e) { /* skip if getCropsFromForm unavailable */ }
@@ -5148,7 +5148,7 @@ function renderBackCheckPanel(res) {
         const std  = Math.sqrt(vals.reduce((s,v) => s + (v-mean)**2, 0) / vals.length);
         vals.forEach(v => {
           if (Math.abs(v - mean) > 1.75 * std) {
-            diagnostics.push(`Your historical <em>${cropName}</em> yield data has an outlier (${Math.round(v).toLocaleString()} lbs/ac vs avg ${Math.round(mean).toLocaleString()} lbs/ac). The model uses the mean including this value — consider marking that year as "atypical" in your profit history upload, or focus on the P50 Monte Carlo result.`);
+            diagnostics.push(`Your historical <em>${cropName}</em> yield data has an outlier (${fmtUnit(v, U_LB_PER_ACRE)} vs avg ${fmtUnit(mean, U_LB_PER_ACRE)}). The model uses the mean including this value — consider marking that year as "atypical" in your profit history upload, or focus on the P50 Monte Carlo result.`);
           }
         });
       });
@@ -5165,12 +5165,12 @@ function renderBackCheckPanel(res) {
         const fmType = fmEntry.demand_type || 'weekly_flat';
         const wsType = wsEntry.demand_type  || 'weekly_flat';
         if (fmType !== wsType) return;   // mixed units (e.g. annual vs weekly) — comparison not meaningful
-        const unit  = fmType === 'annual' ? 'lbs/yr' : 'lbs/wk';
+        const unit  = fmType === 'annual' ? unitStr(U_LB)+'/yr' : unitStr(U_LB)+'/wk';
         const floor = fmType === 'annual' ? 400000 : 10000;
         const fmDemand = parseFloat(fmEntry.demand_value) || 0;
         const wsDemand = parseFloat(wsEntry.demand_value) || 1;
         if (fmDemand > wsDemand * 3 && fmDemand > floor) {
-          diagnostics.push(`<em>${crop.name}</em> Farmers Market sales cap (${fmDemand.toLocaleString()} ${unit}) is much higher than Wholesale — the optimizer may be routing most sales to FM. If your FM capacity hasn't grown, tighten this cap.`);
+          diagnostics.push(`<em>${crop.name}</em> Farmers Market sales cap (${Math.round(dispVal(fmDemand, U_LB)).toLocaleString()} ${unit}) is much higher than Wholesale — the optimizer may be routing most sales to FM. If your FM capacity hasn't grown, tighten this cap.`);
         }
       });
     } catch(e) { /* skip */ }
@@ -7300,7 +7300,7 @@ function renderConstraintSummary(res, params) {
 
       const satClass  = sat    >= 0.9 ? 'color:#dc2626;font-weight:700' : sat    >= 0.6 ? 'color:#d97706' : 'color:#059669';
       const peakClass = peakWk >= 0.95 ? 'color:#dc2626;font-weight:700' : peakWk >= 0.80 ? 'color:#d97706' : 'color:#059669';
-      const satTitle  = `harvest ÷ annual cap: ${totalHarvest.toFixed(0)} lbs ÷ ${annualCap.toFixed(0)} lbs = ${(sat*100).toFixed(0)}%. Same basis as What-If ranking.`;
+      const satTitle  = `harvest ÷ annual cap: ${fmtUnit(totalHarvest, U_LB)} ÷ ${fmtUnit(annualCap, U_LB)} = ${(sat*100).toFixed(0)}%. Same basis as What-If ranking.`;
       const peakTitle = `Peak weekly harvest ÷ weekly demand cap. Can exceed annual sat if harvest is concentrated in a short season.`;
       demandRows.push(`<tr>
         <td style="padding:4px 10px;font-size:0.78rem">${cropName} → ${chName} <span style="font-size:0.68rem;color:#9ca3af" title="harvest ÷ channel annual cap — same basis as What-If ranking">(harvest / cap)</span></td>
@@ -7390,6 +7390,12 @@ function renderContributionMargins(params) {
   const el = document.getElementById('contribution-margin-content');
   if (!el || !params || !params.crops || params.crops.length === 0) return;
 
+  // Unit labels for headers/tooltips. Row values are per-acre CANONICAL ($/ac, lb/ac, $/lb);
+  // dispVal converts them to the active system, uArea/uMass carry the matching unit text.
+  const uArea = unitStr(U_ACRE);   // 'acre' | 'ha'
+  const uMass = unitStr(U_LB);     // 'lb' | 'kg'
+  const pa = v => dispVal(v, U_PER_ACRE).toFixed(0);   // per-acre $ → active-system display, 0dp
+
   // Phase 4.3.1: $/ac/week planted is the primary comparator (always shown, default sort basis).
   // Annualized column remains available via the toggle.
   const annualize = APP_STATE.annualizeMargins === true; // Phase 4.3.2: default false
@@ -7423,7 +7429,7 @@ function renderContributionMargins(params) {
     const nonPkgVC  = laborCost + waterCost + fertCost + fuelCost + seedCost;
 
     const laborHrs  = (crop.labor_plant||0)*pw + (crop.labor_grow||0)*gw + (crop.labor_harv||0)*hw;
-    const vcBreakdown = `Labor: $${laborCost.toFixed(0)} (${laborHrs.toFixed(0)} hrs×$${LABOR_RATE}/hr)\nWater: $${waterCost.toFixed(0)}\nFert: $${fertCost.toFixed(0)}\nFuel: $${fuelCost.toFixed(0)}\nSeed: $${seedCost.toFixed(0)}`;
+    const vcBreakdown = `Labor: $${pa(laborCost)} (${Math.round(dispVal(laborHrs, U_PER_ACRE))} hrs×$${LABOR_RATE}/hr)\nWater: $${pa(waterCost)}\nFert: $${pa(fertCost)}\nFuel: $${pa(fuelCost)}\nSeed: $${pa(seedCost)}`;
 
     const channels  = crop.channels || {};
     const chEntries = Object.entries(channels);
@@ -7480,7 +7486,7 @@ function renderContributionMargins(params) {
     const cellBase = 'overflow:hidden;white-space:nowrap;text-overflow:ellipsis;';
     // Crop cell: show name+stats on first channel of each crop group, blank otherwise
     const cropCellContent = isNewCrop
-      ? `<span style="font-weight:700">${crop.name}</span><br><span style="font-size:0.67rem;color:#9ca3af">${ypa.toLocaleString()} lb/ac · ${dtm}d</span>`
+      ? `<span style="font-weight:700">${crop.name}</span><br><span style="font-size:0.67rem;color:#9ca3af">${fmtUnit(ypa, U_LB_PER_ACRE)} · ${dtm}d</span>`
       : `<span style="color:#d1d5db;font-size:0.7rem">↳</span>`;
 
     tableRows += `<tr style="${isNewCrop ? 'border-top:2px solid #e5e7eb' : 'border-top:1px solid #f3f4f6'}">
@@ -7488,18 +7494,18 @@ function renderContributionMargins(params) {
       <td style="${cellBase}padding:4px 8px;font-size:0.76rem;border-right:1px solid #f3f4f6" title="${chName}">
         <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${chColor};margin-right:3px;flex-shrink:0"></span>${chName}
       </td>
-      <td style="${cellBase}padding:4px 8px;font-size:0.76rem;text-align:right">$${parseFloat(row.chData.price_per_lb||0).toFixed(2)}</td>
-      <td style="${cellBase}padding:4px 8px;font-size:0.76rem;text-align:right" title="Yield ${ypa.toLocaleString()} lb/ac × sell-through ${(stFrac*100).toFixed(0)}% = ${soldLbs.toLocaleString(undefined,{maximumFractionDigits:0})} lb sold&#10;× $${parseFloat(row.chData.price_per_lb||0).toFixed(2)}/lb = $${grossRev.toFixed(0)}&#10;&#10;Sell-through = share of harvest that converts to cash (shrink / grade-out / unsold). You grow the full yield but are paid only on the sold share.">$${grossRev.toFixed(0)} <span style="font-size:0.65rem;color:#9ca3af">ⓘ</span></td>
-      <td style="${cellBase}padding:4px 8px;font-size:0.75rem;text-align:right;color:#6b7280" title="${vcBreakdown}&#10;Packaging: $${pkgCost.toFixed(0)}&#10;Total VC: $${totalVC.toFixed(0)}">$${totalVC.toFixed(0)} <span style="font-size:0.65rem;color:#9ca3af">ⓘ</span></td>
-      <td style="${cellBase}padding:4px 8px;font-size:0.78rem;text-align:right;${mStyle}">$${margin.toFixed(0)}</td>
-      <td style="${cellBase}padding:4px 8px;font-size:0.78rem;text-align:right;${wpStyle}" title="$/ac/wk = CM/ac ÷ field-occupancy weeks (${pw + gw + hw} wk = ${pw} plant + ${gw} grow + ${hw} harvest). Revenue reflects this crop's sell-through. Primary sort: return per week the crop ties up the land.">$${marginPerAcWeek.toFixed(0)}</td>
+      <td style="${cellBase}padding:4px 8px;font-size:0.76rem;text-align:right">$${dispVal(parseFloat(row.chData.price_per_lb||0), U_PER_LB).toFixed(2)}</td>
+      <td style="${cellBase}padding:4px 8px;font-size:0.76rem;text-align:right" title="Yield ${fmtUnit(ypa, U_LB_PER_ACRE)} × sell-through ${(stFrac*100).toFixed(0)}% = ${fmtUnit(soldLbs, U_LB_PER_ACRE)} sold&#10;× $${dispVal(parseFloat(row.chData.price_per_lb||0), U_PER_LB).toFixed(2)}/${uMass} = $${pa(grossRev)}/${uArea}&#10;&#10;Sell-through = share of harvest that converts to cash (shrink / grade-out / unsold). You grow the full yield but are paid only on the sold share.">$${pa(grossRev)} <span style="font-size:0.65rem;color:#9ca3af">ⓘ</span></td>
+      <td style="${cellBase}padding:4px 8px;font-size:0.75rem;text-align:right;color:#6b7280" title="${vcBreakdown}&#10;Packaging: $${pa(pkgCost)}/${uArea}&#10;Total VC: $${pa(totalVC)}/${uArea}">$${pa(totalVC)} <span style="font-size:0.65rem;color:#9ca3af">ⓘ</span></td>
+      <td style="${cellBase}padding:4px 8px;font-size:0.78rem;text-align:right;${mStyle}">$${pa(margin)}</td>
+      <td style="${cellBase}padding:4px 8px;font-size:0.78rem;text-align:right;${wpStyle}" title="$/${uArea}/wk = CM/${uArea} ÷ field-occupancy weeks (${pw + gw + hw} wk = ${pw} plant + ${gw} grow + ${hw} harvest). Revenue reflects this crop's sell-through. Primary sort: return per week the crop ties up the land.">$${pa(marginPerAcWeek)}</td>
       <td style="${cellBase}padding:4px 8px;font-size:0.76rem;text-align:right;${pStyle}">${marginPctStr}</td>
-      ${annualize ? `<td style="${cellBase}padding:4px 8px;font-size:0.78rem;text-align:right;${aStyle}" title="${cyclesPerYear.toFixed(2)} cycles/year (365÷${dtm}d)">$${annualMargin.toFixed(0)}</td>` : ''}
+      ${annualize ? `<td style="${cellBase}padding:4px 8px;font-size:0.78rem;text-align:right;${aStyle}" title="${cyclesPerYear.toFixed(2)} cycles/year (365÷${dtm}d)">$${pa(annualMargin)}</td>` : ''}
     </tr>`;
   });
 
   const annualHeader = annualize
-    ? `<th style="text-align:right;padding:5px 8px;border-bottom:2px solid #d1d5db;color:#1e40af;overflow:hidden;white-space:nowrap" title="Contribution Margin × (365 ÷ days to maturity).">Annual $/ac ⓘ</th>`
+    ? `<th style="text-align:right;padding:5px 8px;border-bottom:2px solid #d1d5db;color:#1e40af;overflow:hidden;white-space:nowrap" title="Contribution Margin × (365 ÷ days to maturity).">Annual $/${uArea} ⓘ</th>`
     : '';
 
   // Phase 4.3.1: $/ac/wk planted column is always shown (primary comparator)
@@ -7517,22 +7523,22 @@ function renderContributionMargins(params) {
     <thead><tr style="background:#f9fafb">
       <th style="text-align:left;padding:5px 8px;border-bottom:2px solid #d1d5db;color:#374151;overflow:hidden;white-space:nowrap">Crop</th>
       <th style="text-align:left;padding:5px 8px;border-bottom:2px solid #d1d5db;color:#374151;overflow:hidden;white-space:nowrap">Channel</th>
-      <th style="text-align:right;padding:5px 8px;border-bottom:2px solid #d1d5db;color:#374151;overflow:hidden;white-space:nowrap">Price/lb</th>
-      <th style="text-align:right;padding:5px 8px;border-bottom:2px solid #d1d5db;color:#374151;overflow:hidden;white-space:nowrap">Rev/ac</th>
-      <th style="text-align:right;padding:5px 8px;border-bottom:2px solid #d1d5db;color:#374151;overflow:hidden;white-space:nowrap" title="All variable costs: packaging + labor + water + fertilizer + fuel + seed">VC/ac ⓘ</th>
-      <th style="text-align:right;padding:5px 8px;border-bottom:2px solid #d1d5db;color:#374151;overflow:hidden;white-space:nowrap">CM/ac</th>
-      <th style="text-align:right;padding:5px 8px;border-bottom:2px solid #d1d5db;color:#1b4332;overflow:hidden;white-space:nowrap;background:#f0faf4" title="$/ac/wk = CM/ac ÷ field-occupancy weeks (plant+grow+harvest). Primary sort: return per week the crop ties up the land. Revenue reflects each crop's sell-through.">$/ac/wk ★ ⓘ</th>
+      <th style="text-align:right;padding:5px 8px;border-bottom:2px solid #d1d5db;color:#374151;overflow:hidden;white-space:nowrap">Price/${uMass}</th>
+      <th style="text-align:right;padding:5px 8px;border-bottom:2px solid #d1d5db;color:#374151;overflow:hidden;white-space:nowrap">Rev/${uArea}</th>
+      <th style="text-align:right;padding:5px 8px;border-bottom:2px solid #d1d5db;color:#374151;overflow:hidden;white-space:nowrap" title="All variable costs: packaging + labor + water + fertilizer + fuel + seed">VC/${uArea} ⓘ</th>
+      <th style="text-align:right;padding:5px 8px;border-bottom:2px solid #d1d5db;color:#374151;overflow:hidden;white-space:nowrap">CM/${uArea}</th>
+      <th style="text-align:right;padding:5px 8px;border-bottom:2px solid #d1d5db;color:#1b4332;overflow:hidden;white-space:nowrap;background:#f0faf4" title="$/${uArea}/wk = CM/${uArea} ÷ field-occupancy weeks (plant+grow+harvest). Primary sort: return per week the crop ties up the land. Revenue reflects each crop's sell-through.">$/${uArea}/wk ★ ⓘ</th>
       <th style="text-align:right;padding:5px 8px;border-bottom:2px solid #d1d5db;color:#374151;overflow:hidden;white-space:nowrap" title="Margin % = Contribution Margin ÷ Gross Revenue × 100. N/A when price is zero.">Margin% ⓘ</th>
       ${annualHeader}
     </tr></thead>
     <tbody>${tableRows}</tbody>
   </table></div>
   <p style="font-size:0.7rem;color:#9ca3af;margin-top:0.5rem">
-    <strong style="color:#1b4332">★ $/ac/wk</strong> = CM/ac ÷ the weeks the crop occupies the field (plant+grow+harvest) — default sort: return per week of land committed. A long-season crop that ties up land for months scores lower per week than a fast crop with the same per-cycle margin. Revenue reflects each crop's sell-through (you're only paid for what sells).
-    <strong>CM/ac</strong> = Gross Revenue − Total Variable Cost (per acre, one crop cycle).
-    ${annualize ? '<strong>Annual $/ac</strong> = CM/ac × (365 ÷ days to maturity) — time-normalized annual return. ' : ''}
-    <strong>Margin % of Rev</strong> = CM/ac ÷ Gross Revenue × 100.
-    <strong>Total VC/ac</strong> includes packaging + field labor + irrigation water + fertilizer + fuel + seed/transplant (hover for breakdown). Does not include fixed overhead.
+    <strong style="color:#1b4332">★ $/${uArea}/wk</strong> = CM/${uArea} ÷ the weeks the crop occupies the field (plant+grow+harvest) — default sort: return per week of land committed. A long-season crop that ties up land for months scores lower per week than a fast crop with the same per-cycle margin. Revenue reflects each crop's sell-through (you're only paid for what sells).
+    <strong>CM/${uArea}</strong> = Gross Revenue − Total Variable Cost (per ${uArea}, one crop cycle).
+    ${annualize ? `<strong>Annual $/${uArea}</strong> = CM/${uArea} × (365 ÷ days to maturity) — time-normalized annual return. ` : ''}
+    <strong>Margin % of Rev</strong> = CM/${uArea} ÷ Gross Revenue × 100.
+    <strong>Total VC/${uArea}</strong> includes packaging + field labor + irrigation water + fertilizer + fuel + seed/transplant (hover for breakdown). Does not include fixed overhead.
     <span style="color:#dc2626">Red</span> = margin % &lt; 20% (low); <span style="color:#d97706">orange</span> = 20–50% (moderate); <span style="color:#059669">green</span> = ≥ 50% (healthy).
   </p>`;
 
@@ -7802,7 +7808,7 @@ function exportGanttCSV() {
   // Col headers: "Succession", "Crop", "Acres", "% Farm", W1 … W52
   const weekHeaders = [];
   for (let w = 1; w <= 52; w++) weekHeaders.push('W' + w);
-  const header = ['Succession', 'Crop', 'Acres', '% of Farm', ...weekHeaders];
+  const header = ['Succession', 'Crop', 'Land (' + unitStr(U_ACRE) + ')', '% of Farm', ...weekHeaders];
 
   // % land use summary row (top)
   const weeklyLand = res.weekly_land_frac || new Array(52).fill(0);
@@ -7834,7 +7840,7 @@ function exportGanttCSV() {
       // Extract just the start week from name for succession label
       const m = s.name.match(/W?(\d+)$/);
       const succLabel = m ? 'Wk ' + m[1] : s.name;
-      dataRows.push([succLabel, cropName, s.acres.toFixed(1), pct, ...cells]);
+      dataRows.push([succLabel, cropName, dispVal(s.acres, U_ACRE).toFixed(1), pct, ...cells]);
     });
   });
 
@@ -8094,20 +8100,20 @@ function exportWeeklySalesCSV() {
     if (ib !== -1) return  1;
     return sa.localeCompare(sb);
   });
-  const colHeaders = channels.map(ch => 'lbs_sold_' + channelSlug(ch));
+  const colHeaders = channels.map(ch => unitStr(U_LB) + '_sold_' + channelSlug(ch));
   const cropNames  = [...cropSet].sort();
 
-  const rows = [['week', 'crop', 'lbs_harvested', ...colHeaders]];
+  const rows = [['week', 'crop', unitStr(U_LB) + '_harvested', ...colHeaders]];
   for (let w = 1; w <= opWeeks; w++) {
     const salesByChannel = computeWeeklySalesLbs(w, res, params);
     const harvestByCrop  = computeWeeklyHarvestLbs(w, res, params);
     cropNames.forEach(crop => {
       const vals = channels.map(ch => {
         const lbs = ((salesByChannel[ch] || {})[crop] || 0);
-        return lbs >= 0.5 ? Math.round(lbs) : 0;
+        return lbs >= 0.5 ? Math.round(dispVal(lbs, U_LB)) : 0;
       });
       const harv = harvestByCrop[crop] || 0;
-      const harvR = harv >= 0.5 ? Math.round(harv) : 0;
+      const harvR = harv >= 0.5 ? Math.round(dispVal(harv, U_LB)) : 0;
       if (harvR > 0 || vals.some(v => v > 0)) rows.push([w, crop, harvR, ...vals]);
     });
   }
@@ -8304,7 +8310,7 @@ function rankBottlenecks(res, params) {
     {
       type:'land',    name:'Total Land',
       peak: landPeak, scaleType:'land',
-      displayFn: (p, f) => `${Math.round((p.total_land||150)*f)} ac`,
+      displayFn: (p, f) => fmtUnit((p.total_land||150)*f, U_ACRE),
     },
     {
       type:'labor',   name:'Labor Availability',
@@ -8317,12 +8323,12 @@ function rankBottlenecks(res, params) {
     {
       type:'water',   name:'Water Supply',
       peak: waterPeak, scaleType:'water',
-      displayFn: (p, f) => `${(((p.well_weekly_cap_L||0)*f)/1000).toFixed(0)}k L/wk well`,
+      displayFn: (p, f) => `${(dispVal((p.well_weekly_cap_L||0)*f, U_L)/1000).toFixed(0)}k ${unitStr(U_L)}/wk well`,
     },
     {
       type:'storage', name:'Harvest Storage',
       peak: storPeak, scaleType:'direct', param:'harvest_storage_cap',
-      displayFn: (p, f) => `${Math.round((p.harvest_storage_cap||0)*f).toLocaleString()} m³`,
+      displayFn: (p, f) => fmtUnit((p.harvest_storage_cap||0)*f, U_M3),
     },
     {
       type:'cash',    name:'Cash / Credit',
@@ -8354,7 +8360,7 @@ function rankBottlenecks(res, params) {
         if (!wk && ch.annual_demand_lbs)
           wk = Math.round((parseFloat(ch.annual_demand_lbs) || 0) / 52);
         return wk
-          ? `${Math.round(wk*f).toLocaleString()} lbs/wk cap`
+          ? `${fmtUnit(wk*f, U_LB)}/wk cap`
           : `cap × ${f.toFixed(2)}`;
       },
     };
