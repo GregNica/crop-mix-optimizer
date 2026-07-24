@@ -4656,7 +4656,21 @@ function applyMCParams(rows) {
   let pairsApplied = 0;
 
   // Mark a field as sourced from the uploaded Past Data: green left accent + tooltip.
-  const markData = (el) => { if (el) { el.style.boxShadow = 'inset 3px 0 0 #059669'; el.title = '✓ Set from your uploaded Past Data'; } };
+  const markData = (el) => {
+    if (!el) return;
+    el.style.boxShadow = 'inset 3px 0 0 #059669';
+    el.title = '✓ Set from your uploaded Past Data';
+    // The just-written value is in the ACTIVE display units (the upload template matches the
+    // active system). Store its canonical equivalent so the solver reads the right number and
+    // it survives unit toggles — otherwise readCanonical returns the stale seeded data-canon.
+    if (typeof UNITS !== 'undefined' && el.dataset) {
+      const spec = specForEl(el);
+      if (spec) {
+        const v = parseFloat(el.value);
+        el.dataset.canon = isNaN(v) ? '' : UNITS.toCanonical(v, spec, APP_STATE.unitSystem || 'canonical');
+      }
+    }
+  };
 
   // Group rows by cropName for batch channel update
   const byCrop = {};
