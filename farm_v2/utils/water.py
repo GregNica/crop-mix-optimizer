@@ -50,7 +50,7 @@ CATCHMENT_EFFICIENCY: float = 0.85
 #
 # Monthly mm → weekly liters/acre:
 #   weekly_mm ≈ monthly_mm / 4.33
-#   liters_per_acre = weekly_mm × 4046.86 / 1000  (since 1 mm = 4.046 L/m², 1 acre = 4046.86 m²)
+#   liters_per_acre = weekly_mm × 4046.86  (since 1 mm = 1 L/m², 1 acre = 4046.86 m²)
 
 def _monthly_mm_to_weekly_L_per_acre(monthly_mm: list[float]) -> np.ndarray:
     """
@@ -58,7 +58,7 @@ def _monthly_mm_to_weekly_L_per_acre(monthly_mm: list[float]) -> np.ndarray:
     (liters/acre/week) using simple equal-week distribution.
     """
     from farm_v2.utils.calendar import monthly_to_weekly
-    monthly_L_per_acre = [mm * 4046.86 / 1000 for mm in monthly_mm]
+    monthly_L_per_acre = [mm * 4046.86 for mm in monthly_mm]
     # Each month's L/acre/month → L/acre/week by dividing by weeks-in-month.
     # monthly_to_weekly assigns each week the value of its calendar month,
     # so we first need L/acre/week from L/acre/month.
