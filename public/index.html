@@ -2674,7 +2674,28 @@ const APP_STATE = {
   _pdCropVarCosts: false,      // Phase 4.3.3: Group (d1) show crop-specific variable costs
   profitHistory: null,         // { years[], profits[], revenues[], fixedCosts[], excludedYears[] }
   profitForecast: null,        // { forecast, ci80Low, ci80High, growthRate, label, nYears }
+  unitSystem: null,            // active display units: null/'canonical' (identity) until the
+                               // metric/US toggle lands (SPEC_units step 3), then 'us' | 'metric'
 };
+
+// ── Unit-system canonicalization (SPEC_units) ────────────────────────────────
+// Resolve a DISPLAY value to CANONICAL units (what the solver expects) for the active
+// unit system. Module-level (not inside runOptimizer) because the crop/channel/serialize
+// readers need the same conversion in step 3, and units.js can't host it (it needs
+// APP_STATE). Identity until APP_STATE.unitSystem is set to a real system — see SPEC_units.
+function toCanonicalActive(value, spec) {
+  const sys = APP_STATE.unitSystem;
+  if (!spec || !sys || sys === 'canonical' || isNaN(value) || typeof UNITS === 'undefined') return value;
+  return UNITS.toCanonical(value, spec, sys);
+}
+// Read a unit-bearing field BY ID and return it in canonical units. Drop-in for
+// parseFloat(el.value); routes through the id-keyed FIELD_REGISTRY.
+function readCanonical(id) {
+  const el = document.getElementById(id);
+  const v = el ? parseFloat(el.value) : NaN;
+  const spec = (typeof UNITS !== 'undefined') && UNITS.FIELD_REGISTRY[id];
+  return toCanonicalActive(v, spec || null);
+}
 
 // ============================================================
 // Phase 0 — Form-state serialization + field registry
@@ -6498,20 +6519,22 @@ async function runOptimizer() {
   // This is the cost of ownership, charged whether or not the pd-* panel is expanded — the
   // panels control editability only, never whether a cost applies (audit A2; see the locked
   // cost-accounting-basis decision: own→depreciate, consume→meter, diffuse→overhead).
+  // readCanonical(id) / toCanonicalActive are module-level (defined near APP_STATE) so the
+  // crop/channel/serialize readers can share them in later SPEC_units steps.
   const rateFromCapital = (costId, costDef, yearsId, yearsDef) => {
-    const cost = parseFloat(g(costId)?.value) || costDef;
+    const cost = readCanonical(costId) || costDef;
     const yrs = Math.max(1, parseFloat(g(yearsId)?.value) || yearsDef);
     return cost / (yrs * 52);
   };
 
   const params = {
     // Farm infrastructure — always required
-    total_land:                parseFloat(g('total_land').value),
+    total_land:                readCanonical('total_land'),
     operating_weeks:           parseInt(g('operating_weeks').value),
-    water_storage_capacity:    (g('wtank-row') && g('wtank-row').style.display==='none') ? 0 : parseFloat(g('water_storage_capacity').value),
+    water_storage_capacity:    (g('wtank-row') && g('wtank-row').style.display==='none') ? 0 : readCanonical('water_storage_capacity'),
     // Water tank depreciation rate (computed from capital cost)
     rate_water_storage:        (() => {
-      const costL = parseFloat(g('water_tank_cost_per_L')?.value) || 3.74;
+      const costL = readCanonical('water_tank_cost_per_L') || 3.74;
       const yrs = Math.max(1, parseFloat(g('depreciation_water_years')?.value) || 20);
       return costL / (yrs * 52);
     })(),
@@ -6526,11 +6549,11 @@ async function runOptimizer() {
     // Water
     climate_zone:              g('climate_zone').value,
     well_enabled:              g('well_enabled').checked,
-    well_weekly_cap_L:         parseFloat(g('well_weekly_cap_L').value),
+    well_weekly_cap_L:         readCanonical('well_weekly_cap_L'),
     catchment_enabled:         g('catchment_enabled').checked,
-    catchment_surface_area_m2: parseFloat(g('catchment_surface_area_m2').value),
+    catchment_surface_area_m2: readCanonical('catchment_surface_area_m2'),
     city_water_enabled:        g('city_water_enabled').checked,
-    city_water_cost_per_L:     parseFloat(g('city_water_cost_per_L').value),
+    city_water_cost_per_L:     readCanonical('city_water_cost_per_L'),
     // Labor positions (fully dynamic)
     employees: getLaborFromForm(),
     // Payroll load (employer burden on wages) — applies to all staff, bought labor included
@@ -6546,18 +6569,18 @@ async function runOptimizer() {
     // silently sent 0 / omitted them and the solver dropped ~$178k/yr of costs the UI claimed
     // were "included at benchmark rates". The pd-* panels now control editability only.
     // Owned assets → capital ÷ (life × 52) depreciation; consumables (fert/fuel) → metered rate.
-    harvest_storage_cap:  parseFloat(g('harvest_storage_cap').value),
+    harvest_storage_cap:  readCanonical('harvest_storage_cap'),
     rate_harvest_storage: rateFromCapital('harvest_storage_cost_per_m3', 463, 'depreciation_harvest_years', 25),
-    equip_storage:        parseFloat(g('equip_storage').value),
-    fuel_storage:         parseFloat(g('fuel_storage').value),
+    equip_storage:        readCanonical('equip_storage'),
+    fuel_storage:         readCanonical('fuel_storage'),
     // Irrigation is a DEPRECIATION line (installed system ÷ useful life), NOT an operating rate:
     // pump energy is negligible→overhead and water is metered in the Water section, so a blended
     // $/acre/wk operating rate would double-count. (Retires the old rate_irrigation $10 knob.)
     rate_irrigation:      rateFromCapital('irrigation_cost_per_acre', 2000, 'depreciation_irrigation_years', 18),
-    cost_fert_per_lb:     parseFloat(g('cost_fert_per_lb').value),
+    cost_fert_per_lb:     readCanonical('cost_fert_per_lb'),
     rate_equip_storage:   rateFromCapital('equip_storage_cost_per_m3', 500, 'depreciation_equip_years', 30),
     rate_fuel_storage:    rateFromCapital('fuel_storage_cost_per_L', 13, 'depreciation_fuel_years', 12),
-    cost_fuel_per_L:      parseFloat(g('cost_fuel_per_L').value),
+    cost_fuel_per_L:      readCanonical('cost_fuel_per_L'),
     // Cash-solvency modeling stays a genuine on/off toggle (models the C13 weekly cash floor
     // when enabled) — this is a feature switch, not a hidden cost, so it remains conditional.
     ...(pdOn('pd-cash') && {
