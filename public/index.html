@@ -1283,7 +1283,7 @@
             <input type="checkbox" id="pd-harvest-storage" onchange="togglePD('pd-harvest-storage','pd-harvest-storage-fields','pd-harvest-storage-helper')">
             Account for harvest storage and refrigeration costs?
           </label>
-          <div id="pd-harvest-storage-helper" class="pd-helper">Harvest storage defaults to 10,000 m³ at $0.356/m³/wk. This constraint limits how much can be harvested in any week.</div>
+          <div id="pd-harvest-storage-helper" class="pd-helper">Harvest storage defaults to 5,000 m³; its weekly cost is the depreciation of the storage building (capital ÷ life ≈ $0.356/m³/wk). This capacity also caps how much can be harvested in any week.</div>
           <div id="pd-harvest-storage-fields" class="pd-revealed pd-hidden form-grid" style="margin-top:0.3rem">
             <div class="form-group"><label>Harvest Storage Capacity (m³) <span class="tip" data-tip="Cold/ambient storage for harvested produce. 5,000 m³ suits an ~80-acre mixed vegetable farm.">?</span></label><input type="number" id="harvest_storage_cap" value="5000" min="100" step="100"></div>
             <div class="form-group"><label>Capital Cost ($/m³) <span class="tip" data-tip="Construction or purchase cost per cubic metre of storage. Typical cold-storage building: $400–$600/m³.">?</span></label><input type="number" id="harvest_storage_cost_per_m3" value="463" min="0" step="10"></div>
@@ -1299,12 +1299,12 @@
             <input type="checkbox" id="pd-irrig-fert" onchange="togglePD('pd-irrig-fert','pd-irrig-fert-fields','pd-irrig-fert-helper')">
             Account for irrigation infrastructure and fertilizer costs?
           </label>
-          <div id="pd-irrig-fert-helper" class="pd-helper">Irrigation defaults to $10.00/acre/wk (operating costs only — pumping energy, water fees, maintenance); fertilizer to $0.82/lb.</div>
+          <div id="pd-irrig-fert-helper" class="pd-helper">Irrigation cost is the depreciation of your installed system (capital ÷ useful life). Pumping energy is negligible→overhead and water is metered in the Water section, so there is no separate operating rate to double-count. Fertilizer defaults to $0.82/lb.</div>
           <div id="pd-irrig-fert-fields" class="pd-revealed pd-hidden form-grid" style="margin-top:0.3rem">
-            <div class="form-group"><label>Irrigation ($/acre/wk) <span class="tip" data-tip="Weekly irrigation OPERATING cost (pumping energy, water delivery fees, maintenance). Typical: $6–$15/acre/wk for drip systems. Capital cost is modelled separately via the depreciation fields in the Water section — do not double-count.">?</span></label><input type="number" id="rate_irrigation" value="10.00" min="0" step="0.01"></div>
-            <div class="form-group"><label>Fertilizer — blended avg. ($/lb) <span class="tip" data-tip="Weighted average across all fertilizer types (N, P, K, organic). Typical: $0.50–$1.20/lb blended.">?</span></label><input type="number" id="cost_fert_per_lb" value="0.82" min="0" step="0.01" placeholder="e.g. 0.82"></div>
-            <div class="form-group"><label>Irrigation Capital ($/acre) <span class="tip" data-tip="Installed cost of drip/sprinkler system per acre. Typical: $1,500–$4,000/acre.">?</span></label><input type="number" id="irrigation_cost_per_acre" value="2000" min="0" step="100"></div>
-            <div class="form-group"><label>Irrigation Depreciation (years)</label><input type="number" id="depreciation_irrigation_years" value="18" min="1" step="1"></div>
+            <div class="form-group"><label>Irrigation Capital ($/acre) <span class="tip" data-tip="Installed cost of the drip/sprinkler system per acre. Typical: $1,500–$4,000/acre. This is the asset you own; its weekly cost is the depreciation below. Pumping energy and water are accounted for separately (overhead / Water section) — not here, to avoid double-counting.">?</span></label><input type="number" id="irrigation_cost_per_acre" value="2000" min="0" step="100"></div>
+            <div class="form-group"><label>Irrigation Depreciation (years) <span class="tip" data-tip="Straight-line asset life for the irrigation system. Typical: 15–20 years.">?</span></label><input type="number" id="depreciation_irrigation_years" value="18" min="1" step="1"></div>
+            <div class="form-group"><label>Fertilizer — blended avg. ($/lb) <span class="tip" data-tip="Weighted average across all fertilizer types (N, P, K, organic). Typical: $0.50–$1.20/lb blended. A metered consumable — charged per lb applied.">?</span></label><input type="number" id="cost_fert_per_lb" value="0.82" min="0" step="0.01" placeholder="e.g. 0.82"></div>
+            <div class="pd-formula-hint">Weekly irrigation cost = (Capital $/acre) ÷ (Years × 52)</div>
           </div>
         </div>
 
@@ -1314,16 +1314,15 @@
             <input type="checkbox" id="pd-machinery-rates" onchange="togglePD('pd-machinery-rates','pd-machinery-rates-fields','pd-machinery-rates-helper')">
             Set custom machinery, equipment, and fuel storage rates?
           </label>
-          <div id="pd-machinery-rates-helper" class="pd-helper">Using benchmark rates: Equip Storage $1.042/m³/wk, Fuel Storage $0.0208/L/wk, Machinery $1,000/wk. Enable to override.</div>
+          <div id="pd-machinery-rates-helper" class="pd-helper">Equipment-barn and fuel-tank costs are the depreciation of those assets (capital ÷ life). Machinery defaults to $1,000/wk (blended depreciation or loan payment + maintenance). Fuel is $1.25/L, metered per litre used. Enable to override.</div>
           <div id="pd-machinery-rates-fields" class="pd-revealed pd-hidden form-grid" style="margin-top:0.3rem">
-            <div class="form-group"><label>Equip Storage ($/m³/wk) <span class="tip" data-tip="Cost of barn/shed for equipment. Typical: $0.80–$1.50/m³/wk.">?</span></label><input type="number" id="rate_equip_storage" value="1.042" min="0" step="0.001"></div>
-            <div class="form-group"><label>Fuel Storage ($/L/wk) <span class="tip" data-tip="Tank rental/depreciation for on-farm fuel storage. Typical: $0.01–$0.03/L/wk.">?</span></label><input type="number" id="rate_fuel_storage" value="0.0208" min="0" step="0.0001"></div>
             <div class="form-group"><label>Avg. Machinery ($/wk) <span class="tip" data-tip="Blended weekly cost of all farm machinery + maintenance. Typical ~80-acre vegetable farm: $800–$1,500/wk.&#10;&#10;Owned outright: use depreciation (purchase price ÷ useful life) + maintenance.&#10;Financed: use your loan payment (principal+interest) + maintenance — don't also depreciate it.&#10;&#10;Either way, enter the blended weekly figure.">?</span></label><input type="number" id="rate_machinery" value="1000" min="0" step="100"></div>
-            <div class="form-group"><label>Fuel ($/L) <span class="tip" data-tip="Diesel or gasoline cost per litre. Typical US diesel: $1.00–$1.50/L.">?</span></label><input type="number" id="cost_fuel_per_L" value="1.25" min="0" step="0.01" placeholder="e.g. 1.25"></div>
-            <div class="form-group"><label>Equip. Storage Capital ($/m³) <span class="tip" data-tip="Building construction cost per m³. Typical ag barn: $300–$700/m³.">?</span></label><input type="number" id="equip_storage_cost_per_m3" value="500" min="0" step="50"></div>
-            <div class="form-group"><label>Equip. Storage Depreciation (years)</label><input type="number" id="depreciation_equip_years" value="30" min="1" step="1"></div>
-            <div class="form-group"><label>Fuel Tank Capital ($/L) <span class="tip" data-tip="Tank purchase and install cost per litre capacity. Typical: $8–$18/L.">?</span></label><input type="number" id="fuel_storage_cost_per_L" value="13" min="0" step="0.5"></div>
-            <div class="form-group"><label>Fuel Tank Depreciation (years)</label><input type="number" id="depreciation_fuel_years" value="12" min="1" step="1"></div>
+            <div class="form-group"><label>Fuel ($/L) <span class="tip" data-tip="Diesel or gasoline cost per litre. Typical US diesel: $1.00–$1.50/L. A metered consumable — charged per litre used.">?</span></label><input type="number" id="cost_fuel_per_L" value="1.25" min="0" step="0.01" placeholder="e.g. 1.25"></div>
+            <div class="form-group"><label>Equip. Storage Capital ($/m³) <span class="tip" data-tip="Building construction cost per m³ for the equipment barn/shed. Typical ag barn: $300–$700/m³. Its weekly cost is the depreciation below.">?</span></label><input type="number" id="equip_storage_cost_per_m3" value="500" min="0" step="50"></div>
+            <div class="form-group"><label>Equip. Storage Depreciation (years) <span class="tip" data-tip="Straight-line asset life for the equipment barn/shed. Typical: 25–40 years.">?</span></label><input type="number" id="depreciation_equip_years" value="30" min="1" step="1"></div>
+            <div class="form-group"><label>Fuel Tank Capital ($/L) <span class="tip" data-tip="Tank purchase and install cost per litre capacity. Typical: $8–$18/L. Its weekly cost is the depreciation below.">?</span></label><input type="number" id="fuel_storage_cost_per_L" value="13" min="0" step="0.5"></div>
+            <div class="form-group"><label>Fuel Tank Depreciation (years) <span class="tip" data-tip="Straight-line asset life for the on-farm fuel storage tank. Typical: 10–15 years.">?</span></label><input type="number" id="depreciation_fuel_years" value="12" min="1" step="1"></div>
+            <div class="pd-formula-hint">Equip/fuel storage weekly cost = (Capital) ÷ (Years × 52)</div>
           </div>
         </div>
 
@@ -2106,9 +2105,10 @@ const BENCHMARK_DEFAULTS = {
   credit_line:          { value: 800000,   label: 'Credit Line',          source: 'AgriBank farm credit survey',         vintage: '2022', confidence: 'low'    },
   harvest_storage_cap:  { value: 5000,     label: 'Harvest Storage',      source: 'Cornell Small Farm sizing guide',     vintage: '2020', confidence: 'medium' },
   rate_harvest_storage: { value: 0.356,    label: 'Harvest Storage Rate', source: 'USDA AMS cold chain cost study',      vintage: '2021', confidence: 'high'   },
-  rate_irrigation:      { value: 10.00,    label: 'Irrigation Rate',      source: 'UC Cooperative Extension',            vintage: '2022', confidence: 'high'   },
-  rate_equip_storage:   { value: 1.042,    label: 'Equip. Storage Rate',  source: 'Farm Business Management avg',        vintage: '2021', confidence: 'medium' },
-  rate_fuel_storage:    { value: 0.0208,   label: 'Fuel Storage Rate',    source: 'EIA fuel storage benchmark',          vintage: '2022', confidence: 'medium' },
+  // NOTE: irrigation, equipment-storage and fuel-storage rates are DERIVED from their capital
+  // cost ÷ useful life (see the cost-accounting-basis decision) — they are no longer standalone
+  // operating-rate inputs, so they are not benchmarked here. Their capital+depreciation inputs
+  // carry the provenance instead.
   rate_water_storage:   { value: 0.0036,   label: 'Water Tank Rate',      source: 'Irrigation Association survey',       vintage: '2021', confidence: 'medium' },
   rate_machinery:       { value: 1000,     label: 'Machinery ($/wk)',     source: 'USDA ERS machinery ownership model',  vintage: '2022', confidence: 'medium' },
   rate_property_mortgage_rent: { value: 0, label: 'Property Mortgage/Rent ($/wk)', source: 'USDA ERS land value survey — user override recommended', vintage: '2023', confidence: 'low' },
@@ -6486,6 +6486,15 @@ async function runOptimizer() {
 
   const g = id => document.getElementById(id);
   const pdOn = id => { const el = g(id); return el ? el.checked : false; };
+  // Weekly depreciation rate for an OWNED asset: installed cost ÷ (useful-life-years × 52).
+  // This is the cost of ownership, charged whether or not the pd-* panel is expanded — the
+  // panels control editability only, never whether a cost applies (audit A2; see the locked
+  // cost-accounting-basis decision: own→depreciate, consume→meter, diffuse→overhead).
+  const rateFromCapital = (costId, costDef, yearsId, yearsDef) => {
+    const cost = parseFloat(g(costId)?.value) || costDef;
+    const yrs = Math.max(1, parseFloat(g(yearsId)?.value) || yearsDef);
+    return cost / (yrs * 52);
+  };
 
   const params = {
     // Farm infrastructure — always required
@@ -6498,7 +6507,8 @@ async function runOptimizer() {
       const yrs = Math.max(1, parseFloat(g('depreciation_water_years')?.value) || 20);
       return costL / (yrs * 52);
     })(),
-    rate_machinery:            pdOn('pd-machinery-rates') ? parseFloat(g('rate_machinery').value) : 0,
+    // Machinery: blended weekly figure (depreciation OR loan payment + maintenance) — always applied.
+    rate_machinery:            parseFloat(g('rate_machinery').value) || 0,
     rate_property_mortgage_rent: parseFloat(g('rate_property_mortgage_rent').value) || 0,
     other_debt_service_per_week: parseFloat(g('other_debt_service_per_week')?.value) || 0,
     // Realism factors — always sent (visible section, not behind a toggle)
@@ -6523,43 +6533,28 @@ async function runOptimizer() {
     channels: getChannelsFromForm(),
     // Crops (fully dynamic from form)
     crops: getCropsFromForm(),
-    // Optional groups — conditionally included
+    // --- Cost lines: ALWAYS included (audit A2) ---
+    // These were previously gated behind the pd-* toggles, so a default run (all toggles off)
+    // silently sent 0 / omitted them and the solver dropped ~$178k/yr of costs the UI claimed
+    // were "included at benchmark rates". The pd-* panels now control editability only.
+    // Owned assets → capital ÷ (life × 52) depreciation; consumables (fert/fuel) → metered rate.
+    harvest_storage_cap:  parseFloat(g('harvest_storage_cap').value),
+    rate_harvest_storage: rateFromCapital('harvest_storage_cost_per_m3', 463, 'depreciation_harvest_years', 25),
+    equip_storage:        parseFloat(g('equip_storage').value),
+    fuel_storage:         parseFloat(g('fuel_storage').value),
+    // Irrigation is a DEPRECIATION line (installed system ÷ useful life), NOT an operating rate:
+    // pump energy is negligible→overhead and water is metered in the Water section, so a blended
+    // $/acre/wk operating rate would double-count. (Retires the old rate_irrigation $10 knob.)
+    rate_irrigation:      rateFromCapital('irrigation_cost_per_acre', 2000, 'depreciation_irrigation_years', 18),
+    cost_fert_per_lb:     parseFloat(g('cost_fert_per_lb').value),
+    rate_equip_storage:   rateFromCapital('equip_storage_cost_per_m3', 500, 'depreciation_equip_years', 30),
+    rate_fuel_storage:    rateFromCapital('fuel_storage_cost_per_L', 13, 'depreciation_fuel_years', 12),
+    cost_fuel_per_L:      parseFloat(g('cost_fuel_per_L').value),
+    // Cash-solvency modeling stays a genuine on/off toggle (models the C13 weekly cash floor
+    // when enabled) — this is a feature switch, not a hidden cost, so it remains conditional.
     ...(pdOn('pd-cash') && {
       opening_cash: parseFloat(g('opening_cash').value),
       credit_line:  parseFloat(g('credit_line').value),
-    }),
-    ...(pdOn('pd-harvest-storage') && {
-      harvest_storage_cap:  parseFloat(g('harvest_storage_cap').value),
-      rate_harvest_storage: (() => {
-        const costM3 = parseFloat(g('harvest_storage_cost_per_m3')?.value) || 463;
-        const yrs = Math.max(1, parseFloat(g('depreciation_harvest_years')?.value) || 25);
-        return costM3 / (yrs * 52);
-      })(),
-    }),
-    ...(pdOn('pd-machinery') && {
-      equip_storage: parseFloat(g('equip_storage').value),
-      fuel_storage:  parseFloat(g('fuel_storage').value),
-    }),
-    ...(pdOn('pd-irrig-fert') && {
-      rate_irrigation:  (() => {
-        const costAc = parseFloat(g('irrigation_cost_per_acre')?.value) || 2000;
-        const yrs = Math.max(1, parseFloat(g('depreciation_irrigation_years')?.value) || 18);
-        return costAc / (yrs * 52);
-      })(),
-      cost_fert_per_lb: parseFloat(g('cost_fert_per_lb').value),
-    }),
-    ...(pdOn('pd-machinery-rates') && {
-      rate_equip_storage: (() => {
-        const costM3 = parseFloat(g('equip_storage_cost_per_m3')?.value) || 500;
-        const yrs = Math.max(1, parseFloat(g('depreciation_equip_years')?.value) || 30);
-        return costM3 / (yrs * 52);
-      })(),
-      rate_fuel_storage: (() => {
-        const costL = parseFloat(g('fuel_storage_cost_per_L')?.value) || 13;
-        const yrs = Math.max(1, parseFloat(g('depreciation_fuel_years')?.value) || 12);
-        return costL / (yrs * 52);
-      })(),
-      cost_fuel_per_L: parseFloat(g('cost_fuel_per_L').value),
     }),
   };
 
