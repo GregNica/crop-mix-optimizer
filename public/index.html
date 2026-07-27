@@ -1221,7 +1221,7 @@
       <h2>Farm Infrastructure</h2>
       <div class="form-grid">
         <div class="form-group"><label>Total Land (acres)<span class="req-marker" aria-hidden="true">*</span><span class="sr-only"> (required)</span></label><input type="number" id="total_land" value="80" min="1" step="1" placeholder="e.g. 80"></div>
-        <div class="form-group"><label>Operating Weeks <span class="tip" data-tip="How many weeks per year the farm operates. Affects the planning horizon, all cost totals, and how many crop successions can fit.&#10;&#10;52 = year-round operation (most CA vegetable farms).&#10;36–44 = seasonal operation (e.g. frost-limited regions, school-year markets).&#10;&#10;Shorter seasons reduce fixed-cost totals but also limit revenue potential.">?</span></label>
+        <div class="form-group"><label>Operating Weeks <span class="tip" data-tip="How many weeks per year the farm operates. Scales recurring fixed costs. It does NOT shorten the planning year — the plan is always solved over 52 weeks, and successions come from each crop's season windows.&#10;&#10;52 = year-round operation (most CA vegetable farms).&#10;36–44 = seasonal operation (e.g. frost-limited regions, school-year markets).&#10;&#10;Shorter seasons reduce fixed-cost totals but also limit revenue potential.">?</span></label>
           <select id="operating_weeks">
             <option value="36">36 wks — spring+fall only</option>
             <option value="40">40 weeks</option>
@@ -1288,7 +1288,7 @@
     <div class="card">
       <h2>Fixed Cost Rates</h2>
       <div class="form-grid">
-        <div class="form-group"><label>Water Tank ($/L/wk) <span class="tip" data-tip="Weekly depreciation on water storage tanks or ponds.&#10;&#10;Typical rates: $0.002–$0.005/L/wk.&#10;&#10;Tank capacity, catchment surface area, and rainfall data are set in the Water section.">?</span></label><input type="number" id="rate_water_storage" value="0.0036" min="0" step="0.0001"></div>
+        
         <div class="form-group"><label>Property Mortgage/Rent ($/wk) <span class="tip" data-tip="Weekly property occupancy cost — mortgage principal+interest or land/facility rent paid on the farm property.&#10;&#10;Enter 0 if land is owned outright with no debt service.&#10;&#10;Typical range: $300–$1,500/wk for an ~80-acre leased or financed vegetable farm.&#10;&#10;This is a fixed cost: it is incurred every week regardless of which crops are planted.">?</span></label><input type="number" id="rate_property_mortgage_rent" value="0" min="0" step="100"></div>
         <div class="form-group"><label>Other Debt Service ($/wk) <span class="tip" data-tip="Weekly principal+interest on OTHER long-term loans not already counted in the Machinery or Property lines — e.g. a building/barn loan, land-improvement loan, or operating debt carried over from a prior year.&#10;&#10;Enter the actual loan payment (you don't need to split interest from principal). Don't also depreciate the same financed asset — the payment stands in for it.&#10;&#10;Note: for non-depreciating assets (land/buildings) the principal portion slightly overstates accrual cost, but it reflects the real cash you must cover. Enter 0 if no other debt.">?</span></label><input type="number" id="other_debt_service_per_week" value="0" min="0" step="100"></div>
 
@@ -1304,7 +1304,6 @@
             <div class="form-group"><label>Capital Cost ($/m³) <span class="tip" data-tip="Construction or purchase cost per cubic metre of storage. Typical cold-storage building: $400–$600/m³.">?</span></label><input type="number" id="harvest_storage_cost_per_m3" value="463" min="0" step="10"></div>
             <div class="form-group"><label>Depreciation (years) <span class="tip" data-tip="Straight-line asset life. Buildings: 25–40 years.">?</span></label><input type="number" id="depreciation_harvest_years" value="25" min="1" step="1"></div>
             <div class="pd-formula-hint">Weekly cost = (Capacity × $/m³) ÷ (Years × 52)</div>
-            <input type="hidden" id="rate_harvest_storage" value="0.356">
           </div>
         </div>
 
@@ -1314,7 +1313,7 @@
             <input type="checkbox" id="pd-irrig-fert" onchange="togglePD('pd-irrig-fert','pd-irrig-fert-fields','pd-irrig-fert-helper')">
             Account for irrigation infrastructure and fertilizer costs?
           </label>
-          <div id="pd-irrig-fert-helper" class="pd-helper">Irrigation cost is the depreciation of your installed system (capital ÷ useful life). Pumping energy is negligible→overhead and water is metered in the Water section, so there is no separate operating rate to double-count. Fertilizer defaults to $0.82/lb.</div>
+          <div id="pd-irrig-fert-helper" class="pd-helper">Irrigation cost is the depreciation of your installed system (capital ÷ useful life). Pumping energy sits in overhead. NOTE: well water itself is currently treated as free at the margin — the Water section caps the VOLUME available but does not price it — so there is no separate operating rate here to double-count. Fertilizer defaults to $0.82/lb.</div>
           <div id="pd-irrig-fert-fields" class="pd-revealed pd-hidden form-grid" style="margin-top:0.3rem">
             <div class="form-group"><label>Irrigation Capital ($/acre) <span class="tip" data-tip="Installed cost of the drip/sprinkler system per acre. Typical: $1,500–$4,000/acre. This is the asset you own; its weekly cost is the depreciation below. Pumping energy and water are accounted for separately (overhead / Water section) — not here, to avoid double-counting.">?</span></label><input type="number" id="irrigation_cost_per_acre" value="2000" min="0" step="100"></div>
             <div class="form-group"><label>Irrigation Depreciation (years) <span class="tip" data-tip="Straight-line asset life for the irrigation system. Typical: 15–20 years.">?</span></label><input type="number" id="depreciation_irrigation_years" value="18" min="1" step="1"></div>
@@ -1356,9 +1355,9 @@
             <tr><td>Total Land (80 ac)</td><td>USDA NASS CA vegetable census — typical diversified vegetable farm size</td><td class="sources-conf-medium">medium · 2022</td></tr>
             <tr><td>Opening Cash ($300k)</td><td>Farm Bureau operating capital guide — CA mixed vegetable startup</td><td class="sources-conf-medium">medium · 2023</td></tr>
             <tr><td>Credit Line ($800k)</td><td>AgriBank farm credit survey — ~80-acre vegetable operation</td><td class="sources-conf-low">low · 2022</td></tr>
-            <tr><td>Harvest Storage (10,000 m³)</td><td>Cornell Small Farm sizing guide</td><td class="sources-conf-medium">medium · 2020</td></tr>
+            <tr><td>Harvest Storage (5,000 m³)</td><td>Cornell Small Farm sizing guide</td><td class="sources-conf-medium">medium · 2020</td></tr>
             <tr><td>Harvest Storage Rate ($/m³)</td><td>USDA AMS cold chain cost study</td><td class="sources-conf-high">high · 2021</td></tr>
-            <tr><td>Irrigation Rate ($/1000 L)</td><td>UC Cooperative Extension irrigation cost benchmarks</td><td class="sources-conf-high">high · 2022</td></tr>
+            <tr><td>Irrigation Capital ($/acre installed)</td><td>UC Cooperative Extension irrigation cost benchmarks</td><td class="sources-conf-high">high · 2022</td></tr>
             <tr><td>Equip. Storage Rate</td><td>Farm Business Management average — CA farm equipment facilities</td><td class="sources-conf-medium">medium · 2021</td></tr>
             <tr><td>Fuel Storage Rate</td><td>EIA fuel storage benchmark</td><td class="sources-conf-medium">medium · 2022</td></tr>
             <tr><td>Machinery ($/wk)</td><td>USDA ERS machinery ownership model — ~80-acre scale</td><td class="sources-conf-medium">medium · 2022</td></tr>
@@ -1375,7 +1374,7 @@
       <div class="assumptions-body">
         <ul>
           <li>All cost rates (irrigation, equipment, machinery) are annual averages. Seasonal rate spikes are not modelled.</li>
-          <li>Budget is a single annual cash constraint. Multi-year investment and depreciation are not included.</li>
+          <li>Budget is a single annual cash constraint. Owned assets (storage, irrigation, tanks, machinery) are charged as straight-line depreciation: capital cost ÷ (useful life × 52) per week.</li>
           <li>Land is assumed to be flat, contiguous, and uniformly productive. Soil quality variation is not modelled.</li>
           <li>Fixed infrastructure costs are incurred regardless of which crops are planted.</li>
         </ul>
@@ -1388,7 +1387,7 @@
       <div class="pd-helper" style="margin-bottom:0.5rem">These three factors turn the optimizer's gross plan into a realistic net result. They are on by default — leaving them out is what inflates margins to implausible levels.</div>
       <div class="form-grid">
         <div class="form-group"><label>Sell-through (%) <span class="tip" data-tip="Share of harvested product that actually converts to cash — after spoilage, grade-outs, returns, and unsold perishables.&#10;&#10;Modeled IN the optimizer: the farm plans to GROW more to deliver a given sales volume (e.g. at 88%, grow ~100 to sell 88) and pays the full growing cost on what's lost — it is not a simple price discount.&#10;&#10;Typical for diversified perishables: 80–92%. Set 100% only if your sales figures already reflect net realized sales.">?</span></label><input type="number" id="sell_through_pct" value="85" min="1" max="100" step="1" oninput="syncSellThroughPlaceholders()"></div>
-        <div class="form-group"><label>Overhead (% of revenue) <span class="tip" data-tip="Indirect business overhead as a share of revenue: insurance (crop/liability/property), property &amp; land taxes, administration (accounting, legal, office, software, licenses), non-irrigation utilities (electricity incl. cooling, comms), general repairs &amp; maintenance, and vehicle/office capital.&#10;&#10;EXCLUDES everything itemized elsewhere — land rent/mortgage, the machinery line, storage &amp; irrigation, all labor, and per-crop inputs (seed/water/fert/fuel/packaging). Never double-counted.&#10;&#10;Typical: 8–18% of revenue.">?</span></label><input type="number" id="overhead_pct" value="16" min="0" max="60" step="1"></div>
+        <div class="form-group"><label>Overhead (% of revenue) <span class="tip" data-tip="Indirect business overhead as a share of revenue: insurance (crop/liability/property), property &amp; land taxes, administration (accounting, legal, office, software, licenses), utilities (electricity incl. cooling, comms, and irrigation pump energy), general repairs &amp; maintenance, and vehicle/office capital.&#10;&#10;EXCLUDES everything itemized elsewhere — land rent/mortgage, the machinery line, storage &amp; irrigation, all labor, and per-crop inputs (seed/water/fert/fuel/packaging). Never double-counted.&#10;&#10;Typical: 8–18% of revenue.">?</span></label><input type="number" id="overhead_pct" value="16" min="0" max="60" step="1"></div>
         <div class="form-group"><label>Interest Rate (APR %) <span class="tip" data-tip="Annual rate charged on the operating borrowing the plan implies — the seasonal cash-flow gap before harvest revenue arrives.&#10;&#10;Applied below the line to the solved plan's average weekly borrowing (currently the model would otherwise charge $0).&#10;&#10;Typical farm operating lines: 6–10% APR.">?</span></label><input type="number" id="interest_rate_pct" value="7" min="0" max="40" step="0.5"></div>
         <div class="form-group"><label>Min. Viable Margin (%) <span class="tip" data-tip="A hurdle: the optimizer won't grow a crop/channel whose NET margin falls below this floor — it's 'not worth the effort/risk.' Net margin = contribution margin (on the table below) minus your Overhead %, computed behind the scenes. So at 16% overhead and an 8% floor, anything under a 24% contribution margin is dropped.&#10;&#10;This is margin on revenue, not return on capital — a rough 'worth-it' bar (e.g. a few points above the risk-free rate for effort + risk), not a literal bond comparison. It also keeps the plan stable: near-break-even crops are what make What-If land use jump around.&#10;&#10;Set 0 to disable. Applies per crop-channel, so a crop can be dropped on wholesale but kept on farmers market. Fixed costs/interest are NOT in this hurdle (they're sunk/plan-level, not per-crop).">?</span></label><input type="number" id="min_viable_margin_pct" value="8" min="0" max="60" step="1"></div>
       </div>
@@ -1483,11 +1482,11 @@
       <h2>Water Tank Cost</h2>
       <p style="font-size:0.73rem;color:#6b7280;margin:0 0 0.6rem">Straight-line depreciation of water storage infrastructure. Leave at defaults for typical CA farm estimates.</p>
       <div class="form-grid">
-        <div class="form-group"><label>Tank Capacity (L) <span class="tip" data-tip="Total on-farm water storage volume in litres.">?</span></label><input type="number" id="water_tank_capacity_L" value="500000" min="0" step="10000"></div>
+        
         <div class="form-group"><label>Capital Cost ($/L) <span class="tip" data-tip="Construction cost per litre of tank capacity. Typical concrete/poly tanks: $3–$5/L.">?</span></label><input type="number" id="water_tank_cost_per_L" value="3.74" min="0" step="0.05"></div>
         <div class="form-group"><label>Depreciation (years)</label><input type="number" id="depreciation_water_years" value="20" min="1" step="1"></div>
         <div style="background:#f0faf4;padding:0.45rem 0.7rem;border-radius:6px;font-size:0.73rem;color:#374151;grid-column:1/-1">
-          Weekly cost = (Capacity × $/L) ÷ (Depreciation Years × 52)
+          Weekly cost = (Storage Tank litres × $/L) ÷ (Depreciation Years × 52). Capacity comes from <strong>Storage Tank</strong> in the Water section.
         </div>
       </div>
     </div>
@@ -2011,7 +2010,7 @@
 <!-- ?v= is a content hash, verified by tests/test_units_asset_version.py: units.js is the
      app's only external script, and a browser serving a cached copy against fresh HTML makes
      unit conversion fail silently. CI tells you the value to paste when units.js changes. -->
-<script src="units.js?v=10d04a36"></script>
+<script src="units.js?v=592bdced"></script>
 <script>
 // ============================================================
 // Embedded farm_v2 Python files (JSON-serialised)
@@ -2125,12 +2124,10 @@ const BENCHMARK_DEFAULTS = {
   opening_cash:         { value: 300000,   label: 'Opening Cash',         source: 'Farm Bureau operating capital guide', vintage: '2023', confidence: 'medium' },
   credit_line:          { value: 800000,   label: 'Credit Line',          source: 'AgriBank farm credit survey',         vintage: '2022', confidence: 'low'    },
   harvest_storage_cap:  { value: 5000,     label: 'Harvest Storage',      source: 'Cornell Small Farm sizing guide',     vintage: '2020', confidence: 'medium' },
-  rate_harvest_storage: { value: 0.356,    label: 'Harvest Storage Rate', source: 'USDA AMS cold chain cost study',      vintage: '2021', confidence: 'high'   },
   // NOTE: irrigation, equipment-storage and fuel-storage rates are DERIVED from their capital
   // cost ÷ useful life (see the cost-accounting-basis decision) — they are no longer standalone
   // operating-rate inputs, so they are not benchmarked here. Their capital+depreciation inputs
   // carry the provenance instead.
-  rate_water_storage:   { value: 0.0036,   label: 'Water Tank Rate',      source: 'Irrigation Association survey',       vintage: '2021', confidence: 'medium' },
   rate_machinery:       { value: 1000,     label: 'Machinery ($/wk)',     source: 'USDA ERS machinery ownership model',  vintage: '2022', confidence: 'medium' },
   rate_property_mortgage_rent: { value: 0, label: 'Property Mortgage/Rent ($/wk)', source: 'USDA ERS land value survey — user override recommended', vintage: '2023', confidence: 'low' },
   cost_fert_per_lb:     { value: 0.82,     label: 'Fertilizer Rate',      source: 'USDA NASS fertilizer price survey',   vintage: '2023', confidence: 'high'   },
@@ -2917,6 +2914,16 @@ function rewriteLabelUnit(label, unit) {
  * So: NEVER assign to a unit-bearing field's .value directly. Use one of these three.
  * canonIntegrityReport() below is the runtime check that catches a sixth site.
  */
+
+/** Numeric fallback that distinguishes "blank" from "zero".
+ *  `x || d` treats a deliberate 0 as missing; `parseFloat(x) ?? d` never fires because
+ *  parseFloat('') is NaN, not null. Both mistakes shipped: the first re-imposed benchmark
+ *  costs on a farmer who entered 0, the second sent NaN -> JSON null -> a Python traceback.
+ *  Only a genuinely unusable value falls back. */
+function numOr(value, fallback) {
+  const n = typeof value === 'number' ? value : parseFloat(value);
+  return (n == null || isNaN(n)) ? fallback : n;
+}
 
 /** Write a field from a CANONICAL value: stores canon, displays it in the active system. */
 function writeFieldCanonical(el, canonicalValue) {
@@ -7150,8 +7157,11 @@ async function runOptimizer() {
   // readCanonical(id) / toCanonicalActive are module-level (defined near APP_STATE) so the
   // crop/channel/serialize readers can share them in later SPEC_units steps.
   const rateFromCapital = (costId, costDef, yearsId, yearsDef) => {
-    const cost = readCanonical(costId) || costDef;
-    const yrs = Math.max(1, parseFloat(g(yearsId)?.value) || yearsDef);
+    // numOr, NOT `|| costDef`: 0 is falsy, so a farmer who owns an asset outright and enters
+    // 0 had the benchmark silently re-imposed — $171k/yr of costs they had explicitly zeroed,
+    // with no signal. Only a BLANK or unparseable field should fall back to the benchmark.
+    const cost = numOr(readCanonical(costId), costDef);
+    const yrs = Math.max(1, numOr(g(yearsId)?.value, yearsDef));
     return cost / (yrs * 52);
   };
 
@@ -7159,7 +7169,13 @@ async function runOptimizer() {
     // Farm infrastructure — always required
     total_land:                readCanonical('total_land'),
     operating_weeks:           parseInt(g('operating_weeks').value),
-    water_storage_capacity:    (g('wtank-row') && g('wtank-row').style.display==='none') ? 0 : readCanonical('water_storage_capacity'),
+    // Read unconditionally. This used to send 0 whenever #wtank-row was hidden, so the plain
+    // hide/show button next to it (labelled "hide", with no cost semantics anywhere) deleted
+    // $50,490/yr of tank depreciation — a user tidying the form silently made their farm
+    // $50k more profitable. That is audit A2's exact pattern surviving in a non-pd- control:
+    // visibility must never decide whether a cost applies. (Whether a tank should be charged
+    // when catchment is OFF is a separate modelling question, deliberately not decided here.)
+    water_storage_capacity:    readCanonical('water_storage_capacity'),
     // Water tank depreciation rate (computed from capital cost)
     rate_water_storage:        (() => {
       const costL = readCanonical('water_tank_cost_per_L') || 3.74;
@@ -7171,9 +7187,12 @@ async function runOptimizer() {
     rate_property_mortgage_rent: parseFloat(g('rate_property_mortgage_rent').value) || 0,
     other_debt_service_per_week: parseFloat(g('other_debt_service_per_week')?.value) || 0,
     // Realism factors — always sent (visible section, not behind a toggle)
-    sell_through_fraction:   Math.min(1, Math.max(0, (parseFloat(g('sell_through_pct')?.value) ?? 88) / 100)),
-    overhead_pct_of_revenue: Math.max(0, (parseFloat(g('overhead_pct')?.value) ?? 0) / 100),
-    interest_rate_apr:       Math.max(0, (parseFloat(g('interest_rate_pct')?.value) ?? 0) / 100),
+    // numOr(), NOT `?? default`: parseFloat('') is NaN, not null/undefined, so `??` never
+    // fired. A blank field produced NaN -> JSON null -> float(None) in run_from_js, and the
+    // user got a raw Python traceback instead of a plan. The documented 88% was dead code.
+    sell_through_fraction:   Math.min(1, Math.max(0, numOr(g('sell_through_pct')?.value, 85) / 100)),
+    overhead_pct_of_revenue: Math.max(0, numOr(g('overhead_pct')?.value, 0) / 100),
+    interest_rate_apr:       Math.max(0, numOr(g('interest_rate_pct')?.value, 0) / 100),
     // Water
     climate_zone:              g('climate_zone').value,
     well_enabled:              g('well_enabled').checked,

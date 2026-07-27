@@ -96,17 +96,14 @@
     harvest_storage_cap:        { measure: 'vol_bulk' },
     equip_storage_cost_per_m3:  { measure: 'vol_bulk', inverse: true },    // $/m³ (capital)
     harvest_storage_cost_per_m3:{ measure: 'vol_bulk', inverse: true },    // $/m³ (capital)
-    rate_harvest_storage:       { measure: 'vol_bulk', inverse: true, perWeek: true }, // hidden derived rate
     // --- liquid volume ---
     fuel_storage:               { measure: 'vol_liquid' },
-    water_tank_capacity_L:      { measure: 'vol_liquid' },
     water_storage_capacity:     { measure: 'vol_liquid' },
     well_weekly_cap_L:          { measure: 'vol_liquid', perWeek: true },  // L/wk quantity
     city_water_cost_per_L:      { measure: 'vol_liquid', inverse: true },  // $/L
     water_tank_cost_per_L:      { measure: 'vol_liquid', inverse: true },  // $/L (capital)
     fuel_storage_cost_per_L:    { measure: 'vol_liquid', inverse: true },  // $/L (capital)
     cost_fuel_per_L:            { measure: 'vol_liquid', inverse: true },  // $/L (metered)
-    rate_water_storage:         { measure: 'vol_liquid', inverse: true, perWeek: true },
     // --- mass ---
     cost_fert_per_lb:           { measure: 'mass', inverse: true }         // $/lb (metered)
   };

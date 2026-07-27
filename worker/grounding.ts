@@ -30,7 +30,7 @@ export const CHATBOT_FIELDS: ChatbotField[] = [
   { id: "sell_through_pct", label: "Sell-through %", type: "number", unit: "%", min: 1, max: 100,
     description: "Share of harvested produce that converts to cash sales (rest = shrink/spoilage/grade-out). NOT a price discount. If the user describes LOSS ('X% doesn't sell / spoils / is wasted'), this = 100 − X. This is the FARM-WIDE default; per-crop sell-through is set on each crop in the form." },
   { id: "overhead_pct", label: "Overhead % of revenue", type: "number", unit: "%", min: 0, max: 60,
-    description: "Overhead as a percent of REVENUE (not of costs) — insurance, property tax, admin, non-irrigation utilities, repairs & maintenance, office/vehicle. EXCLUDES costs itemized elsewhere (labor, seed, fertilizer, fuel, packaging, irrigation, storage); if the user's figure includes those, ask them to exclude them. If given in dollars, ask for revenue or the percent — don't guess." },
+    description: "Overhead as a percent of REVENUE (not of costs) — insurance, property tax, admin, utilities (incl. irrigation pump energy), repairs & maintenance, office/vehicle. EXCLUDES costs itemized elsewhere (labor, seed, fertilizer, fuel, packaging, irrigation, storage); if the user's figure includes those, ask them to exclude them. If given in dollars, ask for revenue or the percent — don't guess." },
   { id: "interest_rate_pct", label: "Interest APR %", type: "number", unit: "% APR", min: 0, max: 40,
     description: "APR on the SEASONAL OPERATING credit line (drawn when cash runs short) — NOT a mortgage or equipment-loan rate. Annualize a monthly rate (× 12)." },
   { id: "min_viable_margin_pct", label: "Minimum viable margin %", type: "number", unit: "%", min: 0, max: 60,
