@@ -2744,7 +2744,12 @@ function specForEl(el) {
   if (!el || typeof UNITS === 'undefined') return null;
   if (el.id && UNITS.FIELD_REGISTRY[el.id]) return UNITS.FIELD_REGISTRY[el.id];
   const f = el.dataset && el.dataset.f;
-  return (f && UNITS.DATA_F_REGISTRY[f]) || null;
+  if (f && UNITS.DATA_F_REGISTRY[f]) return UNITS.DATA_F_REGISTRY[f];
+  // The sensitivity sweep bounds have no fixed unit — they take it from whichever variable is
+  // selected. Routing them through here means the delegated input listener keeps their
+  // data-canon in sync as the user types, and readCanonicalEl works on them unchanged.
+  if (el.id === 'sens-min' || el.id === 'sens-max') return activeSensSpec();
+  return null;
 }
 // Invoke cb(el, spec) for every unit-bearing field currently in the DOM (static + data-f).
 function forEachUnitField(cb) {
@@ -2948,9 +2953,14 @@ function initUnitInputSync() {
     const el = e.target;
     if (!el || !el.dataset || typeof UNITS === 'undefined') return;
     const spec = specForEl(el);
-    if (!spec) return;
+    // The sweep bounds are tracked even with no spec: when a CURRENCY variable is selected they
+    // have no unit, but readCanonicalEl still prefers data-canon — so leaving it unmaintained
+    // would silently run the sweep on a stale bound while the user sees the number they typed.
+    const isSensBound = el.id === 'sens-min' || el.id === 'sens-max';
+    if (!spec && !isSensBound) return;
     const v = parseFloat(el.value);
-    el.dataset.canon = isNaN(v) ? '' : UNITS.toCanonical(v, spec, APP_STATE.unitSystem || 'canonical');
+    el.dataset.canon = isNaN(v) ? ''
+      : (spec ? UNITS.toCanonical(v, spec, APP_STATE.unitSystem || 'canonical') : v);
   });
 }
 
@@ -2960,9 +2970,9 @@ function initUnitInputSync() {
 // the full results renderer, and every import path — crop CSV, Past-Data multi-tab, rainfall —
 // convert, writer and reader together. Uploads take their units from the FILE (its units row or
 // self-labelled column names), never from the active toggle, so a workbook downloaded in one
-// system and uploaded in another still reads correctly. Known remaining gap: the sensitivity
-// panel (SENS_VARS labels and its min/max inputs are still canonical/US).
-// Default stays US customary; Metric is one click away.
+// system and uploaded in another still reads correctly. The sensitivity panel takes its labels
+// and sweep-bound units from the registry too. Default stays US customary; Metric is one click
+// away. Currency is deliberately out of scope everywhere — $ is never converted.
 const METRIC_READY = true;
 
 function initUnitSystem() {
@@ -7782,7 +7792,8 @@ function rerenderResultsForUnits() {
   if (APP_STATE.view !== 'results' || !window._lastRes || !window._lastParams) return;
   renderResults(window._lastRes, window._lastParams.total_land);
   renderUnitBearingResults(window._lastParams, window._lastRes);
-  renderUnitLabels();   // static result headings declaring data-unit (pie titles, etc.)
+  renderUnitLabels();          // static result headings declaring data-unit (pie titles, etc.)
+  refreshSensitivityUnits();   // relabel + reconvert in place, preserving the typed range
 }
 
 /** Phase 4.3 — Stagger-animate results cards after a solve.
@@ -12835,20 +12846,58 @@ window._diagnoseBaseline = async function() {
 // ============================================================
 // Sensitivity Analysis
 // ============================================================
+// `key` doubles as the FIELD_REGISTRY id, so units come from the registry rather than being
+// restated here (they used to be hard-coded 'ac' / 'L/wk' / 'm³' and never followed the toggle).
+// `money: true` marks the currency variables, which have no physical unit.
 const SENS_VARS = [
-  { key: 'total_land',        label: 'Total Land (ac)',    param: 'total_land',         unit: 'ac'    },
-  { key: 'credit_line',       label: 'Credit Line ($)',    param: 'credit_line',         unit: '$'     },
-  { key: 'opening_cash',      label: 'Opening Cash ($)',   param: 'opening_cash',        unit: '$'     },
-  { key: 'well_weekly_cap_L', label: 'Well Cap (L/wk)',   param: 'well_weekly_cap_L',   unit: 'L/wk' },
-  { key: 'harvest_storage_cap', label: 'Harvest Storage (m³)', param: 'harvest_storage_cap', unit: 'm³' },
+  { key: 'total_land',          name: 'Total Land',      param: 'total_land'         },
+  { key: 'credit_line',         name: 'Credit Line',     param: 'credit_line',  money: true },
+  { key: 'opening_cash',        name: 'Opening Cash',    param: 'opening_cash', money: true },
+  { key: 'well_weekly_cap_L',   name: 'Well Cap',        param: 'well_weekly_cap_L'  },
+  { key: 'harvest_storage_cap', name: 'Harvest Storage', param: 'harvest_storage_cap' },
 ];
 let _activeSensKey = null;
+
+const sensVarByKey  = key => SENS_VARS.find(v => v.key === key) || null;
+const sensSpecOf    = v   => (!v || v.money) ? null : specForKey(v.key);
+const sensUnitOf    = v   => (v && v.money) ? '$' : unitStr(sensSpecOf(v));
+const sensLabelOf   = v   => `${v.name} (${sensUnitOf(v)})`;
+/** Unit spec of the variable currently being swept — drives the sens-min/sens-max inputs. */
+function activeSensSpec() { return sensSpecOf(sensVarByKey(_activeSensKey)); }
+
+/** Write a sweep bound: display in the active system, canonical in data-canon. Canonical is
+ *  derived FROM the rounded display so the sweep runs exactly the bound the user can see. */
+function setSensBound(id, canonical) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const spec = activeSensSpec();
+  const disp = roundForDisplay(spec ? dispVal(canonical, spec) : canonical);
+  el.value = disp;
+  el.dataset.canon = spec ? toCanonicalActive(disp, spec) : disp;
+}
+
+/** Relabel the variable buttons and re-derive the bounds' display after a unit change.
+ *  Deliberately does NOT re-render the panel: those inputs hold the user's typed range. */
+function refreshSensitivityUnits() {
+  SENS_VARS.forEach(v => {
+    const b = document.getElementById('svb-' + v.key);
+    if (b) b.textContent = sensLabelOf(v);
+  });
+  const spec = activeSensSpec();
+  ['sens-min', 'sens-max'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const canon = canonOf(el);
+    if (isNaN(canon)) return;
+    el.value = roundForDisplay(spec ? dispVal(canon, spec) : canon);
+  });
+}
 
 function renderSensitivitySetup(params, res) {
   const btns = document.getElementById('sens-variable-btns');
   if (!btns) return;
   btns.innerHTML = SENS_VARS.map(v =>
-    `<button class="sens-var-btn" id="svb-${v.key}" onclick="selectSensVar('${v.key}')">${v.label}</button>`
+    `<button class="sens-var-btn" id="svb-${v.key}" onclick="selectSensVar('${v.key}')">${sensLabelOf(v)}</button>`
   ).join('');
 }
 
@@ -12857,9 +12906,9 @@ function selectSensVar(key) {
   const v = SENS_VARS.find(x => x.key === key);
   if (!v) return;
   const params = window._lastParams || {};
-  const cur = parseFloat(params[v.param]) || 100;
-  document.getElementById('sens-min').value   = Math.round(cur * 0.5);
-  document.getElementById('sens-max').value   = Math.round(cur * 1.5);
+  const cur = parseFloat(params[v.param]) || 100;   // canonical — params are always canonical
+  setSensBound('sens-min', cur * 0.5);
+  setSensBound('sens-max', cur * 1.5);
   document.getElementById('sens-steps').value = 8;
   document.getElementById('sens-range-row').style.display = 'flex';
   document.querySelectorAll('.sens-var-btn').forEach(b => b.classList.remove('selected'));
@@ -12875,8 +12924,9 @@ async function runSensitivity() {
   const sp      = document.getElementById('spinner-sens');
   btn.disabled  = true;
   sp.style.display = 'block';
-  const min   = parseFloat(document.getElementById('sens-min').value);
-  const max   = parseFloat(document.getElementById('sens-max').value);
+  // Bounds are typed in DISPLAY units; the sweep feeds params to the solver, so work canonically.
+  const min   = readCanonicalEl(document.getElementById('sens-min'));
+  const max   = readCanonicalEl(document.getElementById('sens-max'));
   const steps = parseInt(document.getElementById('sens-steps').value) || 8;
   const step  = (max - min) / (steps - 1);
   const values = Array.from({length: steps}, (_, i) => min + i * step);
@@ -12903,14 +12953,15 @@ async function runSensitivity() {
     const barW = p != null ? Math.max(6, Math.round((p - minP) / spread * 180)) : 0;
     const pStr = p != null ? '$' + Math.round(p).toLocaleString() : '—';
     rows += `<tr style="${isCur ? 'background:#f0faf4;font-weight:700' : ''}">
-      <td style="padding:4px 10px">${Number(val).toLocaleString()} ${v.unit}</td>
+      <td style="padding:4px 10px">${v.money ? '$' + Number(Math.round(val)).toLocaleString()
+                                             : Number(dispRound(val, sensSpecOf(v))).toLocaleString() + ' ' + sensUnitOf(v)}</td>
       <td style="padding:4px 10px">${pStr}</td>
       <td style="padding:4px 6px"><div style="height:8px;background:${p != null && p < 0 ? '#fca5a5' : '#52b788'};border-radius:3px;width:${barW}px"></div></td>
     </tr>`;
   });
   resEl.innerHTML = `<table style="font-size:0.8rem;border-collapse:collapse;width:100%;margin-top:0.4rem">
     <thead><tr>
-      <th style="text-align:left;padding:4px 10px;border-bottom:2px solid #d1d5db;color:#374151">${v.label}</th>
+      <th style="text-align:left;padding:4px 10px;border-bottom:2px solid #d1d5db;color:#374151">${sensLabelOf(v)}</th>
       <th style="text-align:left;padding:4px 10px;border-bottom:2px solid #d1d5db;color:#374151">Profit</th>
       <th style="border-bottom:2px solid #d1d5db"></th>
     </tr></thead>
