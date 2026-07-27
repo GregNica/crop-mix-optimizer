@@ -20,8 +20,19 @@ HARNESS = REPO / "tests" / "canon_flows.cjs"
 NODE = shutil.which("node")
 
 
+def _jsdom_available() -> bool:
+    """These flows need jsdom to parse the app's innerHTML-built collections. Skip rather
+    than fail for anyone who hasn't run `npm install` — CI installs it explicitly."""
+    if NODE is None:
+        return False
+    probe = subprocess.run([NODE, "-e", "require.resolve('jsdom')"],
+                           capture_output=True, cwd=str(REPO))
+    return probe.returncode == 0
+
+
 @pytest.mark.skipif(NODE is None, reason="node not on PATH")
 @pytest.mark.skipif(not HARNESS.exists(), reason="canon_flows.cjs missing")
+@pytest.mark.skipif(not _jsdom_available(), reason="jsdom not installed (run: npm install)")
 def test_canon_flows():
     proc = subprocess.run(
         [NODE, str(HARNESS)],
