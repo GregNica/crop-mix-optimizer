@@ -1,0 +1,439 @@
+{
+ "catchment_enabled": false,
+ "catchment_surface_area_m2": 5000,
+ "channels": [
+  {
+   "fixed_selling_cost_per_wk": 0,
+   "name": "Wholesale",
+   "variable_selling_cost_per_lb": 0.08
+  },
+  {
+   "fixed_selling_cost_per_wk": 250,
+   "name": "Farmers Market",
+   "variable_selling_cost_per_lb": 0.05
+  }
+ ],
+ "city_water_cost_per_L": 0.003,
+ "city_water_enabled": false,
+ "climate_zone": "california_central_valley",
+ "cost_fert_per_lb": 0.82,
+ "cost_fuel_per_L": 1.25,
+ "crops": [
+  {
+   "channels": {
+    "Farmers Market": {
+     "demand_cap_type": "weekly_varying",
+     "demand_ranges": [
+      {
+       "weekly_lbs": 6000,
+       "weeks": "W10-W48"
+      }
+     ],
+     "packaging_cost_per_lb": 0.18,
+     "price_per_lb": 2.75
+    },
+    "Wholesale": {
+     "demand_cap_type": "weekly_flat",
+     "packaging_cost_per_lb": 0.09,
+     "price_per_lb": 1,
+     "weekly_demand_lbs": 0
+    }
+   },
+   "crop_diversity_max": 0.5,
+   "crop_size_m3_per_lb": 0.002197967741935484,
+   "days_to_maturity": 42,
+   "fert_grow": 0.35,
+   "fert_harv": 0.23,
+   "fert_plant": 0.46,
+   "fuel_grow": 1.8,
+   "fuel_harv": 4.6,
+   "fuel_plant": 3.5,
+   "harvest_weeks": 2,
+   "labor_grow": 4,
+   "labor_harv": 50,
+   "labor_plant": 15,
+   "min_acreage_if_planted": 2,
+   "name": "Spinach",
+   "planting_type": "seed",
+   "planting_weeks": 1,
+   "sales_spread_weeks": 1,
+   "seasons": [
+    {
+     "end": "06-15",
+     "start": "02-01"
+    },
+    {
+     "end": "11-15",
+     "start": "08-01"
+    }
+   ],
+   "seed_transplant_cost_per_acre": 280,
+   "water_grow": 12700,
+   "water_harv": 9200,
+   "water_plant": 10400,
+   "yield_per_acre": 5000
+  },
+  {
+   "channels": {
+    "Farmers Market": {
+     "demand_cap_type": "weekly_varying",
+     "demand_ranges": [
+      {
+       "weekly_lbs": 6000,
+       "weeks": "W18-W40"
+      }
+     ],
+     "packaging_cost_per_lb": 0.12,
+     "price_per_lb": 1.25
+    },
+    "Wholesale": {
+     "demand_cap_type": "weekly_flat",
+     "packaging_cost_per_lb": 0.06,
+     "price_per_lb": 0.55,
+     "weekly_demand_lbs": 50000
+    }
+   },
+   "crop_diversity_max": 0.4,
+   "crop_size_m3_per_lb": 0.0029624782608695653,
+   "days_to_maturity": 70,
+   "fert_grow": 0.38,
+   "fert_harv": 0.2,
+   "fert_plant": 0.55,
+   "fuel_grow": 2,
+   "fuel_harv": 4.5,
+   "fuel_plant": 3.5,
+   "harvest_weeks": 3,
+   "labor_grow": 1.8,
+   "labor_harv": 38,
+   "labor_plant": 12,
+   "min_acreage_if_planted": 2,
+   "name": "Cucumbers",
+   "planting_type": "seed",
+   "planting_weeks": 1,
+   "sales_spread_weeks": 1,
+   "seasons": [
+    {
+     "end": "09-01",
+     "start": "05-01"
+    }
+   ],
+   "seed_transplant_cost_per_acre": 190,
+   "water_grow": 17000,
+   "water_harv": 15000,
+   "water_plant": 12000,
+   "yield_per_acre": 12000
+  },
+  {
+   "channels": {
+    "Farmers Market": {
+     "demand_cap_type": "weekly_varying",
+     "demand_ranges": [
+      {
+       "weekly_lbs": 3500,
+       "weeks": "W10-W50"
+      }
+     ],
+     "packaging_cost_per_lb": 0.14,
+     "price_per_lb": 2
+    },
+    "Wholesale": {
+     "annual_demand_lbs": 500000,
+     "demand_cap_type": "annual",
+     "packaging_cost_per_lb": 0.07,
+     "price_per_lb": 0.7
+    }
+   },
+   "crop_diversity_max": 0.3,
+   "crop_size_m3_per_lb": 0.003785388888888889,
+   "days_to_maturity": 60,
+   "fert_grow": 0.28,
+   "fert_harv": 0.15,
+   "fert_plant": 0.38,
+   "fuel_grow": 1.5,
+   "fuel_harv": 3.8,
+   "fuel_plant": 3.2,
+   "harvest_weeks": 4,
+   "labor_grow": 2,
+   "labor_harv": 22,
+   "labor_plant": 3.5,
+   "min_acreage_if_planted": 2,
+   "name": "Kale",
+   "planting_type": "transplant",
+   "planting_weeks": 1,
+   "sales_spread_weeks": 1,
+   "seasons": [
+    {
+     "end": "06-01",
+     "start": "02-01"
+    },
+    {
+     "end": "12-01",
+     "start": "07-15"
+    }
+   ],
+   "seed_transplant_cost_per_acre": 220,
+   "water_grow": 11500,
+   "water_harv": 8100,
+   "water_plant": 9200,
+   "yield_per_acre": 8000
+  },
+  {
+   "channels": {
+    "Farmers Market": {
+     "demand_cap_type": "weekly_varying",
+     "demand_ranges": [
+      {
+       "weekly_lbs": 7000,
+       "weeks": "W25-W42"
+      }
+     ],
+     "packaging_cost_per_lb": 0.15,
+     "price_per_lb": 1.8
+    },
+    "Wholesale": {
+     "annual_demand_lbs": 900000,
+     "demand_cap_type": "annual",
+     "packaging_cost_per_lb": 0.06,
+     "price_per_lb": 0.65
+    }
+   },
+   "crop_diversity_max": 0.45,
+   "crop_size_m3_per_lb": 0.0017034250000000002,
+   "days_to_maturity": 85,
+   "fert_grow": 0.58,
+   "fert_harv": 0.35,
+   "fert_plant": 0.69,
+   "fuel_grow": 3,
+   "fuel_harv": 5.5,
+   "fuel_plant": 4.5,
+   "harvest_weeks": 8,
+   "labor_grow": 3.5,
+   "labor_harv": 35,
+   "labor_plant": 5.5,
+   "min_acreage_if_planted": 2,
+   "name": "Tomatoes",
+   "planting_type": "transplant",
+   "planting_weeks": 2,
+   "sales_spread_weeks": 1,
+   "seasons": [
+    {
+     "end": "10-15",
+     "start": "04-15"
+    }
+   ],
+   "seed_transplant_cost_per_acre": 450,
+   "water_grow": 23100,
+   "water_harv": 19600,
+   "water_plant": 17300,
+   "yield_per_acre": 22000
+  },
+  {
+   "channels": {
+    "Farmers Market": {
+     "demand_cap_type": "weekly_varying",
+     "demand_ranges": [
+      {
+       "weekly_lbs": 3000,
+       "weeks": "W22-W44"
+      }
+     ],
+     "packaging_cost_per_lb": 0.25,
+     "price_per_lb": 3.75
+    },
+    "Wholesale": {
+     "demand_cap_type": "weekly_flat",
+     "packaging_cost_per_lb": 0.14,
+     "price_per_lb": 1.5,
+     "weekly_demand_lbs": 15000
+    }
+   },
+   "crop_diversity_max": 0.55,
+   "crop_size_m3_per_lb": 0.0017930789473684212,
+   "days_to_maturity": 147,
+   "fert_grow": 0.38,
+   "fert_harv": 0.28,
+   "fert_plant": 0.55,
+   "fuel_grow": 2.3,
+   "fuel_harv": 4.8,
+   "fuel_plant": 3.5,
+   "harvest_weeks": 10,
+   "labor_grow": 1.4,
+   "labor_harv": 20,
+   "labor_plant": 8,
+   "min_acreage_if_planted": 2,
+   "name": "Hot Peppers",
+   "planting_type": "transplant",
+   "planting_weeks": 2,
+   "sales_spread_weeks": 1,
+   "seasons": [
+    {
+     "end": "10-15",
+     "start": "04-01"
+    }
+   ],
+   "seed_transplant_cost_per_acre": 420,
+   "water_grow": 19000,
+   "water_harv": 16000,
+   "water_plant": 14000,
+   "yield_per_acre": 12000
+  },
+  {
+   "channels": {
+    "Farmers Market": {
+     "demand_cap_type": "weekly_varying",
+     "demand_ranges": [
+      {
+       "weekly_lbs": 2000,
+       "weeks": "W22-W35"
+      }
+     ],
+     "packaging_cost_per_lb": 0.4,
+     "price_per_lb": 6
+    },
+    "Wholesale": {
+     "demand_cap_type": "weekly_flat",
+     "packaging_cost_per_lb": 0.2,
+     "price_per_lb": 2.75,
+     "weekly_demand_lbs": 30000
+    }
+   },
+   "crop_diversity_max": 0.6,
+   "crop_size_m3_per_lb": 0.0011953859649122807,
+   "days_to_maturity": 196,
+   "fert_grow": 0.23,
+   "fert_harv": 0.12,
+   "fert_plant": 0.46,
+   "fuel_grow": 1.8,
+   "fuel_harv": 3.5,
+   "fuel_plant": 4.6,
+   "harvest_weeks": 1,
+   "labor_grow": 0.3,
+   "labor_harv": 75,
+   "labor_plant": 6.7,
+   "min_acreage_if_planted": 2,
+   "name": "Garlic",
+   "planting_type": "seed",
+   "planting_weeks": 3,
+   "sales_spread_weeks": 8,
+   "seasons": [
+    {
+     "end": "08-01",
+     "start": "01-01"
+    }
+   ],
+   "seed_transplant_cost_per_acre": 380,
+   "water_grow": 9200,
+   "water_harv": 8100,
+   "water_plant": 13900,
+   "yield_per_acre": 10000
+  },
+  {
+   "channels": {
+    "Farmers Market": {
+     "demand_cap_type": "weekly_varying",
+     "demand_ranges": [
+      {
+       "weekly_lbs": 2000,
+       "weeks": "W20-W40"
+      }
+     ],
+     "packaging_cost_per_lb": 0.28,
+     "price_per_lb": 4
+    },
+    "Wholesale": {
+     "annual_demand_lbs": 150000,
+     "demand_cap_type": "annual",
+     "packaging_cost_per_lb": 0.12,
+     "price_per_lb": 1.5
+    }
+   },
+   "crop_diversity_max": 0.25,
+   "crop_size_m3_per_lb": 0.005678083333333334,
+   "days_to_maturity": 35,
+   "fert_grow": 0.3,
+   "fert_harv": 0.18,
+   "fert_plant": 0.4,
+   "fuel_grow": 1.5,
+   "fuel_harv": 3.5,
+   "fuel_plant": 3,
+   "harvest_weeks": 3,
+   "labor_grow": 3,
+   "labor_harv": 40,
+   "labor_plant": 5,
+   "min_acreage_if_planted": 1,
+   "name": "Basil",
+   "planting_type": "transplant",
+   "planting_weeks": 1,
+   "sales_spread_weeks": 1,
+   "seasons": [
+    {
+     "end": "09-15",
+     "start": "05-01"
+    }
+   ],
+   "seed_transplant_cost_per_acre": 280,
+   "water_grow": 11500,
+   "water_harv": 8100,
+   "water_plant": 9200,
+   "yield_per_acre": 4500
+  }
+ ],
+ "employees": [
+  {
+   "count": 1,
+   "field_time_pct": 80,
+   "hours_per_week": 45,
+   "position": "Farm Manager",
+   "type": "salary",
+   "wage": 95000
+  },
+  {
+   "count": 2,
+   "field_time_pct": 90,
+   "hours_per_week": 40,
+   "position": "Equipment Operator",
+   "type": "hourly",
+   "wage": 26
+  },
+  {
+   "count": 12,
+   "end_week": 42,
+   "field_time_pct": 100,
+   "hours_per_week": 40,
+   "position": "Seasonal Field Crew",
+   "start_week": 10,
+   "type": "seasonal",
+   "wage": 20
+  },
+  {
+   "count": 8,
+   "end_week": 40,
+   "field_time_pct": 100,
+   "hours_per_week": 40,
+   "position": "Harvest Crew",
+   "start_week": 14,
+   "type": "seasonal",
+   "wage": 19
+  }
+ ],
+ "equip_storage": 300,
+ "fuel_storage": 13000,
+ "harvest_storage_cap": 5000,
+ "interest_rate_apr": 0.07,
+ "operating_weeks": 52,
+ "other_debt_service_per_week": 0,
+ "overhead_pct_of_revenue": 0.16,
+ "payroll_load_pct": 0.25,
+ "rate_equip_storage": 0.32051282051282054,
+ "rate_fuel_storage": 0.020833333333333332,
+ "rate_harvest_storage": 0.35615384615384615,
+ "rate_irrigation": 2.1367521367521367,
+ "rate_machinery": 1000,
+ "rate_property_mortgage_rent": 0,
+ "rate_water_storage": 0.003596153846153846,
+ "sell_through_fraction": 0.85,
+ "total_land": 80,
+ "water_storage_capacity": 270000,
+ "well_enabled": true,
+ "well_weekly_cap_L": 2500000
+}
