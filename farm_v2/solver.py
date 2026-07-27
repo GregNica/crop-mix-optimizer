@@ -513,28 +513,37 @@ def solve_farm_v2(
 
     # Per-succession precomputes shared by C4, C5 and C7.
     #
-    # `succ_sellable_lbs` / `succ_weekly_sellable_lbs` exist so the "sellable pounds off
-    # this succession" product is written ONCE. It was previously hand-typed at each row,
-    # sell-through fallback and all, and C4 was the copy that forgot both the fallback and
-    # the divisor — a drift no reader could see, because each site looked self-consistent.
-    # Which of the two arrays a row wants is a real semantic distinction, so it is in the
-    # name: whole-season for the rows that cap a window's total, one-week for the rows that
-    # cap a single week.
+    # These exist so the "pounds off this succession" product is written ONCE. It used to be
+    # hand-typed at every row, sell-through fallback and all, and C4 was the copy that forgot
+    # both the fallback and the divisor — drift no reader could see, because each site looked
+    # self-consistent. Which array a row wants is a real semantic distinction, so it is in the
+    # name; do not collapse them.
+    #
+    #   *_sellable_*  — after sell-through. For rows that cap SALES.
+    #   *_physical_*  — the whole harvest. For rows that cap SPACE, because unsold and
+    #                   spoiled product still occupies the cooler. `sell_through_fraction`
+    #                   is defined for the user as everything lost "after spoilage,
+    #                   grade-outs, returns, and unsold perishables" — only the grade-out
+    #                   share of that never reaches storage, and the model has no way to
+    #                   separate the components, so a space cap takes the conservative end.
+    #                   Under-sizing a building is the expensive direction to be wrong in.
+    #   weekly_*      — divided across the succession's harvest weeks (the even-split
+    #                   convention); the undivided form is for rows capping a window total.
     succ_spread              = []  # int S ∈ [1,8]
     succ_last_harv           = []  # last harvest week (or None if no harvest phase)
-    succ_n_harv_weeks        = []  # number of harvest-phase weeks per succession
     succ_sellable_lbs        = []  # sellable lbs over the whole season, at x[i] = 1
     succ_weekly_sellable_lbs = []  # ... spread evenly across the harvest weeks
+    succ_weekly_physical_lbs = []  # one week's harvest, before sell-through
     for i in range(N_S):
         crop_i = crops[successions[i]["crop"]]
         succ_spread.append(max(1, min(8, int(crop_i.get("sales_spread_weeks", 1) or 1))))
         harv_wks = harvest_weeks_of(successions[i], N_WEEKS)
         n_harv = max(1, len(harv_wks))  # max(1,...) avoids div-by-zero
         succ_last_harv.append(harv_wks[-1] if harv_wks else None)
-        succ_n_harv_weeks.append(n_harv)
         st_i = crop_i.get("sell_through_fraction", sell_through_fraction)
         succ_sellable_lbs.append(st_i * total_land * crop_i["yield_per_acre"])
         succ_weekly_sellable_lbs.append(succ_sellable_lbs[-1] / n_harv)
+        succ_weekly_physical_lbs.append(total_land * crop_i["yield_per_acre"] / n_harv)
 
     # C1 — Land: Σ x[i] ≤ 1 for each week w
     for w in range(1, N_WEEKS + 1):
@@ -572,22 +581,28 @@ def solve_farm_v2(
 
     # C4 — Harvest storage (weekly throughput)
     #
-    # Coefficient is the volume of ONE WEEK's sellable harvest. C5, C7 and the client's
-    # `weekly_harvest_vol` reporter apply the same sell-through factor and the same
-    # per-harvest-week divisor to this quantity, so keep this row in step with them —
-    # that is what `succ_weekly_sellable_lbs` exists for. `yield_per_acre` is a
-    # WHOLE-SEASON figure; charging it in every harvest week is not a conservative reading
-    # of the cap, it is a different quantity. History of the 2026-07-27 correction and the
-    # money it moved: the baseline log in tests/test_golden_farm.py.
+    # Coefficient is the volume of ONE WEEK's harvest. `yield_per_acre` is a WHOLE-SEASON
+    # figure, so it must be divided by the succession's harvest weeks the way C5 and C7
+    # divide it — charging the season total in every harvest week is not a conservative
+    # reading of the cap, it is a different quantity. History of the 2026-07-27 correction
+    # and the money it moved: the baseline log in tests/test_golden_farm.py.
     #
-    # NOTE: this is a throughput cap, not an inventory cap — it sees produce in its harvest
-    # week only and models no carryover, so a crop with sales_spread_weeks > 1 occupies no
-    # modelled space while it waits to be sold. Set harvest_storage_cap to hold peak weekly
-    # throughput. SPEC_v3 §3 replaces this row with a real inventory balance.
+    # Physical, NOT sellable: this row caps SPACE, and spoiled or unsold product occupies
+    # the cooler just as well as product that sells. See the precompute block above.
+    #
+    # ⚠️ KNOWN GAP, and it is load-bearing now. This is a throughput cap, not an inventory
+    # cap: it sees produce in its harvest week only and models no carryover, so a crop with
+    # sales_spread_weeks > 1 occupies no modelled space while it waits to be sold. On the
+    # shipped default farm, Garlic (spread 8, 1 harvest week) makes peak HELD volume 209 m³
+    # against the 163 m³ peak inflow this row enforces — 28% understated. The 275 m³ default
+    # covers both, but a user who sizes a cooler from the reported utilization will build one
+    # too small, so the field's help text tells them to size for peak HELD volume. This gap
+    # was inert while the cap sat at 5,000 m³; the right-sizing is what gave it teeth.
+    # SPEC_v3 §3 replaces this row with a real inventory balance and closes it.
     for w in range(1, N_WEEKS + 1):
         cols = [
             (idx_x_start + i,
-             succ_weekly_sellable_lbs[i] * crops[successions[i]["crop"]]["crop_size_m3_per_lb"])
+             succ_weekly_physical_lbs[i] * crops[successions[i]["crop"]]["crop_size_m3_per_lb"])
             for i in range(N_S)
             if phase_table[i][w] == 2
         ]

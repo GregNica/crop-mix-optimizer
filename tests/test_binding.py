@@ -82,12 +82,11 @@ def _peak_storage_m3(r, land):
     assert a == a. This repo has shipped exactly that test before — one that compared two
     parses of the same value, both zero, and certified a bug as correct.
 
-    `sell_through` is the one input echoed back off the result rather than re-supplied by
-    the caller: it is a scalar the solver was handed, not a number it derived, so quoting
-    it twice creates a way for helper and solve to disagree without creating independence.
+    PHYSICAL volume, deliberately: C4 caps space, and spoiled or unsold product occupies the
+    cooler. If C4 ever reverts to the sellable basis, the squeeze test sees `used` overshoot
+    its cap by 1/sell_through and fails — which is the point.
     """
     x, succs, crops = r["x"], r["successions"], r["crops"]
-    sell_through = r["sell_through_fraction"]
     weekly = [0.0] * 53
     for i, s in enumerate(succs):
         if x[i] <= 1e-9:
@@ -96,8 +95,7 @@ def _peak_storage_m3(r, land):
         harv = harvest_weeks_of(s)
         if not harv:
             continue
-        st_c = crop.get("sell_through_fraction", sell_through)
-        per_week = (st_c * x[i] * land * crop["yield_per_acre"]
+        per_week = (x[i] * land * crop["yield_per_acre"]
                     * crop["crop_size_m3_per_lb"] / len(harv))
         for w in harv:
             weekly[w] += per_week
@@ -161,10 +159,9 @@ class TestHarvestStorageBinds:
         with less acreage or a lower profit.
         """
         loose, peak = loose_storage
-        # 2%, not 20%. The margin must be TIGHTER than the smallest error it has to catch, and
-        # the smaller of the two factors is sell-through: dropping it inflates the row by
-        # 1/0.85 = 1.176x. A 20% margin swallowed that exactly — mutation-testing caught this
-        # guard passing with the sell-through factor deleted from the solver.
+        # 2%, not 20%. The margin must be TIGHTER than the smallest error it has to catch.
+        # The original 20% swallowed a 1/0.85 = 1.176x error whole — mutation-testing caught
+        # this guard passing with a factor deleted from the solver.
         sized = _solve(full_params, harvest_storage_cap=peak * 1.02, **_STORAGE_FREE)
         assert sized["profit"] == pytest.approx(loose["profit"], rel=1e-6), (
             f"a cap 2% above the plan's {peak:,.0f} m³ peak must be slack, but profit moved "
