@@ -353,6 +353,16 @@ class TestInventoryIsDeterminate:
         )
 
 
+def _assert_within_caps(r, tag=""):
+    prefix = f"[{tag}] " if tag else ""
+    for name, series in r["capacity_series"].items():
+        for w, (used, cap) in enumerate(zip(series["used"], series["cap"]), start=1):
+            assert used <= cap * (1 + 1e-6) + 1e-6, (
+                f"{prefix}{name} W{w}: used {used:,.2f} exceeds the cap {cap:,.2f} it was "
+                "solved against"
+            )
+
+
 class TestCapacitySeriesIsTheConstraints:
     """SPEC_v3 §9 / audit N5-N6: what the client renders must be what the model enforced.
 
@@ -391,12 +401,37 @@ class TestCapacitySeriesIsTheConstraints:
 
     def test_every_series_respects_its_own_cap(self, solved):
         r, _ = solved
-        for name, series in r["capacity_series"].items():
-            for w, (used, cap) in enumerate(zip(series["used"], series["cap"]), start=1):
-                assert used <= cap * (1 + 1e-6) + 1e-6, (
-                    f"{name} W{w}: used {used:,.2f} exceeds the cap {cap:,.2f} it was solved "
-                    "against"
-                )
+        _assert_within_caps(r)
+
+    @pytest.mark.parametrize("tag,extra", [
+        # The plain fixture has no well-off/city-on case and no labor flex, so it cannot see
+        # the two rows that BUY headroom with a decision variable. Both were reported as
+        # correct by every other test in this file while the cap was the bare RHS.
+        ("city water alongside a well", dict(city_water_enabled=True,
+                                             city_water_cost_per_L=0.0005)),
+        ("city water, no well",         dict(city_water_enabled=True,
+                                             city_water_cost_per_L=0.0005,
+                                             well_enabled=False, well_weekly_cap_L=0.0)),
+        ("overtime + hire",             dict(overtime_enabled=True,
+                                             overtime_rate_multiplier=1.5,
+                                             max_overtime_hrs_per_week=400.0,
+                                             hire_enabled=True,
+                                             max_hire_hrs_per_week=400.0,
+                                             hire_wage_markup=0.2)),
+    ])
+    def test_caps_hold_when_a_row_buys_extra_headroom(self, full_params, tag, extra):
+        """C2 and C3 are satisfied against capacity PLUS what the plan purchased, so `cap`
+        has to be the RHS as solved. Reporting the bare standing capacity makes `used`
+        exceed `cap` (water ranked #1 wrongly, labor shown over-subscribed in the very
+        scenario that bought the hours) or makes it zero (well off + city on: every consumer
+        guards `cap > 0` and the row vanishes from the bottleneck ranking entirely)."""
+        r = _solve({**full_params, "sell_through_fraction": 0.85}, **extra)
+        _assert_within_caps(r, tag)
+        for name in ("labor", "water"):
+            assert max(r["capacity_series"][name]["cap"]) > 0, (
+                f"[{tag}] {name} cap is all zeros — consumers guard `cap > 0` and drop the "
+                "row, so this resource can never be ranked as the bottleneck"
+            )
 
 
 class TestWasteIsVisible:
@@ -457,3 +492,36 @@ class TestWasteIsVisible:
             if entry["sellable_lbs"] > 1e-9:
                 assert entry["fraction"] == pytest.approx(
                     entry["lbs"] / entry["sellable_lbs"], rel=1e-9)
+
+
+class TestTimeLimitedSolveKeepsItsPlan:
+    """SPEC_v3 §7.1. HiGHS stopping on the clock is not the same as finding nothing.
+
+    B.2 made this reachable: the golden farm went from closing at the root in one
+    branch-and-bound node to needing 41, so a farm bigger than the demo can plausibly hit the
+    75s budget the client sets. The old code returned profit=None and discarded result.x,
+    showing "no solution found" while a usable incumbent sat in the object.
+    """
+
+    def test_a_time_limited_solve_returns_the_incumbent(self, full_params):
+        # A budget small enough that HiGHS cannot prove optimality but will have something.
+        r = solve_farm_v2(**{**full_params, "sell_through_fraction": 0.85},
+                          solver_time_limit=0.05)
+        if r["status"] == "optimal":
+            pytest.skip("solved to optimality inside the budget; nothing to assert here")
+        assert r["status"] == "time_limit_feasible", (
+            f"expected a usable incumbent, got {r['status']!r} — the plan was thrown away"
+        )
+        assert r["profit"] is not None, "profit is None: the incumbent was discarded"
+        assert r["gap_note"], "a non-proven plan must say so"
+        # And it must be a real plan, not an empty shell.
+        assert r["x"] is not None and float(sum(r["x"])) > 0
+        _assert_within_caps(r, "time-limited")
+
+    def test_an_optimal_solve_carries_no_gap_note(self, solved):
+        r, _ = solved
+        assert r["status"] == "optimal"
+        assert r["gap_note"] is None, (
+            "a proven-optimal plan must not warn about a time limit, or the warning stops "
+            "meaning anything"
+        )

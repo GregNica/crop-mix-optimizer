@@ -868,7 +868,19 @@ def solve_farm_v2(
                   3: "unbounded", 4: "other"}
     status = status_map.get(result.status, f"unknown({result.status})")
 
-    if result.status != 0:
+    # SPEC_v3 §7.1 — a time-limited solve usually HAS a plan; don't throw it away.
+    #
+    # scipy reports status 1 when HiGHS hits `time_limit`, and in that case `result.x` is
+    # normally a feasible incumbent, often within a fraction of a percent of optimal. Bailing
+    # out with profit=None hands the grower "no solution found" while a perfectly usable plan
+    # sits in the result object. B.2 made this materially more likely: the golden farm went
+    # from closing at the root in 1 branch-and-bound node to needing 41, so a farm larger than
+    # the demo can plausibly reach the 75s budget the client sets.
+    #
+    # Fall through to normal extraction and flag it, rather than inventing a second reporting
+    # path that could drift from the first.
+    time_limited_incumbent = (result.status == 1 and getattr(result, "x", None) is not None)
+    if result.status != 0 and not time_limited_incumbent:
         return {
             "status": status,
             "profit": None,
@@ -879,6 +891,8 @@ def solve_farm_v2(
             "crops": crops,
             "channels": channels,
         }
+    if time_limited_incumbent:
+        status = "time_limit_feasible"
 
     z = result.x
     x_sol = z[idx_x_start : idx_x_start + N_S]
@@ -1092,17 +1106,43 @@ def solve_farm_v2(
                   for i in range(N_S) if phase_table[i][w] is not None))
         for w in range(1, N_WEEKS + 1)
     ]
+    # `cap` is each row's RHS AS SOLVED, not its standing capacity — because several rows buy
+    # extra headroom with a decision variable and the constraint is only satisfied against the
+    # total:
+    #     C2:  used - overtime[w] - hire[w]  <= labor_capacity[w]
+    #     C3:  used - city_water[w]          <= free_water[w]
+    # Reporting the bare RHS understates the ceiling and breaks two real configurations. With
+    # a well switched off and city water on, free_water is all zeros: every consumer guards
+    # `cap > 0 ? used/cap : 0`, so water silently reports 0% and summaryRow drops the row
+    # entirely — water can never be ranked the bottleneck even when it is the binding
+    # resource. With both on, used legitimately exceeds free_water and the unclamped
+    # peakRatio goes past 100%, which makes rankBottlenecks call water #1 wrongly. The labor
+    # equivalent fires in the What-If "Plan optimal labor" scenario, which reports labor
+    # over-subscribed in exactly the run where the grower just bought the extra hours.
+    ot_weekly   = (z[idx_ot_start   : idx_ot_start   + N_WEEKS]
+                   if (overtime_enabled and idx_ot_start is not None) else np.zeros(N_WEEKS))
+    hire_weekly = (z[idx_hire_start : idx_hire_start + N_WEEKS]
+                   if (hire_enabled and idx_hire_start is not None) else np.zeros(N_WEEKS))
+    city_weekly = (z[idx_cw_start   : idx_cw_start   + N_WEEKS]
+                   if (city_water_enabled and idx_cw_start is not None) else np.zeros(N_WEEKS))
+
     capacity_series = {
         "labor":   {"used": [float(v) for v in labor_used_weekly[1:]],
-                    "cap":  [float(v) for v in labor_capacity]},
+                    "cap":  [float(labor_capacity[w] + ot_weekly[w] + hire_weekly[w])
+                             for w in range(N_WEEKS)]},
         "water":   {"used": water_used_weekly,
-                    "cap":  [float(v) for v in free_water]},
+                    "cap":  [float(free_water[w] + city_weekly[w]) for w in range(N_WEEKS)]},
         "storage": {"used": storage_m3_weekly,
                     "cap":  [float(harvest_storage_cap)] * N_WEEKS},
     }
 
     return {
         "status":           status,
+        # Present only when the solve stopped on its time budget: the plan below is the best
+        # HiGHS found, not a proven optimum. SPEC_v3 §7.1.
+        "gap_note":         ("Stopped at the time limit — this is the best plan found within "
+                             "the budget, not a proven optimum."
+                             if status == "time_limit_feasible" else None),
         # SPEC_v3 §8: the ONE margin kernel, computed from the objective's own arrays. The UI
         # renders these numbers rather than recomputing them, so it can never disagree with
         # the optimizer about which crop-channels make money.
