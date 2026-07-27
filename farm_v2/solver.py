@@ -34,7 +34,11 @@ import numpy as np
 from scipy.optimize import milp, LinearConstraint, Bounds
 from scipy.sparse import csr_matrix
 
-from farm_v2.utils.calendar import generate_successions, build_phase_table
+from farm_v2.utils.calendar import (
+    generate_successions,
+    build_phase_table,
+    harvest_weeks_of,
+)
 from farm_v2.utils.water import (
     compute_free_water,
     compute_net_water_rates,
@@ -507,6 +511,31 @@ def solve_farm_v2(
         ubs_con.append(hi)
         row += 1
 
+    # Per-succession precomputes shared by C4, C5 and C7.
+    #
+    # `succ_sellable_lbs` / `succ_weekly_sellable_lbs` exist so the "sellable pounds off
+    # this succession" product is written ONCE. It was previously hand-typed at each row,
+    # sell-through fallback and all, and C4 was the copy that forgot both the fallback and
+    # the divisor — a drift no reader could see, because each site looked self-consistent.
+    # Which of the two arrays a row wants is a real semantic distinction, so it is in the
+    # name: whole-season for the rows that cap a window's total, one-week for the rows that
+    # cap a single week.
+    succ_spread              = []  # int S ∈ [1,8]
+    succ_last_harv           = []  # last harvest week (or None if no harvest phase)
+    succ_n_harv_weeks        = []  # number of harvest-phase weeks per succession
+    succ_sellable_lbs        = []  # sellable lbs over the whole season, at x[i] = 1
+    succ_weekly_sellable_lbs = []  # ... spread evenly across the harvest weeks
+    for i in range(N_S):
+        crop_i = crops[successions[i]["crop"]]
+        succ_spread.append(max(1, min(8, int(crop_i.get("sales_spread_weeks", 1) or 1))))
+        harv_wks = harvest_weeks_of(successions[i], N_WEEKS)
+        n_harv = max(1, len(harv_wks))  # max(1,...) avoids div-by-zero
+        succ_last_harv.append(harv_wks[-1] if harv_wks else None)
+        succ_n_harv_weeks.append(n_harv)
+        st_i = crop_i.get("sell_through_fraction", sell_through_fraction)
+        succ_sellable_lbs.append(st_i * total_land * crop_i["yield_per_acre"])
+        succ_weekly_sellable_lbs.append(succ_sellable_lbs[-1] / n_harv)
+
     # C1 — Land: Σ x[i] ≤ 1 for each week w
     for w in range(1, N_WEEKS + 1):
         cols = [
@@ -541,18 +570,27 @@ def solve_farm_v2(
             cols.append((idx_cw_start + w - 1, -1.0))
         add_row(cols, -np.inf, free_water[w - 1])
 
-    # C4 — Harvest storage
-    # NOTE: With sales_spread_weeks > 1 (Phase 3.5.1), this constraint is checked
-    # at the harvest week only and does not track post-harvest inventory carryover.
-    # Users must set harvest_storage_cap large enough to hold the full harvest
-    # volume for any spread crop. Full inventory balance is out of scope here.
+    # C4 — Harvest storage (weekly throughput)
+    #
+    # Coefficient is the volume of ONE WEEK's sellable harvest. C5, C7 and the client's
+    # `weekly_harvest_vol` reporter apply the same sell-through factor and the same
+    # per-harvest-week divisor to this quantity, so keep this row in step with them —
+    # that is what `succ_weekly_sellable_lbs` exists for. `yield_per_acre` is a
+    # WHOLE-SEASON figure; charging it in every harvest week is not a conservative reading
+    # of the cap, it is a different quantity. History of the 2026-07-27 correction and the
+    # money it moved: the baseline log in tests/test_golden_farm.py.
+    #
+    # NOTE: this is a throughput cap, not an inventory cap — it sees produce in its harvest
+    # week only and models no carryover, so a crop with sales_spread_weeks > 1 occupies no
+    # modelled space while it waits to be sold. Set harvest_storage_cap to hold peak weekly
+    # throughput. SPEC_v3 §3 replaces this row with a real inventory balance.
     for w in range(1, N_WEEKS + 1):
-        cols = []
-        for i in range(N_S):
-            if phase_table[i][w] == 2:
-                crop = crops[successions[i]["crop"]]
-                coeff = total_land * crop["yield_per_acre"] * crop["crop_size_m3_per_lb"]
-                cols.append((idx_x_start + i, coeff))
+        cols = [
+            (idx_x_start + i,
+             succ_weekly_sellable_lbs[i] * crops[successions[i]["crop"]]["crop_size_m3_per_lb"])
+            for i in range(N_S)
+            if phase_table[i][w] == 2
+        ]
         add_row(cols, -np.inf, harvest_storage_cap)
 
     # C5 — Channel sales ≤ sell_through × production (Phase 3.5.1: sales_spread_weeks)
@@ -571,18 +609,6 @@ def solve_farm_v2(
     #   (b) Cumulative: Σ_ch Σ_{w=H}^{H+S-1} v[c,ch,w] ≤ x[i]×land×yield
     #       Caps the total across the window to the actual harvest volume.
     #   C1 (land/field occupancy) is unchanged — spread window is post-harvest.
-    #
-    # Pre-compute per-succession spread, last harvest week, and harvest week count.
-    succ_spread       = []  # int S ∈ [1,8]
-    succ_last_harv    = []  # last harvest week (or None if no harvest phase)
-    succ_n_harv_weeks = []  # number of harvest-phase weeks per succession
-    for i in range(N_S):
-        crop_i = crops[successions[i]["crop"]]
-        S = max(1, min(8, int(crop_i.get("sales_spread_weeks", 1) or 1)))
-        succ_spread.append(S)
-        harv_wks = [w for w in successions[i]["weeks"] if phase_table[i][w] == 2]
-        succ_last_harv.append(harv_wks[-1] if harv_wks else None)
-        succ_n_harv_weeks.append(max(1, len(harv_wks)))  # max(1,...) avoids div-by-zero
 
     # Build spread_window[i] = set of weeks where succession i can sell (post-harvest window)
     # For spread=1 this equals the harvest weeks.  For spread>1 it is [H .. H+S-1].
@@ -595,14 +621,13 @@ def solve_farm_v2(
         S = succ_spread[i]
         if S == 1:
             # Standard: only the actual harvest weeks
-            spread_window.append({w for w in successions[i]["weeks"] if phase_table[i][w] == 2})
+            spread_window.append(set(harvest_weeks_of(successions[i], N_WEEKS)))
         else:
             # Spread: window starts at last harvest week, extends S weeks
             spread_window.append(set(range(H, min(H + S, N_WEEKS + 1))))
 
     # (a) Per-week rows — one per crop × week
     for c_idx in range(n_crops):
-        crop = crops[c_idx]
         for w in range(1, N_WEEKS + 1):
             col_v = [
                 (idx_v_start + _vcw_index(c_idx, ch_idx, w, n_channels, N_WEEKS), 1.0)
@@ -616,13 +641,11 @@ def solve_farm_v2(
                         # Spread evenly across harvest weeks so total supply = yield_per_acre.
                         # Without this division each harvest week independently allows the full
                         # yield, letting the optimizer sell n_harv_weeks × yield_per_acre total.
-                        # sell_through_fraction: only this share of harvest is sellable, so the
-                        # farm must grow more (higher x) to deliver a given sales/cap volume.
-                        supply = crop.get("sell_through_fraction", sell_through_fraction) * total_land * crop["yield_per_acre"] / succ_n_harv_weeks[i]
+                        supply = succ_weekly_sellable_lbs[i]
                     else:
                         # spread>1: cumulative constraint (C5b) caps the total; per-week
                         # supply stays at full yield so any week in the window can clear it.
-                        supply = crop.get("sell_through_fraction", sell_through_fraction) * total_land * crop["yield_per_acre"]
+                        supply = succ_sellable_lbs[i]
                     col_v.append((idx_x_start + i, -supply))
             add_row(col_v, -np.inf, 0.0)
 
@@ -634,13 +657,12 @@ def solve_farm_v2(
         if succ_last_harv[i] is None:
             continue
         c_idx = successions[i]["crop"]
-        crop  = crops[c_idx]
         col_w = [
             (idx_v_start + _vcw_index(c_idx, ch_idx, w, n_channels, N_WEEKS), 1.0)
             for w in sorted(spread_window[i])
             for ch_idx in range(n_channels)
         ]
-        col_w.append((idx_x_start + i, -crop.get("sell_through_fraction", sell_through_fraction) * total_land * crop["yield_per_acre"]))
+        col_w.append((idx_x_start + i, -succ_sellable_lbs[i]))
         add_row(col_w, -np.inf, 0.0)
 
     # C6 — Channel sales ≤ demand cap
@@ -654,10 +676,9 @@ def solve_farm_v2(
     # C7 — sell_through × production ≤ total sales-capacity  (i.e. production ≤ capacity / sell_through)
     #   Lets the farm grow more than the cap so the SELLABLE share still fits the market.
     for c_idx in range(n_crops):
-        crop = crops[c_idx]
         for w in range(1, N_WEEKS + 1):
             cols = [
-                (idx_x_start + i, crop.get("sell_through_fraction", sell_through_fraction) * total_land * crop["yield_per_acre"] / succ_n_harv_weeks[i])
+                (idx_x_start + i, succ_weekly_sellable_lbs[i])
                 for i in range(N_S)
                 if successions[i]["crop"] == c_idx and phase_table[i][w] == 2
             ]

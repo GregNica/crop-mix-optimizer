@@ -144,6 +144,22 @@ def build_phase_table(successions: list[dict], n_weeks: int = 52) -> list[list]:
     return table
 
 
+def harvest_weeks_of(s: dict, n_weeks: int = 52) -> list[int]:
+    """Weeks (1-indexed, clamped to 1..n_weeks) in which succession `s` is harvesting.
+
+    One definition, because the count is a DIVISOR in money-path math: the even-split
+    convention charges a succession's season yield as `yield / len(harvest_weeks)` per
+    harvest week, in the storage cap, the sales-supply rows, and the client's reported
+    volume series. Those three had drifted — C4 omitted the divisor entirely — and the
+    fix would have left three differently-clamped reimplementations behind it.
+
+    The clamp matches build_phase_table, which is what the constraint rows index through,
+    so a caller supplying successions directly (rather than via generate_successions,
+    which never emits an out-of-range slot) still gets the count the solver will use.
+    """
+    return [w for w, p in zip(s["weeks"], s["phases"]) if p == 2 and 1 <= w <= n_weeks]
+
+
 def successions_active_in_week(successions: list[dict], week: int) -> list[int]:
     """Return indices of successions that are active (any phase) in the given week."""
     return [i for i, s in enumerate(successions) if week in s["weeks"]]

@@ -45,11 +45,11 @@ pytestmark = pytest.mark.skipif(not PAYLOAD.exists(), reason="golden payload mis
 GOLDEN = {
     "revenue":          1_815_018,
     "variable_cost":      718_088,
-    "fixed_cost":         298_072,
+    "fixed_cost":         212_347,
     "overhead_cost":      290_403,
-    "interest_cost":        1_321,
-    "profit":             494_134,
-    "operating_profit":   798_858,
+    "interest_cost":          821,
+    "profit":             580_359,
+    "operating_profit":   884_583,
 }
 # Baseline history — re-pin ONLY with a reason, and record it here.
 #   2026-07-27 (first pin): fixed 341,812 / profit 443,458.
@@ -68,6 +68,26 @@ GOLDEN = {
 #     defaults: that channel's 25,000 lb/wk cap is back, revenue 1,793,298 -> 1,815,018 and
 #     profit 487,549 -> 494,134. Lesson worth keeping: capture the fixture from the FORM, not
 #     from a payload something upstream has already rewritten.
+#   2026-07-27 (Phase B.1 — harvest storage right-sized, C4 divisor fixed):
+#     TWO changes, and only ONE of them moves money.
+#       (a) C4's coefficient was missing both the /n_harv_weeks divisor and the sell-through
+#           factor that C5, C7 and the client's weekly_harvest_vol reporter all apply, so the
+#           enforced storage row was ~5x the physical quantity (peak 825 m3 enforced against a
+#           real 139 m3). At the OLD 5,000 m3 cap that row was slack either way, so this fix
+#           moves profit by +$5 — under the tolerance. It deliberately lands WITH the resize
+#           because the two are destructive apart: at 275 m3 with the old coefficient, revenue
+#           collapses 1.82M -> 1.42M against a constraint that is counting the wrong quantity.
+#       (b) harvest_storage_cap 5,000 -> 275 m3, and the rate rebased from $463/m3 over 25yr
+#           to $500/m3 over 20yr (0.35615 -> 0.48077 $/m3/wk = 500/(20*52)). Why those numbers,
+#           and why the old ones had no provenance to preserve, is documented next to the
+#           default itself: BENCHMARK_DEFAULTS.harvest_storage_cap in public/index.html.
+#     Effect: fixed_cost 298,072 -> 212,347 (-85,725/yr), interest 1,321 -> 821 (less borrowing
+#     against a smaller fixed base), profit 494,134 -> 580,359. Revenue, variable cost and
+#     overhead are UNCHANGED to the dollar — the plan did not move at all. This was a wrong
+#     number on the balance sheet, not a wrong plan.
+#     The two payload keys were edited directly rather than re-captured from a browser, because
+#     both are deterministic functions of form defaults changed in the same commit
+#     (harvest_storage_cap = the input itself; rate = 500/(20*52)).
 
 # $50 is the solver noise floor, not a comfort margin. The MILP is solved by HiGHS via scipy,
 # and different builds (notably Pyodide's vs a local venv) settle on solutions that differ by
