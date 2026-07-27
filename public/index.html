@@ -6116,7 +6116,7 @@ function renderExecutiveSummary(res, params) {
     ? fmtD(res.profit) + ' projected annual profit'
     : 'Profit data unavailable';
 
-  // ── 2. Highest / Lowest margin crop/channel (per acre-day) ─────────────
+  // ── 2. Highest / Lowest margin crop-CHANNEL (per acre-week) ────────────
   // Read the SOLVER's margin kernel — never recompute it here. Three copies of this used to
   // recompute margins from params.cost_labor_per_hr / params.cost_water_per_L, keys the payload
   // never sets, so both silently used $20/hr and $0.002/L while the solver charged a blended
@@ -6139,7 +6139,9 @@ function renderExecutiveSummary(res, params) {
         if (!worst || e.rate < worst.rate) worst = e;
       }
     }
-    const line = e => `${e.label} — ${fmtRate(e.rate, U_PER_ACRE)}/day (${e.pct.toFixed(0)}% margin)`;
+    // per WEEK, matching the contribution table's primary column so the two are directly
+    // comparable (the solver's honest day rate x 7 — no annualisation assumption either way).
+    const line = e => `${e.label} — ${fmtRate(e.rate * 7, U_PER_ACRE)}/wk (${e.pct.toFixed(0)}% margin)`;
     if (best) topCrop = line(best);
     if (worst && worst.label !== best.label) lowCrop = line(worst);
   } catch(e) { topCrop = 'Calculation error — check crop channel prices'; }
@@ -6230,9 +6232,9 @@ function renderExecutiveSummary(res, params) {
     <div class="exec-grid">
       <div class="exec-item"><div class="exec-label">Projected Profit</div><div class="exec-value">${profitStr}</div></div>
       ${laborFlexItem}
-      <div class="exec-item"><div class="exec-label">Highest-Margin Option</div><div class="exec-value">${topCrop}</div></div>
-      ${lowCrop ? `<div class="exec-item"><div class="exec-label">Lowest-Margin Option</div><div class="exec-value">${lowCrop}</div></div>` : ''}
-      ${topContrib ? `<div class="exec-item"><div class="exec-label">Biggest Contributor</div><div class="exec-value">${topContrib}</div></div>` : ''}
+      <div class="exec-item"><div class="exec-label" title="Per crop AND channel. Each channel carries a full share of the crop's growing cost, so this is a full-cost measure — not a verdict on whether to sell there.">Best Crop + Channel</div><div class="exec-value">${topCrop}</div></div>
+      ${lowCrop ? `<div class="exec-item"><div class="exec-label" title="Per crop AND channel, on full allocated cost. A negative figure does NOT mean stop selling there: once the ground is planted for a better channel, surplus sold here still adds cash — it just cannot carry a full share of the growing cost.">Weakest Crop + Channel</div><div class="exec-value">${lowCrop}</div></div>` : ''}
+      ${topContrib ? `<div class="exec-item"><div class="exec-label" title="Per CROP, summed across all its channels, from the solved plan. A crop can top this list while one of its channels is the weakest above.">Biggest Contributor (all channels)</div><div class="exec-value">${topContrib}</div></div>` : ''}
       <div class="exec-item"><div class="exec-label">Peak Labor Week</div><div class="exec-value">${peakLaborStr}</div></div>
       <div class="exec-item"><div class="exec-label" title="Land rarely hits 100% in any single week — and that's expected, not idle ground. Succession planting staggers crops in and out, so the field is never fully occupied at one instant. When utilization is well below 100%, the binding limit is usually crop diversity/rotation caps, water, labor, or sales capacity — not land. The What-If panel below identifies which constraint is actually binding.">Peak Land-Use Week ⓘ</div><div class="exec-value">${peakLandStr}</div></div>
       <div class="exec-item"><div class="exec-label">${peakBorrowLabel}</div><div class="exec-value">${peakBorrow}</div></div>
@@ -13040,11 +13042,21 @@ window._diagnoseBaseline = async function() {
 // `money: true` marks the currency variables, which have no physical unit.
 const SENS_VARS = [
   { key: 'total_land',          name: 'Total Land',      param: 'total_land'         },
-  { key: 'credit_line',         name: 'Credit Line',     param: 'credit_line',  money: true },
-  { key: 'opening_cash',        name: 'Opening Cash',    param: 'opening_cash', money: true },
+  // needsCash: these only exist in the payload when the cash constraint is enabled. Sweeping
+  // one while it is off used to ADD the key, which is what switches the constraint on — with a
+  // zero balance — so every point came back infeasible and the user got a table of dashes with
+  // no explanation. A sweep must not turn on a constraint the baseline plan never had.
+  { key: 'credit_line',         name: 'Credit Line',     param: 'credit_line',  money: true, needsCash: true },
+  { key: 'opening_cash',        name: 'Opening Cash',    param: 'opening_cash', money: true, needsCash: true },
   { key: 'well_weekly_cap_L',   name: 'Well Cap',        param: 'well_weekly_cap_L'  },
   { key: 'harvest_storage_cap', name: 'Harvest Storage', param: 'harvest_storage_cap' },
 ];
+/** The variables that can be swept against the CURRENT plan. */
+function availableSensVars() {
+  const p = window._lastParams || {};
+  const cashOn = ('opening_cash' in p) || ('credit_line' in p);
+  return SENS_VARS.filter(v => !v.needsCash || cashOn);
+}
 let _activeSensKey = null;
 
 const sensVarByKey  = key => SENS_VARS.find(v => v.key === key) || null;
@@ -13085,7 +13097,7 @@ function refreshSensitivityUnits() {
 function renderSensitivitySetup(params, res) {
   const btns = document.getElementById('sens-variable-btns');
   if (!btns) return;
-  btns.innerHTML = SENS_VARS.map(v =>
+  btns.innerHTML = availableSensVars().map(v =>
     `<button class="sens-var-btn" id="svb-${v.key}" onclick="selectSensVar('${v.key}')">${sensLabelOf(v)}</button>`
   ).join('');
 }
