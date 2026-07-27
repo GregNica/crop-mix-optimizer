@@ -131,7 +131,7 @@ const EPILOGUE = `
   APP_STATE, setUnitSystem,
   parseCropCSV, parseMCMultiTab, parseRainfallXLSX,
   downloadCropTemplate, downloadMCXLSX, downloadRainfallXLSX,
-  rainfallUnitOfFile, MC_TAB_UNITS,
+  rainfallUnitOfFile, cropCSVUnitSystem, MC_TAB_UNITS,
   U_LB, U_ACRE, U_PER_LB, U_MM,
   dispVal, toCanonicalActive,
 };`;
@@ -296,6 +296,19 @@ if (!csvUS || !csvME) {
   if (a.err || b.err) {
     fail(`crop CSV: parse errors us=${JSON.stringify(a.err)} metric=${JSON.stringify(b.err)}`);
   } else {
+    // Pin the ABSOLUTE canonical values from the template's own example row, not just
+    // "both parses agree". Comparing two parses to each other passes vacuously when a column
+    // is dropped and both sides read 0 — which is exactly how a bug that zeroed every
+    // imported water and fuel figure survived the first version of this test.
+    const EXPECTED = {                       // template example row EX1 (Spinach), canonical
+      yield_per_acre: 8000, lbs_per_tote: 20, min_acreage: 2, seed_cost: 280,
+      price: 1.10, pkg: 0.09, water_plant: 10400,
+    };
+    Object.keys(EXPECTED).forEach(k => {
+      if (!(k in a)) return fail(`crop CSV: field "${k}" missing from the parsed crop`);
+      if (typeof a[k] !== 'number' || Number.isNaN(a[k])) return fail(`crop CSV: ${k} is ${a[k]}, expected a number`);
+      near(`crop CSV canonical ${k}`, a[k], EXPECTED[k], 5e-3);
+    });
     // Each template, read back in the system that wrote it, must land on the same canonical
     // crop — rounding of the example row is the only permitted difference.
     Object.keys(a).forEach(k => {
@@ -304,8 +317,36 @@ if (!csvUS || !csvME) {
     });
     near('crop CSV US is identity (yield)', a.yield_per_acre, 8000, 1e-12);
   }
-  // A US-written CSV uploaded while the app is in Metric is a KNOWN limitation of the format
-  // (no unit row is parsed back), so it is deliberately not asserted here.
+
+  // Cross-system: the units row is what decides, so a CSV downloaded in one system and
+  // uploaded in the other must still land on the same canonical crop. Without this, a
+  // colleague's US export opened in Metric reads 8000 lb/acre as 8000 kg/ha (2.2x).
+  if (T.cropCSVUnitSystem(['(text)', 'lb/acre', '$/lb']) !== 'us') fail('cropCSVUnitSystem: lb/acre row not detected as US');
+  if (T.cropCSVUnitSystem(['(text)', 'kg/ha', '$/kg']) !== 'metric') fail('cropCSVUnitSystem: kg/ha row not detected as Metric');
+  if (T.cropCSVUnitSystem(['(text)', 'days int>0']) !== null) fail('cropCSVUnitSystem: unlabelled row must return null (caller keeps old behaviour)');
+  if (T.cropCSVUnitSystem(null) !== null) fail('cropCSVUnitSystem: missing row must return null');
+  // A pre-metric template mixed canonical litres with US acres ("lbs/acre" + "L/ac/wk"); no
+  // single system describes that, and the compound water spec needs one for both halves — so
+  // it must decline and let the toggle decide rather than half-trusting the file.
+  if (T.cropCSVUnitSystem(['(text)', 'lbs/acre', 'L/ac/wk', '$/lb']) !== null)
+    fail('cropCSVUnitSystem: a row mixing US mass/area with canonical litres must return null');
+  if (T.cropCSVUnitSystem(['(text)', 'lb/acre', 'gal/acre/wk', '$/lb']) !== 'us')
+    fail('cropCSVUnitSystem: a consistent US row must be detected as US');
+  if (T.cropCSVUnitSystem(['(text)', 'kg/ha', 'L/ha/wk', '$/kg']) !== 'metric')
+    fail('cropCSVUnitSystem: a consistent Metric row must be detected as Metric');
+
+  [['us', csvUS], ['metric', csvME]].forEach(([wroteIn, csv]) => {
+    const home = cropParse(wroteIn, csv);
+    ['us', 'metric'].forEach(readIn => {
+      const away = cropParse(readIn, csv);
+      if (home.err || away.err) return fail(`crop CSV cross-system: parse error (${wroteIn} file read in ${readIn})`);
+      Object.keys(home).forEach(k => {
+        if (typeof home[k] !== 'number' || Number.isNaN(home[k]))
+          return fail(`crop CSV cross-system: ${k} is ${home[k]}, expected a number`);
+        near(`crop CSV ${wroteIn}-file read in ${readIn}: ${k}`, away[k], home[k], 1e-9);
+      });
+    });
+  });
 }
 
 if (failures) { console.error(`\n${failures} FAILURE(S)`); process.exit(1); }

@@ -2937,6 +2937,11 @@ function setUnitSystem(newSys) {
   APP_STATE.unitSystem = newSys;
   try { localStorage.setItem('farm_unit_system', newSys); } catch (e) {}
   renderUnitLabels();
+  // The sweep bounds are not in the registry (their unit depends on the selected variable), so
+  // convert them here rather than inside rerenderResultsForUnits — that early-returns unless
+  // the results view is open, which would leave the From/To boxes reading the old system's
+  // numbers under a relabelled button.
+  refreshSensitivityUnits();
   // Results are rendered from the canonical result object, so repaint them too — otherwise
   // an open results view keeps whatever units it was first drawn in.
   rerenderResultsForUnits();
@@ -4171,13 +4176,39 @@ function parseCSVLine(line) {
  *
  * Validation stops on first batch of errors (no partial crops returned on error).
  */
+/** Which unit system a crop CSV is written in, read from its own units row ("lb/acre" vs
+ *  "kg/ha"). Uploads must trust the FILE: a colleague's US export opened while the app is in
+ *  Metric would otherwise be read as kg/ha, inflating every yield by 2.2x straight into the
+ *  solver. Same rule as rainfall (rainfallUnitOfFile) and the Past-Data workbook.
+ *  Counts only the unambiguous mass/area tokens — "18-gal tote" appears in BOTH systems.
+ *  Returns null for an unlabelled or ambiguous row, so the caller keeps the old behaviour. */
+function cropCSVUnitSystem(unitRow) {
+  const txt = (unitRow || []).join(' ').toLowerCase();
+  const vote = (metricRe, usRe) => {
+    const m = (txt.match(metricRe) || []).length, u = (txt.match(usRe) || []).length;
+    return m > u ? 'metric' : u > m ? 'us' : null;
+  };
+  const massArea = vote(/\b(kg|ha)\b/g, /\b(lbs?|acres?)\b/g);
+  const volume   = vote(/\bl\b/g,       /\b(gal|gallons?)\b/g);
+  // Both dimensions must agree before the file is allowed to override the toggle. A row that
+  // mixes them is not this app's output: pre-metric templates emitted "lbs/acre" alongside
+  // "L/ac/wk" (canonical litres per US acre), which no single system describes — and the
+  // compound water/fuel specs are num/den pairs, so one system has to cover both halves.
+  // Disagreement returns null and the caller falls back to the active toggle, which at least
+  // leaves the user a control to flip; silently trusting a half-match would not.
+  if (massArea && volume && massArea !== volume) return null;
+  return massArea || volume;
+}
+
 function parseCropCSV(text) {
   const errors = [];
-  // Imported values are in the active display units (the download template matches the active
-  // system); convert unit-bearing fields to CANONICAL so the rendered crops + solver are right.
+  // Set once the units row is inspected below; until then, fall back to the active system
+  // (what a file with no units row has always been assumed to be).
+  let importSys = null;
+  // Convert unit-bearing fields to CANONICAL so the rendered crops + solver are right.
   const impC = (v, dataFKey) => {
     const spec = (typeof UNITS !== 'undefined') && UNITS.DATA_F_REGISTRY[dataFKey];
-    return spec ? UNITS.toCanonical(v, spec, APP_STATE.unitSystem || 'canonical') : v;
+    return spec ? UNITS.toCanonical(v, spec, importSys || APP_STATE.unitSystem || 'canonical') : v;
   };
   const lines  = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
   if (lines.length < 2)
@@ -4187,12 +4218,14 @@ function parseCropCSV(text) {
   const hdrs = parseCSVLine(lines[0]).map(h =>
     h.toLowerCase().replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,'_').replace(/_+/g,'_').replace(/^_|_$/g,''));
 
-  // Skip units/description row if it looks like metadata
+  // Skip units/description row if it looks like metadata — and read the units it declares.
   let dataStart = 1;
   if (lines.length > 2) {
     const probe = parseCSVLine(lines[1]);
-    if (probe[0] && (probe[0].startsWith('(') || /mm.dd/i.test(probe[0]) || /text/i.test(probe[0])))
+    if (probe[0] && (probe[0].startsWith('(') || /mm.dd/i.test(probe[0]) || /text/i.test(probe[0]))) {
       dataStart = 2;
+      importSys = cropCSVUnitSystem(probe);
+    }
   }
 
   // Validate required columns present
@@ -4200,7 +4233,12 @@ function parseCropCSV(text) {
   if (missingCols.length)
     return { crops: [], errors: missingCols.map(c => ({ row:1, field:c, msg:`Required column missing: "${c}"` })) };
 
-  const col = name => hdrs.indexOf(name);
+  // Lowercase the lookup: headers were normalized to lowercase above, but several column
+  // constants carry a capital L (water_plant_L_ac, fuel_grow_L_ac, …). Those lookups returned
+  // -1, so EVERY crop CSV imported with water and fuel silently zeroed — the water constraint
+  // could never bind and fuel dropped out of the objective. Normalizing here, at the single
+  // point of lookup, keeps any future capitalised constant from reintroducing it.
+  const col = name => hdrs.indexOf(String(name).toLowerCase());
 
   // Parse and validate data rows
   const rawRows = [];
@@ -7793,7 +7831,6 @@ function rerenderResultsForUnits() {
   renderResults(window._lastRes, window._lastParams.total_land);
   renderUnitBearingResults(window._lastParams, window._lastRes);
   renderUnitLabels();          // static result headings declaring data-unit (pie titles, etc.)
-  refreshSensitivityUnits();   // relabel + reconvert in place, preserving the typed range
 }
 
 /** Phase 4.3 — Stagger-animate results cards after a solve.
