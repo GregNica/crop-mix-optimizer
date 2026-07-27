@@ -7,17 +7,18 @@ Variable layout (all collected into one flat vector ``z`` for scipy.milp):
   0 .. N_S-1               x[i]           — succession land fraction (continuous)
   N_S .. 2*N_S-1           y[i]           — binary plant/no-plant
   2*N_S .. 2*N_S+V_off-1   v[c,ch,w]      — channel sales in lbs (continuous)
-  next V_off               city_water[w]  — liters (continuous, optional)
-  next 52                  overtime[w]    — hours (continuous, optional)
+  next n_crops*52          inv[c,w]       — lbs held at END of week w (continuous)
+  next n_crops*52          waste[c,w]     — lbs discarded in week w (continuous)
+  then, when enabled:      city_water[w], overtime[w], hire[w]  — 52 each
 
 Constraint order (rows of A):
   C1   land (52)
   C2   labor (52)
   C3   water (52)
-  C4   harvest storage (52)
-  C5   sales ≤ sell_through × production (n_crops × 52)   [production = harvest = x×land×yield]
+  C4a  inventory balance — EQUALITY, inv[c,0]=0 (n_crops × 52)
+  C4b  storage capacity on HELD stock (52)
+  C4c  shelf life — rolling bound on inv (n_crops × 52)
   C6   sales ≤ sales-capacity cap (n_crops × n_channels × 52)
-  C7   sell_through × production ≤ sales-capacity (n_crops × 52)
   C8   crop diversity — annual acre-weeks per crop (n_crops)
   C9   binary linkage upper x[i] ≤ y[i]  (N_S)
   C10  min acreage lower   x[i] ≥ y[i]×min_frac  (N_S)
@@ -25,6 +26,10 @@ Constraint order (rows of A):
   C12  max harvest acres/week (52)
   C13  weekly cash floor — cumulative cash ≥ -(opening_cash + credit_line) (52)
   C14  overtime lower bound (52, optional)
+
+C4 (harvest-week storage), C5a/C5b (per-week supply + spread window) and C7 (production ≤
+one week's demand) were deleted in Phase B.2; the inventory core above replaces all four.
+See SPEC_v3.md §3.
 """
 
 from __future__ import annotations
@@ -46,7 +51,7 @@ from farm_v2.utils.water import (
     CATCHMENT_EFFICIENCY,
 )
 from farm_v2.utils.labor import compute_labor_arrays, compute_labor_rates
-from farm_v2.utils.demand import build_demand_table, total_demand_per_crop_week
+from farm_v2.utils.demand import build_demand_table
 
 
 # ---------------------------------------------------------------------------
@@ -56,6 +61,17 @@ from farm_v2.utils.demand import build_demand_table, total_demand_per_crop_week
 def _vcw_index(c: int, ch: int, w: int, n_channels: int, n_weeks: int) -> int:
     """Flat index into v[c, ch, w] block (0-based within the block)."""
     return c * n_channels * n_weeks + ch * n_weeks + (w - 1)
+
+
+# Holding tie-break, $/lb/week. Module-level so tests can assert on the ACTUAL value —
+# a test that re-types the number cannot detect the number changing. See its use in the
+# objective for why it exists and why it must stay negligible.
+INVENTORY_TIE_BREAK_PER_LB_WEEK = 1e-6
+
+
+def _cw_index(c: int, w: int, n_weeks: int) -> int:
+    """Flat index into a per-crop-per-week block (inv, waste), 0-based within the block."""
+    return c * n_weeks + (w - 1)
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +211,6 @@ def solve_farm_v2(
 
     # Demand
     demand_table = build_demand_table(crops, channels, N_WEEKS)  # (n_crops, n_ch, 53)
-    total_demand = total_demand_per_crop_week(demand_table)       # (n_crops, 53)
 
     # Fert and fuel rate arrays per succession per week
     _FERT_KEY = ["fert_plant", "fert_grow", "fert_harv"]
@@ -388,8 +403,6 @@ def solve_farm_v2(
                         "crop": crop["name"], "channel": ch["name"],
                         "margin_pct": m["margin_pct"], "floor_pct": float(min_viable_margin_pct),
                     })
-        if excluded_channels:
-            total_demand = total_demand_per_crop_week(demand_table)
 
     # -----------------------------------------------------------------------
     # Step 4 — Fixed cost
@@ -425,11 +438,19 @@ def solve_farm_v2(
     # Step 5 — Decision variable layout
     # -----------------------------------------------------------------------
     V_off = n_crops * n_channels * N_WEEKS  # v block size
+    INV_off = n_crops * N_WEEKS             # inv[] and waste[] block size
     idx_x_start   = 0
     idx_y_start   = N_S
     idx_v_start   = 2 * N_S
-    # Sequentially lay out the optional weekly variable blocks after the v[] block.
-    _next = idx_v_start + V_off
+    # inv[c,w] — lbs of crop c held in storage at the END of week w.
+    # waste[c,w] — lbs discarded in week w (free disposal: earns nothing, costs nothing more).
+    # Both always present: the inventory balance (C4′) is an equality, so `waste` is what keeps
+    # a shelf-life bound from forcing sales that demand cannot absorb — turning a modelling
+    # limit into an infeasibility is the B1 failure this rewrite exists to remove.
+    idx_inv_start   = idx_v_start + V_off
+    idx_waste_start = idx_inv_start + INV_off
+    # Sequentially lay out the optional weekly variable blocks after the fixed ones.
+    _next = idx_waste_start + INV_off
     idx_cw_start = None
     if city_water_enabled:
         idx_cw_start = _next; _next += N_WEEKS
@@ -464,6 +485,33 @@ def solve_farm_v2(
     # City water cost
     if city_water_enabled and idx_cw_start is not None:
         c_obj[idx_cw_start : idx_cw_start + N_WEEKS] = city_water_cost_per_L
+
+    # Holding tie-break — a numerical device, NOT economics.
+    #
+    # The balance pins inventory GIVEN a sales schedule, but the schedule itself is degenerate
+    # whenever a pound can be sold this week or next at the same price with demand to spare.
+    # Both plans earn identically, so HiGHS picks arbitrarily and the returned `inventory`
+    # series moves on a 1e-9 nudge — measured at 29,077 lb on the six-crop fixture. That is
+    # the same defect the periodic boundary had (SPEC_v3 §3.0a): a reported series that is not
+    # a function of the inputs. Refusing it there and tolerating it here would be incoherent.
+    #
+    # An arbitrarily small positive cost on held stock makes "sell sooner, hold less" strictly
+    # optimal and the series unique, without changing which plan wins: at 1e-6 $/lb/week the
+    # whole tie-break is worth about $2 against a ~$900k objective, four orders below the
+    # golden farm's $50 noise floor, and it is ~6 orders below any real per-lb margin so it can
+    # never make discarding a sellable pound look better than selling it.
+    #
+    # It is deliberately NOT in the reported P&L, so the objective and `profit` differ by its
+    # value. That is the same reported-vs-optimized gap the audit killed in the labor-flex
+    # reconstruction (F1/N1), and it is tolerated here only because it is bounded at well
+    # under a dollar and pinned there by a test. The clean alternative is a lexicographic
+    # two-stage solve (maximize profit, then minimize inventory subject to that profit), which
+    # doubles solve time to buy nothing a grower can see.
+    #
+    # SPEC_v3 §3.4 supersedes this with a real per-crop `storage_loss_pct_per_week`, which is
+    # wanted anyway to model shrink and to stop long shelf lives being free money. When that
+    # lands, delete this.
+    c_obj[idx_inv_start : idx_inv_start + INV_off] = INVENTORY_TIE_BREAK_PER_LB_WEEK
 
     # Overtime cost (incremental rate above regular pay)
     if overtime_enabled and idx_ot_start is not None:
@@ -511,39 +559,31 @@ def solve_farm_v2(
         ubs_con.append(hi)
         row += 1
 
-    # Per-succession precomputes shared by C4, C5 and C7.
-    #
-    # These exist so the "pounds off this succession" product is written ONCE. It used to be
-    # hand-typed at every row, sell-through fallback and all, and C4 was the copy that forgot
-    # both the fallback and the divisor — drift no reader could see, because each site looked
-    # self-consistent. Which array a row wants is a real semantic distinction, so it is in the
-    # name; do not collapse them.
-    #
-    #   *_sellable_*  — after sell-through. For rows that cap SALES.
-    #   *_physical_*  — the whole harvest. For rows that cap SPACE, because unsold and
-    #                   spoiled product still occupies the cooler. `sell_through_fraction`
-    #                   is defined for the user as everything lost "after spoilage,
-    #                   grade-outs, returns, and unsold perishables" — only the grade-out
-    #                   share of that never reaches storage, and the model has no way to
-    #                   separate the components, so a space cap takes the conservative end.
-    #                   Under-sizing a building is the expensive direction to be wrong in.
-    #   weekly_*      — divided across the succession's harvest weeks (the even-split
-    #                   convention); the undivided form is for rows capping a window total.
-    succ_spread              = []  # int S ∈ [1,8]
-    succ_last_harv           = []  # last harvest week (or None if no harvest phase)
-    succ_sellable_lbs        = []  # sellable lbs over the whole season, at x[i] = 1
-    succ_weekly_sellable_lbs = []  # ... spread evenly across the harvest weeks
-    succ_weekly_physical_lbs = []  # one week's harvest, before sell-through
+    # Per-crop shelf life, in weeks. `sales_spread_weeks` is deprecated: it named a sales
+    # WINDOW anchored at the LAST harvest week, which double-counted overlapping plantings
+    # (B2) and locked a crop out of its own early harvest weeks (F2). Same grower question,
+    # honest semantics. Migrated 1:1 here so this commit changes the MECHANISM and not the
+    # data, and any profit move is attributable to the rewrite alone.
+    # The old 8-week ceiling is kept for now; SPEC_v3 §3.4 raises it in B.3 along with honest
+    # per-crop defaults — and the holding cost that has to precede them, because holding is
+    # currently free in every dimension and a long shelf life is pure upside in the objective.
+    shelf_life_weeks = [
+        max(1, min(8, int(c.get("shelf_life_weeks", c.get("sales_spread_weeks", 1)) or 1)))
+        for c in crops
+    ]
+
+    # One week's SELLABLE harvest per succession, at x[i] = 1 — the even-split convention.
+    # Written once because it used to be hand-typed at every row, sell-through fallback and
+    # all, and the copy in C4 forgot both the fallback and the divisor. `harvest_weeks_of`
+    # gives the one clamped definition of the denominator.
+    succ_weekly_sellable_lbs = []
+    succ_n_harv = []
     for i in range(N_S):
         crop_i = crops[successions[i]["crop"]]
-        succ_spread.append(max(1, min(8, int(crop_i.get("sales_spread_weeks", 1) or 1))))
-        harv_wks = harvest_weeks_of(successions[i], N_WEEKS)
-        n_harv = max(1, len(harv_wks))  # max(1,...) avoids div-by-zero
-        succ_last_harv.append(harv_wks[-1] if harv_wks else None)
+        n_harv = max(1, len(harvest_weeks_of(successions[i], N_WEEKS)))  # max(1,…): no div-by-0
+        succ_n_harv.append(n_harv)
         st_i = crop_i.get("sell_through_fraction", sell_through_fraction)
-        succ_sellable_lbs.append(st_i * total_land * crop_i["yield_per_acre"])
-        succ_weekly_sellable_lbs.append(succ_sellable_lbs[-1] / n_harv)
-        succ_weekly_physical_lbs.append(total_land * crop_i["yield_per_acre"] / n_harv)
+        succ_weekly_sellable_lbs.append(st_i * total_land * crop_i["yield_per_acre"] / n_harv)
 
     # C1 — Land: Σ x[i] ≤ 1 for each week w
     for w in range(1, N_WEEKS + 1):
@@ -579,106 +619,98 @@ def solve_farm_v2(
             cols.append((idx_cw_start + w - 1, -1.0))
         add_row(cols, -np.inf, free_water[w - 1])
 
-    # C4 — Harvest storage (weekly throughput)
+    # C4a — Inventory balance (equality rows, n_crops × 52)
     #
-    # Coefficient is the volume of ONE WEEK's harvest. `yield_per_acre` is a WHOLE-SEASON
-    # figure, so it must be divided by the succession's harvest weeks the way C5 and C7
-    # divide it — charging the season total in every harvest week is not a conservative
-    # reading of the cap, it is a different quantity. History of the 2026-07-27 correction
-    # and the money it moved: the baseline log in tests/test_golden_farm.py.
+    # Replaces v2's C4 (harvest-week storage), C5a (per-week supply), C5b (cumulative spread
+    # window) and C7 (production ≤ one week's demand). SPEC_v3 §3.
     #
-    # Physical, NOT sellable: this row caps SPACE, and spoiled or unsold product occupies
-    # the cooler just as well as product that sells. See the precompute block above.
+    #     inv[c,w] = inv[c,w-1] + st[c]·H[c,w] − Σ_ch v[c,ch,w] − waste[c,w]
+    #     inv[c,0] = 0
     #
-    # ⚠️ KNOWN GAP, and it is load-bearing now. This is a throughput cap, not an inventory
-    # cap: it sees produce in its harvest week only and models no carryover, so a crop with
-    # sales_spread_weeks > 1 occupies no modelled space while it waits to be sold. On the
-    # shipped default farm, Garlic (spread 8, 1 harvest week) makes peak HELD volume 209 m³
-    # against the 163 m³ peak inflow this row enforces — 28% understated. The 275 m³ default
-    # covers both, but a user who sizes a cooler from the reported utilization will build one
-    # too small, so the field's help text tells them to size for peak HELD volume. This gap
-    # was inert while the cap sat at 5,000 m³; the right-sizing is what gave it teeth.
-    # SPEC_v3 §3 replaces this row with a real inventory balance and closes it.
-    for w in range(1, N_WEEKS + 1):
-        cols = [
-            (idx_x_start + i,
-             succ_weekly_physical_lbs[i] * crops[successions[i]["crop"]]["crop_size_m3_per_lb"])
-            for i in range(N_S)
-            if phase_table[i][w] == 2
-        ]
-        add_row(cols, -np.inf, harvest_storage_cap)
-
-    # C5 — Channel sales ≤ sell_through × production (Phase 3.5.1: sales_spread_weeks)
-    #   "production" = "harvest" = x[i]×total_land×yield_per_acre (physical lbs off the field).
-    #   Only sell_through_fraction of it is sellable; the supply coefficient below carries that factor.
+    # ⚠️ The boundary is ZERO, not periodic. SPEC_v3 §3.0(a): summing a periodic balance over
+    # the year cancels the level, leaving these rows one short of full rank and the inventory
+    # LEVEL free — same plan, same profit, peak stock anywhere across a 6× band on a solver
+    # tie-break, so the reported series would not be a physical quantity. A periodic boundary
+    # also lets a W52 harvest sell in W5 of the same calendar year while C13, interest and
+    # peak borrowing are all calendar-anchored. The cost of anchoring at zero is audit item
+    # B6 — nothing sells stock grown the previous autumn until §1's cyclic year lands. No
+    # shipped template overwinters, so nothing regresses today.
     #
-    # spread=1 (default, backward-compatible):
-    #   Per-week:  Σ_ch v[c,ch,w] ≤ Σ_{i: harvest phase in w} x[i]×land×yield
-    #   Successions not in harvest phase contribute zero supply → v forced to 0.
-    #
-    # spread=S > 1 (per succession i with last harvest week H):
-    #   Two constraint sets work together:
-    #   (a) Per-week:   Σ_ch v[c,ch,w] ≤ Σ_{spread=1, harvest in w} supply
-    #                                    + Σ_{spread>1, window covers w} supply
-    #       Allows selling in spread weeks; does NOT increase total allowed.
-    #   (b) Cumulative: Σ_ch Σ_{w=H}^{H+S-1} v[c,ch,w] ≤ x[i]×land×yield
-    #       Caps the total across the window to the actual harvest volume.
-    #   C1 (land/field occupancy) is unchanged — spread window is post-harvest.
-
-    # Build spread_window[i] = set of weeks where succession i can sell (post-harvest window)
-    # For spread=1 this equals the harvest weeks.  For spread>1 it is [H .. H+S-1].
-    spread_window: list[set[int]] = []
-    for i in range(N_S):
-        H = succ_last_harv[i]
-        if H is None:
-            spread_window.append(set())
-            continue
-        S = succ_spread[i]
-        if S == 1:
-            # Standard: only the actual harvest weeks
-            spread_window.append(set(harvest_weeks_of(successions[i], N_WEEKS)))
-        else:
-            # Spread: window starts at last harvest week, extends S weeks
-            spread_window.append(set(range(H, min(H + S, N_WEEKS + 1))))
-
-    # (a) Per-week rows — one per crop × week
+    # Only SELLABLE product enters inventory (st[c] factor): culls are assumed graded out at
+    # harvest rather than stored. B.1's C4 took the opposite, conservative reading because it
+    # had no way to price holding; this row can, so it takes the more precise one. Expect the
+    # reported storage figure to drop by 1/st when this lands — SPEC_v3 §3.3.
     for c_idx in range(n_crops):
         for w in range(1, N_WEEKS + 1):
-            col_v = [
+            cols = [
+                (idx_inv_start + _cw_index(c_idx, w, N_WEEKS), 1.0),
+                (idx_waste_start + _cw_index(c_idx, w, N_WEEKS), 1.0),
+            ]
+            if w > 1:
+                cols.append((idx_inv_start + _cw_index(c_idx, w - 1, N_WEEKS), -1.0))
+            cols += [
                 (idx_v_start + _vcw_index(c_idx, ch_idx, w, n_channels, N_WEEKS), 1.0)
                 for ch_idx in range(n_channels)
             ]
+            cols += [
+                (idx_x_start + i, -succ_weekly_sellable_lbs[i])
+                for i in range(N_S)
+                if successions[i]["crop"] == c_idx and phase_table[i][w] == 2
+            ]
+            add_row(cols, 0.0, 0.0)   # equality
+
+    # C4b — Storage capacity: what is actually HELD, not what was harvested this week (52 rows)
+    #
+    # Produce sold in its harvest week never enters `inv`, so field-to-truck sales consume no
+    # capacity — deliberate. Consequence worth knowing: with v2's C4 gone there is now no
+    # volumetric THROUGHPUT cap at all (C11/C12 cap harvest acres, not m³). SPEC_v3 §3.3
+    # records `max_harvest_m3_per_week` as the fix if that ever matters.
+    #
+    # One pool for now. SPEC_v3 §3.3 splits it into refrigerated + ambient with a per-crop
+    # `storage_type`, because cured storables (garlic, onions, winter squash — which takes
+    # chilling injury below 50°F) do not belong in a cooler, and one bulky storable can crowd
+    # out the perishables that do.
+    for w in range(1, N_WEEKS + 1):
+        cols = [
+            (idx_inv_start + _cw_index(c_idx, w, N_WEEKS), crops[c_idx]["crop_size_m3_per_lb"])
+            for c_idx in range(n_crops)
+        ]
+        add_row(cols, -np.inf, harvest_storage_cap)
+
+    # C4c — Shelf life: nothing in store is older than L weeks (n_crops × 52 rows)
+    #
+    #     inv[c,w] ≤ st[c] · Σ_{k=0..L−1} H[c, w−k]
+    #
+    # "Inventory cannot exceed what arrived in the last L weeks." A rolling bound, NOT the
+    # cumulative construction SPEC_v3 originally specified: §3.0(b) showed those doubled
+    # 104-week rows collapse to tautologies in every wrap case (harvest W52, shelf life 1,
+    # sold W5 — permitted, bit-identical to no constraint at all). This form is anchor-free,
+    # stays correct if §1 later makes the year cyclic (w−k becomes ((w−k−1) mod 52)+1), and
+    # runs ~L nonzeros per row against the cumulative form's ~170.
+    #
+    # `waste` is what makes it satisfiable: product that cannot be sold inside its shelf life
+    # is discarded rather than the row forcing a sale demand cannot absorb.
+    for c_idx in range(n_crops):
+        L = shelf_life_weeks[c_idx]
+        if L >= N_WEEKS:
+            # Unreachable today: shelf_life_weeks is clamped to <= 8 above, so this never
+            # fires. Kept because B.3 raises that clamp for honest shelf lives (carrots 12,
+            # garlic 16), at which point a crop marked non-perishable genuinely skips the
+            # row. Do not read the row count as if this branch were live.
+            continue
+        for w in range(1, N_WEEKS + 1):
+            window = range(max(1, w - L + 1), w + 1)
+            cols = [(idx_inv_start + _cw_index(c_idx, w, N_WEEKS), 1.0)]
             for i in range(N_S):
                 if successions[i]["crop"] != c_idx:
                     continue
-                if w in spread_window[i]:
-                    if succ_spread[i] <= 1:
-                        # Spread evenly across harvest weeks so total supply = yield_per_acre.
-                        # Without this division each harvest week independently allows the full
-                        # yield, letting the optimizer sell n_harv_weeks × yield_per_acre total.
-                        supply = succ_weekly_sellable_lbs[i]
-                    else:
-                        # spread>1: cumulative constraint (C5b) caps the total; per-week
-                        # supply stays at full yield so any week in the window can clear it.
-                        supply = succ_sellable_lbs[i]
-                    col_v.append((idx_x_start + i, -supply))
-            add_row(col_v, -np.inf, 0.0)
-
-    # (b) Cumulative window rows — one per spread>1 succession
-    # Ensures total sales across the window ≤ actual harvest volume.
-    for i in range(N_S):
-        if succ_spread[i] <= 1:
-            continue
-        if succ_last_harv[i] is None:
-            continue
-        c_idx = successions[i]["crop"]
-        col_w = [
-            (idx_v_start + _vcw_index(c_idx, ch_idx, w, n_channels, N_WEEKS), 1.0)
-            for w in sorted(spread_window[i])
-            for ch_idx in range(n_channels)
-        ]
-        col_w.append((idx_x_start + i, -succ_sellable_lbs[i]))
-        add_row(col_w, -np.inf, 0.0)
+                # A succession can harvest in several of the window's weeks; each contributes
+                # one week's inflow.
+                n_in_window = sum(1 for t in window if phase_table[i][t] == 2)
+                if n_in_window:
+                    cols.append((idx_x_start + i,
+                                 -succ_weekly_sellable_lbs[i] * n_in_window))
+            add_row(cols, -np.inf, 0.0)
 
     # C6 — Channel sales ≤ demand cap
     for c_idx in range(n_crops):
@@ -688,16 +720,19 @@ def solve_farm_v2(
                 flat_idx = idx_v_start + _vcw_index(c_idx, ch_idx, w, n_channels, N_WEEKS)
                 add_row([(flat_idx, 1.0)], -np.inf, cap_w)
 
-    # C7 — sell_through × production ≤ total sales-capacity  (i.e. production ≤ capacity / sell_through)
-    #   Lets the farm grow more than the cap so the SELLABLE share still fits the market.
-    for c_idx in range(n_crops):
-        for w in range(1, N_WEEKS + 1):
-            cols = [
-                (idx_x_start + i, succ_weekly_sellable_lbs[i])
-                for i in range(N_S)
-                if successions[i]["crop"] == c_idx and phase_table[i][w] == 2
-            ]
-            add_row(cols, -np.inf, total_demand[c_idx, w])
+    # C7 — DELETED (audit B1). It capped a succession's whole-cycle production at ONE week's
+    # demand, which pinned any crop whose harvest is concentrated to `demand / yield` acres and
+    # collided with `min_acreage_if_planted` to zero others out silently. Overproduction is now
+    # simply `waste` that cost money to grow and earns nothing, so the optimizer prices it out
+    # instead of the model forbidding it. Measured on the shipped farm: +$84,857, Garlic
+    # 11.6 → 23.5 acres.
+    #
+    # Two consequences SPEC_v3 §3.5 flags, neither automatic:
+    #   • free disposal turns modelling bugs into invisible waste, which is why `waste_by_crop`
+    #     is now in the result dict — a number nobody can see is a number nobody can audit;
+    #   • `overhead_pct_of_revenue` proxies costs that scale with the SIZE of the operation,
+    #     and C7 was accidentally holding production ≈ sales. A farm that grows 2× and sells 1×
+    #     now pays overhead as if it were half its real size. Not fixed here.
 
     # C8 — Crop diversity: annual acre-weeks per crop
     # Σ_{i: crop c} x[i] × len(weeks(i)) ≤ diversity_max[c] × N_WEEKS
@@ -857,6 +892,38 @@ def solve_farm_v2(
                 flat = _vcw_index(c_idx, ch_idx, w, n_channels, N_WEEKS)
                 v_sol[c_idx, ch_idx, w] = v_flat[flat]
 
+    inv_sol   = np.zeros((n_crops, N_WEEKS + 1), dtype=float)
+    waste_sol = np.zeros((n_crops, N_WEEKS + 1), dtype=float)
+    for c_idx in range(n_crops):
+        for w in range(1, N_WEEKS + 1):
+            flat = _cw_index(c_idx, w, N_WEEKS)
+            inv_sol[c_idx, w]   = z[idx_inv_start + flat]
+            waste_sol[c_idx, w] = z[idx_waste_start + flat]
+
+    # Waste per crop, and what share of sellable output it represents.
+    #
+    # NOT optional reporting. Deleting C7 (B1) means overproduction is no longer infeasible,
+    # it is discarded — which is correct economics, but it also means a MODELLING bug now
+    # expresses itself as a plan that looks legitimate while quietly dumping product, where
+    # before it expressed itself as suppressed acreage that at least looked wrong. The shipped
+    # plan already discards 45.2% of its garlic to the F2 window defect with nothing anywhere
+    # saying so. A number nobody can see is a number nobody can audit. SPEC_v3 §3.5.
+    waste_by_crop = {}
+    for c_idx, crop in enumerate(crops):
+        discarded = float(waste_sol[c_idx, 1:].sum())
+        sellable = sum(
+            succ_weekly_sellable_lbs[i] * float(x_sol[i]) * succ_n_harv[i]
+            for i in range(N_S) if successions[i]["crop"] == c_idx
+        )
+        waste_by_crop[crop["name"]] = {
+            "lbs": discarded,
+            "sellable_lbs": sellable,
+            "fraction": (discarded / sellable) if sellable > 1e-9 else 0.0,
+        }
+
+    m3_per_lb = np.array([c["crop_size_m3_per_lb"] for c in crops], dtype=float)
+    storage_m3_weekly = (m3_per_lb @ inv_sol[:, 1:]).tolist()
+
     # Revenue and costs
     revenue = 0.0
     packaging_cost = 0.0
@@ -1004,6 +1071,36 @@ def solve_farm_v2(
     interest_cost = interest_rate_apr * avg_borrowing
     profit = operating_profit - overhead_cost - interest_cost  # net profit (honest headline)
 
+    # capacity_series — the used-vs-capacity pairs the CONSTRAINTS actually used, so the
+    # client can render them instead of rebuilding the physics with different assumptions
+    # (SPEC_v3 §9, audit N5/N6). Every series here has a matching constraint:
+    #   labor   -> C2   water -> C3   storage -> C4b
+    #
+    # This is not cosmetic. The client's own versions disagreed with the model: it counted
+    # rain falling on fields as water SUPPLY, where C3 treats rain as a reduction in demand
+    # via net_water_rate, and it summed raw crew hours without field_time_pct. On the shipped
+    # farm that inflated the water denominator by 1.5x on average and 2.2x at peak, and labor
+    # by up to 16%. Since the bottleneck ranking picks the max utilisation ACROSS these
+    # series, one honest ratio among inflated ones does not just mislead, it mis-ranks.
+    #
+    # Shape is {name: {used, cap}} rather than flat arrays because SPEC_v3 §3.3 splits
+    # storage into refrigerated + ambient, and a scalar cap wedged into a dict of series
+    # would have to be reshaped once consumers exist.
+
+    water_used_weekly = [
+        float(sum(total_land * net_water_rate[i][w] * x_sol[i]
+                  for i in range(N_S) if phase_table[i][w] is not None))
+        for w in range(1, N_WEEKS + 1)
+    ]
+    capacity_series = {
+        "labor":   {"used": [float(v) for v in labor_used_weekly[1:]],
+                    "cap":  [float(v) for v in labor_capacity]},
+        "water":   {"used": water_used_weekly,
+                    "cap":  [float(v) for v in free_water]},
+        "storage": {"used": storage_m3_weekly,
+                    "cap":  [float(harvest_storage_cap)] * N_WEEKS},
+    }
+
     return {
         "status":           status,
         # SPEC_v3 §8: the ONE margin kernel, computed from the objective's own arrays. The UI
@@ -1035,6 +1132,14 @@ def solve_farm_v2(
         "x":                x_sol,
         "y":                y_sol,
         "v":                v_sol,
+        "inventory":        inv_sol,
+        "waste":            waste_sol,
+        "waste_by_crop":    waste_by_crop,
+        # The storage series the CONSTRAINT used. The client must render this rather than
+        # rebuild it — B.1 left the adapter recomputing harvest inflow because there was no
+        # key to read, and that copy understates any plan that holds stock. SPEC_v3 §9.
+        "capacity_series":  capacity_series,
+        "storage_peak_m3":  max(storage_m3_weekly) if storage_m3_weekly else 0.0,
         "successions":      successions,
         "crops":            crops,
         "channels":         channels,

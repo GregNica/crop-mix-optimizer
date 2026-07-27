@@ -43,13 +43,13 @@ pytestmark = pytest.mark.skipif(not PAYLOAD.exists(), reason="golden payload mis
 
 # The P&L of the shipped default farm. Captured 2026-07-27 from the app's own default payload.
 GOLDEN = {
-    "revenue":          1_815_018,
-    "variable_cost":      718_088,
+    "revenue":          2_304_930,
+    "variable_cost":      808_398,
     "fixed_cost":         212_347,
-    "overhead_cost":      290_403,
-    "interest_cost":          821,
-    "profit":             580_359,
-    "operating_profit":   884_583,
+    "overhead_cost":      368_789,
+    "interest_cost":        1_160,
+    "profit":             901_236,
+    "operating_profit": 1_284_185,
 }
 # Baseline history — re-pin ONLY with a reason, and record it here.
 #   2026-07-27 (first pin): fixed 341,812 / profit 443,458.
@@ -88,6 +88,31 @@ GOLDEN = {
 #     The two payload keys were edited directly rather than re-captured from a browser, because
 #     both are deterministic functions of form defaults changed in the same commit
 #     (harvest_storage_cap = the input itself; rate = 500/(20*52)).
+#   2026-07-27 (Phase B.2 — inventory core, SPEC_v3 §3):
+#     The largest single move this baseline has seen, and it is three fixes compounding:
+#       B1  C7 deleted. It capped a whole cycle's production at ONE week's demand, pinning
+#           Garlic to demand/yield acres. Alone: +$84,857.
+#       B2  C5b's per-succession sales windows double-counted overlapping plantings.
+#       F2  those windows were anchored at the LAST harvest week, so a crop could not sell
+#           during its own earlier harvest weeks.
+#     Together B2+F2 were discarding 44,600 lb of Garlic — 45.2% of its sellable output —
+#     silently. Under the balance, waste on this plan is now ZERO: every pound grown is sold.
+#     revenue 1,815,018 -> 2,304,930, profit 580,359 -> 901,236.
+#
+#     ⚠️ THE RESULTING NET MARGIN IS 39.1%, WHICH IS NOT BELIEVABLE FOR DIVERSIFIED VEG
+#     (real farms net 5-15%). Do not read this re-pin as "the model got better". The
+#     constraint arithmetic is verified correct to the pound by tests/test_inventory.py; what
+#     it exposes is that the shipped DEMAND defaults are far more generous than the broken
+#     constraints ever let the optimizer reach. Garlic wholesale alone is defaulted to
+#     30,000 lb/week = 1.56M lb/yr of standing demand. The old C7/C5b defects were masking
+#     that, so the demo looked plausible for the wrong reason. Re-calibrating those defaults
+#     is a separate, deliberate piece of work and must not be done by quietly re-tightening a
+#     constraint until the number looks nice.
+#
+#     Also new here: `inventory`, `waste`, `waste_by_crop`, `storage_peak_m3` and
+#     `capacity_series.storage`. The adapter now RENDERS the storage series the constraint
+#     used instead of recomputing harvest inflow client-side (SPEC_v3 §9), which is why the
+#     reported storage utilisation changes meaning: it is held stock now, not weekly inflow.
 
 # $50 is the solver noise floor, not a comfort margin. The MILP is solved by HiGHS via scipy,
 # and different builds (notably Pyodide's vs a local venv) settle on solutions that differ by
@@ -112,6 +137,14 @@ def _extract_python_code() -> str:
     assert "${" not in code, (
         "PYTHON_CODE now contains a JS interpolation; this extractor would inline it "
         "verbatim and the golden test would be running something other than the app's code."
+    )
+    # A backtick ENDS the template literal in the browser, so the page breaks while this
+    # extractor — which slices to the first "`;" — happily keeps returning valid Python and
+    # every test here stays green. That happened once: a backtick inside a comment in the
+    # result dict. Only the node harnesses caught it. Fail here too.
+    assert "`" not in code, (
+        "PYTHON_CODE contains a backtick, which closes the JS template literal early and "
+        "breaks the page. Python-side tests cannot see this; use quotes in comments."
     )
     # matplotlib is only needed for the chart PNGs, which this test does not exercise.
     return code

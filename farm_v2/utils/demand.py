@@ -163,16 +163,3 @@ def build_demand_table(
 # Total market capacity per crop per week (used for C7)
 # ---------------------------------------------------------------------------
 
-def total_demand_per_crop_week(demand_table: np.ndarray) -> np.ndarray:
-    """
-    Return sum over channels of demand_cap for each crop × week.
-
-    Parameters
-    ----------
-    demand_table : np.ndarray of shape (n_crops, n_channels, n_weeks+1)
-
-    Returns
-    -------
-    np.ndarray of shape (n_crops, n_weeks+1) — sum over channel axis.
-    """
-    return demand_table.sum(axis=1)

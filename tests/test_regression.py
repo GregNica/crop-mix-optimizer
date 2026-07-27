@@ -36,10 +36,20 @@ from farm_v2.solver import solve_farm_v2
 #     (1,627,508 / 356,785) and the plan is identical — only the 4 extra weeks of
 #     non-salaried fixed lines move: fixed 1,098,984 → 1,184,316 (+85,332) and
 #     profit 171,739 → 86,407 (−85,332, exactly the same figure).
+#   2026-07-27 — REBASELINED (Phase B.2, SPEC_v3 §3 inventory core). C4/C5a/C5b/C7 are
+#     replaced by a real weekly inventory balance with a storage cap on held stock and a
+#     rolling shelf-life bound. Three defects died together: C7 capped a whole cycle's
+#     production at one week's demand (B1), C5b double-counted overlapping sales windows
+#     (B2), and those windows were anchored at the LAST harvest week so a crop could not
+#     sell during its own earlier harvest weeks (F2). Revenue 1,627,508 → 1,761,684 and
+#     profit 86,407 → 197,860; fixed cost unchanged at 1,184,316. This fixture wastes
+#     nothing under the new model — every pound grown is sold.
+#     The balance is verified to the pound, per crop, per week, by tests/test_inventory.py;
+#     this file only pins that the headline did not drift afterwards.
 # ---------------------------------------------------------------------------
 
-EXPECTED_PROFIT  = 86_407       # ± 10%  (rebaselined 2026-07-27)
-EXPECTED_REVENUE = 1_627_508    # ± 10%  (rebaselined 2026-07-24)
+EXPECTED_PROFIT  = 197_860      # ± 10%  (rebaselined 2026-07-27, Phase B.2)
+EXPECTED_REVENUE = 1_761_684    # ± 10%  (rebaselined 2026-07-27, Phase B.2)
 EXPECTED_FIXED   = 1_184_316    # ± 5%   (rebaselined 2026-07-27: annual, not 48-week)
 TOLERANCE_PCT    = 0.10         # 10% relative tolerance
 
