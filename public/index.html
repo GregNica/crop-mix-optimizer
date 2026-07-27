@@ -2337,7 +2337,11 @@ function onDemandTypeChange(sel) {
   const newType  = sel.value;
   const cur      = parseFloat(valEl?.value);
   if (valEl && !isNaN(cur) && cur > 0) {
-    valEl.value = Math.round(convertCapacity(cur, prevType, newType, sec));
+    // writeFieldDisplay, NOT valEl.value: the converted number is a DISPLAY value and its
+    // canonical shadow must move with it. Assigning .value alone left data-canon holding the
+    // pre-conversion number, so readCanonicalEl sent the solver a cap 52x wrong (weekly<->annual)
+    // while the screen showed the right one — in US mode too, on an everyday dropdown change.
+    writeFieldDisplay(valEl, Math.round(convertCapacity(cur, prevType, newType, sec)));
   }
   sel.dataset.prevType = newType;
   toggleDemandSeason(sel);
@@ -2902,6 +2906,76 @@ function rewriteLabelUnit(label, unit) {
     }
   }
 }
+/* ── THE data-canon INVARIANT ────────────────────────────────────────────────────────────
+ * For every unit-bearing field: `el.value` is a DISPLAY number and `el.dataset.canon` is the
+ * SAME quantity in canonical units. readCanonicalEl() prefers data-canon, so any code that
+ * writes el.value WITHOUT updating data-canon silently sends a stale number to the solver
+ * while the screen shows the new one. That has happened five separate times (markData,
+ * updateCropChannels, onDemandTypeChange, save/restore, clearBenchmarkFields) — twice with
+ * >50x errors — because the invariant was maintained by hand at every call site.
+ *
+ * So: NEVER assign to a unit-bearing field's .value directly. Use one of these three.
+ * canonIntegrityReport() below is the runtime check that catches a sixth site.
+ */
+
+/** Write a field from a CANONICAL value: stores canon, displays it in the active system. */
+function writeFieldCanonical(el, canonicalValue) {
+  if (!el) return;
+  const v = parseFloat(canonicalValue);
+  if (isNaN(v)) { el.value = ''; if (el.dataset) el.dataset.canon = ''; return; }
+  const spec = specForEl(el);
+  if (el.dataset) el.dataset.canon = spec ? v : '';
+  el.value = spec ? roundForDisplay(dispVal(v, spec)) : v;
+}
+
+/** Write a field from a value already in the ACTIVE DISPLAY system (e.g. one the user typed,
+ *  or one converted for display); derives and stores the matching canonical. */
+function writeFieldDisplay(el, displayValue) {
+  if (!el) return;
+  const v = parseFloat(displayValue);
+  if (isNaN(v)) { el.value = ''; if (el.dataset) el.dataset.canon = ''; return; }
+  const spec = specForEl(el);
+  el.value = v;
+  if (el.dataset) el.dataset.canon = spec ? toCanonicalActive(v, spec) : '';
+}
+
+/** Clear a field AND its canonical shadow. Clearing only the display leaves readCanonicalEl
+ *  returning the old value, so a "blank" field still reaches the solver with its old number. */
+function clearField(el) {
+  if (!el) return;
+  el.value = '';
+  if (el.dataset) el.dataset.canon = '';
+}
+
+/** Every unit-bearing field whose data-canon disagrees with its displayed value. Empty array
+ *  means the invariant holds. Used by tests (and available in the console) to catch the class
+ *  of bug rather than the instances. */
+function canonIntegrityReport(tolerance) {
+  // 1% by default. The DISPLAY value is deliberately rounded for legibility (roundForDisplay),
+  // so a faithful pair still disagrees by up to ~0.2% on back-conversion — a tight tolerance
+  // would report every field. Every real defect of this class is a unit FACTOR: 1.12x (kg/ha)
+  // at the smallest, then 2.20x, 2.47x, 3.79x, 25.4x, 52x. 1% separates the two cleanly.
+  const tol = tolerance == null ? 0.01 : tolerance;
+  const bad = [];
+  if (typeof UNITS === 'undefined') return bad;
+  forEachUnitField(function (el, spec) {
+    const canon = canonOf(el);
+    const shown = parseFloat(el.value);
+    if (isNaN(canon) && isNaN(shown)) return;                 // both blank: consistent
+    if (isNaN(canon) !== isNaN(shown)) {
+      bad.push({ field: el.id || el.getAttribute('data-f'), shown: el.value, canon: el.dataset.canon,
+                 why: isNaN(canon) ? 'displayed value has no canonical shadow' : 'canonical value with a blank display' });
+      return;
+    }
+    const expected = toCanonicalActive(shown, spec);
+    if (Math.abs(expected - canon) > tol * Math.max(1, Math.abs(expected))) {
+      bad.push({ field: el.id || el.getAttribute('data-f'), shown: shown, canon: canon,
+                 expected: expected, ratio: canon / expected });
+    }
+  });
+  return bad;
+}
+
 // After crop/channel collections are (re)rendered, their data-f inputs hold CANONICAL template
 // values with no data-canon and no display conversion. Seed data-canon from that canonical
 // value and convert the display to the active system. Idempotent: already-seeded fields skip.
@@ -3073,7 +3147,17 @@ function serializeCrops() {
   const crops = [];
   document.querySelectorAll('#crop-list .crop-detail').forEach(card => {
     const nameEl = card.querySelector('.crop-name-inline');
-    const f = field => { const el = card.querySelector('[data-f="' + field + '"]'); return el ? el.value : ''; };
+    // Capture CANONICAL for unit-bearing fields. applyCrops feeds these values back through
+    // renderCrop, and seedAndDisplayUnitFields treats a freshly-rendered value as canonical —
+    // so serializing the DISPLAY value converted it a SECOND time on every save/restore cycle,
+    // compounding. In plain US mode that divided every crop's water and fuel by 3.79 on the
+    // first plan reload. Channels already serialize canonically via getChannelDefs().
+    const canonOrRaw = el => {
+      if (!el || el.value === '') return '';
+      const spec = specForEl(el);
+      return spec ? readCanonicalEl(el) : el.value;
+    };
+    const f = field => canonOrRaw(card.querySelector('[data-f="' + field + '"]'));
     const mmdd = prefix => {
       const m = card.querySelector('[data-f="' + prefix + '_m"]');
       const d = card.querySelector('[data-f="' + prefix + '_d"]');
@@ -3084,8 +3168,8 @@ function serializeCrops() {
     card.querySelectorAll('.crop-channel-section').forEach(sec => {
       const ch = sec.getAttribute('data-ch');
       if (!ch) return;
-      const cf = f2 => { const el = sec.querySelector('[data-f="' + f2 + '"]'); return el ? el.value : ''; };
-      const ss = cf('ch_season_start').trim(), se = cf('ch_season_end').trim();
+      const cf = f2 => canonOrRaw(sec.querySelector('[data-f="' + f2 + '"]'));
+      const ss = String(cf('ch_season_start')).trim(), se = String(cf('ch_season_end')).trim();
       channels_data[ch] = {
         price: cf('ch_price'), pkg: cf('ch_pkg'),
         demand_type: cf('ch_demand_type') || 'weekly_flat',
@@ -3975,29 +4059,33 @@ function applyBenchmarkDefaults() {
  */
 function clearBenchmarkFields() {
   APP_STATE.overriddenFields = new Set();
+  // clearField, NOT el.value = '': readCanonicalEl prefers data-canon, so blanking only the
+  // display left every cleared field still sending its benchmark number to the solver. "My
+  // Farm Data" mode silently kept the 80-acre farm, 5,000 m3 store and 2.5M L/wk well, and
+  // validateParams passed on the ghost values instead of prompting for real ones.
 
   // 1. Standard benchmark fields (infra, rates, availability)
   Object.keys(BENCHMARK_DEFAULTS).forEach(fieldId => {
     const el = document.getElementById(fieldId);
     if (!el) return;
     if (el.tagName === 'SELECT') return; // preserve climate zone / selects
-    el.value = '';
+    clearField(el);
   });
 
   // 2. Labor section: clear wage inputs (but not the salaried/hourly selects)
   document.querySelectorAll('.labor-row [data-lf="wage"]').forEach(el => {
-    if (el.tagName !== 'SELECT') el.value = '';
+    if (el.tagName !== 'SELECT') clearField(el);
   });
 
   // 3. Channel section: clear per-channel pricing/cost inputs
   document.querySelectorAll('.channel-row .channel-pkg-input, .channel-row .ch-var-sell, .channel-row .ch-fixed-sell').forEach(el => {
-    if (el.tagName !== 'SELECT') el.value = '';
+    if (el.tagName !== 'SELECT') clearField(el);
   });
 
   // 4. Crop section: clear per-crop channel pricing, demand, and packaging fields
   // Preserve: crop-name-inline, planting date inputs, SELECTs (demand type etc.)
   document.querySelectorAll('.crop-channel-section [data-f="ch_price"], .crop-channel-section [data-f="ch_demand_value"], .crop-channel-section [data-f="ch_pkg"]').forEach(el => {
-    if (el.tagName !== 'SELECT') el.value = '';
+    if (el.tagName !== 'SELECT') clearField(el);
   });
 }
 

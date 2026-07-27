@@ -8,7 +8,7 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
-    "test": "node tests/units_selftest.cjs && node tests/import_roundtrip.cjs",
+    "test": "node tests/units_selftest.cjs && node tests/import_roundtrip.cjs && node tests/canon_invariant.cjs",
     "test:blob": "python3 scripts/sync_solver_blob.py --check",
     "db:auth-schema": "npx @better-auth/cli@latest generate --config ./auth.config.ts --output ./worker/db/schema/auth.ts --yes",
     "db:push": "drizzle-kit push"
