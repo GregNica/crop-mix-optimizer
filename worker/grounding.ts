@@ -25,8 +25,6 @@ export type ChatbotField = {
 export const CHATBOT_FIELDS: ChatbotField[] = [
   { id: "total_land", label: "Total land", type: "number", unit: "acres", min: 1, max: 5000,
     description: "Acreage usable for crops (exclude buildings, roads, unusable land). Hectares × 2.47 = acres." },
-  { id: "operating_weeks", label: "Operating weeks per year", type: "enum", enum: ["36", "40", "44", "48", "52"],
-    description: "Weeks per year the farm actively operates. 'Year-round' = 52; map a stated season to the nearest of 36/40/44/48/52 and confirm." },
   { id: "sell_through_pct", label: "Sell-through %", type: "number", unit: "%", min: 1, max: 100,
     description: "Share of harvested produce that converts to cash sales (rest = shrink/spoilage/grade-out). NOT a price discount. If the user describes LOSS ('X% doesn't sell / spoils / is wasted'), this = 100 − X. This is the FARM-WIDE default; per-crop sell-through is set on each crop in the form." },
   { id: "overhead_pct", label: "Overhead % of revenue", type: "number", unit: "%", min: 0, max: 60,
@@ -215,7 +213,6 @@ COACH — SANITY-CHECK VALUES (you are an expert advisor, not a passive form-fil
 - This complements ACT IMMEDIATELY below: you still call the tool in the same turn — you just add the sanity note to your message.
 
 CONVERSATION OUTLINE (work through it in order, skipping what's already set or irrelevant):
-1. Farm size & season — total_land (acres); operating_weeks (active weeks/year).
 2. Water sources — which of well / rainwater catchment / city water they use (set the *_enabled flags), then the detail for each they have: well_weekly_cap_L, catchment_surface_area_m2, city_water_cost_per_L.
 3. Finances & realism — overhead_pct (% of revenue), interest_rate_pct (APR on operating borrowing), sell_through_pct, min_viable_margin_pct, payroll_load_pct.
 4. Land & debt costs — rate_property_mortgage_rent ($/wk), other_debt_service_per_week ($/wk).
@@ -226,7 +223,6 @@ INTERPRETATION RULES (get the logic right — this matters):
 - sell_through_pct is the share that SELLS. If the user instead describes LOSS — "X% doesn't sell", "I lose X%", "X% spoils / grades out / gets wasted / is unsold" — then sell_through_pct = 100 − X. Example: "15% of my harvest doesn't sell" → sell_through_pct = 85. If they state sell-through directly ("I sell about 90%"), use it as-is.
 - Convert units, or ask if unsure: gallons → liters (×3.785), acres ↔ hectares (1 ha = 2.47 ac), etc.
 - If a value is given in dollars where a percent is needed (e.g. overhead), ask for the percent or for revenue to compute it — don't guess a number.
-- "year-round" → operating_weeks 52; a stated season (e.g. "April–October") → estimate the weeks and confirm with the user.
 - Define terms in one sentence if the user seems unsure (e.g. sell-through ≠ a price cut; overhead % excludes costs counted elsewhere like labor/seed/fuel).
 - UNITS — the form's units differ from how people talk, so convert (or ask): rent & other-debt are PER WEEK (monthly ÷ 4.33, annual ÷ 52); water volumes are LITERS (gallons × 3.785); city water is $/LITER ($/gal ÷ 3.785, $/m³ ÷ 1000); catchment is the collection-surface area in m² (NOT the tank), sq ft ÷ 10.76; land is acres (hectares × 2.47).
 - DON'T CONFLATE: rent/debt are payments, not interest rates; interest_rate_pct is the operating credit line, not a mortgage/equipment rate; payroll_load_pct is the % added to wages, not the wage itself.

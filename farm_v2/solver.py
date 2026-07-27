@@ -348,7 +348,12 @@ def solve_farm_v2(
             split["packaging"] = float(
                 crop.get("channels", {}).get(ch["name"], {}).get("packaging_cost_per_lb", 0.0)
                 * sold_lbs_per_acre)
-            split["total"] = float(split["total"] + split["packaging"])
+            # Overhead is INTERNALISED in the objective (net_after_price subtracts
+            # overhead_pct x gross), so it must appear in the cost split too — otherwise the
+            # displayed row does not reconcile: Revenue - Cost came out ABOVE Margin by exactly
+            # the overhead share, with no line to explain the gap.
+            split["overhead"] = float(overhead_pct_of_revenue * gross * sold_lbs_per_acre)
+            split["total"] = float(split["total"] + split["packaging"] + split["overhead"])
             channel_margins.setdefault(crop["name"], {})[ch["name"]] = {
                 "margin_per_lb": float(per_lb),
                 "margin_pct": float(per_lb / gross * 100.0),
@@ -971,12 +976,6 @@ def solve_farm_v2(
         "channel_margins":   channel_margins,
         "excluded_channels": excluded_channels,
         "crop_contribution": crop_contribution,
-        # The rates the objective ACTUALLY charged. Published so the UI stops inventing
-        # its own ($20/hr labour, $0.002/L water were hard-coded in three places while
-        # the solver used a payroll-loaded blend and priced well water at zero).
-        # Averaged over the weeks hourly labour is actually AVAILABLE. utils/labor.py sets the
-        # blended rate to 0 in weeks with no hourly staff, so a mean over all 52 weeks would
-        # report a rate below anything the solver ever charged.
         "profit":           profit,
         "operating_profit": operating_profit,
         "overhead_cost":    overhead_cost,

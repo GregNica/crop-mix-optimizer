@@ -290,18 +290,22 @@ class TestOneKernelNoDrift:
         for crop, chans in result["channel_margins"].items():
             for ch, m in chans.items():
                 c = m["cost_per_acre"]
-                parts = c["labor"] + c["water"] + c["fert"] + c["fuel"] + c["seed"] + c["packaging"]
+                parts = (c["labor"] + c["water"] + c["fert"] + c["fuel"] + c["seed"]
+                         + c["packaging"] + c["overhead"])
                 assert parts == pytest.approx(c["total"], rel=1e-9), f"{crop}/{ch} split != total"
 
     def test_margin_reconciles_with_revenue_minus_cost(self, result):
-        """Revenue per acre minus cost per acre must be the per-cycle margin — the identity the
-        table's Rev/acre, VC/acre and CM/acre columns display side by side."""
+        """Revenue - Cost must EQUAL the margin, exactly. The table shows Rev/acre, VC/acre and
+        CM/acre side by side, so if they don't reconcile the reader is looking at three numbers
+        that cannot all be true. This failed by exactly the overhead share until overhead was
+        added to the cost split — the objective internalises it, so it is a real cost of the
+        row and belongs in the row's cost column."""
         for crop, chans in result["channel_margins"].items():
             for ch, m in chans.items():
-                # the objective also charges overhead, so allow for it explicitly
-                gross = m["revenue_per_acre"]
-                implied = gross - m["cost_per_acre"]["total"] - m["margin_per_acre_cycle"]
-                assert implied >= -1e-6, f"{crop}/{ch}: margin exceeds revenue minus cost"
+                implied = m["revenue_per_acre"] - m["cost_per_acre"]["total"]
+                assert implied == pytest.approx(m["margin_per_acre_cycle"], abs=0.01), (
+                    f"{crop}/{ch}: revenue {m['revenue_per_acre']:.2f} - cost "
+                    f"{m['cost_per_acre']['total']:.2f} != margin {m['margin_per_acre_cycle']:.2f}")
 
     def test_loss_making_channels_stay_negative_in_every_derived_figure(self, result):
         """The bug's signature was a loss-maker rendering as break-even-or-better. If any
