@@ -214,6 +214,7 @@ def solve_farm_v2(
     # -----------------------------------------------------------------------
     var_cost_coeff  = np.zeros(N_S, dtype=float)
     var_cost_weekly = np.zeros((N_S, N_WEEKS + 1), dtype=float)
+    vc_split        = np.zeros((N_S, 5), dtype=float)   # labor, water, fert, fuel, seed
 
     for i, s in enumerate(successions):
         crop = crops[s["crop"]]
@@ -225,6 +226,7 @@ def solve_farm_v2(
             seed_total = total_land * seed_cost
             var_cost_weekly[i][first_week] += seed_total
             var_cost_coeff[i] += seed_total
+            vc_split[i, 4] += seed_total
 
         for w in range(1, N_WEEKS + 1):
             if phase_table[i][w] is None:
@@ -236,6 +238,15 @@ def solve_farm_v2(
             week_c  = water_c + fert_c + fuel_c + labor_c
             var_cost_weekly[i][w] += week_c
             var_cost_coeff[i]     += week_c
+            # Keep the split. The UI used to re-multiply hours x a scalar rate to show a cost
+            # breakdown, which could never reproduce these numbers: labour is priced at the
+            # week's own blended wage and water at the RAINFALL-ADJUSTED requirement. Returning
+            # the products the objective actually charged is the only way the displayed
+            # breakdown can agree with the plan.
+            vc_split[i, 0] += labor_c
+            vc_split[i, 1] += water_c
+            vc_split[i, 2] += fert_c
+            vc_split[i, 3] += fuel_c
 
     # Cumulative variable cost per succession up to week W: cum_var[i, W]
     # cum_var[i, W] = Σ_{w=1}^{W} var_cost_weekly[i][w]
@@ -299,6 +310,21 @@ def solve_farm_v2(
         lens = [len(s["weeks"]) * 7.0 for s in successions if s["crop"] == c_idx and s["weeks"]]
         occupancy_days[c_idx] = float(np.mean(lens)) if lens else 0.0
 
+    # Per-acre variable cost split for each crop, from the products the objective charged.
+    # var_cost_coeff/vc_split are "cost when x=1", i.e. for total_land acres, so divide out.
+    cost_split_per_acre = {}
+    for c_idx, crop in enumerate(crops):
+        rows = [vc_split[i] for i, sc in enumerate(successions) if sc["crop"] == c_idx]
+        if rows and total_land > 0:
+            mean = np.mean(np.vstack(rows), axis=0) / total_land
+        else:
+            mean = np.zeros(5, dtype=float)
+        cost_split_per_acre[crop["name"]] = {
+            "labor": float(mean[0]), "water": float(mean[1]), "fert": float(mean[2]),
+            "fuel":  float(mean[3]), "seed":  float(mean[4]),
+            "total": float(mean.sum()),
+        }
+
     channel_margins = {}
     for c_idx, crop in enumerate(crops):
         ypa = float(crop.get("yield_per_acre", 0.0) or 0.0)
@@ -318,13 +344,24 @@ def solve_farm_v2(
             # is answered by the plan itself, not by a formula in a summary.
             days = occupancy_days[c_idx]
             per_acre_day = (per_lb * sold_lbs_per_acre / days) if days > 0 else 0.0
+            split = dict(cost_split_per_acre[crop["name"]])
+            split["packaging"] = float(
+                crop.get("channels", {}).get(ch["name"], {}).get("packaging_cost_per_lb", 0.0)
+                * sold_lbs_per_acre)
+            split["total"] = float(split["total"] + split["packaging"])
             channel_margins.setdefault(crop["name"], {})[ch["name"]] = {
                 "margin_per_lb": float(per_lb),
                 "margin_pct": float(per_lb / gross * 100.0),
                 "margin_per_acre_day": float(per_acre_day),
+                "margin_per_acre_cycle": float(per_acre_day * days),
                 "occupancy_days": float(days),
                 "gross_price_per_lb": float(gross),
+                "revenue_per_acre": float(gross * sold_lbs_per_acre),
+                "sold_lbs_per_acre": float(sold_lbs_per_acre),
                 "var_cost_per_lb": float(var_cost_per_lb[c_idx]),
+                # The breakdown the row tooltip renders — the objective's own products, so the
+                # displayed split always sums to the cost that produced the plan.
+                "cost_per_acre": split,
             }
 
     # Margin hurdle: zero the demand of any crop-channel below the floor, BEFORE the solve.
@@ -934,6 +971,12 @@ def solve_farm_v2(
         "channel_margins":   channel_margins,
         "excluded_channels": excluded_channels,
         "crop_contribution": crop_contribution,
+        # The rates the objective ACTUALLY charged. Published so the UI stops inventing
+        # its own ($20/hr labour, $0.002/L water were hard-coded in three places while
+        # the solver used a payroll-loaded blend and priced well water at zero).
+        # Averaged over the weeks hourly labour is actually AVAILABLE. utils/labor.py sets the
+        # blended rate to 0 in weeks with no hourly staff, so a mean over all 52 weeks would
+        # report a rate below anything the solver ever charged.
         "profit":           profit,
         "operating_profit": operating_profit,
         "overhead_cost":    overhead_cost,

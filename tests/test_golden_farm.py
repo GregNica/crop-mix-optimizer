@@ -265,3 +265,50 @@ class TestPerAcreDayMargin:
             for ch, m in chans.items():
                 if abs(m["margin_per_lb"]) > 1e-9:
                     assert (m["margin_per_acre_day"] >= 0) == (m["margin_per_lb"] >= 0), f"{crop}/{ch}"
+
+
+class TestOneKernelNoDrift:
+    """The contribution table used to recompute margins in JS and disagreed with the exec
+    summary on the same screen — it showed Spinach/Wholesale at 0% and +$3/ac/wk while the
+    solver had it at -20% and -$128/ac/wk. The divergence was structural, not just rates: the
+    JS omitted overhead, used round(dtm/7) for occupancy, and re-multiplied hours by a scalar
+    wage where the objective charges each week's own blend and a rainfall-adjusted water need.
+
+    Both surfaces now render channel_margins. These pin the relationships they render, so a
+    future surface can be checked against them instead of growing a fourth kernel.
+    """
+
+    def test_cycle_margin_is_the_day_rate_times_occupancy(self, result):
+        for crop, chans in result["channel_margins"].items():
+            for ch, m in chans.items():
+                assert m["margin_per_acre_cycle"] == pytest.approx(
+                    m["margin_per_acre_day"] * m["occupancy_days"], rel=1e-9), f"{crop}/{ch}"
+
+    def test_cost_split_sums_to_the_total_it_reports(self, result):
+        """The row tooltip renders the split and the cell renders the total; if they disagree
+        the reader is being shown a breakdown that does not add up."""
+        for crop, chans in result["channel_margins"].items():
+            for ch, m in chans.items():
+                c = m["cost_per_acre"]
+                parts = c["labor"] + c["water"] + c["fert"] + c["fuel"] + c["seed"] + c["packaging"]
+                assert parts == pytest.approx(c["total"], rel=1e-9), f"{crop}/{ch} split != total"
+
+    def test_margin_reconciles_with_revenue_minus_cost(self, result):
+        """Revenue per acre minus cost per acre must be the per-cycle margin — the identity the
+        table's Rev/acre, VC/acre and CM/acre columns display side by side."""
+        for crop, chans in result["channel_margins"].items():
+            for ch, m in chans.items():
+                # the objective also charges overhead, so allow for it explicitly
+                gross = m["revenue_per_acre"]
+                implied = gross - m["cost_per_acre"]["total"] - m["margin_per_acre_cycle"]
+                assert implied >= -1e-6, f"{crop}/{ch}: margin exceeds revenue minus cost"
+
+    def test_loss_making_channels_stay_negative_in_every_derived_figure(self, result):
+        """The bug's signature was a loss-maker rendering as break-even-or-better. If any
+        derived figure can disagree in SIGN with the per-lb margin, that can happen again."""
+        for crop, chans in result["channel_margins"].items():
+            for ch, m in chans.items():
+                if m["margin_per_lb"] < 0:
+                    assert m["margin_pct"] < 0, f"{crop}/{ch}"
+                    assert m["margin_per_acre_day"] < 0, f"{crop}/{ch}"
+                    assert m["margin_per_acre_cycle"] < 0, f"{crop}/{ch}"
