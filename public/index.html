@@ -1858,13 +1858,13 @@
           </div>
           <div id="pie-week-label" style="font-size:0.95rem;font-weight:700;color:#374151">Week 20</div>
           <!-- Land use pie -->
-          <div style="font-size:0.8rem;font-weight:600;color:#374151;margin:0.6rem 0 0.2rem">🌱 Land Use (acres by crop)</div>
+          <div style="font-size:0.8rem;font-weight:600;color:#374151;margin:0.6rem 0 0.2rem">🌱 Land Use (<span data-unit="area_land">acres</span> by crop)</div>
           <div id="pie-chart-area">
             <div id="pie-svg-wrap"></div>
             <div id="pie-legend"></div>
           </div>
           <!-- Harvested volume pie -->
-          <div style="font-size:0.8rem;font-weight:600;color:#374151;margin:0.8rem 0 0.2rem">🧺 Harvested Volume (lbs by crop)</div>
+          <div style="font-size:0.8rem;font-weight:600;color:#374151;margin:0.8rem 0 0.2rem">🧺 Harvested Volume (<span data-unit="mass">lbs</span> by crop)</div>
           <div id="harvest-pie-area">
             <div id="harvest-pie-svg-wrap"></div>
             <div id="harvest-pie-legend"></div>
@@ -2008,7 +2008,10 @@
 
 <!-- Unit-system foundation (canonical⇄display conversion + field registry). Must load
      before the main script. Step 1: defined but not yet wired — see SPEC_units.md. -->
-<script src="units.js"></script>
+<!-- ?v= is a content hash, verified by tests/test_units_asset_version.py: units.js is the
+     app's only external script, and a browser serving a cached copy against fresh HTML makes
+     unit conversion fail silently. CI tells you the value to paste when units.js changes. -->
+<script src="units.js?v=10d04a36"></script>
 <script>
 // ============================================================
 // Embedded farm_v2 Python files (JSON-serialised)
@@ -2142,26 +2145,32 @@ function renderChannelRow(ch, idx) {
       <input type="text" class="channel-name-input" value="${ch.name}"
              placeholder="e.g. Wholesale" onchange="updateAllCropChannels()"></div>
     <div><label>Default Pkg ($/lb) <span class="tip" data-tip="Default packaging cost per lb for this channel. Can be overridden per crop.">?</span></label>
-      <input type="number" class="channel-pkg-input" value="${ch.default_pkg||0}"
+      <input type="number" class="channel-pkg-input" data-f="ch_default_pkg" value="${ch.default_pkg||0}"
              min="0" step="0.01" onchange="updateAllCropChannels()"></div>
     <div><label>Var. Selling Cost ($/lb) <span class="tip" data-tip="Variable cost of selling through this channel per lb sold — e.g. broker commission, delivery, market fees. Deducted from price.">?</span></label>
-      <input type="number" class="ch-var-sell" value="${ch.var_sell||0}" min="0" step="0.01"></div>
+      <input type="number" class="ch-var-sell" data-f="ch_var_sell" value="${ch.var_sell||0}" min="0" step="0.01"></div>
     <div><label>Fixed Selling Cost ($/wk) <span class="tip" data-tip="Fixed weekly overhead for this channel — e.g. market stall fee, distributor retainer, website cost. Subtracted from profit display but not optimized over.">?</span></label>
       <input type="number" class="ch-fixed-sell" value="${ch.fixed_sell||0}" min="0" step="10"></div>
     <button type="button" class="delete-ch-btn" onclick="deleteChannel(${idx})">✕</button>
   </div>`;
 }
 
+// Channel rows carry unit-bearing data-f inputs, so every mutation of #channel-list must seed
+// data-canon on the freshly-written markup. Do NOT rely on updateAllCropChannels() for this:
+// it seeds only as a side effect of looping crop cards, so with no crops the new row keeps its
+// canonical default under a converted label and getChannelDefs then reads it as a display value.
 function renderAllChannels() {
   const list = document.getElementById('channel-list');
   if (!list) return;
   list.innerHTML = CHANNEL_DEFAULTS.map((ch, i) => renderChannelRow(ch, i)).join('');
+  seedAndDisplayUnitFields();
 }
 
 function addChannel() {
   const list = document.getElementById('channel-list');
   const n = list.querySelectorAll('.channel-row').length;
   list.insertAdjacentHTML('beforeend', renderChannelRow({name:'New Channel', default_pkg: 0.10, var_sell: 0, fixed_sell: 0}, n));
+  seedAndDisplayUnitFields();
   updateAllCropChannels();
 }
 
@@ -2186,8 +2195,10 @@ function getChannelDefs() {
     const name = nameEl ? nameEl.value.trim() : '';
     if (name) defs.push({
       name,
-      default_pkg: pkgEl ? (parseFloat(pkgEl.value) || 0) : 0,
-      var_sell:    varEl  ? (parseFloat(varEl.value)  || 0) : 0,
+      // pkg and var_sell are $/lb — DISPLAY may be $/kg, so read them canonically.
+      // fixed_sell is $/wk (no physical unit) and stays a plain read.
+      default_pkg: pkgEl ? (readCanonicalEl(pkgEl) || 0) : 0,
+      var_sell:    varEl  ? (readCanonicalEl(varEl) || 0) : 0,
       fixed_sell:  fixEl  ? (parseFloat(fixEl.value)  || 0) : 0,
     });
   });
@@ -2208,6 +2219,16 @@ function updateCropChannels(card, chDefs, cropDefaults, forceOverride) {
   let container = card.querySelector('.crop-channels-container');
   if (!container) return;
   const prev = {};
+  // Unit-bearing fields MUST be snapshotted canonically. This snapshot is written straight back
+  // into the re-rendered markup, and seedAndDisplayUnitFields() treats freshly-rendered values
+  // as canonical — so snapshotting the DISPLAY value converts it a second time, compounding
+  // ×2.2046 per re-render in Metric (and poisoning data-canon, so the solver sees it too).
+  // Unitless fields (demand_type, season weeks) stay plain .value reads.
+  const canonVal = el => {
+    if (!el || el.value === '' || el.value == null) return '';
+    const v = readCanonicalEl(el);
+    return isNaN(v) ? '' : v;
+  };
   container.querySelectorAll('.crop-channel-section').forEach(sec => {
     const ch = sec.getAttribute('data-ch');
     const ssEl = sec.querySelector('[data-f="ch_season_start"]');
@@ -2215,10 +2236,10 @@ function updateCropChannels(card, chDefs, cropDefaults, forceOverride) {
     const ssVal = ssEl ? ssEl.value : '';
     const seVal = seEl ? seEl.value : '';
     prev[ch] = {
-      price:         sec.querySelector('[data-f="ch_price"]')?.value,
-      pkg:           sec.querySelector('[data-f="ch_pkg"]')?.value,
+      price:         canonVal(sec.querySelector('[data-f="ch_price"]')),
+      pkg:           canonVal(sec.querySelector('[data-f="ch_pkg"]')),
       demand_type:   sec.querySelector('[data-f="ch_demand_type"]')?.value || 'weekly_flat',
-      demand_value:  sec.querySelector('[data-f="ch_demand_value"]')?.value,
+      demand_value:  canonVal(sec.querySelector('[data-f="ch_demand_value"]')),
       demand_season: (ssVal && seVal) ? `W${ssVal}-W${seVal}` : '',
     };
   });
@@ -2248,9 +2269,9 @@ function updateCropChannels(card, chDefs, cropDefaults, forceOverride) {
         <input type="number" class="cf" data-f="ch_pkg" value="${pkg}" min="0" step="0.01"></div>
       <div class="form-group"><label>Sales Capacity Type <span class="tip" data-tip="How much you can actually sell through this channel — your own sales capacity, not abstract market demand. Best estimated from your past sales records.\n\nWeekly flat: same cap every week all year.\nWeekly + season: cap applies only during active weeks.\nAnnual: total cap for the full year.">?</span></label>
         <select class="cf" data-f="ch_demand_type" data-prev-type="${dtype}" onchange="onDemandTypeChange(this)">
-          <option value="weekly_flat"    ${dtype==='weekly_flat'   ?'selected':''}>Weekly cap — all year (lbs/wk)</option>
-          <option value="weekly_varying" ${dtype==='weekly_varying'?'selected':''}>Weekly cap + active season (lbs/wk)</option>
-          <option value="annual"         ${dtype==='annual'        ?'selected':''}>Annual total cap (lbs/yr)</option>
+          <option value="weekly_flat"    ${dtype==='weekly_flat'   ?'selected':''}>Weekly cap — all year (${unitStr(U_LB)}/wk)</option>
+          <option value="weekly_varying" ${dtype==='weekly_varying'?'selected':''}>Weekly cap + active season (${unitStr(U_LB)}/wk)</option>
+          <option value="annual"         ${dtype==='annual'        ?'selected':''}>Annual total cap (${unitStr(U_LB)}/yr)</option>
         </select></div>
       <div class="form-group"><label>Sales Capacity (lbs) <span class="tip" data-tip="The quantity you can reliably move through this channel in the chosen period — i.e. your sellable volume, from your own sales history where available.">?</span> ${uploadPill('Upload historical sales data')}</label>
         <input type="number" class="cf" data-f="ch_demand_value" value="${dval}" min="0" step="500"></div>
@@ -2737,10 +2758,28 @@ function forEachUnitField(cb) {
     if (spec) cb(el, spec);
   });
 }
-// The <label> for a field — each unit-bearing field lives in its own .form-group.
-function labelFor(el) {
-  const grp = el && (el.closest('.form-group') || el.closest('div'));
-  return grp ? grp.querySelector('label') : null;
+// The <label> ELEMENT for a field — each unit-bearing field lives in its own .form-group.
+// NOTE: named labelElFor, not labelFor — the chatbot already owns `labelFor(id)` (~L3408,
+// returns a label STRING by field id). Two same-named function declarations in this one
+// inline script silently shadow each other (last wins), which is exactly how unit labels
+// stopped updating once the chatbot landed.
+// The <label> ELEMENT for a field — distinct from the chatbot's labelFor(id), which returns a
+// label STRING. (Two same-named function declarations in this single inline script silently
+// shadow each other, last one wins; keep these names distinct.)
+// Walks up to the nearest wrapper owning EXACTLY ONE control — .form-group for most fields, a
+// plain <div> for Sales Channel rows. The one-control rule is load-bearing: it stops the walk
+// from escaping to an enclosing panel and rewriting a SIBLING field's label. A field with no
+// such wrapper (e.g. a hidden derived input) has no label → returns null → the caller no-ops.
+function labelElFor(el) {
+  if (!el) return null;
+  const grp = el.closest('.form-group');            // fast path: the overwhelming majority
+  if (grp) return grp.querySelector('label');
+  for (let n = el.parentElement; n && n !== document.body; n = n.parentElement) {
+    if (n.querySelectorAll('input, select, textarea').length !== 1) return null;
+    const lbl = n.querySelector('label');
+    if (lbl) return lbl;
+  }
+  return null;
 }
 // Read ANY unit-bearing element in canonical units. Prefers data-canon (exact source of
 // truth, drift-free); falls back to converting the displayed value. Drop-in for
@@ -2783,12 +2822,31 @@ const U_PER_ACRE = { measure: 'area_land', inverse: true };// $/acre ⇄ $/ha
 const U_PER_LB   = { measure: 'mass', inverse: true };     // $/lb ⇄ $/kg
 // Convert a canonical result value to the active display system (number only).
 function dispVal(canonicalValue, spec) {
-  if (typeof UNITS === 'undefined' || canonicalValue == null || isNaN(canonicalValue)) return canonicalValue;
+  if (typeof UNITS === 'undefined' || !spec || canonicalValue == null || isNaN(canonicalValue)) return canonicalValue;
   return UNITS.toDisplay(canonicalValue, spec, APP_STATE.unitSystem || 'canonical');
 }
 // The active-system unit string for a spec (e.g. "m³" or "ft³", "lbs"→"kg", "$/acre"→"$/ha").
+// An unknown/missing spec yields '' rather than throwing: these run inside big template
+// literals, where one throw blanks the whole panel (or aborts a unit-toggle mid-sweep).
 function unitStr(spec) {
-  return typeof UNITS !== 'undefined' ? UNITS.unitLabel(spec, APP_STATE.unitSystem || 'canonical') : '';
+  if (typeof UNITS === 'undefined' || !spec) return '';
+  try { return UNITS.unitLabel(spec, APP_STATE.unitSystem || 'canonical'); } catch (e) { return ''; }
+}
+// A field's declared unit spec, by registry key (static field id, or crop/channel data-f name).
+// Lets result renderers reuse the form's declarations instead of restating them.
+function specForKey(key) {
+  if (typeof UNITS === 'undefined') return null;
+  return UNITS.FIELD_REGISTRY[key] || UNITS.DATA_F_REGISTRY[key] || null;
+}
+// Canonical value → display NUMBER, rounded for its magnitude. The number half of fmtUnit,
+// for the callers that need to place the unit themselves (templates, "$X/unit" rates).
+function dispRound(canonicalValue, spec) {
+  return roundForDisplay(dispVal(canonicalValue, spec));
+}
+// Format a canonical money RATE as "$X/unit" — e.g. U_PER_LB → "$1.81/kg". The label comes
+// from the spec itself (units.js owns the "$/x" form), so text and value can never disagree.
+function fmtRate(canonicalValue, spec) {
+  return unitStr(spec).replace('$', '$' + dispRound(canonicalValue, spec));   // "$/kg" → "$1.81/kg"
 }
 // Format a canonical result value as "<number> <unit>" in the active system. By default the
 // number is rounded + locale-grouped; pass decimals for fixed precision (e.g. rates).
@@ -2809,7 +2867,16 @@ function renderUnitLabels() {
   if (typeof UNITS === 'undefined') return;
   const sys = APP_STATE.unitSystem || 'canonical';
   forEachUnitField(function (el, spec) {
-    rewriteLabelUnit(labelFor(el), UNITS.unitLabel(spec, sys));
+    rewriteLabelUnit(labelElFor(el), UNITS.unitLabel(spec, sys));
+  });
+  // Second sweep: any element may declare its own unit with data-unit="<measure>" and have its
+  // TEXT replaced by that unit. This covers unit strings with no input field behind them —
+  // static result headings, table captions — which the registry sweep above cannot reach.
+  document.querySelectorAll('[data-unit]').forEach(function (el) {
+    // Guarded: an unrecognised measure must not throw out of the sweep and leave the toggle
+    // half-applied (values converted, labels and button state not).
+    const label = unitStr({ measure: el.getAttribute('data-unit') });
+    if (label) el.textContent = label;
   });
 }
 // Rewrite the unit inside a label's TRAILING parenthetical, leaving tip <span>s/pills/markers
@@ -2865,6 +2932,9 @@ function setUnitSystem(newSys) {
   APP_STATE.unitSystem = newSys;
   try { localStorage.setItem('farm_unit_system', newSys); } catch (e) {}
   renderUnitLabels();
+  // Results are rendered from the canonical result object, so repaint them too — otherwise
+  // an open results view keeps whatever units it was first drawn in.
+  rerenderResultsForUnits();
   const seg = document.getElementById('unit-toggle');
   if (seg) seg.querySelectorAll('[data-sys]').forEach(function (b) {
     b.classList.toggle('active', b.getAttribute('data-sys') === newSys);
@@ -2887,9 +2957,12 @@ function initUnitInputSync() {
 // Called once at boot (after benchmark defaults are written in canonical units): pick the
 // saved system (default US customary — D2) and convert the canonical DOM into that display.
 // Metric is now wired end-to-end: setup inputs (static + crop/channel + per-phase resources),
-// the full results renderer, CSV/Past-Data imports, and download templates all convert. Known
-// remaining gap: the advanced Past-Data multi-tab upload expects US units (lbs/acres). Default
-// stays US customary; Metric is one click away.
+// the full results renderer, and every import path — crop CSV, Past-Data multi-tab, rainfall —
+// convert, writer and reader together. Uploads take their units from the FILE (its units row or
+// self-labelled column names), never from the active toggle, so a workbook downloaded in one
+// system and uploaded in another still reads correctly. Known remaining gap: the sensitivity
+// panel (SENS_VARS labels and its min/max inputs are still canonical/US).
+// Default stays US customary; Metric is one click away.
 const METRIC_READY = true;
 
 function initUnitSystem() {
@@ -4257,11 +4330,30 @@ function _loadSheetJS(cb) {
   document.head.appendChild(s);
 }
 
+/* Unit spec per Past-Data tab — the SINGLE source shared by the template writer
+ * (downloadMCXLSX) and the reader (parseMCMultiTab). The workbook is authored in the user's
+ * active units and canonicalized on upload; if these two ever disagree, a file is written in
+ * one unit and read as another with nothing to catch it. Keep them reading from here.
+ * (Revenue columns are plain $ and appear in neither — currency is never converted.) */
+const MC_TAB_UNITS = {
+  harvest: U_LB,        // Harvest tab — total mass per year
+  acres:   U_ACRE,      // Acres tab   — land planted per year
+  price:   U_PER_LB,    // Sales tab   — the Price_YYYY columns
+};
+
 /** Generates and triggers download of the MC uncertainty XLSX template (Phase 3.4: separate Yield/Price/Demand tabs). */
 function downloadMCXLSX() {
   _loadSheetJS(() => {
     const wb = XLSX.utils.book_new();
     const EX_YEARS = [2020, 2021, 2022, 2023, 2024];
+    // Authored in the user's ACTIVE units; parseMCMultiTab canonicalizes on upload. The two
+    // must always move together. (The legacy single "Data" tab is exempt — its column names,
+    // e.g. yield_per_acre_lbs, state their own units.)
+    const uMass = unitStr(U_LB), uArea = unitStr(U_ACRE);
+    // Example rows are written in canonical units; convert every column but the leading
+    // name column(s) into the active system.
+    const convRows = (rows, spec, skip) =>
+      rows.map(r => r.map((v, i) => i < skip ? v : dispRound(v, spec)));
 
     // ── Instructions sheet ────────────────────────────────────────────────────
     const instrRows = [
@@ -4275,20 +4367,20 @@ function downloadMCXLSX() {
       [],
       ['TAB STRUCTURE'],
       ['Tab',          'Rows',                    'Year columns',               'Value'],
-      ['Harvest', 'One row per crop',         'Year_YYYY (e.g. Year_2018)', 'TOTAL lbs harvested that year'],
-      ['Acres',   'One row per crop',         'Year_YYYY',                  'acres planted that year — COUNT EACH SUCCESSION (10 ac planted twice = 20)'],
-      ['Sales',   'One row per crop+channel', 'Revenue_YYYY + Price_YYYY',  'total $ sold, and avg $/lb, that year'],
+      ['Harvest', 'One row per crop',         'Year_YYYY (e.g. Year_2018)', 'TOTAL ' + uMass + ' harvested that year'],
+      ['Acres',   'One row per crop',         'Year_YYYY',                  uArea + ' planted that year — COUNT EACH SUCCESSION (10 planted twice = 20)'],
+      ['Sales',   'One row per crop+channel', 'Revenue_YYYY + Price_YYYY',  'total $ sold, and avg $/' + uMass + ', that year'],
       [],
       ['DERIVED FOR YOU (do not enter)'],
-      ['• yield (lbs/acre) = Harvest ÷ Acres.'],
-      ['• lbs sold = Revenue ÷ Price (per channel) → sets your sales-capacity caps.'],
-      ['• sell-through % = total lbs sold ÷ Harvest (per crop). You never type a ratio — it comes from your raw numbers.'],
+      ['• yield (' + uMass + '/' + uArea + ') = Harvest ÷ Acres.'],
+      ['• ' + uMass + ' sold = Revenue ÷ Price (per channel) → sets your sales-capacity caps.'],
+      ['• sell-through % = total ' + uMass + ' sold ÷ Harvest (per crop). You never type a ratio — it comes from your raw numbers.'],
       [],
       ['HOW TO FILL'],
       ['• Add Year_YYYY columns for each year of data you have (e.g. Year_2015, Year_2016…).'],
       ['• Delete any year columns you do not have data for — the parser accepts whatever is present.'],
       ['• Blank cells in year columns are skipped (treated as missing data for that year).'],
-      ['• ACRES = total acres planted across the year. If you plant the same ground twice (successions), add them up: 10 ac planted twice = 20.'],
+      ['• ACRES = total ' + uArea + ' planted across the year. If you plant the same ground twice (successions), add them up: 10 planted twice = 20.'],
       ['• Averages and variability are computed automatically on upload — no need to add summary columns.'],
       [],
       ['BACKWARD COMPATIBILITY'],
@@ -4305,24 +4397,24 @@ function downloadMCXLSX() {
 
     // ── Harvest tab (per crop; TOTAL lbs harvested) ───────────────────────────
     const hHdr  = ['crop_name', ...EX_YEARS.map(y => 'Year_' + y)];
-    const hUnit = ['(text)',    ...EX_YEARS.map(() => 'total lbs')];
-    const hEx   = [
+    const hUnit = ['(text)',    ...EX_YEARS.map(() => 'total ' + uMass)];
+    const hEx   = convRows([
       ['Spinach',    82000, 78000, 85000, 81000, 79500],
       ['Garlic',     21000, 19500, 22000, 20500, 21500],
       ['Cucumbers',  58000, 55000, 61000, 57500, 59000],
-    ];
+    ], MC_TAB_UNITS.harvest, 1);
     const wsHarvest = XLSX.utils.aoa_to_sheet([hHdr, hUnit, ...hEx]);
     wsHarvest['!cols'] = [{ wch: 16 }, ...EX_YEARS.map(() => ({ wch: 11 }))];
     XLSX.utils.book_append_sheet(wb, wsHarvest, 'Harvest');
 
     // ── Acres tab (per crop; acres planted → yield = harvest ÷ acres) ──────────
     const aHdr  = ['crop_name', ...EX_YEARS.map(y => 'Year_' + y)];
-    const aUnit = ['(text)',    ...EX_YEARS.map(() => 'acres (sum successions)')];
-    const aEx   = [
+    const aUnit = ['(text)',    ...EX_YEARS.map(() => uArea + ' (sum successions)')];
+    const aEx   = convRows([
       ['Spinach',    10, 10, 10, 10, 10],
       ['Garlic',     10, 10, 10, 10, 10],
       ['Cucumbers',  10, 10, 10, 10, 10],
-    ];
+    ], MC_TAB_UNITS.acres, 1);
     const wsAcres = XLSX.utils.aoa_to_sheet([aHdr, aUnit, ...aEx]);
     wsAcres['!cols'] = [{ wch: 16 }, ...EX_YEARS.map(() => ({ wch: 11 }))];
     XLSX.utils.book_append_sheet(wb, wsAcres, 'Acres');
@@ -4330,11 +4422,14 @@ function downloadMCXLSX() {
     // ── Sales tab (per crop+channel; paired Revenue ($) + Price ($/lb) per year)
     //    lbs sold = Revenue ÷ Price is derived on upload.
     const dHdr  = ['crop_name', 'channel_name', ...EX_YEARS.flatMap(y => ['Revenue_' + y, 'Price_' + y])];
-    const dUnit = ['(text)',    '(text)',        ...EX_YEARS.flatMap(() => ['$ total', '$/lb'])];
+    const dUnit = ['(text)',    '(text)',        ...EX_YEARS.flatMap(() => ['$ total', '$/' + uMass])];
+    // Columns are [crop, channel, Revenue, Price, Revenue, Price, …]: revenue is plain $ and
+    // never converts; the price columns are the odd indices from 2 onward.
+    const salesRow = r => r.map((v, i) => (i >= 2 && i % 2 === 1) ? dispRound(v, MC_TAB_UNITS.price) : v);
     const dEx   = [
-      ['Spinach', 'Wholesale',      63000, 1.05, 66960, 1.08, 59160, 1.02, 70400, 1.10, 65270, 1.07],
-      ['Spinach', 'Farmers Market', 26000, 2.00, 28350, 2.10, 23400, 1.95, 30100, 2.15, 27060, 2.05],
-      ['Garlic',  'Wholesale',      60000, 3.00, 57350, 3.10, 60610, 2.90, 62400, 3.20, 62220, 3.05],
+      salesRow(['Spinach', 'Wholesale',      63000, 1.05, 66960, 1.08, 59160, 1.02, 70400, 1.10, 65270, 1.07]),
+      salesRow(['Spinach', 'Farmers Market', 26000, 2.00, 28350, 2.10, 23400, 1.95, 30100, 2.15, 27060, 2.05]),
+      salesRow(['Garlic',  'Wholesale',      60000, 3.00, 57350, 3.10, 60610, 2.90, 62400, 3.20, 62220, 3.05]),
     ];
     const wsSales = XLSX.utils.aoa_to_sheet([dHdr, dUnit, ...dEx]);
     wsSales['!cols'] = [{ wch: 16 }, { wch: 18 }, ...EX_YEARS.flatMap(() => [{ wch: 12 }, { wch: 8 }])];
@@ -4559,20 +4654,11 @@ function parseMCMultiTab(wb) {
       ycols.forEach(({ yr, idx }) => { const v = parseFloat(String(row[idx] ?? '').trim()); if (!isNaN(v) && v > 0) assign(crop, yr, v); });
     });
   };
-  // Read a per-crop+channel year-keyed tab → cropMap[crop].channels[ch][field][year] = value
-  const readChanYears = (key, field) => {
-    const sh = readSheetRows(key); if (!sh) return;
-    const ycols = yearCols(sh.hdrs), cidx = colOf(sh.hdrs, 'crop_name'), chidx = colOf(sh.hdrs, 'channel_name');
-    sh.rows.forEach(row => {
-      if (!row || row.every(c => String(c ?? '').trim() === '')) return;
-      const crop = String(row[cidx] ?? '').trim(), ch = String(row[chidx < 0 ? 1 : chidx] ?? '').trim();
-      if (!crop || !ch) return;
-      ycols.forEach(({ yr, idx }) => { const v = parseFloat(String(row[idx] ?? '').trim()); if (!isNaN(v) && v > 0) ensureCh(crop, ch)[field][yr] = v; });
-    });
-  };
-
-  readCropYears('harvest', (c, yr, v) => { ensure(c).harvestByYear[yr] = v; });
-  readCropYears('acres',   (c, yr, v) => { ensure(c).acresByYear[yr]   = v; });
+  // The workbook is authored in the user's ACTIVE units (downloadMCXLSX labels it that way),
+  // so canonicalize on the way in: harvest → lb, acres → acre, price → $/lb. Everything
+  // downstream (yield = harvest ÷ acres, sales caps, sell-through) is then canonical.
+  readCropYears('harvest', (c, yr, v) => { ensure(c).harvestByYear[yr] = toCanonicalActive(v, MC_TAB_UNITS.harvest); });
+  readCropYears('acres',   (c, yr, v) => { ensure(c).acresByYear[yr]   = toCanonicalActive(v, MC_TAB_UNITS.acres); });
 
   // Sales tab: per crop+channel with paired Revenue_YYYY / Price_YYYY columns.
   // Price feeds the solver directly; lbs sold = revenue ÷ price feeds the sales cap + sell-through.
@@ -4589,7 +4675,13 @@ function parseMCMultiTab(wb) {
       const crop = String(row[cidx] ?? '').trim(), ch = String(row[chidx < 0 ? 1 : chidx] ?? '').trim();
       if (!crop || !ch) return;
       const rev = {}, prc = {};
-      cols.forEach(({ yr, idx, kind }) => { const v = parseFloat(String(row[idx] ?? '').trim()); if (!isNaN(v) && v > 0) (kind === 'price' ? prc : rev)[yr] = v; });
+      // price is $/lb (canonicalize); revenue is plain $ (currency — never converted).
+      cols.forEach(({ yr, idx, kind }) => {
+        const v = parseFloat(String(row[idx] ?? '').trim());
+        if (isNaN(v) || v <= 0) return;
+        if (kind === 'price') prc[yr] = toCanonicalActive(v, MC_TAB_UNITS.price);
+        else                  rev[yr] = v;
+      });
       const ce = ensureCh(crop, ch);
       Object.keys(prc).forEach(yr => { ce.priceByYear[yr] = prc[yr]; });
       Object.keys(rev).forEach(yr => { if (prc[yr] > 0) ce.soldByYear[yr] = rev[yr] / prc[yr]; });   // lbs = revenue ÷ price
@@ -4781,6 +4873,9 @@ const RAINFALL_WARN_YEARS = 25;  // note if < 25 (ideal 25-50)
 function downloadRainfallXLSX() {
   _loadSheetJS(() => {
     const wb = XLSX.utils.book_new();
+    // Template speaks the user's ACTIVE units; parseRainfallXLSX converts back to canonical
+    // mm on upload. The two must always move together.
+    const uRain = unitStr(U_MM);                               // 'mm' or 'in'
 
     // ── Instructions sheet ────────────────────────────────────────────────────
     const instr = [
@@ -4794,7 +4889,7 @@ function downloadRainfallXLSX() {
       ['• Row 1: headers. Row 2: units (read-only). Rows 3–54: weeks 1–52.'],
       ['• Column A = week number (1–52). Columns B onward = one year each.'],
       ['• Column header format: Year_YYYY  (e.g. Year_2005, Year_2018).'],
-      ['• Fill rainfall in mm for each week/year cell. Use 0 for dry weeks (do not leave blank).'],
+      ['• Fill rainfall in ' + uRain + ' for each week/year cell. Use 0 for dry weeks (do not leave blank).'],
       ['• Delete any year columns you do not have data for — the parser accepts any number.'],
       ['• The avg_rainfall and stddev_rainfall columns (last two) are reference only — re-computed on upload.'],
       [],
@@ -4806,7 +4901,7 @@ function downloadRainfallXLSX() {
       [],
       ['VALIDATION'],
       ['• At least ' + RAINFALL_MIN_YEARS + ' year columns required; 25–50 recommended.'],
-      ['• All rainfall values must be ≥ 0 mm. Blank cells treated as 0.'],
+      ['• All rainfall values must be ≥ 0 ' + uRain + '. Blank cells treated as 0.'],
       ['• Year column headers must contain a 4-digit year (Year_YYYY or just YYYY).'],
     ];
     const wsInstr = XLSX.utils.aoa_to_sheet(instr);
@@ -4814,7 +4909,12 @@ function downloadRainfallXLSX() {
     XLSX.utils.book_append_sheet(wb, wsInstr, 'Instructions');
 
     // ── Data sheet — week × year matrix ──────────────────────────────────────
-    const EX_YEARS = [2020, 2021, 2022, 2023, 2024];
+    // 25 year columns: the parser REJECTS anything under RAINFALL_MIN_YEARS, so a template
+    // that shipped with fewer could not be filled in and uploaded as-is. 25 also matches the
+    // 25–50 the instructions recommend, and deleting spare columns is easier than adding them.
+    const EX_YEAR_COUNT = 25;
+    const EX_END_YEAR   = 2024;
+    const EX_YEARS = Array.from({ length: EX_YEAR_COUNT }, (_, i) => EX_END_YEAR - EX_YEAR_COUNT + 1 + i);
     // Illustrative weekly rainfall values (mm) — temperate CA coastal pattern
     const SAMPLE = {
       2020: [18,12,25,8,3,0,0,0,2,5,0,0,0,0,0,0,0,2,8,14,22,18,12,6,0,0,0,0,0,2,5,8,12,18,24,30,22,14,8,12,20,28,18,10,6,3,0,5,10,16,20,24],
@@ -4824,10 +4924,18 @@ function downloadRainfallXLSX() {
       2024: [16,10,22,9,2,0,0,0,2,5,0,0,0,0,0,0,0,3,9,15,22,18,12,5,0,0,0,0,3,7,9,13,17,23,29,32,24,16,8,12,20,28,18,10,6,3,0,5,10,16,20,24],
     };
     const headerRow = ['week', ...EX_YEARS.map(y => 'Year_' + y), 'avg_rainfall', 'stddev_rainfall'];
-    const unitsRow  = ['(1–52)', ...EX_YEARS.map(() => 'mm/week'), '(auto)', '(auto)'];
+    const unitsRow  = ['(1–52)', ...EX_YEARS.map(() => uRain + '/week'), '(auto)', '(auto)'];
+    // Only 5 seasonal patterns are hand-authored, so the remaining columns cycle them under a
+    // deterministic per-year multiplier (~0.8–1.2). Deterministic, not random: a template must
+    // download identically every time. This keeps every column non-zero and the year-to-year
+    // spread realistic — a block of zero-rainfall years would hand the user a bogus CV.
+    const SAMPLE_YEARS = Object.keys(SAMPLE).map(Number);
+    const yearFactor = i => 0.8 + 0.4 * (((i * 7) % 11) / 10);
+    const sampleAt = (i, w) => (SAMPLE[SAMPLE_YEARS[i % SAMPLE_YEARS.length]][w - 1] ?? 0) * yearFactor(i);
+
     const dataMatrix = [];
     for (let w = 1; w <= 52; w++) {
-      const vals = EX_YEARS.map(y => (SAMPLE[y] || [])[w - 1] ?? 0);
+      const vals = EX_YEARS.map((y, i) => dispRound(sampleAt(i, w), U_MM));
       const avg  = vals.reduce((s, v) => s + v, 0) / vals.length;
       const std  = Math.sqrt(vals.reduce((s, v) => s + (v - avg) ** 2, 0) / vals.length);
       dataMatrix.push([w, ...vals, Math.round(avg * 10) / 10, Math.round(std * 10) / 10]);
@@ -5413,7 +5521,7 @@ function renderRainfallCVSource() {
  * avg_rainfall / stddev_rainfall columns are ignored (re-computed from data).
  * Returns { history, errors }. Exposed on window for unit tests.
  */
-function _parseRainfallMatrix(hdrs, rawData) {
+function _parseRainfallMatrix(hdrs, rawData, fileUnit) {
   // Identify year columns: header contains a 4-digit year 1950–present
   const yearCols = [];
   hdrs.forEach((h, i) => {
@@ -5445,7 +5553,8 @@ function _parseRainfallMatrix(hdrs, rawData) {
     yearCols.forEach(({ yr, idx }) => {
       const raw = String(row[idx] ?? '').trim();
       const mm  = raw === '' ? 0 : parseFloat(raw);
-      if (!isNaN(mm) && mm >= 0) { byWeek[wKey].push(mm); years.add(yr); }
+      // canonicalize using the unit the FILE declares (see rainfallUnitOfFile), not the toggle
+      if (!isNaN(mm) && mm >= 0) { byWeek[wKey].push(fileUnit === 'in' ? mm * 25.4 : mm); years.add(yr); }
       else errors.push({ row: i + 2, field: `Year_${yr}`, msg: `rainfall_mm must be ≥ 0, got "${raw}" for year ${yr} week ${weekVal}.` });
     });
   }
@@ -5467,10 +5576,10 @@ window._parseRainfallMatrix = _parseRainfallMatrix;
  * Long format: year, week, rainfall_mm columns.
  * Exposed on window for unit tests.
  */
-function _parseRainfallRows(hdrs, rawData) {
+function _parseRainfallRows(hdrs, rawData, fileUnit) {
   // Auto-detect matrix format: first col = 'week', some col header contains a 4-digit year
   if (hdrs[0] === 'week' && hdrs.some((h, i) => i > 0 && /\d{4}/.test(String(h))))
-    return _parseRainfallMatrix(hdrs, rawData);
+    return _parseRainfallMatrix(hdrs, rawData, fileUnit);
 
   // Long format: year, week, rainfall_mm
   const errors = [];
@@ -5510,6 +5619,9 @@ function _parseRainfallRows(hdrs, rawData) {
     years.add(yearVal);
     const wKey = `week_${weekVal}`;
     if (!byWeek[wKey]) byWeek[wKey] = [];
+    // NOT converted: this is the long format, whose column is literally named `rainfall_mm`.
+    // Rule across all importers: a column that names its own unit is always canonical; only
+    // unit-less columns (the matrix format's Year_YYYY, the MC tabs) follow the active system.
     byWeek[wKey].push(mmVal);
   }
 
@@ -5545,7 +5657,16 @@ function parseRainfallXLSX(wb) {
     if (probe !== '' && isNaN(parseFloat(probe))) dataStart = 2;
   }
 
-  return _parseRainfallRows(hdrs, raw.slice(dataStart));
+  return _parseRainfallRows(hdrs, raw.slice(dataStart), rainfallUnitOfFile(dataStart === 2 ? raw[1] : null));
+}
+
+/** The unit a rainfall workbook is written in, read from its own units row ("mm/week" /
+ *  "in/week"). Deliberately NOT the active toggle: every template issued before the unit
+ *  system existed is in mm, and a user can download in one system and upload in another —
+ *  guessing there would scale a whole rainfall history by 25.4. Unlabelled ⇒ canonical mm. */
+function rainfallUnitOfFile(unitsRow) {
+  const txt = (unitsRow || []).map(c => String(c ?? '')).join(' ').toLowerCase();
+  return /(^|[^a-z])(in|inch|inches)([^a-z]|$)/.test(txt) ? 'in' : 'mm';
 }
 
 /**
@@ -5790,9 +5911,11 @@ function renderExecutiveSummary(res, params) {
         if (margin < worstMargin) { worstMargin = margin;  worstLabel = `${crop.name} (${chName})`; }
       }
     }
-    if (bestLabel)  topCrop = `${bestLabel} — ${fmtD(bestMargin)}/year per acre`;
+    // margin is computed in $/acre (params are canonical) — display as $/ha under metric.
+    const perLand = m => `${fmtD(dispVal(m, U_PER_ACRE))}/year per ${unitStr(U_ACRE)}`;
+    if (bestLabel)  topCrop = `${bestLabel} — ${perLand(bestMargin)}`;
     if (worstLabel && worstLabel !== bestLabel) {
-      lowCrop = `${worstLabel} — ${fmtD(worstMargin)}/year per acre`;
+      lowCrop = `${worstLabel} — ${perLand(worstMargin)}`;
     }
   } catch(e) { topCrop = 'Calculation error — check crop channel prices'; }
 
@@ -6930,8 +7053,12 @@ async function runOptimizer() {
 }
 
 function renderResults(res, total_land) {
-  // Waterfall chart — KPI grid removed; Peak Borrowing lives in exec summary only
-  document.getElementById('chart-waterfall').src = 'data:image/png;base64,' + res.waterfall_png;
+  // Waterfall chart — KPI grid removed; Peak Borrowing lives in exec summary only.
+  // Skip the re-assign when unchanged: the chart is in dollars (unit-invariant), so a unit
+  // toggle would otherwise re-decode a ~100 KB data URL for a byte-identical image.
+  const wfImg = document.getElementById('chart-waterfall');
+  const wfSrc = 'data:image/png;base64,' + res.waterfall_png;
+  if (wfImg.getAttribute('src') !== wfSrc) wfImg.src = wfSrc;
 
   // Profit back-check panel (state 1/2/3 depending on uploaded history)
   renderBackCheckPanel(res);
@@ -7611,21 +7738,51 @@ function switchToResults(params, res) {
     const hasSpread = (params.crops || []).some(c => (parseInt(c.sales_spread_weeks) || 1) > 1);
     spreadBanner.style.display = hasSpread ? 'block' : 'none';
   }
-  // Render all result sections
-  renderExecutiveSummary(res, params);
-  // renderDefaultsAppliedPanel removed (Phase 3.2): sources now in collapsible section blocks
-  renderWhatIfCard(res, params);
-  renderSummaryPane(params);
-  renderGanttCalendar(res);
-  updatePieChart(document.getElementById('week-slider').value);
-  renderSensitivitySetup(params, res);
-  renderMCSetup(params);
-  renderRainfallCVSource();
+  renderResultSections(params, res);
   // Scroll results-main to top
   const rm = document.getElementById('results-main');
   if (rm) rm.scrollTop = 0;
   // Phase 4.3: stagger-animate results cards
   triggerResultsStagger();
+}
+
+/** Re-render every results section from the SAME canonical result object.
+ *  Split out of switchToResults so a unit-system toggle can repaint the results in the new
+ *  units without the view-switch side effects (scroll-to-top, entry animation). The solver
+ *  result is always canonical, so every display helper simply reads the active system.
+ */
+function renderResultSections(params, res) {
+  renderUnitBearingResults(params, res);
+  // Below: sections a unit toggle must NOT rebuild, because their DOM is also the only store
+  // for user input — rebuilding would silently discard the what-if constraint selection, the
+  // sensitivity variable choice, and any typed Monte Carlo spread %.
+  renderWhatIfCard(res, params);
+  renderSensitivitySetup(params, res);
+  renderMCSetup(params);
+  renderRainfallCVSource();
+}
+
+/** The subset of result sections that render physical units, and so must repaint when the
+ *  display system changes. Everything here is derived output — safe to rebuild. */
+function renderUnitBearingResults(params, res) {
+  renderExecutiveSummary(res, params);
+  // renderDefaultsAppliedPanel removed (Phase 3.2): sources now in collapsible section blocks
+  renderSummaryPane(params);
+  renderGanttCalendar(res);
+  const slider = document.getElementById('week-slider');
+  updatePieChart(slider ? slider.value : 20);   // 20 = the slider's own default
+  // The what-if CARD is input-bearing (above), but its baseline label bakes in unit-carrying
+  // displayFn output at render time, so refresh just that label — it preserves the selection.
+  if (typeof WHATIF_STATE !== 'undefined' && WHATIF_STATE.rankedConstraints) updateWhatIfSelectionUI();
+}
+
+/** Repaint an already-open results view after the unit system changes. No-op if the user has
+ *  not solved yet, or is still on the input/hub view. */
+function rerenderResultsForUnits() {
+  if (APP_STATE.view !== 'results' || !window._lastRes || !window._lastParams) return;
+  renderResults(window._lastRes, window._lastParams.total_land);
+  renderUnitBearingResults(window._lastParams, window._lastRes);
+  renderUnitLabels();   // static result headings declaring data-unit (pie titles, etc.)
 }
 
 /** Phase 4.3 — Stagger-animate results cards after a solve.
@@ -7685,29 +7842,38 @@ function renderSummaryPane(params) {
   if (!el) return;
   const kv = (k, v) => `<div class="summary-kv"><span>${k}</span><strong>${v}</strong></div>`;
   const fmtN = n => (n == null || isNaN(n)) ? '—' : Number(n).toLocaleString();
+  // This pane echoes the input form, so take each value's unit from the SAME registry the form
+  // uses (keyed by param name = field id) rather than hand-picking a U_* const per line.
+  // dispRound, not fmtUnit: fmtUnit rounds to whole units, which would report a 12.5-acre farm
+  // as "13 acre" (and 80 acres as "32 ha", not 32.37). This pane echoes what the user entered.
+  const p = key => {
+    const spec = specForKey(key);
+    const v = dispRound(params[key], spec);
+    return (v == null || isNaN(v)) ? '—' : Number(v).toLocaleString() + ' ' + unitStr(spec);
+  };
   const employees = params.employees || [];
   const channels  = params.channels  || [];
   const crops     = params.crops     || [];
   el.innerHTML = `
     <div class="summary-section">
       <h4>Farm</h4>
-      ${kv('Land', fmtN(params.total_land) + ' ac')}
+      ${kv('Land', p('total_land'))}
       ${kv('Op. weeks', params.operating_weeks)}
       ${kv('Opening cash', '$' + fmtN(params.opening_cash))}
       ${kv('Credit line', params.credit_line ? '$' + fmtN(params.credit_line) : 'Off')}
     </div>
     <div class="summary-section">
       <h4>Storage</h4>
-      ${kv('Harvest', fmtUnit(params.harvest_storage_cap, U_M3))}
-      ${kv('Equip.', params.equip_storage ? fmtUnit(params.equip_storage, U_M3) : 'Off')}
-      ${kv('Fuel', params.fuel_storage ? fmtUnit(params.fuel_storage, U_L) : 'Off')}
+      ${kv('Harvest', p('harvest_storage_cap'))}
+      ${kv('Equip.', params.equip_storage ? p('equip_storage') : 'Off')}
+      ${kv('Fuel', params.fuel_storage ? p('fuel_storage') : 'Off')}
     </div>
     <div class="summary-section">
       <h4>Water</h4>
       ${kv('Zone', (params.climate_zone || '').replace(/_/g, ' '))}
-      ${kv('Well', params.well_enabled ? fmtN(params.well_weekly_cap_L) + ' L/wk' : 'Off')}
-      ${kv('Catchment', params.catchment_enabled ? fmtN(params.catchment_surface_area_m2) + ' m²' : 'Off')}
-      ${kv('City water', params.city_water_enabled ? '$' + params.city_water_cost_per_L + '/L' : 'Off')}
+      ${kv('Well', params.well_enabled ? p('well_weekly_cap_L') : 'Off')}
+      ${kv('Catchment', params.catchment_enabled ? p('catchment_surface_area_m2') : 'Off')}
+      ${kv('City water', params.city_water_enabled ? fmtRate(params.city_water_cost_per_L, specForKey('city_water_cost_per_L')) : 'Off')}
     </div>
     <div class="summary-section">
       <h4>Labor (${employees.length})</h4>
@@ -7724,12 +7890,12 @@ function renderSummaryPane(params) {
     </div>
     <div class="summary-section">
       <h4>Crops (${crops.length})</h4>
-      ${crops.map(c => kv(c.name, fmtN(c.yield_per_acre) + ' lb/ac')).join('')}
+      ${crops.map(c => kv(c.name, fmtUnit(c.yield_per_acre, specForKey('yield_per_acre')))).join('')}
     </div>
     <div class="summary-section">
       <h4>Var. Costs</h4>
-      ${kv('Fertilizer', '$' + params.cost_fert_per_lb + '/lb')}
-      ${kv('Fuel', '$' + params.cost_fuel_per_L + '/L')}
+      ${kv('Fertilizer', fmtRate(params.cost_fert_per_lb, specForKey('cost_fert_per_lb')))}
+      ${kv('Fuel', fmtRate(params.cost_fuel_per_L, specForKey('cost_fuel_per_L')))}
     </div>`;
 }
 
@@ -8511,7 +8677,7 @@ function getTopCropsSummary(res, n) {
   return Object.entries(acres)
     .sort((a, b) => b[1] - a[1])
     .slice(0, n || 3)
-    .map(([name, ac]) => `${name} ${ac.toFixed(0)}ac`)
+    .map(([name, ac]) => `${name} ${fmtUnit(ac, U_ACRE, 0)}`)
     .join(' · ') || '—';
 }
 

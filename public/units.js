@@ -119,6 +119,11 @@
     ch_price:                    { measure: 'mass', inverse: true }, // $/lb
     ch_pkg:                      { measure: 'mass', inverse: true }, // $/lb packaging
     ch_demand_value:            { measure: 'mass' },                 // lbs (a capacity quantity)
+    // Sales-channel DEFINITION row (the Channels panel, not the per-crop overrides above).
+    // These render with classes rather than ids, so they are keyed by data-f like crop fields.
+    ch_default_pkg:             { measure: 'mass', inverse: true }, // $/lb default packaging
+    ch_var_sell:                { measure: 'mass', inverse: true }, // $/lb variable selling cost
+    // (ch_fixed_sell is $/wk — currency per time, no physical unit — deliberately absent.)
     lbs_per_tote:               { measure: 'mass' },                 // lbs
     min_acreage_if_planted:     { measure: 'area_land' },            // acres
     seed_transplant_cost_per_acre: { measure: 'area_land', inverse: true }, // $/acre
@@ -143,7 +148,8 @@
    * unit-bearing-looking numeric input should be missing from the registry.
    * Logs to console; never throws in production. Call after DOMContentLoaded. */
   function assertFieldRegistry(opts) {
-    if (typeof document === 'undefined') return { ok: true, missing: [], unregistered: [] };
+    if (typeof document === 'undefined')
+      return { ok: true, missing: [], unregistered: [], absentDataF: [], unknownDataF: [] };
     opts = opts || {};
     var missing = [];
     Object.keys(FIELD_REGISTRY).forEach(function (id) {
@@ -159,12 +165,30 @@
       var text = (grp ? grp.textContent : '') + ' ' + id;
       if (UNIT_HINT.test(text) && !/\$\/wk|per week|\byears?\b|%/.test(text)) unregistered.push(id);
     });
+    // Same drift check for the data-f keys (crop/channel/sales-channel rows). A renamed or
+    // typo'd data-f silently stops converting, so surface both directions: registry keys that
+    // no longer render, and rendered keys nothing in the registry claims.
+    var renderedF = {};
+    Array.prototype.forEach.call(document.querySelectorAll('[data-f]'), function (el) {
+      renderedF[el.getAttribute('data-f')] = true;
+    });
+    // Skip entirely when nothing has rendered yet — the crop/channel collections are built by
+    // the app's own DOMContentLoaded handler, which runs AFTER this script's. Comparing then
+    // would report every key as missing.
+    var nRendered = Object.keys(renderedF).length;
+    var unknownF = nRendered ? Object.keys(renderedF).filter(function (f) { return !DATA_F_REGISTRY[f]; }) : [];
+    var absentF  = nRendered ? Object.keys(DATA_F_REGISTRY).filter(function (f) { return !renderedF[f]; }) : [];
+
     if (missing.length) console.warn('[units] registry ids missing from DOM (form drift):', missing);
+    if (absentF.length) console.warn('[units] DATA_F_REGISTRY keys not rendered anywhere:', absentF);
     // The unregistered-field heuristic stays opt-in (?units-audit) until the dynamic
     // crop/channel registry is complete — otherwise deferred per-acre fields false-positive.
     if (opts.audit && unregistered.length) console.warn('[units] unit-looking inputs NOT in registry:', unregistered);
-    if (opts.verbose && !missing.length) console.log('[units] field registry ✓ (' + Object.keys(FIELD_REGISTRY).length + ' fields)');
-    return { ok: !missing.length, missing: missing, unregistered: unregistered };
+    if (opts.audit && unknownF.length) console.warn('[units] rendered data-f keys NOT in registry:', unknownF);
+    if (opts.verbose && !missing.length) console.log('[units] field registry ✓ (' + Object.keys(FIELD_REGISTRY).length +
+      ' static' + (nRendered ? ' + ' + nRendered + ' data-f rendered' : '') + ')');
+    return { ok: !missing.length && !absentF.length, missing: missing, unregistered: unregistered,
+             absentDataF: absentF, unknownDataF: unknownF };
   }
 
   var API = {
@@ -189,7 +213,11 @@
       var audit = /[?&]units-audit\b/.test(window.location ? window.location.search : '');
       assertFieldRegistry({ audit: audit, verbose: audit });
     };
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run);
-    else run();
+    // Run AFTER the app's own DOMContentLoaded handler: this script is parsed first, so its
+    // listener fires first, and at that point the crop/channel collections do not exist yet —
+    // the data-f half of the check would see an empty DOM and silently pass on nothing.
+    var runDeferred = function () { setTimeout(run, 0); };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', runDeferred);
+    else runDeferred();
   }
 })(typeof window !== 'undefined' ? window : null);
