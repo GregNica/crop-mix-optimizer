@@ -2405,8 +2405,14 @@ function weekRangeInputs(prefix, val, label, tipText) {
 
 function diversitySelect(val) {
   const cur = parseFloat(val) || 0.5;
-  const opts = [0.10,0.15,0.20,0.25,0.30,0.35,0.40,0.45,0.50,0.55,0.60,0.65,0.70,0.75,0.80,0.90,1.00]
-    .map(v => `<option value="${v}" ${Math.abs(cur-v)<0.003?'selected':''}>${Math.round(v*100)}%</option>`).join('');
+  const choices = [0.10,0.15,0.20,0.25,0.30,0.35,0.40,0.45,0.50,0.55,0.60,0.65,0.70,0.75,0.80,0.90,1.00];
+  // Snap to the NEAREST preset rather than requiring an exact hit. The presets step by 0.05 but
+  // the crop-CSV template invites "0.0–1.0 fraction", so an imported 0.33 matched nothing, no
+  // option was marked selected, and the browser fell back to the first one — silently applying
+  // a 10% diversity cap (3x tighter than the file asked for) with a success message.
+  const nearest = choices.reduce((best, v) => Math.abs(cur - v) < Math.abs(cur - best) ? v : best, choices[0]);
+  const opts = choices
+    .map(v => `<option value="${v}" ${v === nearest ? 'selected' : ''}>${Math.round(v*100)}%</option>`).join('');
   return `<select class="cf" data-f="crop_diversity_max">${opts}</select>`;
 }
 
@@ -4138,11 +4144,19 @@ function handleCSVUpload(input) {
     if (result.errors.length) {
       if (statusEl) statusEl.innerHTML = renderCSVErrors(result.errors);
     } else {
+      // loadCropsFromData renders only the channels configured in the app, so a channel_name
+      // the file uses but the Channels section doesn't have is dropped along with its price,
+      // packaging and sales cap — previously with no indication at all.
+      const known = new Set(getChannelDefs().map(c => c.name));
+      const unknown = [...new Set(result.crops.flatMap(c => Object.keys(c.channels_data || {})))]
+        .filter(n => !known.has(n));
       loadCropsFromData(result.crops);
       APP_STATE.visitedSections.add('crops');
       updateOptimizeBtn();
       if (statusEl) statusEl.innerHTML =
-        `<span class="csv-success-msg">✓ ${result.crops.length} crop(s) imported. Review in the Crops section.</span>`;
+        `<span class="csv-success-msg">✓ ${result.crops.length} crop(s) imported. Review in the Crops section.</span>`
+        + (unknown.length ? `<div style="color:#d97706;font-size:0.74rem;margin-top:3px">⚠ Channel(s) not configured in the app, so their price / packaging / sales capacity were NOT imported: `
+            + `${unknown.join(', ')}. Add them under Channels, then re-import.</div>` : '');
     }
   };
   reader.onerror = () => {
@@ -4374,7 +4388,17 @@ function _loadSheetJS(cb) {
   s.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
   s.crossOrigin = 'anonymous';
   s.onload  = cb;
-  s.onerror = () => alert('Could not load the XLSX library from CDN. Check your internet connection and try again.');
+  // onerror must also run the caller's failure path: every upload handler clears input.value
+  // and updates its status INSIDE reader.onload, which never runs if the library never loads.
+  // Without this the control stays on "Reading file…" and, because input.value still holds the
+  // filename, re-picking the same file fires no change event — the page has to be reloaded.
+  s.onerror = () => {
+    alert('Could not load the XLSX library from CDN. Check your internet connection and try again.');
+    document.querySelectorAll('input[type="file"]').forEach(el => { el.value = ''; });
+    document.querySelectorAll('[id$="-upload-status"], #csv-status, #rainfall-upload-status')
+      .forEach(el => { if (/Reading file/i.test(el.textContent)) el.innerHTML =
+        '<div class="csv-error-item">⚠ Could not load the spreadsheet library. Check your connection and try again.</div>'; });
+  };
   document.head.appendChild(s);
 }
 
@@ -4432,7 +4456,9 @@ function downloadMCXLSX() {
       ['• Averages and variability are computed automatically on upload — no need to add summary columns.'],
       [],
       ['BACKWARD COMPATIBILITY'],
-      ['A legacy "Data" tab (year, week, rainfall_mm format) is also accepted if present.'],
+      ['A legacy single "Data" tab is also accepted: one row per crop+channel, with columns'],
+      ['crop_name, channel_name, yield_per_acre_lbs, price_per_lb, demand_cap_type and the'],
+      ['demand/std-dev columns. (Rainfall history is a SEPARATE upload — use its own template.)'],
       [],
       ['COMMON ERRORS'],
       ['• crop_name / channel_name must match exactly (case-sensitive).'],
@@ -4535,6 +4561,14 @@ function handleXLSXUpload(input) {
             });
             summaryHTML += `</div>`;
           }
+          // Fold in the parser's own warnings (unconfigured channels, sales exceeding harvest,
+          // revenue with no price). applyMCParams appends these to #csv-status, which THIS
+          // assignment then overwrote — so a partly-applied import read as fully successful.
+          const parseWarnings = [...(APP_STATE.mcParseWarnings || []), ...(APP_STATE.mcApplyWarnings || [])];
+          if (parseWarnings.length) {
+            summaryHTML += `<div style="color:#d97706;font-size:0.74rem;margin-top:3px">`
+              + parseWarnings.map(w => `<div>⚠ ${w}</div>`).join('') + `</div>`;
+          }
           if (target) target.innerHTML = summaryHTML;
 
           // Re-render MC setup table if on results page so inputs update immediately
@@ -4636,7 +4670,10 @@ window._parseMCRows = _parseMCRows; // expose for unit tests
 function parseMCXLSX(wb) {
   const sheetNames = wb.SheetNames.map(n => n.toLowerCase());
   // Current tabs: Harvest / Acres / Sales. (Yield/Price/Demand kept for backward compatibility.)
-  const hasMultiTab = ['harvest', 'acres', 'sales', 'yield', 'price', 'demand']
+  // Only tabs parseMCMultiTab can actually read ('demand' is accepted as a Sales alias).
+  // 'yield'/'price' used to route here too, but there is no reader for them, so such a
+  // workbook died on an error message that named a "Price" tab the parser cannot parse.
+  const hasMultiTab = ['harvest', 'acres', 'sales', 'demand']
     .some(n => sheetNames.includes(n));
 
   if (hasMultiTab) return parseMCMultiTab(wb);
@@ -4658,7 +4695,27 @@ function parseMCXLSX(wb) {
     const probe = String(raw[1][0] ?? '');
     if (probe.startsWith('(') || /text/i.test(probe)) dataStart = 2;
   }
-  return _parseMCRows(hdrs, raw.slice(dataStart));
+  const parsed = _parseMCRows(hdrs, raw.slice(dataStart));
+  // The legacy sheet carries demand caps and std-dev columns in fields of its own, but
+  // applyMCParams consumes `annualSold`/`sellThroughPct` and Monte Carlo reads only
+  // APP_STATE.mcComputedCVs — both populated exclusively by parseMCMultiTab. So this format
+  // used to import yield and price, drop the caps and the entire risk spread, and still show
+  // "✓ … sales and risk spread applied". Map them onto the shape the rest of the app reads.
+  if (parsed.rows && parsed.rows.length) {
+    const cvs = {};
+    parsed.rows.forEach(r => {
+      r.annualSold = r.dtype === 'annual' ? (r.demandAnnual || 0) : (r.demandWeekly || 0) * 52;
+      const prev = cvs[r.cropName] || { yield: 0, price: 0, demand: 0, sellThrough: 0 };
+      cvs[r.cropName] = {
+        yield:       Math.round(r.yieldStdPct  || prev.yield),
+        price:       Math.round(r.priceStdPct  || prev.price),
+        demand:      Math.round(r.demandStdPct || prev.demand),
+        sellThrough: 0,   // not expressible in this format
+      };
+    });
+    APP_STATE.mcComputedCVs = cvs;
+  }
+  return parsed;
 }
 
 /**
@@ -4673,6 +4730,9 @@ function parseMCMultiTab(wb) {
 
   // cropMap[crop] = { harvestByYear:{yr:lbs}, acresByYear:{yr:ac}, channels:{ ch:{priceByYear:{yr:$}, soldByYear:{yr:lbs/yr}} } }
   const cropMap = {};
+  // crop -> Set of years where some channel reported revenue with no price (lbs sold unknowable)
+  const incompleteSalesYears = {};
+  const salesGaps = [];
   const ensure   = (c) => (cropMap[c] = cropMap[c] || { harvestByYear: {}, acresByYear: {}, channels: {} });
   const ensureCh = (c, ch) => { const e = ensure(c); return (e.channels[ch] = e.channels[ch] || { priceByYear: {}, soldByYear: {} }); };
 
@@ -4682,8 +4742,16 @@ function parseMCMultiTab(wb) {
     const raw  = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
     if (raw.length < 2) return null;
     const hdrs = raw[0].map(h => String(h ?? '').trim());
+    // Row 2 is the units row ONLY if it is clearly metadata. "Non-numeric" is not enough —
+    // a crop name is also non-numeric, so a workbook the user built from their own records
+    // (header + crop rows, no units row) had its FIRST CROP silently deleted from every tab.
+    // Same predicate parseMCXLSX uses. A stray non-data row that slips through is harmless:
+    // it yields no parseable numbers and is ignored.
     let start  = 1;
-    if (raw.length > 2) { const p = String(raw[1][0] ?? '').trim(); if (isNaN(parseFloat(p)) && p !== '') start = 2; }
+    if (raw.length > 2) {
+      const p = String(raw[1][0] ?? '').trim();
+      if (p.startsWith('(') || /text|unit/i.test(p)) start = 2;
+    }
     return { hdrs, rows: raw.slice(start) };
   };
   const yearCols = (hdrs) => hdrs
@@ -4732,12 +4800,20 @@ function parseMCMultiTab(wb) {
       });
       const ce = ensureCh(crop, ch);
       Object.keys(prc).forEach(yr => { ce.priceByYear[yr] = prc[yr]; });
-      Object.keys(rev).forEach(yr => { if (prc[yr] > 0) ce.soldByYear[yr] = rev[yr] / prc[yr]; });   // lbs = revenue ÷ price
+      Object.keys(rev).forEach(yr => {
+        if (prc[yr] > 0) { ce.soldByYear[yr] = rev[yr] / prc[yr]; return; }   // lbs = revenue ÷ price
+        // Revenue with no price: lbs sold is unknowable for this channel-year. Record it so the
+        // year can be left OUT of the sell-through calculation — counting the other channels'
+        // sales against the FULL harvest silently understates sell-through (70% -> 55% on one
+        // blank cell), and that figure scales revenue in the objective.
+        (incompleteSalesYears[crop] = incompleteSalesYears[crop] || new Set()).add(String(yr));
+        salesGaps.push(`${crop} / ${ch} ${yr}`);
+      });
     });
   }
 
   if (Object.keys(cropMap).length === 0)
-    return { rows: [], errors: [{ row: 1, field: '', msg: 'No data found. Fill the Harvest, Acres, Price, or Sales tabs (crop/channel names must match).' }] };
+    return { rows: [], errors: [{ row: 1, field: '', msg: 'No data found. Fill the Harvest, Acres or Sales tabs (crop/channel names must match the app).' }] };
 
   const vals  = o => Object.values(o || {});
   const sum   = a => a.reduce((s, v) => s + v, 0);
@@ -4746,6 +4822,9 @@ function parseMCMultiTab(wb) {
   const cvPct = a => { const m = mean(a); return m > 0 ? Math.round((stdv(a) / m) * 100) : 0; };
 
   const computedCVs = {}, uploadSummary = [], warnings = [];
+  if (salesGaps.length) warnings.push(
+    `Sales rows with revenue but no price (lbs sold can't be derived, so those years are excluded ` +
+    `from sell-through): ${salesGaps.slice(0, 6).join(', ')}${salesGaps.length > 6 ? `, +${salesGaps.length - 6} more` : ''}.`);
   const stStore = {};       // crop → derived sell-through % (0–100)
   let gSold = 0, gHarv = 0; // farm-wide totals for the global default
 
@@ -4761,7 +4840,9 @@ function parseMCMultiTab(wb) {
     // Per-year sell-through = Σ_channel(sold that year) ÷ harvest that year
     const soldTot = {};
     Object.values(cd.channels).forEach(ch => Object.entries(ch.soldByYear).forEach(([y, v]) => { soldTot[y] = (soldTot[y] || 0) + v; }));
-    const stYears = Object.keys(cd.harvestByYear).filter(y => soldTot[y] > 0);
+    const gapYears = incompleteSalesYears[crop];
+    const stYears = Object.keys(cd.harvestByYear)
+      .filter(y => soldTot[y] > 0 && !(gapYears && gapYears.has(String(y))));
     const stByYr  = stYears.map(y => soldTot[y] / cd.harvestByYear[y]);
     const tSold   = sum(stYears.map(y => soldTot[y]));
     const tHarv   = sum(stYears.map(y => cd.harvestByYear[y]));
@@ -4829,10 +4910,10 @@ function applyMCParams(rows) {
     if (!el) return;
     el.style.boxShadow = 'inset 3px 0 0 #059669';
     el.title = '✓ Set from your uploaded Past Data';
-    // The multi-tab "Past Data" upload is in US/canonical units (its tabs are lbs/acres), so the
-    // just-written value IS canonical: store it as data-canon and convert the DISPLAY to the
-    // active system. Without this, readCanonical returns the stale seeded data-canon and the
-    // solver silently ignores the upload. (In US mode toDisplay is identity — pure repair.)
+    // Values reaching here are CANONICAL — the parsers canonicalize on the way in (the tabs
+    // themselves are written in whatever units the file declares). So store the value as
+    // data-canon and convert the DISPLAY to the active system. Without this, readCanonical
+    // returns the stale seeded data-canon and the solver silently ignores the upload.
     if (typeof UNITS !== 'undefined' && el.dataset) {
       const spec = specForEl(el);
       const canon = spec ? parseFloat(el.value) : NaN;
@@ -4894,6 +4975,10 @@ function applyMCParams(rows) {
     syncSellThroughPlaceholders();  // keep per-crop "(farm default)" hints in step with the new global
   }
 
+  // Publish for the caller: handleXLSXUpload writes its own summary into the same status
+  // element AFTER this returns, which used to erase everything appended here — so a dropped
+  // channel or a capped sell-through vanished behind a green success line.
+  APP_STATE.mcApplyWarnings = warnings.slice();
   if (warnings.length) {
     const statusEl = document.getElementById('csv-status');
     if (statusEl) statusEl.innerHTML +=
@@ -5000,8 +5085,13 @@ function downloadRainfallXLSX() {
 function handleRainfallXLSXUpload(input) {
   const file = input.files[0];
   if (!file) return;
-  const statusEl  = document.getElementById('rainfall-upload-status');
-  const detailEl  = document.getElementById('rainfall-upload-detail');
+  // Prefer a status element next to THIS input: the same handler serves the Water card and the
+  // results page, and always targeting the Water card meant a rejected file (e.g. too few year
+  // columns) rendered its error into a section the user wasn't looking at — silent failure.
+  const nearby     = input.parentElement && input.parentElement.nextElementSibling;
+  const statusEl   = (nearby && nearby.id && /status/i.test(nearby.id) ? nearby : null)
+                     || document.getElementById('rainfall-upload-status');
+  const detailEl   = document.getElementById('rainfall-upload-detail');
   if (statusEl) statusEl.textContent = 'Reading file…';
   if (detailEl) detailEl.innerHTML = '';
   _loadSheetJS(() => {
@@ -5112,6 +5202,15 @@ function handleProfitHistoryUpload(input) {
         APP_STATE.profitHistory  = history;
         APP_STATE.profitForecast = computeProfitForecast(history);
         renderProfitHistoryStatus();
+        // Rejected rows must be shown even when SOME parsed: a 5-row sheet with 4 bad rows
+        // used to render "✓ 1 year loaded" and throw the errors away, then build the
+        // reality-check band off that single point.
+        if (errors && errors.length && statusEl) {
+          statusEl.innerHTML += `<div style="color:#d97706;font-size:0.74rem;margin-top:3px">`
+            + errors.slice(0, 8).map(err => `<div>⚠ ${err}</div>`).join('')
+            + (errors.length > 8 ? `<div>⚠ +${errors.length - 8} more row(s) skipped</div>` : '')
+            + `</div>`;
+        }
         // If results already showing, re-render back-check panel
         if (window._lastRes) renderBackCheckPanel(window._lastRes);
       } catch(err) {
@@ -5451,6 +5550,10 @@ function deleteMCUncertainty() {
   APP_STATE.mcMultiTabData  = null;
   APP_STATE.mcComputedCVs   = null;
   APP_STATE.mcUploadSummary = null;
+  // Also the derived state, or the deleted file's farm-wide sell-through and warnings get
+  // re-applied on the NEXT import (applyMCParams reads both).
+  APP_STATE.mcSellThroughAvg = null;
+  APP_STATE.mcParseWarnings  = null;
   renderMCUploadStatus();
   if (window._lastParams) renderMCSetup(window._lastParams);
 }
@@ -5462,8 +5565,9 @@ function deleteRainfallHistory() {
   APP_STATE.rainfallFileName    = null;
   APP_STATE.rainfallHistory     = null;
   APP_STATE.rainfallComputedCV  = null;
-  APP_STATE.profitHistory       = null;
-  APP_STATE.profitForecast      = null;
+  // NOT profitHistory/profitForecast — those come from a separate upload with its own
+  // deleteProfitHistory(). Clearing them here discarded an unrelated workbook (and blanked the
+  // back-check panel) when the user removed the rainfall file.
   // Reset MC rainfall CV input to default fallback
   const rainInput = document.getElementById('mc-cv-rain');
   if (rainInput) { rainInput.value = 15; rainInput.style.border = '1.5px solid #d1d5db'; }

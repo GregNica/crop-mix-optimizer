@@ -131,7 +131,7 @@ const EPILOGUE = `
   APP_STATE, setUnitSystem,
   parseCropCSV, parseMCMultiTab, parseRainfallXLSX,
   downloadCropTemplate, downloadMCXLSX, downloadRainfallXLSX,
-  rainfallUnitOfFile, cropCSVUnitSystem, MC_TAB_UNITS,
+  rainfallUnitOfFile, cropCSVUnitSystem, MC_TAB_UNITS, parseMCXLSX, diversitySelect,
   U_LB, U_ACRE, U_PER_LB, U_MM,
   dispVal, toCanonicalActive,
 };`;
@@ -214,6 +214,67 @@ if (!mcUS || !mcME) {
   near(`past-data template ${sys} acres`, back.acres, 10, 5e-3);
   near(`past-data template ${sys} price`, back.price, 1.05, 5e-3);
 });
+
+// ===== 2b. Past-Data structural hazards (silent data loss, not unit conversion) ===========
+// A workbook the user built from their own records has no units row. The old "row 2 is
+// non-numeric ⇒ units row" heuristic ate the first CROP (crop names are non-numeric too).
+{
+  const wb = XLSXStub.utils.book_new();
+  XLSXStub.utils.book_append_sheet(wb, XLSXStub.utils.aoa_to_sheet(
+    [['crop_name', 'Year_2020'], ['Spinach', 100000], ['Garlic', 50000]]), 'Harvest');
+  XLSXStub.utils.book_append_sheet(wb, XLSXStub.utils.aoa_to_sheet(
+    [['crop_name', 'Year_2020'], ['Spinach', 10], ['Garlic', 5]]), 'Acres');
+  withSystem('us', () => { T.APP_STATE.mcMultiTabData = null; T.parseMCMultiTab(wb); });
+  const got = Object.keys(T.APP_STATE.mcMultiTabData || {}).sort();
+  if (got.join(',') !== 'Garlic,Spinach') fail(`past-data without a units row: parsed [${got}], want both crops (first row must not be eaten)`);
+}
+// Revenue with no price makes lbs-sold unknowable for that channel-year; counting the OTHER
+// channels' sales against the full harvest silently understates sell-through, which scales
+// revenue in the objective.
+{
+  const mk = (blank) => {
+    const wb = XLSXStub.utils.book_new(), S = XLSXStub.utils.aoa_to_sheet, A = XLSXStub.utils.book_append_sheet;
+    A(wb, S([['crop_name', 'Year_2020', 'Year_2021'], ['(text)', 'u', 'u'], ['Spinach', 100000, 100000]]), 'Harvest');
+    A(wb, S([['crop_name', 'Year_2020', 'Year_2021'], ['(text)', 'u', 'u'], ['Spinach', 10, 10]]), 'Acres');
+    A(wb, S([['crop_name', 'channel_name', 'Revenue_2020', 'Price_2020', 'Revenue_2021', 'Price_2021'],
+             ['(text)', '(text)', '$', 'p', '$', 'p'],
+             ['Spinach', 'Wholesale', 40000, 1.00, 40000, 1.00],
+             ['Spinach', 'Farmers Market', 60000, 2.00, 60000, blank ? '' : 2.00]]), 'Sales');
+    return wb;
+  };
+  const st = (wb) => withSystem('us', () => {
+    T.APP_STATE.mcMultiTabData = null; T.APP_STATE.mcUploadSummary = null;
+    T.parseMCMultiTab(wb);
+    return (T.APP_STATE.mcUploadSummary || [])[0] || {};
+  });
+  near('sell-through, all cells filled', st(mk(false)).sellThroughMean, 70, 1e-9);
+  near('sell-through, one price cell blank (must not deflate)', st(mk(true)).sellThroughMean, 70, 1e-9);
+}
+// The legacy single "Data" tab must actually apply its demand caps and std-dev spread — it
+// used to import yield and price only, while reporting that sales and risk had been applied.
+{
+  const hdr = ['crop_name', 'channel_name', 'yield_per_acre_lbs', 'price_per_lb', 'demand_cap_type',
+               'demand_annual_lbs', 'demand_weekly_lbs', 'yield_std_dev_pct', 'price_std_dev_pct', 'demand_std_dev_pct'];
+  const wb = XLSXStub.utils.book_new();
+  XLSXStub.utils.book_append_sheet(wb, XLSXStub.utils.aoa_to_sheet([
+    hdr, ['(text)', '(text)', 'lbs/acre', '$/lb', 'type', 'lbs', 'lbs', '%', '%', '%'],
+    ['Spinach', 'Wholesale', 8000, 1.10, 'annual', 1200000, '', 12, 8, 20],
+  ]), 'Data');
+  const out = withSystem('us', () => { T.APP_STATE.mcComputedCVs = null; return T.parseMCXLSX(wb); });
+  const row = (out.rows || [])[0];
+  if (!row) fail('legacy Data tab: no rows parsed');
+  else near('legacy Data tab annualSold', row.annualSold, 1200000, 1e-9);
+  const cv = (T.APP_STATE.mcComputedCVs || {}).Spinach;
+  if (!cv) fail('legacy Data tab: std-dev columns produced no computed CVs (risk spread silently dropped)');
+  else { near('legacy CV yield', cv.yield, 12, 1e-9); near('legacy CV price', cv.price, 8, 1e-9); near('legacy CV demand', cv.demand, 20, 1e-9); }
+}
+// An imported diversity fraction that is not one of the presets must snap to the nearest,
+// not fall through to the browser's first option (10%, a 3x tighter solver constraint).
+{
+  const sel = T.diversitySelect(0.33);
+  if (!/value="0.35"[^>]*selected/.test(sel)) fail(`diversitySelect(0.33) must snap to 35%, got: ${(sel.match(/value="[^"]+"[^>]*selected/) || ['none'])[0]}`);
+  if (!/value="0.5"[^>]*selected/.test(T.diversitySelect(0.5))) fail('diversitySelect(0.5) must keep an exact preset selected');
+}
 
 // ===== 3. Rainfall: the FILE's units row governs, not the active toggle ===================
 // This is the regression that matters most: every template issued before the unit system
