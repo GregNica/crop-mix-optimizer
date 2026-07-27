@@ -39,13 +39,13 @@ pytest.importorskip("scipy")
 
 # The P&L of the shipped default farm. Captured 2026-07-27 from the app's own default payload.
 GOLDEN = {
-    "revenue":          1_793_298,
-    "variable_cost":      706_305,
+    "revenue":          1_815_018,
+    "variable_cost":      718_088,
     "fixed_cost":         298_072,
-    "overhead_cost":      286_928,
-    "interest_cost":        1_444,
-    "profit":             487_549,
-    "operating_profit":   788_920,
+    "overhead_cost":      290_403,
+    "interest_cost":        1_321,
+    "profit":             494_134,
+    "operating_profit":   798_858,
 }
 # Baseline history — re-pin ONLY with a reason, and record it here.
 #   2026-07-27 (first pin): fixed 341,812 / profit 443,458.
@@ -57,6 +57,13 @@ GOLDEN = {
 #     overhead are UNCHANGED — the plan did not move, only the cost of a tank did.
 #     (Retiring operating_weeks as a cost multiplier in the same commit changed nothing here,
 #     because the shipped default was already 52.)
+#   2026-07-27 (re-captured): the previous fixture had been captured AFTER the JS margin hurdle
+#     mutated the payload — Spinach/Wholesale went in with weekly_demand_lbs = 0, so the golden
+#     farm was pinning a post-hurdle plan rather than the form's own defaults. With the hurdle
+#     moved into Python and defaulted OFF (SPEC_v3 §8), the payload is now the untouched
+#     defaults: that channel's 25,000 lb/wk cap is back, revenue 1,793,298 -> 1,815,018 and
+#     profit 487,549 -> 494,134. Lesson worth keeping: capture the fixture from the FORM, not
+#     from a payload something upstream has already rewritten.
 
 # $50 is the solver noise floor, not a comfort margin. The MILP is solved by HiGHS via scipy,
 # and different builds (notably Pyodide's vs a local venv) settle on solutions that differ by
@@ -137,3 +144,53 @@ class TestGoldenFarm:
         acres = sum(s.get("acres", 0.0) for s in result.get("succession_schedule", []))
         assert acres > 0, "golden farm planted nothing"
         assert result["revenue"] > 0 and result["profit"] > 0
+
+
+class TestMarginKernel:
+    """SPEC_v3 §8 — one margin kernel, computed from the objective's own arrays.
+
+    Three JS copies used to recompute this with rates the model never charges ($20/hr labour,
+    $0.002/L water), so the app ranked and signed crop-channels differently from its own
+    optimizer — and used those wrong numbers to DROP channels before the solve. These pin the
+    solver-side numbers the UI is now required to render rather than recompute.
+    """
+
+    def test_margins_are_returned_for_every_priced_crop_channel(self, result):
+        cm = result.get("channel_margins")
+        assert cm, "solver must return channel_margins for the UI to render"
+        n = sum(len(v) for v in cm.values())
+        assert n >= 14, f"expected a margin for every priced crop-channel, got {n}"
+        for crop, chans in cm.items():
+            for ch, m in chans.items():
+                assert m["gross_price_per_lb"] > 0
+                # the reported % must be the reported $/lb over gross price — not a second
+                # computation that could drift from it
+                assert m["margin_pct"] == pytest.approx(
+                    m["margin_per_lb"] / m["gross_price_per_lb"] * 100.0, rel=1e-9), \
+                    f"{crop}/{ch}: margin_pct disagrees with margin_per_lb"
+
+    def test_wholesale_loss_makers_are_reported_negative(self, result):
+        """The exec summary used to show Cucumbers/Wholesale at +$13,541/acre/yr. On the
+        solver's own basis it is negative, and the kernel must say so."""
+        cm = result["channel_margins"]
+        assert cm["Cucumbers"]["Wholesale"]["margin_pct"] < 0
+        assert cm["Spinach"]["Wholesale"]["margin_pct"] < 0
+        assert cm["Garlic"]["Farmers Market"]["margin_pct"] > 40, "strong channels must stay clearly positive"
+
+    def test_hurdle_is_off_by_default_and_excludes_nothing(self, result):
+        assert result.get("excluded_channels") == [], (
+            "the margin hurdle must default OFF: with honest margins any positive floor also "
+            "excludes contribution-positive channels, which costs real profit (~$61k here)."
+        )
+
+    def test_hurdle_excludes_only_below_floor_when_enabled(self, run_from_js):
+        params = json.loads(PAYLOAD.read_text())
+        params["min_viable_margin_pct"] = 8.0
+        r = json.loads(run_from_js(json.dumps(params)))
+        excluded = {(e["crop"], e["channel"]) for e in r["excluded_channels"]}
+        assert excluded, "an 8% floor must exclude the sub-8% channels"
+        for crop, ch in excluded:
+            assert r["channel_margins"][crop][ch]["margin_pct"] < 8.0
+        # and it must cost profit — the measured price of applying a floor calibrated against
+        # the OLD inflated margins to honest ones
+        assert r["profit"] < GOLDEN["profit"]

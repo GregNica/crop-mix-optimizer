@@ -36,7 +36,7 @@
      "demand_cap_type": "weekly_flat",
      "packaging_cost_per_lb": 0.09,
      "price_per_lb": 1,
-     "weekly_demand_lbs": 0
+     "weekly_demand_lbs": 25000
     }
    },
    "crop_diversity_max": 0.5,
@@ -420,6 +420,7 @@
  "fuel_storage": 13000,
  "harvest_storage_cap": 5000,
  "interest_rate_apr": 0.07,
+ "min_viable_margin_pct": 0,
  "other_debt_service_per_week": 0,
  "overhead_pct_of_revenue": 0.16,
  "payroll_load_pct": 0.25,

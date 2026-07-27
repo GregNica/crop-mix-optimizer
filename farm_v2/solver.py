@@ -106,6 +106,7 @@ def solve_farm_v2(
     # --- Cash flow constraint ---
     cash_constraint_enabled: bool = True,  # if False, skip C13 weekly cash floor entirely
     # --- Realism factors (sell-through in-objective; overhead & interest below the line) ---
+    min_viable_margin_pct: float = 0.0,   # 0 = off; see Step 3b
     sell_through_fraction: float = 1.0,    # FARM-WIDE DEFAULT fraction of harvest that converts to sellable product (shrink/grade-out/spoilage). Per-crop override via crop["sell_through_fraction"]. Scales C5/C7 production→sales link, so the farm grows more to deliver the cap.
     overhead_pct_of_revenue: float = 0.0,  # indirect overhead (insurance, tax, admin, utilities, R&M, vehicle/office) as a share of revenue; deducted post-solve
     interest_rate_apr: float = 0.0,        # APR charged on the solved weekly operating borrowing; deducted post-solve
@@ -265,6 +266,62 @@ def solve_farm_v2(
                 ch["name"], {}).get("price_per_lb", 0.0)
     overhead_price  = overhead_pct_of_revenue * gross_price
     net_after_price = net_price - overhead_price
+
+    # -----------------------------------------------------------------------
+    # Step 3b — Contribution margin per crop x channel (audit 1.3 / SPEC_v3 §8)
+    # -----------------------------------------------------------------------
+    # ONE margin kernel, built from the arrays the objective itself uses, and returned in the
+    # result so the UI renders these numbers instead of recomputing them. Three JS copies used
+    # to each recompute this with hard-coded rates the model never charges ($20/hr labour,
+    # $0.002/L water), so the app disagreed with its own optimizer about which channels made
+    # money — while the same wrong numbers were used to DROP channels before the solve.
+    #
+    # Per pound sold, the objective credits net_after_price (price - packaging - overhead
+    # share) and pays the growing cost. Only sell_through of what is grown can be sold, so the
+    # full growing cost is carried by the sold pounds.
+    var_cost_per_lb = np.zeros(n_crops, dtype=float)
+    for c_idx, crop in enumerate(crops):
+        ypa = float(crop.get("yield_per_acre", 0.0) or 0.0)
+        stf = float(crop.get("sell_through_fraction", sell_through_fraction) or 0.0)
+        sold_lbs_per_unit_x = total_land * ypa * stf          # lbs sold when x[i] = 1
+        costs = [
+            var_cost_coeff[i] / sold_lbs_per_unit_x
+            for i, s in enumerate(successions)
+            if s["crop"] == c_idx and sold_lbs_per_unit_x > 0
+        ]
+        var_cost_per_lb[c_idx] = float(np.mean(costs)) if costs else 0.0
+
+    channel_margins = {}
+    for c_idx, crop in enumerate(crops):
+        for ch_idx, ch in enumerate(channels):
+            gross = gross_price[c_idx, ch_idx]
+            if gross <= 0:
+                continue
+            per_lb = net_after_price[c_idx, ch_idx] - var_cost_per_lb[c_idx]
+            channel_margins.setdefault(crop["name"], {})[ch["name"]] = {
+                "margin_per_lb": float(per_lb),
+                "margin_pct": float(per_lb / gross * 100.0),
+                "gross_price_per_lb": float(gross),
+                "var_cost_per_lb": float(var_cost_per_lb[c_idx]),
+            }
+
+    # Margin hurdle: zero the demand of any crop-channel below the floor, BEFORE the solve.
+    # Default 0 disables it. Deliberately opt-in: with honest margins any positive floor also
+    # excludes channels that are contribution-POSITIVE per pound but thin on a standalone
+    # per-acre basis, which costs real profit in a shared-acreage model.
+    excluded_channels = []
+    if min_viable_margin_pct > 0:
+        for c_idx, crop in enumerate(crops):
+            for ch_idx, ch in enumerate(channels):
+                m = channel_margins.get(crop["name"], {}).get(ch["name"])
+                if m is not None and m["margin_pct"] < min_viable_margin_pct:
+                    demand_table[c_idx, ch_idx, :] = 0.0
+                    excluded_channels.append({
+                        "crop": crop["name"], "channel": ch["name"],
+                        "margin_pct": m["margin_pct"], "floor_pct": float(min_viable_margin_pct),
+                    })
+        if excluded_channels:
+            total_demand = total_demand_per_crop_week(demand_table)
 
     # -----------------------------------------------------------------------
     # Step 4 — Fixed cost
@@ -681,6 +738,8 @@ def solve_farm_v2(
             "status": status,
             "profit": None,
             "message": result.message,
+            "channel_margins": channel_margins,
+            "excluded_channels": excluded_channels,
             "successions": successions,
             "crops": crops,
             "channels": channels,
@@ -817,6 +876,11 @@ def solve_farm_v2(
 
     return {
         "status":           status,
+        # SPEC_v3 §8: the ONE margin kernel, computed from the objective's own arrays. The UI
+        # renders these numbers rather than recomputing them, so it can never disagree with
+        # the optimizer about which crop-channels make money.
+        "channel_margins":   channel_margins,
+        "excluded_channels": excluded_channels,
         "profit":           profit,
         "operating_profit": operating_profit,
         "overhead_cost":    overhead_cost,
