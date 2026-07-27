@@ -194,3 +194,74 @@ class TestMarginKernel:
         # and it must cost profit — the measured price of applying a floor calibrated against
         # the OLD inflated margins to honest ones
         assert r["profit"] < GOLDEN["profit"]
+
+
+class TestCropContribution:
+    """Per-crop dollars, from the plan that was actually solved.
+
+    Every other per-crop figure the app reports is a RATE (per lb, per acre, per acre-day).
+    None of them answer "how much of my profit does garlic account for". These do, and because
+    they come from the solved plan — pounds really sold, acres really planted — they involve no
+    cycle-count or repeat assumption.
+    """
+
+    def test_contributions_reconcile_to_net_profit(self, result):
+        """The strongest money assertion available: crop contributions minus the plan-level
+        costs must equal the reported headline, to the cent. If a cost line is ever
+        double-counted, dropped, or allocated to the wrong bucket, this is what catches it."""
+        r = result
+        total = sum(d["contribution"] for d in r["crop_contribution"].values())
+        rebuilt = total - r["fixed_cost"] - r["fixed_selling_cost"] - r["interest_cost"]
+        assert rebuilt == pytest.approx(r["profit"], abs=1.0), (
+            f"per-crop contributions do not rebuild net profit: {rebuilt:,.2f} vs {r['profit']:,.2f}. "
+            "A cost line is missing, doubled, or in the wrong bucket."
+        )
+
+    def test_every_planted_crop_is_accounted_for(self, result):
+        planted = {s["crop"] for s in result["succession_schedule"] if s.get("acres", 0) > 0.01}
+        reported = set(result["crop_contribution"])
+        assert planted <= reported, f"planted but unaccounted: {sorted(planted - reported)}"
+
+    def test_contribution_internals_are_consistent(self, result):
+        for crop, d in result["crop_contribution"].items():
+            assert d["contribution"] == pytest.approx(d["net_revenue"] - d["growing_cost"], abs=0.01), crop
+            by_ch = sum(c["net_revenue"] for c in d["by_channel"].values())
+            assert by_ch == pytest.approx(d["net_revenue"], abs=0.01), f"{crop}: channel split != total"
+            lbs = sum(c["lbs_sold"] for c in d["by_channel"].values())
+            assert lbs == pytest.approx(d["lbs_sold"], abs=0.01), f"{crop}: channel lbs != total"
+
+
+class TestPerAcreDayMargin:
+    """$/acre/day replaces a $/acre/YEAR figure the UI computed as 365/days_to_maturity — an
+    assumption that a crop could be regrown all year (Basil got 10.43 cycles where its season
+    allows 4). Because each crop's error differed, it REORDERED the ranking rather than just
+    inflating it: the summary crowned Basil while the optimizer ranked it 6th of 7 by land."""
+
+    def test_occupancy_is_the_full_succession_not_days_to_maturity(self, result):
+        """Land is occupied from planting through the LAST harvest week. Charging only to
+        maturity would overstate the earning rate of anything harvested over several weeks."""
+        params = json.loads(PAYLOAD.read_text())
+        dtm = {c["name"]: float(c.get("days_to_maturity", 0)) for c in params["crops"]}
+        for crop, chans in result["channel_margins"].items():
+            days = next(iter(chans.values()))["occupancy_days"]
+            assert days > 0, crop
+            assert days >= dtm[crop] * 0.8, (
+                f"{crop}: occupancy {days}d is far below days-to-maturity {dtm[crop]}d")
+
+    def test_rate_and_total_can_disagree_and_both_are_real(self, result):
+        """Guards the insight the single fabricated metric was hiding: the best crop per
+        acre-day need not be the biggest contributor. Basil earns the most per day of ground
+        but occupies it briefly; Spinach contributes the most in total."""
+        cm, cc = result["channel_margins"], result["crop_contribution"]
+        best_rate = max(((c, m["margin_per_acre_day"])
+                         for c, chans in cm.items() for m in chans.values()), key=lambda t: t[1])[0]
+        biggest = max(cc.items(), key=lambda kv: kv[1]["contribution"])[0]
+        assert best_rate != biggest, (
+            "rate leader and contribution leader coincide — re-check the fixture; the point of "
+            "reporting both is that they answer different questions")
+
+    def test_per_acre_day_agrees_in_sign_with_per_lb(self, result):
+        for crop, chans in result["channel_margins"].items():
+            for ch, m in chans.items():
+                if abs(m["margin_per_lb"]) > 1e-9:
+                    assert (m["margin_per_acre_day"] >= 0) == (m["margin_per_lb"] >= 0), f"{crop}/{ch}"

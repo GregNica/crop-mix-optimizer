@@ -291,16 +291,38 @@ def solve_farm_v2(
         ]
         var_cost_per_lb[c_idx] = float(np.mean(costs)) if costs else 0.0
 
+    # Land-occupancy days per crop: planting through the LAST harvest week, not days-to-maturity
+    # — a crop harvested over several weeks occupies the ground for all of them, and charging it
+    # only to maturity would overstate its earning rate.
+    occupancy_days = np.zeros(n_crops, dtype=float)
+    for c_idx in range(n_crops):
+        lens = [len(s["weeks"]) * 7.0 for s in successions if s["crop"] == c_idx and s["weeks"]]
+        occupancy_days[c_idx] = float(np.mean(lens)) if lens else 0.0
+
     channel_margins = {}
     for c_idx, crop in enumerate(crops):
+        ypa = float(crop.get("yield_per_acre", 0.0) or 0.0)
+        stf = float(crop.get("sell_through_fraction", sell_through_fraction) or 0.0)
+        sold_lbs_per_acre = ypa * stf
         for ch_idx, ch in enumerate(channels):
             gross = gross_price[c_idx, ch_idx]
             if gross <= 0:
                 continue
             per_lb = net_after_price[c_idx, ch_idx] - var_cost_per_lb[c_idx]
+            # $/acre/DAY: what an acre earns for each day this crop occupies it. Acre-days are
+            # the farm's scarce resource, so this is the honest way to rank what to put in a
+            # slot. It replaces a "$/acre/year" figure the UI computed as 365/days_to_maturity,
+            # which assumed a crop could be regrown all year — Basil got 10.43 cycles where its
+            # season allows 4 — and which reordered the rankings, not just inflated them.
+            # Whether the rest of the year can be refilled is the OPTIMIZER's question, and it
+            # is answered by the plan itself, not by a formula in a summary.
+            days = occupancy_days[c_idx]
+            per_acre_day = (per_lb * sold_lbs_per_acre / days) if days > 0 else 0.0
             channel_margins.setdefault(crop["name"], {})[ch["name"]] = {
                 "margin_per_lb": float(per_lb),
                 "margin_pct": float(per_lb / gross * 100.0),
+                "margin_per_acre_day": float(per_acre_day),
+                "occupancy_days": float(days),
                 "gross_price_per_lb": float(gross),
                 "var_cost_per_lb": float(var_cost_per_lb[c_idx]),
             }
@@ -771,6 +793,36 @@ def solve_farm_v2(
 
     variable_cost = float(np.dot(x_sol, var_cost_coeff)) + packaging_cost
 
+    # What each crop actually contributes to THIS plan, in dollars. Every other per-crop figure
+    # the app reports is a rate (per lb, per acre, per acre-day); none of them answer "how much
+    # of my profit does garlic account for". These come from the solved plan — the pounds really
+    # sold and the acres really planted — so no cycle-count or repeat assumption is involved.
+    crop_contribution = {}
+    for c_idx, crop in enumerate(crops):
+        grow_cost = float(sum(x_sol[i] * var_cost_coeff[i]
+                              for i, sc in enumerate(successions) if sc["crop"] == c_idx))
+        acres = float(sum(x_sol[i] * total_land
+                          for i, sc in enumerate(successions) if sc["crop"] == c_idx))
+        by_channel, net_rev_total, lbs_total = {}, 0.0, 0.0
+        for ch_idx, ch in enumerate(channels):
+            sold = float(v_sol[c_idx, ch_idx, 1:].sum())
+            if sold <= 0:
+                continue
+            net_rev = sold * float(net_after_price[c_idx, ch_idx])   # net of packaging + overhead
+            by_channel[ch["name"]] = {"lbs_sold": sold, "net_revenue": net_rev}
+            net_rev_total += net_rev
+            lbs_total     += sold
+        if lbs_total <= 0 and acres <= 0:
+            continue
+        crop_contribution[crop["name"]] = {
+            "acres_planted":  acres,
+            "lbs_sold":       lbs_total,
+            "net_revenue":    net_rev_total,      # after packaging and overhead
+            "growing_cost":   grow_cost,
+            "contribution":   net_rev_total - grow_cost,
+            "by_channel":     by_channel,
+        }
+
     city_water_cost = 0.0
     if city_water_enabled and idx_cw_start is not None:
         cw_sol = z[idx_cw_start : idx_cw_start + N_WEEKS]
@@ -881,6 +933,7 @@ def solve_farm_v2(
         # the optimizer about which crop-channels make money.
         "channel_margins":   channel_margins,
         "excluded_channels": excluded_channels,
+        "crop_contribution": crop_contribution,
         "profit":           profit,
         "operating_profit": operating_profit,
         "overhead_cost":    overhead_cost,
