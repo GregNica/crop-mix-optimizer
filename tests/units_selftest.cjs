@@ -83,12 +83,14 @@ function eq_s(name, got, want) { if (got !== want) fail(`${name}: got "${got}", 
 // --- registry sanity ---
 assert('FIELD_REGISTRY has total_land', !!U.FIELD_REGISTRY.total_land);
 assert('DATA_F_REGISTRY has yield_per_acre', !!U.DATA_F_REGISTRY.yield_per_acre);
-assert('DATA_F_REGISTRY has 12 phase fields',
-  ['labor_plant', 'water_grow', 'fert_harv', 'fuel_plant'].every(k => !!U.DATA_F_REGISTRY[k]));
+// name the missing key rather than reporting an anonymous failure
+['labor', 'water', 'fert', 'fuel'].forEach(r => ['plant', 'grow', 'harv'].forEach(ph => {
+  if (!U.DATA_F_REGISTRY[`${r}_${ph}`]) fail(`DATA_F_REGISTRY missing phase field "${r}_${ph}"`);
+}));
 // every registry spec must reference a real dimension
-[...Object.values(U.FIELD_REGISTRY), ...Object.values(U.DATA_F_REGISTRY)].forEach(spec => {
+[...Object.entries(U.FIELD_REGISTRY), ...Object.entries(U.DATA_F_REGISTRY)].forEach(([key, spec]) => {
   const dims = spec.num && spec.den ? [spec.num, spec.den] : [spec.measure];
-  dims.forEach(d => { if (!U.DIMENSIONS[d]) fail(`registry spec references unknown dimension "${d}"`); });
+  dims.forEach(d => { if (!U.DIMENSIONS[d]) fail(`registry spec "${key}" references unknown dimension "${d}"`); });
 });
 
 if (failures) { console.error(`\n${failures} FAILURE(S)`); process.exit(1); }

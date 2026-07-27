@@ -79,7 +79,6 @@ const sandbox = {
   alert() {}, confirm: () => false, prompt: () => null,
   Event: function Event(t) { this.type = t; },
   URLSearchParams, URL, TextEncoder, TextDecoder, Blob: function Blob() {},
-  XLSX: { utils: { book_new: () => ({ SheetNames: [], Sheets: {} }), aoa_to_sheet: a => ({ __aoa: a }), book_append_sheet() {}, sheet_to_json: ws => (ws && ws.__aoa) || [] }, writeFile() {} },
 };
 sandbox.window = sandbox; sandbox.globalThis = sandbox;
 vm.createContext(sandbox);
@@ -88,7 +87,7 @@ sandbox.UNITS = sandbox.window.UNITS;
 
 const EPILOGUE = `
 ;window.__T = {
-  APP_STATE, setUnitSystem, specForEl, readCanonicalEl, canonOf,
+  setUnitSystem, specForEl, readCanonicalEl, canonOf,
   writeFieldCanonical, writeFieldDisplay, clearField, canonIntegrityReport,
   toCanonicalActive, dispVal, roundForDisplay,
 };`;
@@ -156,6 +155,8 @@ function field(dataF, canonical, system) {
   const clean = [];
   ['us', 'metric'].forEach(sys => ['yield_per_acre', 'ch_price', 'water_plant', 'min_acreage_if_planted']
     .forEach(k => clean.push(field(k, 1234.5, sys))));
+  // Patch BEFORE setUnitSystem: it re-renders every field through this same selector, so
+  // swapping these two lines fails with a message that blames the checker, not the setup.
   sandbox.document.querySelectorAll = (sel) => (String(sel).indexOf('data-f') >= 0 ? clean : []);
   T.setUnitSystem('us');
   let report = T.canonIntegrityReport();

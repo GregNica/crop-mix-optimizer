@@ -37,6 +37,10 @@ PAYLOAD = REPO / "tests" / "golden" / "default_farm_payload.json"
 pytest.importorskip("numpy")
 pytest.importorskip("scipy")
 
+# Module-level: every class here consumes the `result`/`run_from_js` fixtures, which read the
+# payload. A class-level skip left the other four to ERROR instead of skip when it is absent.
+pytestmark = pytest.mark.skipif(not PAYLOAD.exists(), reason="golden payload missing")
+
 # The P&L of the shipped default farm. Captured 2026-07-27 from the app's own default payload.
 GOLDEN = {
     "revenue":          1_815_018,
@@ -117,7 +121,6 @@ def result(run_from_js):
     return out
 
 
-@pytest.mark.skipif(not PAYLOAD.exists(), reason="golden payload missing")
 class TestGoldenFarm:
     @pytest.mark.parametrize("line", sorted(GOLDEN))
     def test_pnl_line_to_the_dollar(self, result, line):

@@ -9,6 +9,7 @@ chatbot applied "80 acres" as 80 hectares. Six sites in this class have shipped.
 A guard over the primitives does not cover the paths, so this drives the paths. Skips if node
 is absent.
 """
+import os
 import shutil
 import subprocess
 import pathlib
@@ -32,7 +33,8 @@ def _jsdom_available() -> bool:
 
 @pytest.mark.skipif(NODE is None, reason="node not on PATH")
 @pytest.mark.skipif(not HARNESS.exists(), reason="canon_flows.cjs missing")
-@pytest.mark.skipif(not _jsdom_available(), reason="jsdom not installed (run: npm install)")
+@pytest.mark.skipif(not _jsdom_available() and not os.environ.get("CI"),
+                    reason="jsdom not installed (run: npm install)")
 def test_canon_flows():
     proc = subprocess.run(
         [NODE, str(HARNESS)],

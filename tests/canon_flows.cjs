@@ -32,9 +32,12 @@ const { bootApp, ROOT } = require('./jsdom_app.cjs');
 
 let failures = 0;
 const fail = m => { failures++; console.error('  x ' + m); };
+// Pure RELATIVE tolerance. The `* Math.max(1, |want|)` form degrades to an ABSOLUTE tolerance
+// below 1.0, which made the sub-dollar $/lb assertions — the tightest in the file — the loosest
+// in practice (0.005 absolute on 0.09 is 5.5%).
 const near = (name, got, want, rel) => {
   if (got == null || Number.isNaN(got)) return fail(`${name}: got ${got}`);
-  if (Math.abs(got - want) > (rel == null ? 5e-3 : rel) * Math.max(1, Math.abs(want)))
+  if (Math.abs(got - want) / Math.max(Math.abs(want), 1e-12) > (rel == null ? 5e-3 : rel))
     fail(`${name}: got ${got}, want ${want}`);
 };
 
@@ -48,6 +51,23 @@ const near = (name, got, want, rel) => {
     if (r.length) fail(`${label}: canonIntegrityReport not empty — ${JSON.stringify(r[0])}`);
   };
 
+  // POSITIVE CONTROL, before anything else. Every check below asserts the report is EMPTY, so a
+  // checker that stopped matching fields would return [] and all of them would pass silently —
+  // precisely how this file's guards have gone inert twice already. Break a field on purpose and
+  // require the report to notice. total_land is a FIELD_REGISTRY static, i.e. the half of
+  // forEachUnitField that canon_invariant.cjs structurally cannot reach.
+  {
+    const el = d.getElementById('total_land');
+    w.setUnitSystem('us');
+    w.writeFieldCanonical(el, 80);
+    el.value = String(parseFloat(el.value) * 52);          // display moves, canon does not
+    if (!w.canonIntegrityReport().length)
+      fail('canonIntegrityReport did NOT flag a deliberately broken field — every integrity '
+         + 'check below is inert and would pass no matter what the flows did');
+    w.writeFieldCanonical(el, 80);                          // restore
+    integrityClean('positive control teardown');
+  }
+
   // ---- FLOW 1: restoring a saved plan must not re-seed channels from the DISPLAY ---------
   // The bug: applyChannels wrote canonical $/lb markup with no data-canon, under $/kg labels.
   // applyCrops then calls getChannelDefs() immediately, so readCanonicalEl fell back to
@@ -59,35 +79,13 @@ const near = (name, got, want, rel) => {
       { name: 'Farmers Market', default_pkg: 0.18, var_sell: 0.05, fixed_sell: 250 },
     ]);
     const defs = w.getChannelDefs();
-    near('restore channels in Metric: default_pkg stays canonical $/lb', defs[0].default_pkg, 0.09);
-    near('restore channels in Metric: var_sell stays canonical $/lb',    defs[0].var_sell,    0.08);
-    near('restore channels in Metric: second row too',                   defs[1].default_pkg, 0.18);
+    near('restore channels in Metric: default_pkg stays canonical $/lb', defs[0].default_pkg, 0.09, 1e-9);
+    near('restore channels in Metric: var_sell stays canonical $/lb',    defs[0].var_sell,    0.08, 1e-9);
+    near('restore channels in Metric: second row too',                   defs[1].default_pkg, 0.18, 1e-9);
     if (defs[0].fixed_sell !== 0 || defs[1].fixed_sell !== 250)
       fail('restore channels: fixed_sell ($/wk, no physical unit) must pass through untouched');
     integrityClean('after applyChannels in Metric');
     w.setUnitSystem('us');
-  }
-
-  // ---- FLOW 2: a restored plan with NO crops ---------------------------------------------
-  // Seeding used to happen only as a side effect of looping crop cards, so a plan with zero
-  // crops left the channel rows unseeded permanently.
-  {
-    w.setUnitSystem('metric');
-    w.applyCrops([]);                       // no crops at all
-    w.applyChannels([{ name: 'Wholesale', default_pkg: 0.09, var_sell: 0.08, fixed_sell: 0 }]);
-    if (d.querySelectorAll('#crop-list .crop-detail').length !== 0)
-      fail('flow 2 setup: expected zero crop cards');
-    const defs = w.getChannelDefs();
-    near('zero-crop plan: channel costs still canonical', defs[0].default_pkg, 0.09);
-    near('zero-crop plan: var_sell still canonical',      defs[0].var_sell,    0.08);
-    integrityClean('after a zero-crop restore in Metric');
-    // restore the default collections — this flow deliberately empties them, and the later
-    // flows need a populated form. (Order dependence between flows is a smell; keeping the
-    // teardown next to the flow that causes it is the cheap fix.)
-    w.setUnitSystem('us');
-    w.renderAllChannels();
-    w.renderAllCrops();
-    w.updateAllCropChannels();
   }
 
   // ---- FLOW 3: save in one unit system, restore in the other ------------------------------
@@ -137,6 +135,22 @@ const near = (name, got, want, rel) => {
     w.setUnitSystem('us');
   }
 
+  // ---- FLOW 2 (runs LAST — it empties the collections): a restored plan with NO crops ---------------------------------------------
+  // Seeding used to happen only as a side effect of looping crop cards, so a plan with zero
+  // crops left the channel rows unseeded permanently.
+  {
+    w.setUnitSystem('metric');
+    w.applyCrops([]);                       // no crops at all
+    w.applyChannels([{ name: 'Wholesale', default_pkg: 0.09, var_sell: 0.08, fixed_sell: 0 }]);
+    if (d.querySelectorAll('#crop-list .crop-detail').length !== 0)
+      fail('flow 2 setup: expected zero crop cards');
+    const defs = w.getChannelDefs();
+    near('zero-crop plan: channel costs still canonical', defs[0].default_pkg, 0.09, 1e-9);
+    near('zero-crop plan: var_sell still canonical',      defs[0].var_sell,    0.08, 1e-9);
+    integrityClean('after a zero-crop restore in Metric');
+    w.setUnitSystem('us');
+  }
+
   // ---- FLOW 5 (structural backstop): applyProposal is not reachable from here -------------
   // It reads a module-scoped `let` and the proposal checkboxes, neither addressable from
   // outside the script. Driving it needs a browser; until then pin that it writes through the
@@ -146,8 +160,16 @@ const near = (name, got, want, rel) => {
     const i = html.indexOf('function applyProposal(');
     if (i < 0) fail('applyProposal not found — this guard is pinned to a function that no longer exists');
     else {
-      const body = html.slice(i, i + 2600).replace(/\/\/.*$/gm, '');   // strip comments: an earlier
-      if (!/writeFieldCanonical/.test(body))                            // version matched its own prose
+      // Brace-match rather than slice a fixed window: 2600 chars ran 706 PAST applyProposal's
+      // closing brace into the next functions — one edit from matching a neighbour and going
+      // inert, which is the failure already seen twice in this file.
+      let k = html.indexOf('{', i), depth = 0, end = k;
+      for (; end < html.length; end++) {
+        if (html[end] === '{') depth++;
+        else if (html[end] === '}' && --depth === 0) break;
+      }
+      const body = html.slice(k, end).replace(/\/\/.*$/gm, '');   // strip comments: an earlier
+      if (!/writeFieldCanonical/.test(body))                        // version matched its own prose
         fail('applyProposal writes form fields without writeFieldCanonical — values arriving in '
            + 'canonical schema units must not be re-canonicalised in the active display system');
     }

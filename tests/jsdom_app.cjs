@@ -26,9 +26,14 @@ function bootApp({ quiet = true } = {}) {
   // fetches), so the <script src> would silently never load and UNITS would be undefined.
   let doc = html.replace(/<script src="units\.js[^"]*"><\/script>/,
                          `<script>${units}</script>`);
+  if (doc === html) throw new Error(
+    'units.js <script src> tag not found — jsdom would boot the app with UNITS undefined');
   // Drop the Pyodide loader: it fetches WASM, which jsdom cannot run. Nothing in these flows
   // needs the solver.
+  const beforeStrip = doc;
   doc = doc.replace(/<script[^>]*pyodide[^>]*>[\s\S]*?<\/script>/gi, '');
+  if (doc === beforeStrip) throw new Error(
+    'pyodide loader not found — jsdom would try to fetch WASM it cannot run');
 
   const dom = new JSDOM(doc, {
     runScripts: 'dangerously',
@@ -45,7 +50,21 @@ function bootApp({ quiet = true } = {}) {
     },
   });
 
-  return new Promise((resolve) => setTimeout(() => resolve(dom.window), 300));
+  // Poll for readiness rather than guessing a delay. Measured, the app finishes its
+  // DOMContentLoaded work within a single macrotask; a fixed sleep is dead wait today and a
+  // latent flake later — and a flow running against a half-booted window would fail somewhere
+  // confusing instead of here.
+  return new Promise((resolve, reject) => {
+    const deadline = Date.now() + 5000;
+    const ready = () => dom.window.document.querySelectorAll('#crop-list .crop-detail').length > 0;
+    (function poll() {
+      if (ready()) return resolve(dom.window);
+      if (Date.now() > deadline)
+        return reject(new Error('app did not finish DOMContentLoaded init within 5s '
+                              + '(no .crop-detail cards rendered)'));
+      setTimeout(poll, 10);
+    })();
+  });
 }
 
 module.exports = { bootApp, ROOT };

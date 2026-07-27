@@ -3084,7 +3084,12 @@ function initUnitSystem() {
 // captured in their FORM shape (same shape the render* functions consume), not
 // the solver shape returned by get*FromForm().
 // ============================================================
-const FORM_STATE_VERSION = 1;
+// v2 (2026-07-27): state.fields holds CANONICAL values for unit-bearing fields. v1 held the
+// DISPLAY number with no record of which system was active, so a v1 plan is only meaningful
+// when restored in the system it was saved in — applyFormState reproduces that old behaviour
+// for v1 rather than reinterpreting those numbers as canonical, which would corrupt every plan
+// saved before this change (a US-display 847,552 ft3 store read as 847,552 m3).
+const FORM_STATE_VERSION = 2;
 
 // Dynamic collections are handled explicitly (variable row counts, data-* attrs);
 // their containers are excluded from the flat-field sweep.
@@ -3306,8 +3311,9 @@ function applyFormState(state) {
     if (el.type === 'checkbox') {
       el.checked = !!val;
     } else if (specForEl(el) && val !== '' && val != null) {
-      // stored canonical (see serializeFormState) — convert to the ACTIVE display system
-      writeFieldCanonical(el, val);
+      // v2+ stores canonical; v1 stored the display number (see FORM_STATE_VERSION).
+      if (Number(state.version) >= 2) writeFieldCanonical(el, val);
+      else                            writeFieldDisplay(el, val);
     } else {
       el.value = val;
     }
@@ -7853,6 +7859,7 @@ function renderContributionMargins(params) {
       // The split is the objective's own products, so it sums to the cost that made the plan.
       const vcBreakdown = `Labor: $${pa(c.labor||0)}\nWater: $${pa(c.water||0)}\nFert: $${pa(c.fert||0)}`
         + `\nFuel: $${pa(c.fuel||0)}\nSeed: $${pa(c.seed||0)}\nPackaging: $${pa(c.packaging||0)}`
+        + `\nOverhead share: $${pa(c.overhead||0)}`
         + `\n\nOccupies the field ${Math.round(m.occupancy_days)} days.`;
       const chColor = chColors[chNames.indexOf(chName) % chColors.length] || '#6b7280';
       allRows.push({
@@ -7939,7 +7946,7 @@ function renderContributionMargins(params) {
       <th style="text-align:left;padding:5px 8px;border-bottom:2px solid #d1d5db;color:#374151;overflow:hidden;white-space:nowrap">Channel</th>
       <th style="text-align:right;padding:5px 8px;border-bottom:2px solid #d1d5db;color:#374151;overflow:hidden;white-space:nowrap">Price/${uMass}</th>
       <th style="text-align:right;padding:5px 8px;border-bottom:2px solid #d1d5db;color:#374151;overflow:hidden;white-space:nowrap">Rev/${uArea}</th>
-      <th style="text-align:right;padding:5px 8px;border-bottom:2px solid #d1d5db;color:#374151;overflow:hidden;white-space:nowrap" title="All variable costs: packaging + labor + water + fertilizer + fuel + seed">VC/${uArea} ⓘ</th>
+      <th style="text-align:right;padding:5px 8px;border-bottom:2px solid #d1d5db;color:#374151;overflow:hidden;white-space:nowrap" title="Every cost the objective charges this crop-channel per acre: labor, water, fertilizer, fuel, seed/transplant, packaging, and its share of overhead. These are the products the solver actually charged, not rates re-multiplied here.">VC/${uArea} ⓘ</th>
       <th style="text-align:right;padding:5px 8px;border-bottom:2px solid #d1d5db;color:#374151;overflow:hidden;white-space:nowrap">CM/${uArea}</th>
       <th style="text-align:right;padding:5px 8px;border-bottom:2px solid #d1d5db;color:#1b4332;overflow:hidden;white-space:nowrap;background:#f0faf4" title="$/${uArea}/wk = CM/${uArea} ÷ field-occupancy weeks (plant+grow+harvest). Primary sort: return per week the crop ties up the land. Revenue reflects each crop's sell-through.">$/${uArea}/wk ★ ⓘ</th>
       <th style="text-align:right;padding:5px 8px;border-bottom:2px solid #d1d5db;color:#374151;overflow:hidden;white-space:nowrap" title="Margin % = Contribution Margin ÷ Gross Revenue × 100. N/A when price is zero.">Margin% ⓘ</th>
@@ -7952,7 +7959,7 @@ function renderContributionMargins(params) {
     <strong>CM/${uArea}</strong> = Gross Revenue − Total Variable Cost (per ${uArea}, one crop cycle).
     ${annualize ? `<strong>Annual $/${uArea}</strong> = CM/${uArea} × (365 ÷ days to maturity) — time-normalized annual return. ` : ''}
     <strong>Margin % of Rev</strong> = CM/${uArea} ÷ Gross Revenue × 100.
-    <strong>Total VC/${uArea}</strong> includes packaging + field labor + irrigation water + fertilizer + fuel + seed/transplant (hover for breakdown). Does not include fixed overhead.
+    <strong>Cost/${uArea}</strong> is every cost the optimizer charges this crop-channel: field labor, irrigation water, fertilizer, fuel, seed/transplant, packaging, and its share of overhead (hover for the breakdown). Revenue &minus; Cost equals the CM column exactly.
     <span style="color:#dc2626">Red</span> = margin % &lt; 20% (low); <span style="color:#d97706">orange</span> = 20–50% (moderate); <span style="color:#059669">green</span> = ≥ 50% (healthy).
   </p>`;
 
