@@ -65,7 +65,7 @@ def solve_farm_v2(
     credit_line: float,              # maximum operating credit (line of credit)
     harvest_storage_cap: float,      # m³
     # --- Fixed cost rates ---
-    operating_weeks: int,
+    operating_weeks: int,            # DEPRECATED: accepted, but no longer scales any cost (Step 4)
     rate_harvest_storage: float,     # $/m³/week
     rate_water_storage: float,       # $/liter/week (for any on-farm water tank)
     rate_irrigation: float,          # $/acre/week
@@ -269,20 +269,30 @@ def solve_farm_v2(
     # -----------------------------------------------------------------------
     # Step 4 — Fixed cost
     # -----------------------------------------------------------------------
-    irrigation_fixed = total_land * rate_irrigation * operating_weeks
+    # Every recurring fixed line is charged over the FULL year (N_WEEKS = 52), never over
+    # `operating_weeks`. Ownership does not pause off-season: a barn keeps depreciating and a
+    # loan keeps accruing whether or not anything is planted, and the depreciation rates are
+    # themselves derived as capital / (life_years * 52). Charging them over a shorter season
+    # understated an owned-asset farm by ~$17k/yr at 48 weeks and ~$52k at 36. Salaried payroll
+    # was already correct here (* N_WEEKS), which made the expression internally inconsistent.
+    # Costs that genuinely stop when nothing is planted already scale on their own: metered
+    # consumables are charged per unit of usage, overhead is a share of revenue, and interest
+    # comes off the cash curve. `operating_weeks` is therefore accepted for backwards
+    # compatibility but no longer multiplies anything (SPEC_v3 N2/N3).
+    irrigation_fixed = total_land * rate_irrigation * N_WEEKS
     fixed_cost = (
-        harvest_storage_cap * rate_harvest_storage * operating_weeks
-        + water_storage_capacity * rate_water_storage * operating_weeks
+        harvest_storage_cap * rate_harvest_storage * N_WEEKS
+        + water_storage_capacity * rate_water_storage * N_WEEKS
         + irrigation_fixed
-        + equip_storage * rate_equip_storage * operating_weeks
-        + fuel_storage * rate_fuel_storage * operating_weeks
-        + rate_machinery * operating_weeks
-        + rate_property_mortgage_rent * operating_weeks
-        + other_debt_service_per_week * operating_weeks
+        + equip_storage * rate_equip_storage * N_WEEKS
+        + fuel_storage * rate_fuel_storage * N_WEEKS
+        + rate_machinery * N_WEEKS
+        + rate_property_mortgage_rent * N_WEEKS
+        + other_debt_service_per_week * N_WEEKS
         + salaried_weekly_cost * N_WEEKS
     )
     if city_water_enabled and city_water_fixed_fee_per_week > 0:
-        fixed_cost += city_water_fixed_fee_per_week * operating_weeks
+        fixed_cost += city_water_fixed_fee_per_week * N_WEEKS
 
     fixed_weekly = fixed_cost / N_WEEKS  # fixed cost spread evenly per week
 

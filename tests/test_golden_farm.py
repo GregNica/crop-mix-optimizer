@@ -41,12 +41,22 @@ pytest.importorskip("scipy")
 GOLDEN = {
     "revenue":          1_793_298,
     "variable_cost":      706_305,
-    "fixed_cost":         341_812,
+    "fixed_cost":         298_072,
     "overhead_cost":      286_928,
-    "interest_cost":        1_795,
-    "profit":             443_458,
-    "operating_profit":   745_180,
+    "interest_cost":        1_444,
+    "profit":             487_549,
+    "operating_profit":   788_920,
 }
+# Baseline history — re-pin ONLY with a reason, and record it here.
+#   2026-07-27 (first pin): fixed 341,812 / profit 443,458.
+#   2026-07-27 (re-pinned): the water-tank capital benchmark was $3.74/L, which made the
+#     stock 270,000 L tank a $1,009,800 asset and 15% of ALL fixed cost on an 80-acre farm.
+#     Re-benchmarked to $0.50/L installed: a 10,000-gal poly tank lists around $13,940
+#     ($0.37/L) before freight, and per-litre cost falls with capacity. Fixed cost
+#     341,812 -> 298,072 (-43,740) and profit 443,458 -> 487,549. Revenue, variable cost and
+#     overhead are UNCHANGED — the plan did not move, only the cost of a tank did.
+#     (Retiring operating_weeks as a cost multiplier in the same commit changed nothing here,
+#     because the shipped default was already 52.)
 
 # $50 is the solver noise floor, not a comfort margin. The MILP is solved by HiGHS via scipy,
 # and different builds (notably Pyodide's vs a local venv) settle on solutions that differ by

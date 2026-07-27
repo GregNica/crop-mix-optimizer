@@ -96,8 +96,9 @@ def test_other_debt_service_is_a_fixed_cost(minimal_params):
     base = solve_farm_v2(**minimal_params)
     with_debt = solve_farm_v2(**minimal_params, other_debt_service_per_week=1000.0)
     assert base["status"] == "optimal" and with_debt["status"] == "optimal"
-    wk = minimal_params["operating_weeks"]
-    # It's a flat fixed cost: fixed cost rises by payment × operating_weeks, nothing else shifts the plan.
+    # A flat fixed cost charged over the FULL year, not over operating_weeks — debt service
+    # does not pause off-season (see solver.py Step 4). Nothing else shifts the plan.
+    wk = 52
     assert with_debt["fixed_cost"] == pytest.approx(base["fixed_cost"] + 1000.0 * wk, abs=1.0)
     assert with_debt["operating_profit"] == pytest.approx(base["operating_profit"] - 1000.0 * wk, abs=1.0)
 

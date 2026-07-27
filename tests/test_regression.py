@@ -27,11 +27,20 @@ from farm_v2.solver import solve_farm_v2
 #     The `full_params` fixture sets overhead=interest=0, so profit == operating
 #     profit == revenue − variable − fixed (verified by test_profit_equals_...).
 #     Fixed cost is unchanged (fixture rates unchanged).
+#   2026-07-27 — REBASELINED (operating_weeks retired as a cost multiplier). Recurring
+#     fixed costs are now charged over the full 52-week year instead of the fixture's
+#     operating_weeks=48: an owned asset depreciates and a loan accrues whether or not
+#     the farm is operating, and the depreciation rates are themselves derived as
+#     capital / (life × 52). Salaried payroll already used 52, which made the old
+#     expression internally inconsistent. Revenue and variable cost are UNCHANGED
+#     (1,627,508 / 356,785) and the plan is identical — only the 4 extra weeks of
+#     non-salaried fixed lines move: fixed 1,098,984 → 1,184,316 (+85,332) and
+#     profit 171,739 → 86,407 (−85,332, exactly the same figure).
 # ---------------------------------------------------------------------------
 
-EXPECTED_PROFIT  = 171_739      # ± 10%  (rebaselined 2026-07-24)
+EXPECTED_PROFIT  = 86_407       # ± 10%  (rebaselined 2026-07-27)
 EXPECTED_REVENUE = 1_627_508    # ± 10%  (rebaselined 2026-07-24)
-EXPECTED_FIXED   = 1_098_984    # ± 5%   (unchanged since 2026-03-11)
+EXPECTED_FIXED   = 1_184_316    # ± 5%   (rebaselined 2026-07-27: annual, not 48-week)
 TOLERANCE_PCT    = 0.10         # 10% relative tolerance
 
 
