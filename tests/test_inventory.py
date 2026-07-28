@@ -116,8 +116,15 @@ def solved(full_params):
     return r, p
 
 
+def _loss_of(r, p, c):
+    """Per-crop weekly storage shrink, farm default unless the crop overrides it."""
+    crop = r["crops"][c]
+    return float(crop.get("storage_loss_pct_per_week",
+                          p.get("storage_loss_pct_per_week", 0.0)) or 0.0)
+
+
 class TestBalanceReconciles:
-    """inv[c,w] = inv[c,w-1] + st*H - sold - wasted, to the pound, for every crop-week."""
+    """inv[c,w] = (1-loss)*inv[c,w-1] + st*H - sold - wasted, to the pound, every crop-week."""
 
     def test_balance_holds_every_week(self, solved):
         r, p = solved
@@ -125,9 +132,10 @@ class TestBalanceReconciles:
         inv, waste, v = r["inventory"], r["waste"], r["v"]
         worst = 0.0
         for c, crop in enumerate(r["crops"]):
+            keep = 1.0 - _loss_of(r, p, c)
             prev = 0.0
             for w in range(1, W + 1):
-                expected = prev + H[c, w] - float(v[c, :, w].sum()) - waste[c, w]
+                expected = keep * prev + H[c, w] - float(v[c, :, w].sum()) - waste[c, w]
                 worst = max(worst, abs(inv[c, w] - expected))
                 assert abs(inv[c, w] - expected) < max(TOL, 1e-6 * max(1.0, abs(expected))), (
                     f"{crop['name']} W{w}: inventory balance off by "
@@ -184,6 +192,95 @@ class TestBalanceReconciles:
                 f"{crop['name']} sells in W{min(sales)} but first harvests in "
                 f"W{min(harvests)} — revenue is booking before the cost that produced it"
             )
+
+
+class TestStorageShrinkCostsSomething:
+    """SPEC_v3 §3.4 / decision D3. Holding produce has to cost something before honest shelf
+    lives can be entered — otherwise a long-keeping crop is pure upside in the objective and the
+    optimiser hoards for free. This is the prerequisite the audit's Phase B waits on.
+
+    Ships at 0.0, so every baseline is unmoved; these tests turn it on deliberately.
+    """
+
+    def _held_farm(self, full_params, loss):
+        # Buyer opens ten weeks after harvest, so the plan MUST carry stock to sell at all —
+        # which is the only condition under which shrink can show up.
+        p = _one_crop_farm(full_params, ("03-01", "04-26"), "W24-W40",
+                           shelf_life=8, min_acreage=5.0)
+        p["crops"][0]["sell_through_fraction"] = 1.0
+        p["sell_through_fraction"] = 1.0
+        p["storage_loss_pct_per_week"] = loss
+        return p
+
+    def test_shrink_reconciles_to_the_pound(self, full_params):
+        """The decayed balance is still an equality — rebuilt from x and v, not read back."""
+        p = self._held_farm(full_params, 0.05)
+        r = _solve(p, harvest_storage_cap=1e9, cash_constraint_enabled=False)
+        H = _weekly_sellable_inflow(r, p["total_land"], 1.0)
+        inv, waste, v = r["inventory"], r["waste"], r["v"]
+        prev = 0.0
+        for w in range(1, W + 1):
+            expected = 0.95 * prev + H[0, w] - float(v[0, :, w].sum()) - waste[0, w]
+            assert abs(inv[0, w] - expected) < max(TOL, 1e-6 * max(1.0, abs(expected))), (
+                f"W{w}: decayed balance off by {inv[0, w] - expected:,.6f} lb"
+            )
+            prev = inv[0, w]
+
+    def test_shrink_costs_product_and_money(self, full_params):
+        """More shrink, same plan shape: less product survives to the buyer, so less money."""
+        none = _solve(self._held_farm(full_params, 0.0),
+                      harvest_storage_cap=1e9, cash_constraint_enabled=False)
+        heavy = _solve(self._held_farm(full_params, 0.08),
+                       harvest_storage_cap=1e9, cash_constraint_enabled=False)
+        sold_none = float(none["v"][0, :, 1:].sum())
+        sold_heavy = float(heavy["v"][0, :, 1:].sum())
+        assert sold_none > 1e3, "control sold nothing — the comparison would be vacuous"
+        assert sold_heavy < sold_none, (
+            f"8%/wk shrink over a ten-week hold must destroy product: sold {sold_heavy:,.0f} lb "
+            f"vs {sold_none:,.0f} lb with no shrink. If these are equal the decay coefficient is "
+            f"not reaching the balance"
+        )
+        assert heavy["profit"] < none["profit"], "product lost in store must cost money"
+
+    def test_a_crop_can_override_the_farm_default(self, full_params):
+        """Shrink is per-crop in reality — garlic loses tenths of a percent a week, salad greens
+        several percent — so the crop-level key must win over the farm default.
+
+        Added because a mutation that ignored the override was caught only by the blob checksum:
+        the path was live and untested, which is how the per-crop sell_through key stayed broken
+        for months.
+        """
+        farm_only = self._held_farm(full_params, 0.0)          # farm default 0, no override
+        overridden = self._held_farm(full_params, 0.0)         # farm default STILL 0 ...
+        overridden["crops"][0]["storage_loss_pct_per_week"] = 0.08   # ... crop overrides it
+
+        base = _solve(farm_only, harvest_storage_cap=1e9, cash_constraint_enabled=False)
+        over = _solve(overridden, harvest_storage_cap=1e9, cash_constraint_enabled=False)
+        assert float(base["v"][0, :, 1:].sum()) > 1e3, "control sold nothing — vacuous"
+        assert over["profit"] < base["profit"], (
+            "a crop-level storage_loss_pct_per_week must apply even when the farm default is 0 — "
+            "if these match, the per-crop key is being ignored"
+        )
+
+    def test_shrink_makes_holding_strictly_worse_than_selling(self, full_params):
+        """What the 1e-6 tie-break was standing in for. With a real holding cost, carrying stock
+        is strictly dominated whenever selling now is possible — so the reported inventory series
+        is determinate on its own merits rather than by an epsilon nudge."""
+        p = self._held_farm(full_params, 0.10)
+        p["crops"][0]["shelf_life_weeks"] = 8
+        # Buyer open across the harvest weeks AND later: holding is a real choice here.
+        p = {**p, "crops": [{**p["crops"][0]}]}
+        r = _solve({**p, "crops": [{**p["crops"][0], "channels": {
+            list(p["crops"][0]["channels"])[0]: {
+                **list(p["crops"][0]["channels"].values())[0],
+                "demand_ranges": [{"weeks": "W1-W52", "weekly_lbs": 1e9}],
+            }}}]}, harvest_storage_cap=1e9, cash_constraint_enabled=False)
+        assert float(r["v"][0, :, 1:].sum()) > 1e3, "nothing sold — vacuous"
+        assert float(r["inventory"].max()) < 1e-6, (
+            f"with 10%/wk shrink and a buyer available every week, holding stock destroys product "
+            f"for no gain — the optimiser should hold nothing, but peak inventory is "
+            f"{float(r['inventory'].max()):,.2f} lb"
+        )
 
 
 class TestStorageBindsOnRoomOccupancy:

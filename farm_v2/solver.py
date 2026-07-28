@@ -123,6 +123,15 @@ def solve_farm_v2(
     rate_property_mortgage_rent: float = 0.0,  # $/week — land lease or mortgage payment
     other_debt_service_per_week: float = 0.0,  # $/week — P&I on other long-term loans (buildings, land improvements, carried debt) not already in the machinery/property lines
     fixed_selling_per_week: float = 0.0,       # $/week — channel fixed selling (stall fees, retainers); in cash flow only, P&L handles it below the line
+    # --- Storage shrink ---
+    # Weight lost per week in store: respiration, moisture loss, trimming, sorting out rots.
+    # SPEC_v3 §3.4. This is what makes holding COST something — without it a long shelf life is
+    # pure upside in the objective, so honest shelf lives cannot be entered before it exists
+    # (the reason it is a hard prerequisite of the crop-data audit's Phase B). Per-crop override
+    # via crop["storage_loss_pct_per_week"]; garlic and onions are a few tenths of a percent a
+    # week, leafy greens several percent.
+    # Ships at 0.0 = no shrink = today's behaviour exactly. Values arrive with their sources.
+    storage_loss_pct_per_week: float = 0.0,
     # --- Ambient (non-refrigerated) produce storage ---
     # A second pool for crops whose `cold_storage` flag is False: cured alliums, winter squash
     # (chilling-injured below 50°F), potatoes. It is CAPPED and PRICED, never free — an
@@ -576,6 +585,10 @@ def solve_farm_v2(
     # The old 8-week ceiling is kept for now; SPEC_v3 §3.4 raises it in B.3 along with honest
     # per-crop defaults — and the holding cost that has to precede them, because holding is
     # currently free in every dimension and a long shelf life is pure upside in the objective.
+    storage_loss = [
+        max(0.0, min(0.99, float(c.get("storage_loss_pct_per_week", storage_loss_pct_per_week) or 0.0)))
+        for c in crops
+    ]
     shelf_life_weeks = [
         max(1, min(N_WEEKS, int(c.get("shelf_life_weeks", c.get("sales_spread_weeks", 1)) or 1)))
         for c in crops
@@ -633,7 +646,7 @@ def solve_farm_v2(
     # Replaces v2's C4 (harvest-week storage), C5a (per-week supply), C5b (cumulative spread
     # window) and C7 (production ≤ one week's demand). SPEC_v3 §3.
     #
-    #     inv[c,w] = inv[c,w-1] + st[c]·H[c,w] − Σ_ch v[c,ch,w] − waste[c,w]
+    #     inv[c,w] = (1 − loss[c])·inv[c,w-1] + st[c]·H[c,w] − Σ_ch v[c,ch,w] − waste[c,w]
     #     inv[c,0] = 0
     #
     # ⚠️ The boundary is ZERO, not periodic. SPEC_v3 §3.0(a): summing a periodic balance over
@@ -656,7 +669,10 @@ def solve_farm_v2(
                 (idx_waste_start + _cw_index(c_idx, w, N_WEEKS), 1.0),
             ]
             if w > 1:
-                cols.append((idx_inv_start + _cw_index(c_idx, w - 1, N_WEEKS), -1.0))
+                # -(1 - loss), not -1: a pound carried from last week arrives as (1-loss) pounds.
+                # Still linear — the coefficient is a constant, not a variable.
+                cols.append((idx_inv_start + _cw_index(c_idx, w - 1, N_WEEKS),
+                             -(1.0 - storage_loss[c_idx])))
             cols += [
                 (idx_v_start + _vcw_index(c_idx, ch_idx, w, n_channels, N_WEEKS), 1.0)
                 for ch_idx in range(n_channels)
