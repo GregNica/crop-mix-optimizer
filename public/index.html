@@ -3414,15 +3414,26 @@ let _saveOffline = false;     // the API said "not signed in" — stop asking
 // unreachable. Cleared on a confirmed server save.
 const LOCAL_DRAFT_KEY = 'farm_local_draft';
 const LOCAL_DRAFT_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
-// Real backoff. The previous 5s retry was dead code — the `finally` block below cancelled it
-// and rescheduled at 1.5s whenever edits were pending, which after a failure is always, so a
-// logged-out visitor hammered the API every 1.5s for the life of the tab.
+// The whole timing policy, in one place — a delay defined somewhere else is how the last
+// backoff came to be silently cancelled by a reschedule.
+const SAVE_DEBOUNCE_MS = 2000;   // quiet period after an edit
+const SAVE_FOLLOWUP_MS = 1500;   // edits that landed while a save was in flight
 const SAVE_BACKOFF_MS = [2000, 5000, 15000, 30000, 60000];
 
-function writeLocalDraft() {
+function scheduleSave(ms) {
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(saveNow, ms);
+}
+
+// `state` is passed in by callers that have already serialized: serializeFormState() rebuilds
+// the field registry and runs on the order of a thousand DOM queries, so doing it once per
+// save rather than once per store matters — most of all on unload, where the browser is
+// timing us.
+function writeLocalDraft(state) {
   try {
     localStorage.setItem(LOCAL_DRAFT_KEY, JSON.stringify(
-      { savedAt: Date.now(), name: _currentPlan, formState: serializeFormState() }));
+      { savedAt: Date.now(), name: _currentPlan,
+        formState: state || serializeFormState() }));
   } catch (_) { /* quota, or private mode — the in-page state is still live */ }
 }
 
@@ -3514,8 +3525,7 @@ function markDirty() {
   if (_suppressDirty) return;
   _planDirty = true;
   setSaveStatus('Editing…');
-  clearTimeout(_saveTimer);
-  _saveTimer = setTimeout(saveNow, 2000);
+  scheduleSave(SAVE_DEBOUNCE_MS);
 }
 
 function uniqueUntitledName() {
@@ -3528,9 +3538,10 @@ function uniqueUntitledName() {
 
 async function saveNow() {
   clearTimeout(_saveTimer);
-  if (_planSaving) return;                 // in flight; the finally block reschedules if needed
+  if (_planSaving) return;                 // in flight; the success path reschedules if needed
   if (!_planDirty && _currentPlan) return; // nothing to do
-  writeLocalDraft();            // before the network, so the local copy never depends on it
+  const state = serializeFormState();      // once, for both stores
+  writeLocalDraft(state);       // before the network, so the local copy never depends on it
   if (_saveOffline) return;     // not signed in: the draft above is the only store there is
   _planSaving = true;
   setSaveStatus('Saving…');
@@ -3539,10 +3550,9 @@ async function saveNow() {
   try {
     const res = await fetch('/api/scenarios', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name, formState: serializeFormState() }),
+      body: JSON.stringify({ name, formState: state }),
     });
-    // 401 is an answer, not a failure: retrying cannot fix "you are not signed in", and the
-    // old code looped on it forever for every logged-out visitor.
+    // 401 is an answer, not a failure: retrying cannot fix "you are not signed in".
     if (res.status === 401) {
       _saveOffline = true;
       setSaveStatus('Not signed in — changes kept in this browser only');
@@ -3558,12 +3568,11 @@ async function saveNow() {
     if (isNew) await refreshScenarios(name);
     // Edits that landed while the request was in flight are not covered by the save just
     // confirmed, so take them now rather than waiting for the next keystroke.
-    if (_planDirty) { clearTimeout(_saveTimer); _saveTimer = setTimeout(saveNow, 1500); }
+    if (_planDirty) scheduleSave(SAVE_FOLLOWUP_MS);
   } catch (e) {
     const delay = SAVE_BACKOFF_MS[Math.min(_saveFailures++, SAVE_BACKOFF_MS.length - 1)];
     setSaveStatus(`Save failed — kept in this browser, retrying in ${Math.round(delay / 1000)}s`);
-    clearTimeout(_saveTimer);
-    _saveTimer = setTimeout(saveNow, delay);
+    scheduleSave(delay);
   } finally {
     _planSaving = false;
   }
@@ -3929,12 +3938,13 @@ function initAutoSave() {
     if (!_planDirty && !_planSaving) return;
     // The local draft first: it is the only one of the two that cannot fail, and this is the
     // last moment the form still exists.
-    writeLocalDraft();
+    const state = serializeFormState();   // once: two sweeps here is the worst place to pay
+    writeLocalDraft(state);
     if (_saveOffline) return;   // a beacon to an endpoint that already said 401 goes nowhere
     try {
       const name = _currentPlan || uniqueUntitledName();
       navigator.sendBeacon('/api/scenarios',
-        new Blob([JSON.stringify({ name, formState: serializeFormState() })], { type: 'application/json' }));
+        new Blob([JSON.stringify({ name, formState: state })], { type: 'application/json' }));
     } catch (_) { /* best effort */ }
   });
   // Flush on in-app screen switches by wrapping the navigation functions.
