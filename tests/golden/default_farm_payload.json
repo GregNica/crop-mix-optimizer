@@ -345,7 +345,7 @@
    "planting_weeks": 1,
    "harvest_weeks": 3,
    "sales_spread_weeks": 1,
-   "cold_storage": true,
+   "cold_storage": false,
    "min_acreage_if_planted": 1,
    "crop_diversity_max": 0.25,
    "yield_per_acre": 4500,
@@ -444,6 +444,5 @@
  "well_enabled": true,
  "well_weekly_cap_L": 2500000,
  "ambient_storage_cap": 150,
- "rate_ambient_storage": 0.09615384615384616,
- "storage_loss_pct_per_week": 0
+ "rate_ambient_storage": 0.09615384615384616
 }

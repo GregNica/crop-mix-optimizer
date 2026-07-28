@@ -60,8 +60,36 @@ bootApp().then(({ window: w }) => {
     }
   }
 
+  // 4 — provenance is CHECKED, not decorative. It duplicates values from CROP_TEMPLATES, and an
+  // unchecked parallel map is a citation that can quietly stop describing the number it cites.
+  const prov = w.eval('CROP_PROVENANCE');
+  for (const [crop, fields] of Object.entries(prov)) {
+    const tpl = templates[crop];
+    if (!tpl) { fail(`CROP_PROVENANCE cites "${crop}", which is not a template`); continue; }
+    for (const [field, rec] of Object.entries(fields)) {
+      // cold_storage defaults to true by omission, so compare against that default.
+      const actual = field === 'cold_storage' ? (tpl[field] !== false) : tpl[field];
+      const cited = field === 'cold_storage' ? (rec.value !== false) : rec.value;
+      if (JSON.stringify(actual) !== JSON.stringify(cited))
+        fail(`CROP_PROVENANCE ${crop}.${field} cites ${JSON.stringify(rec.value)} but the `
+           + `template says ${JSON.stringify(tpl[field])} — the citation no longer describes `
+           + `the shipped number`);
+      if (!rec.source || !rec.confidence)
+        fail(`CROP_PROVENANCE ${crop}.${field} has no source/confidence`);
+    }
+  }
+  // Every non-default shelf life must be able to say where it came from.
+  for (const [name, tpl] of Object.entries(templates)) {
+    if (!tpl || typeof tpl !== 'object') continue;
+    if (tpl.sales_spread_weeks !== undefined && !(prov[name] || {}).sales_spread_weeks)
+      fail(`${name} carries sales_spread_weeks:${tpl.sales_spread_weeks} with no provenance`);
+    if (tpl.cold_storage === false && !(prov[name] || {}).cold_storage)
+      fail(`${name} is flagged ambient with no provenance`);
+  }
+
   if (failures) { console.error(`\n${failures} FAILURE(S)`); process.exit(1); }
   console.log(`demo derivation: all checks passed (form identical, ${Object.keys(ovActual).length}`
-            + ` overridden crops match snapshot, no orphan keys)`);
+            + ` overridden crops match snapshot, no orphan keys, `
+            + `${Object.keys(prov).length} provenance records agree with their templates)`);
   process.exit(0);
 }).catch(e => { console.error('FATAL:', e.message); process.exit(1); });

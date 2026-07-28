@@ -119,8 +119,8 @@ def solved(full_params):
 def _loss_of(r, p, c):
     """Per-crop weekly storage shrink, farm default unless the crop overrides it."""
     crop = r["crops"][c]
-    return float(crop.get("storage_loss_pct_per_week",
-                          p.get("storage_loss_pct_per_week", 0.0)) or 0.0)
+    return float(crop.get("storage_loss_frac_per_week",
+                          p.get("storage_loss_frac_per_week", 0.0)) or 0.0)
 
 
 class TestBalanceReconciles:
@@ -209,7 +209,7 @@ class TestStorageShrinkCostsSomething:
                            shelf_life=8, min_acreage=5.0)
         p["crops"][0]["sell_through_fraction"] = 1.0
         p["sell_through_fraction"] = 1.0
-        p["storage_loss_pct_per_week"] = loss
+        p["storage_loss_frac_per_week"] = loss
         return p
 
     def test_shrink_reconciles_to_the_pound(self, full_params):
@@ -218,9 +218,10 @@ class TestStorageShrinkCostsSomething:
         r = _solve(p, harvest_storage_cap=1e9, cash_constraint_enabled=False)
         H = _weekly_sellable_inflow(r, p["total_land"], 1.0)
         inv, waste, v = r["inventory"], r["waste"], r["v"]
+        keep = 1.0 - _loss_of(r, p, 0)   # not a literal: one place to change, not two
         prev = 0.0
         for w in range(1, W + 1):
-            expected = 0.95 * prev + H[0, w] - float(v[0, :, w].sum()) - waste[0, w]
+            expected = keep * prev + H[0, w] - float(v[0, :, w].sum()) - waste[0, w]
             assert abs(inv[0, w] - expected) < max(TOL, 1e-6 * max(1.0, abs(expected))), (
                 f"W{w}: decayed balance off by {inv[0, w] - expected:,.6f} lb"
             )
@@ -242,6 +243,50 @@ class TestStorageShrinkCostsSomething:
         )
         assert heavy["profit"] < none["profit"], "product lost in store must cost money"
 
+    def test_shrink_is_visible_in_the_results(self, full_params):
+        """Product destroyed by shrink must be reported, or the auditability guard goes blind
+        exactly when the new mechanism starts destroying things.
+
+        Before this was added: a fixture losing 424,529 lb (50.6% of harvest) to shrink reported
+        `waste_by_crop.fraction == 0.0000`, and the results banner — which filters on > 0.5% —
+        stayed hidden. That is the failure `waste_by_crop` was written to prevent, reintroduced
+        by the mechanism that removes the pounds.
+        """
+        r = _solve(self._held_farm(full_params, 0.10),
+                   harvest_storage_cap=1e9, cash_constraint_enabled=False)
+        entry = r["waste_by_crop"]["ShelfTest"]
+        assert entry["shrink_lbs"] > 1.0, (
+            "a ten-week hold at 10%/wk destroys product; shrink_lbs must show it"
+        )
+        assert entry["lost_lbs"] == pytest.approx(entry["lbs"] + entry["shrink_lbs"], rel=1e-9)
+        assert entry["lost_fraction"] > 0.005, (
+            "lost_fraction is what the results banner filters on — below the threshold the "
+            "grower is told nothing"
+        )
+
+    def test_shelf_life_is_measured_on_decayed_stock(self, full_params):
+        """C4c bounds inventory by what arrived inside the window. With shrink, what is HELD is
+        smaller than what arrived, so an undecayed bound leaves slack that can only be filled
+        with product older than the shelf life — the one thing the row forbids.
+
+        Measured before the fix: 7.4% of held stock overheld at 5%/wk, 21% at 15%/wk, booking
+        revenue on pounds that should have been written off.
+        """
+        loss = 0.05
+        p = self._held_farm(full_params, loss)
+        r = _solve(p, harvest_storage_cap=1e9, cash_constraint_enabled=False)
+        H = _weekly_sellable_inflow(r, p["total_land"], 1.0)
+        L = 8
+        worst = 0.0
+        for w in range(1, W + 1):
+            exact = sum((1.0 - loss) ** (w - t) * H[0, t]
+                        for t in range(max(1, w - L + 2), w + 1))
+            worst = max(worst, r["inventory"][0, w] - exact)
+        assert worst < max(TOL, 1e-6 * 1e5), (
+            f"held {worst:,.1f} lb more than the shrink-exact shelf-life bound allows — the row "
+            f"is still measuring undecayed arrivals"
+        )
+
     def test_a_crop_can_override_the_farm_default(self, full_params):
         """Shrink is per-crop in reality — garlic loses tenths of a percent a week, salad greens
         several percent — so the crop-level key must win over the farm default.
@@ -252,13 +297,13 @@ class TestStorageShrinkCostsSomething:
         """
         farm_only = self._held_farm(full_params, 0.0)          # farm default 0, no override
         overridden = self._held_farm(full_params, 0.0)         # farm default STILL 0 ...
-        overridden["crops"][0]["storage_loss_pct_per_week"] = 0.08   # ... crop overrides it
+        overridden["crops"][0]["storage_loss_frac_per_week"] = 0.08   # ... crop overrides it
 
         base = _solve(farm_only, harvest_storage_cap=1e9, cash_constraint_enabled=False)
         over = _solve(overridden, harvest_storage_cap=1e9, cash_constraint_enabled=False)
         assert float(base["v"][0, :, 1:].sum()) > 1e3, "control sold nothing — vacuous"
         assert over["profit"] < base["profit"], (
-            "a crop-level storage_loss_pct_per_week must apply even when the farm default is 0 — "
+            "a crop-level storage_loss_frac_per_week must apply even when the farm default is 0 — "
             "if these match, the per-crop key is being ignored"
         )
 
@@ -463,13 +508,13 @@ class TestInventoryIsDeterminate:
         # farm size and lb-weeks held, so a fixed $1 ceiling silently tightens as the model
         # grows. The usable band is narrow — the constant cannot shrink much below 1e-6
         # (HiGHS's dual-feasibility tolerance is 1e-7) — so when this fires the answer is not
-        # to loosen the bound, it is to ship the real storage_loss_pct_per_week of §3.4.
+        # to loosen the bound, it is to ship the real storage_loss_frac_per_week of §3.4.
         assert tie_break_cost < 1e-5 * abs(r["profit"]), (
             f"the holding tie-break is worth ${tie_break_cost:,.2f} against a "
             f"${r['profit']:,.0f} profit ({held_lb_weeks:,.0f} lb-weeks held). It is an "
             "undisclosed objective term, tolerable only while it rounds to nothing. "
             "B.3's longer shelf lives will push it here — that is the signal to implement "
-            "SPEC_v3 §3.4's storage_loss_pct_per_week, not to raise this bound."
+            "SPEC_v3 §3.4's storage_loss_frac_per_week, not to raise this bound."
         )
 
 

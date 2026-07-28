@@ -289,7 +289,7 @@
   "min_acreage_if_planted": 1,
   "sell_through_pct": "",
   "sales_spread_weeks": "1",
-  "cold_storage": true,
+  "cold_storage": false,
   "planting_type": "transplant",
   "seed_transplant_cost_per_acre": 280,
   "yield_per_acre": 4500,

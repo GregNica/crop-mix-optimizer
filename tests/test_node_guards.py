@@ -1,0 +1,59 @@
+"""
+Runs the node-side guards under pytest, because CI runs pytest and NOT `npm test`.
+
+Two guards built on 2026-07-28 — "the demo stays derived from CROP_TEMPLATES" and "the golden
+payload is not stale" — were wired into `npm test` only, so neither ran in CI and both were
+being reported as protection they did not provide. A guard that does not run is worse than no
+guard: it buys false confidence.
+
+The four older harnesses each have their own ~40-line wrapper (test_canon_flows.py,
+test_canon_invariant.py, test_import_roundtrip.py, test_units_js.py). This file covers the new
+ones with one parametrised case rather than copying that boilerplate a fifth and sixth time.
+"""
+import os
+import shutil
+import subprocess
+import pathlib
+
+import pytest
+
+REPO = pathlib.Path(__file__).resolve().parent.parent
+NODE = shutil.which("node")
+
+# (label, argv relative to the repo root, failure message)
+GUARDS = [
+    (
+        "demo-derivation",
+        ["tests/demo_derivation.cjs"],
+        "the shipped demo no longer matches CROP_TEMPLATES + DEMO_OVERRIDES. If the change was "
+        "intended, re-capture tests/golden/demo_form_snapshot.json AND re-pin the golden P&L in "
+        "the same commit",
+    ),
+    (
+        "golden-payload-staleness",
+        ["scripts/capture_golden_payload.cjs", "--check"],
+        "tests/golden/default_farm_payload.json pins a farm the app no longer ships. Run "
+        "`node scripts/capture_golden_payload.cjs` and re-pin the P&L in the same commit",
+    ),
+]
+
+
+def _jsdom_available() -> bool:
+    if NODE is None:
+        return False
+    probe = subprocess.run([NODE, "-e", "require.resolve('jsdom')"],
+                           capture_output=True, cwd=str(REPO))
+    return probe.returncode == 0
+
+
+@pytest.mark.skipif(NODE is None, reason="node not on PATH")
+@pytest.mark.skipif(not _jsdom_available() and not os.environ.get("CI"),
+                    reason="jsdom not installed (run: npm install)")
+@pytest.mark.parametrize("label,argv,why", GUARDS, ids=[g[0] for g in GUARDS])
+def test_node_guard(label, argv, why):
+    script = REPO / argv[0]
+    if not script.exists():
+        pytest.skip(f"{argv[0]} missing")
+    proc = subprocess.run([NODE, *argv], capture_output=True, text=True,
+                          timeout=180, cwd=str(REPO))
+    assert proc.returncode == 0, why + ":\n" + proc.stdout + proc.stderr

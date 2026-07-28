@@ -128,10 +128,12 @@ def solve_farm_v2(
     # SPEC_v3 §3.4. This is what makes holding COST something — without it a long shelf life is
     # pure upside in the objective, so honest shelf lives cannot be entered before it exists
     # (the reason it is a hard prerequisite of the crop-data audit's Phase B). Per-crop override
-    # via crop["storage_loss_pct_per_week"]; garlic and onions are a few tenths of a percent a
+    # via crop["storage_loss_frac_per_week"]; garlic and onions are a few tenths of a percent a
     # week, leafy greens several percent.
+    # A FRACTION, not a percent — 0.05 means 5%/week. Named explicitly because `_pct` means
+    # 0-100 everywhere else here, and the 0-0.99 clamp would silently turn a "5" into 99%/wk.
     # Ships at 0.0 = no shrink = today's behaviour exactly. Values arrive with their sources.
-    storage_loss_pct_per_week: float = 0.0,
+    storage_loss_frac_per_week: float = 0.0,
     # --- Ambient (non-refrigerated) produce storage ---
     # A second pool for crops whose `cold_storage` flag is False: cured alliums, winter squash
     # (chilling-injured below 50°F), potatoes. It is CAPPED and PRICED, never free — an
@@ -526,7 +528,7 @@ def solve_farm_v2(
     # two-stage solve (maximize profit, then minimize inventory subject to that profit), which
     # doubles solve time to buy nothing a grower can see.
     #
-    # SPEC_v3 §3.4 supersedes this with a real per-crop `storage_loss_pct_per_week`, which is
+    # SPEC_v3 §3.4 supersedes this with a real per-crop `storage_loss_frac_per_week`, which is
     # wanted anyway to model shrink and to stop long shelf lives being free money. When that
     # lands, delete this.
     c_obj[idx_inv_start : idx_inv_start + INV_off] = INVENTORY_TIE_BREAK_PER_LB_WEEK
@@ -582,11 +584,11 @@ def solve_farm_v2(
     # (B2) and locked a crop out of its own early harvest weeks (F2). Same grower question,
     # honest semantics. Migrated 1:1 here so this commit changes the MECHANISM and not the
     # data, and any profit move is attributable to the rewrite alone.
-    # The old 8-week ceiling is kept for now; SPEC_v3 §3.4 raises it in B.3 along with honest
-    # per-crop defaults — and the holding cost that has to precede them, because holding is
-    # currently free in every dimension and a long shelf life is pure upside in the objective.
+    # The 8-week ceiling was lifted to N_WEEKS in B.3, and the holding cost that had to precede
+    # honest long shelf lives (storage_loss_frac_per_week, above) landed with it — without one,
+    # a long shelf life is pure upside in the objective.
     storage_loss = [
-        max(0.0, min(0.99, float(c.get("storage_loss_pct_per_week", storage_loss_pct_per_week) or 0.0)))
+        max(0.0, min(0.99, float(c.get("storage_loss_frac_per_week", storage_loss_frac_per_week) or 0.0)))
         for c in crops
     ]
     shelf_life_weeks = [
@@ -754,10 +756,10 @@ def solve_farm_v2(
     for c_idx in range(n_crops):
         L = shelf_life_weeks[c_idx]
         if L > N_WEEKS:
-            # Unreachable today: shelf_life_weeks is clamped to <= 8 above, so this never
-            # fires. Kept because B.3 raises that clamp for honest shelf lives (carrots 12,
-            # garlic 16), at which point a crop marked non-perishable genuinely skips the
-            # row. Do not read the row count as if this branch were live.
+            # Unreachable BY CONSTRUCTION: L is clamped to min(N_WEEKS, ...) above. Kept as the
+            # attachment point for a future non-perishable sentinel (a crop that genuinely never
+            # expires), which is the only way it becomes live. Do not read the row count as if it
+            # were.
             continue
         for w in range(1, N_WEEKS + 1):
             # L-1, not L: the harvest week is a SELLING week, not a storage week.
@@ -767,11 +769,17 @@ def solve_farm_v2(
                 if successions[i]["crop"] != c_idx:
                     continue
                 # A succession can harvest in several of the window's weeks; each contributes
-                # one week's inflow.
-                n_in_window = sum(1 for t in window if phase_table[i][t] == 2)
-                if n_in_window:
+                # one week's inflow, DECAYED by the weeks it has been sitting. Without the
+                # (1-loss)^age factor the row bounds shrunken stock against undecayed arrivals,
+                # and the slack can only be filled by product older than the shelf life — which
+                # is the one thing this row exists to forbid. Measured before the fix: 7.4% of
+                # held stock overheld at 5%/wk, 21% at 15%/wk, and the error books revenue on
+                # pounds that should have been written off.
+                weight = sum((1.0 - storage_loss[c_idx]) ** (w - t)
+                             for t in window if phase_table[i][t] == 2)
+                if weight:
                     cols.append((idx_x_start + i,
-                                 -succ_weekly_sellable_lbs[i] * n_in_window))
+                                 -succ_weekly_sellable_lbs[i] * weight))
             add_row(cols, -np.inf, 0.0)
 
     # C6 — Channel sales ≤ demand cap
@@ -991,10 +999,20 @@ def solve_farm_v2(
             succ_weekly_sellable_lbs[i] * float(x_sol[i]) * succ_n_harv[i]
             for i in range(N_S) if successions[i]["crop"] == c_idx
         )
+        # Shrink leaves the balance through the (1-loss) coefficient without ever becoming
+        # `waste`, so before this was reported a farm could lose half its harvest in store and
+        # the results still said "0% waste" with no banner — the exact blindness this block
+        # exists to prevent, reintroduced by the mechanism that destroys the product. Measured
+        # at 15%/wk: 424,529 lb unaccounted, waste_by_crop reporting 0.0000.
+        shrunk = float(storage_loss[c_idx] * inv_sol[c_idx, :-1].sum())
+        lost = discarded + shrunk
         waste_by_crop[crop["name"]] = {
             "lbs": discarded,
+            "shrink_lbs": shrunk,
+            "lost_lbs": lost,
             "sellable_lbs": sellable,
             "fraction": (discarded / sellable) if sellable > 1e-9 else 0.0,
+            "lost_fraction": (lost / sellable) if sellable > 1e-9 else 0.0,
         }
 
     m3_per_lb = np.array([c["crop_size_m3_per_lb"] for c in crops], dtype=float)

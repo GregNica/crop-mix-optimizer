@@ -23,19 +23,23 @@ const CHECK = process.argv.includes('--check');
 // Only the keys this capture owns. The rest of the payload (labor, channels, cash, rates) was
 // captured from a real browser session and is not regenerated here — narrow, so a bug in this
 // script cannot quietly rewrite the whole farm.
-const OWNED = ['crops', 'ambient_storage_cap', 'rate_ambient_storage', 'storage_loss_pct_per_week'];
+// storage_loss_frac_per_week is deliberately NOT here: runOptimizer does not emit it, so
+// capturing it would put a key in the golden payload that the browser never sends — the exact
+// staleness this script exists to prevent.
+const OWNED = ['crops', 'ambient_storage_cap', 'rate_ambient_storage',
+               'harvest_storage_cap', 'rate_harvest_storage'];
 
 bootApp().then(({ window: w }) => {
   const payload = JSON.parse(fs.readFileSync(PAYLOAD, 'utf8'));
   const fresh = {
     crops: w.eval('getCropsFromForm()'),
     ambient_storage_cap: w.eval("readCanonical('ambient_storage_cap')"),
-    // rateFromCapital is scoped inside runOptimizer, so mirror its one line here: an owned
-    // asset's weekly cost is capital / (useful life x 52), per the locked cost-accounting basis.
+    // The app's own function, not a mirror — see the note where it was hoisted.
     rate_ambient_storage: w.eval(
-      "readCanonical('ambient_storage_cost_per_m3') / "
-      + "(Math.max(1, parseFloat(document.getElementById('depreciation_ambient_years').value)) * 52)"),
-    storage_loss_pct_per_week: 0.0,
+      "rateFromCapital('ambient_storage_cost_per_m3', 150, 'depreciation_ambient_years', 30)"),
+    harvest_storage_cap: w.eval("readCanonical('harvest_storage_cap')"),
+    rate_harvest_storage: w.eval(
+      "rateFromCapital('harvest_storage_cost_per_m3', 500, 'depreciation_harvest_years', 20)"),
   };
 
   const before = JSON.stringify(OWNED.map(k => payload[k]));
