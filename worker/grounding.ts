@@ -64,7 +64,7 @@ export const CROP_DETAIL_FIELDS: ChatbotField[] = [
   { id: "harvest_weeks", label: "Harvest weeks", type: "number", min: 1, max: 20, description: "Weeks the crop yields harvestable produce." },
   { id: "min_acreage_if_planted", label: "Min acreage if planted", type: "number", unit: "acres", min: 0, description: "Minimum acres to commit if this crop is planted at all." },
   { id: "sell_through_pct", label: "Per-crop sell-through %", type: "number", unit: "%", min: 1, max: 100, description: "Share of THIS crop's harvest that sells (overrides the farm default). '15% doesn't sell' => 85." },
-  { id: "sales_spread_weeks", label: "Sales spread weeks", type: "number", min: 1, max: 8, description: "Weeks to spread sales of a storage crop after harvest (1 = sell in the harvest week)." },
+  { id: "sales_spread_weeks", label: "Sellable weeks", type: "number", min: 1, max: 52, description: "Weeks the crop can be sold in, counting the harvest week (1 = must sell the week it is picked)." },
   { id: "seed_transplant_cost_per_acre", label: "Seed/transplant cost", type: "number", unit: "$/acre", min: 0, description: "Seed or transplant cost per acre." },
   { id: "lbs_per_tote", label: "Lbs per tote", type: "number", min: 1, description: "Pounds per 18-gallon harvest tote (storage sizing)." },
   { id: "planting_type", label: "Planting type", type: "enum", enum: ["seed", "transplant"], description: "Direct-seeded or transplanted." },

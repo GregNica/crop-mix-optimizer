@@ -139,6 +139,29 @@ const near = (name, got, want, rel) => {
     }
   }
 
+  // ---- FLOW 3c: shelf life survives the form and the template loader ----------------------
+  // Three clamps stood between the input and the solver; B.3 raised only the innermost, so a
+  // grower typing 16 reached the solver as 8 with no error, and Garlic's template value of 8
+  // was dropped entirely by loadCropTemplate's field list. Both fixed; both pinned here.
+  {
+    const spreadEls = () => Array.from(d.querySelectorAll('[data-f="sales_spread_weeks"]'));
+    if (!spreadEls().length) fail('shelf-life flow: no crop cards rendered — vacuous');
+    else {
+      spreadEls()[0].value = '16';
+      const read = w.eval('getCropsFromForm()')[0].sales_spread_weeks;
+      if (read !== 16)
+        fail(`shelf-life flow: typed 16, getCropsFromForm returned ${read} — a clamp is back`);
+      w.eval("loadCropTemplate(0, 'Garlic')");
+      const afterTpl = spreadEls()[0].value;
+      if (String(afterTpl) !== '8')
+        fail(`shelf-life flow: Garlic template carries sales_spread_weeks:8 but the loader `
+           + `wrote ${JSON.stringify(afterTpl)} — template shelf lives are dead on load`);
+      const coldAfter = d.querySelectorAll('[data-f="cold_storage"]')[0];
+      if (!coldAfter || coldAfter.checked !== true)
+        fail('shelf-life flow: template load must leave an unflagged crop refrigerated');
+    }
+  }
+
   // ---- FLOW 4: a chatbot proposal carries CANONICAL schema units --------------------------
   // CHATBOT_FIELDS/CROP_DETAIL_FIELDS declare fixed units (acres, liters/week, lbs/acre), so a
   // value written with .value gets re-canonicalised in whatever system is on screen: "80 acres"

@@ -2482,6 +2482,9 @@ function loadCropTemplate(idx, templateName) {
   set('yield_per_acre',   t.yield_per_acre);
   set('crop_diversity_max', t.crop_diversity_max);
   set('lbs_per_tote',     t.lbs_per_tote);
+  set('sales_spread_weeks', t.sales_spread_weeks);
+  const coldBox = card.querySelector('[data-f="cold_storage"]');
+  if (coldBox) coldBox.checked = t.cold_storage === false ? false : true;
   set('labor_plant',t.labor_plant); set('labor_grow',t.labor_grow); set('labor_harv',t.labor_harv);
   set('water_plant',t.water_plant); set('water_grow',t.water_grow); set('water_harv',t.water_harv);
   set('fert_plant', t.fert_plant);  set('fert_grow', t.fert_grow);  set('fert_harv', t.fert_harv);
@@ -2683,7 +2686,7 @@ function getCropsFromForm() {
     });
 
     const rawSpread = parseInt(f('sales_spread_weeks'));
-    const salesSpreadWeeks = (!isNaN(rawSpread) && rawSpread >= 1) ? Math.min(8, rawSpread) : 1;
+    const salesSpreadWeeks = (!isNaN(rawSpread) && rawSpread >= 1) ? Math.min(52, rawSpread) : 1;
     // Checkbox, so read .checked — the generic f() reader returns the string "on" for a ticked
     // box and "" for an unticked one, and both are truthy/falsy by accident rather than design.
     const coldEl = card.querySelector('[data-f="cold_storage"]');
@@ -7052,7 +7055,7 @@ def run_from_js(params_json):
             # Normalise spread: int 1-8; missing/blank/0 → 1
             raw_spread = ac.get('sales_spread_weeks', 1)
             try:
-                ac['sales_spread_weeks'] = max(1, min(8, int(raw_spread or 1)))
+                ac['sales_spread_weeks'] = max(1, min(52, int(raw_spread or 1)))
             except (TypeError, ValueError):
                 ac['sales_spread_weeks'] = 1
             # Cold vs ambient. Default TRUE so a crop dict from anywhere that predates the flag
@@ -11310,8 +11313,8 @@ window._testWhatIf = function() {
     // Blank/missing sales_spread_weeks field → should produce 1
     const rawSpread91a = parseInt('') || 0;   // blank → NaN → 0 → 1
     const rawSpread91b = parseInt('0') || 0;  // explicit 0 → 1
-    const spread91a = (!isNaN(parseInt(''))  && parseInt('') >= 1)  ? Math.min(8, parseInt(''))  : 1;
-    const spread91b = (!isNaN(parseInt('0')) && parseInt('0') >= 1) ? Math.min(8, parseInt('0')) : 1;
+    const spread91a = (!isNaN(parseInt(''))  && parseInt('') >= 1)  ? Math.min(52, parseInt(''))  : 1;
+    const spread91b = (!isNaN(parseInt('0')) && parseInt('0') >= 1) ? Math.min(52, parseInt('0')) : 1;
     console.assert(spread91a === 1, `T91a: blank → 1, got ${spread91a}`);
     console.assert(spread91b === 1, `T91b: 0 → 1, got ${spread91b}`);
     // Valid value passthrough
