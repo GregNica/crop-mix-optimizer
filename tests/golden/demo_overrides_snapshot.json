@@ -1,0 +1,139 @@
+{
+ "Cucumbers": {
+  "labor_plant": 12,
+  "labor_grow": 1.8,
+  "labor_harv": 38,
+  "water_plant": 12000,
+  "water_grow": 17000,
+  "water_harv": 15000,
+  "fert_plant": 0.55,
+  "fert_grow": 0.38,
+  "fert_harv": 0.2,
+  "fuel_plant": 3.5,
+  "fuel_grow": 2,
+  "fuel_harv": 4.5,
+  "channels_data": {
+   "Wholesale": {
+    "price": 0.55,
+    "pkg": 0.06,
+    "demand_type": "weekly_flat",
+    "demand_value": 50000,
+    "demand_season": ""
+   },
+   "Farmers Market": {
+    "price": 1.25,
+    "pkg": 0.12,
+    "demand_type": "weekly_varying",
+    "demand_value": 6000,
+    "demand_season": "W18-W40"
+   }
+  }
+ },
+ "Kale": {
+  "harvest_weeks": 4,
+  "crop_diversity_max": 0.3,
+  "yield_per_acre": 8000,
+  "lbs_per_tote": 18,
+  "seed_transplant_cost_per_acre": 220,
+  "labor_plant": 3.5,
+  "labor_grow": 2,
+  "fert_plant": 0.38,
+  "fert_grow": 0.28,
+  "fert_harv": 0.15,
+  "fuel_plant": 3.2,
+  "fuel_harv": 3.8,
+  "channels_data": {
+   "Wholesale": {
+    "price": 0.7,
+    "pkg": 0.07,
+    "demand_type": "annual",
+    "demand_value": 500000,
+    "demand_season": ""
+   },
+   "Farmers Market": {
+    "price": 2,
+    "pkg": 0.14,
+    "demand_type": "weekly_varying",
+    "demand_value": 3500,
+    "demand_season": "W10-W50"
+   }
+  }
+ },
+ "Tomatoes": {
+  "crop_diversity_max": 0.45,
+  "channels_data": {
+   "Wholesale": {
+    "price": 0.65,
+    "pkg": 0.06,
+    "demand_type": "annual",
+    "demand_value": 900000,
+    "demand_season": ""
+   },
+   "Farmers Market": {
+    "price": 1.8,
+    "pkg": 0.15,
+    "demand_type": "weekly_varying",
+    "demand_value": 7000,
+    "demand_season": "W25-W42"
+   }
+  }
+ },
+ "Hot Peppers": {
+  "labor_plant": 8,
+  "labor_grow": 1.4,
+  "labor_harv": 20,
+  "water_plant": 14000,
+  "water_grow": 19000,
+  "water_harv": 16000,
+  "fert_plant": 0.55,
+  "fert_grow": 0.38,
+  "fert_harv": 0.28,
+  "fuel_plant": 3.5,
+  "fuel_grow": 2.3,
+  "fuel_harv": 4.8,
+  "channels_data": {
+   "Wholesale": {
+    "price": 1.5,
+    "pkg": 0.14,
+    "demand_type": "weekly_flat",
+    "demand_value": 15000,
+    "demand_season": ""
+   },
+   "Farmers Market": {
+    "price": 3.75,
+    "pkg": 0.25,
+    "demand_type": "weekly_varying",
+    "demand_value": 3000,
+    "demand_season": "W22-W44"
+   }
+  }
+ },
+ "Basil": {
+  "yield_per_acre": 4500,
+  "labor_plant": 5,
+  "labor_grow": 3,
+  "labor_harv": 40,
+  "water_harv": 8100,
+  "fert_plant": 0.4,
+  "fert_grow": 0.3,
+  "fert_harv": 0.18,
+  "fuel_plant": 3,
+  "fuel_grow": 1.5,
+  "channels_data": {
+   "Wholesale": {
+    "price": 1.5,
+    "pkg": 0.12,
+    "demand_type": "annual",
+    "demand_value": 150000,
+    "demand_season": ""
+   },
+   "Farmers Market": {
+    "price": 4,
+    "pkg": 0.28,
+    "demand_type": "weekly_varying",
+    "demand_value": 2000,
+    "demand_season": "W20-W40"
+   }
+  }
+ }
+}

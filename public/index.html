@@ -2503,15 +2503,156 @@ function loadCropTemplate(idx, templateName) {
 // ============================================================
 // Crop management
 // ============================================================
-const CROP_DEFAULTS = [
-  { name:"Spinach",     days_to_maturity:42,  planting_weeks:1, harvest_weeks:2,  s1_start:"02-01", s1_end:"06-15", s2_start:"08-01", s2_end:"11-15", min_acreage_if_planted:2.0, crop_diversity_max:0.50, yield_per_acre:5000,  lbs_per_tote:31, planting_type:"seed",      seed_transplant_cost_per_acre:280, labor_plant:15.0, labor_grow:4.0, labor_harv:50.0, water_plant:10400, water_grow:12700, water_harv:9200,  fert_plant:0.46, fert_grow:0.35, fert_harv:0.23, fuel_plant:3.5, fuel_grow:1.8, fuel_harv:4.6, channels_data:{"Wholesale":{price:1.00,pkg:0.09,demand_type:"weekly_flat",demand_value:25000,demand_season:""},"Farmers Market":{price:2.75,pkg:0.18,demand_type:"weekly_varying",demand_value:6000,demand_season:"W10-W48"}} },
-  { name:"Cucumbers",   days_to_maturity:70,  planting_weeks:1, harvest_weeks:3,  s1_start:"05-01", s1_end:"09-01", s2_start:"",      s2_end:"",      min_acreage_if_planted:2.0, crop_diversity_max:0.40, yield_per_acre:12000, lbs_per_tote:23, planting_type:"seed",      seed_transplant_cost_per_acre:190, labor_plant:12.0, labor_grow:1.8, labor_harv:38.0, water_plant:12000, water_grow:17000, water_harv:15000, fert_plant:0.55, fert_grow:0.38, fert_harv:0.20, fuel_plant:3.5, fuel_grow:2.0, fuel_harv:4.5, channels_data:{"Wholesale":{price:0.55,pkg:0.06,demand_type:"weekly_flat",demand_value:50000,demand_season:""},"Farmers Market":{price:1.25,pkg:0.12,demand_type:"weekly_varying",demand_value:6000,demand_season:"W18-W40"}} },
-  { name:"Kale",         days_to_maturity:60,  planting_weeks:1, harvest_weeks:4,  s1_start:"02-01", s1_end:"06-01", s2_start:"07-15", s2_end:"12-01", min_acreage_if_planted:2.0, crop_diversity_max:0.30, yield_per_acre:8000,  lbs_per_tote:18, planting_type:"transplant", seed_transplant_cost_per_acre:220, labor_plant:3.5, labor_grow:2.0, labor_harv:22.0, water_plant:9200,  water_grow:11500, water_harv:8100,  fert_plant:0.38, fert_grow:0.28, fert_harv:0.15, fuel_plant:3.2, fuel_grow:1.5, fuel_harv:3.8, channels_data:{"Wholesale":{price:0.70,pkg:0.07,demand_type:"annual",demand_value:500000,demand_season:""},"Farmers Market":{price:2.00,pkg:0.14,demand_type:"weekly_varying",demand_value:3500,demand_season:"W10-W50"}} },
-  { name:"Tomatoes",     days_to_maturity:85,  planting_weeks:2, harvest_weeks:8,  s1_start:"04-15", s1_end:"10-15", s2_start:"",      s2_end:"",      min_acreage_if_planted:2.0, crop_diversity_max:0.45, yield_per_acre:22000, lbs_per_tote:40, planting_type:"transplant", seed_transplant_cost_per_acre:450, labor_plant:5.5, labor_grow:3.5, labor_harv:35.0, water_plant:17300, water_grow:23100, water_harv:19600, fert_plant:0.69, fert_grow:0.58, fert_harv:0.35, fuel_plant:4.5, fuel_grow:3.0, fuel_harv:5.5, channels_data:{"Wholesale":{price:0.65,pkg:0.06,demand_type:"annual",demand_value:900000,demand_season:""},"Farmers Market":{price:1.80,pkg:0.15,demand_type:"weekly_varying",demand_value:7000,demand_season:"W25-W42"}} },
-  { name:"Hot Peppers", days_to_maturity:147, planting_weeks:2, harvest_weeks:10, s1_start:"04-01", s1_end:"10-15", s2_start:"",      s2_end:"",      min_acreage_if_planted:2.0, crop_diversity_max:0.55, yield_per_acre:12000,  lbs_per_tote:38, planting_type:"transplant", seed_transplant_cost_per_acre:420, labor_plant:8.0, labor_grow:1.4, labor_harv:20.0,  water_plant:14000, water_grow:19000, water_harv:16000, fert_plant:0.55, fert_grow:0.38, fert_harv:0.28, fuel_plant:3.5, fuel_grow:2.3, fuel_harv:4.8, channels_data:{"Wholesale":{price:1.50,pkg:0.14,demand_type:"weekly_flat",demand_value:15000,demand_season:""},"Farmers Market":{price:3.75,pkg:0.25,demand_type:"weekly_varying",demand_value:3000,demand_season:"W22-W44"}} },
-  { name:"Garlic",      days_to_maturity:196, planting_weeks:3, harvest_weeks:1,  s1_start:"01-01", s1_end:"08-01", s2_start:"",      s2_end:"",      min_acreage_if_planted:2.0, crop_diversity_max:0.60, yield_per_acre:10000,   lbs_per_tote:57, planting_type:"seed", sales_spread_weeks:8,     seed_transplant_cost_per_acre:380, labor_plant:6.7,  labor_grow:0.3, labor_harv:75.0, water_plant:13900, water_grow:9200,  water_harv:8100,  fert_plant:0.46, fert_grow:0.23, fert_harv:0.12, fuel_plant:4.6, fuel_grow:1.8, fuel_harv:3.5, channels_data:{"Wholesale":{price:2.75,pkg:0.20,demand_type:"weekly_flat",demand_value:30000,demand_season:""},"Farmers Market":{price:6.00,pkg:0.40,demand_type:"weekly_varying",demand_value:2000,demand_season:"W22-W35"}} },
-  { name:"Basil",        days_to_maturity:35,  planting_weeks:1, harvest_weeks:3,  s1_start:"05-01", s1_end:"09-15", s2_start:"",      s2_end:"",      min_acreage_if_planted:1.0, crop_diversity_max:0.25, yield_per_acre:4500,  lbs_per_tote:12, planting_type:"transplant", seed_transplant_cost_per_acre:280, labor_plant:5.0, labor_grow:3.0, labor_harv:40.0, water_plant:9200,  water_grow:11500, water_harv:8100,  fert_plant:0.40, fert_grow:0.30, fert_harv:0.18, fuel_plant:3.0, fuel_grow:1.5, fuel_harv:3.5, channels_data:{"Wholesale":{price:1.50,pkg:0.12,demand_type:"annual",demand_value:150000,demand_season:""},"Farmers Market":{price:4.00,pkg:0.28,demand_type:"weekly_varying",demand_value:2000,demand_season:"W20-W40"}} },
-];
+// The demo farm is a SELECTION from the template library, not a second copy of it.
+// SPEC_agronomy Ruling 0: CROP_TEMPLATES is canonical, and anything the demo does differently is
+// an explicit reviewable override instead of a silently divergent duplicate. Five of these seven
+// had drifted — 52 fields, including three where the demand is a different SHAPE (annual vs
+// weekly caps), not merely a different number. DEMO_OVERRIDES is snapshotted by
+// tests/golden/demo_overrides_snapshot.json so a new override is always a reviewed diff; Phase C
+// of the audit burns it toward empty one adjudication at a time.
+const DEMO_CROPS = ["Spinach", "Cucumbers", "Kale", "Tomatoes", "Hot Peppers", "Garlic", "Basil"];
+const DEMO_OVERRIDES = {
+  "Cucumbers": {
+    "labor_plant": 12,
+    "labor_grow": 1.8,
+    "labor_harv": 38,
+    "water_plant": 12000,
+    "water_grow": 17000,
+    "water_harv": 15000,
+    "fert_plant": 0.55,
+    "fert_grow": 0.38,
+    "fert_harv": 0.2,
+    "fuel_plant": 3.5,
+    "fuel_grow": 2,
+    "fuel_harv": 4.5,
+    "channels_data": {
+      "Wholesale": {
+        "price": 0.55,
+        "pkg": 0.06,
+        "demand_type": "weekly_flat",
+        "demand_value": 50000,
+        "demand_season": ""
+      },
+      "Farmers Market": {
+        "price": 1.25,
+        "pkg": 0.12,
+        "demand_type": "weekly_varying",
+        "demand_value": 6000,
+        "demand_season": "W18-W40"
+      }
+    }
+  },
+  "Kale": {
+    "harvest_weeks": 4,
+    "crop_diversity_max": 0.3,
+    "yield_per_acre": 8000,
+    "lbs_per_tote": 18,
+    "seed_transplant_cost_per_acre": 220,
+    "labor_plant": 3.5,
+    "labor_grow": 2,
+    "fert_plant": 0.38,
+    "fert_grow": 0.28,
+    "fert_harv": 0.15,
+    "fuel_plant": 3.2,
+    "fuel_harv": 3.8,
+    "channels_data": {
+      "Wholesale": {
+        "price": 0.7,
+        "pkg": 0.07,
+        "demand_type": "annual",
+        "demand_value": 500000,
+        "demand_season": ""
+      },
+      "Farmers Market": {
+        "price": 2,
+        "pkg": 0.14,
+        "demand_type": "weekly_varying",
+        "demand_value": 3500,
+        "demand_season": "W10-W50"
+      }
+    }
+  },
+  "Tomatoes": {
+    "crop_diversity_max": 0.45,
+    "channels_data": {
+      "Wholesale": {
+        "price": 0.65,
+        "pkg": 0.06,
+        "demand_type": "annual",
+        "demand_value": 900000,
+        "demand_season": ""
+      },
+      "Farmers Market": {
+        "price": 1.8,
+        "pkg": 0.15,
+        "demand_type": "weekly_varying",
+        "demand_value": 7000,
+        "demand_season": "W25-W42"
+      }
+    }
+  },
+  "Hot Peppers": {
+    "labor_plant": 8,
+    "labor_grow": 1.4,
+    "labor_harv": 20,
+    "water_plant": 14000,
+    "water_grow": 19000,
+    "water_harv": 16000,
+    "fert_plant": 0.55,
+    "fert_grow": 0.38,
+    "fert_harv": 0.28,
+    "fuel_plant": 3.5,
+    "fuel_grow": 2.3,
+    "fuel_harv": 4.8,
+    "channels_data": {
+      "Wholesale": {
+        "price": 1.5,
+        "pkg": 0.14,
+        "demand_type": "weekly_flat",
+        "demand_value": 15000,
+        "demand_season": ""
+      },
+      "Farmers Market": {
+        "price": 3.75,
+        "pkg": 0.25,
+        "demand_type": "weekly_varying",
+        "demand_value": 3000,
+        "demand_season": "W22-W44"
+      }
+    }
+  },
+  "Basil": {
+    "yield_per_acre": 4500,
+    "labor_plant": 5,
+    "labor_grow": 3,
+    "labor_harv": 40,
+    "water_harv": 8100,
+    "fert_plant": 0.4,
+    "fert_grow": 0.3,
+    "fert_harv": 0.18,
+    "fuel_plant": 3,
+    "fuel_grow": 1.5,
+    "channels_data": {
+      "Wholesale": {
+        "price": 1.5,
+        "pkg": 0.12,
+        "demand_type": "annual",
+        "demand_value": 150000,
+        "demand_season": ""
+      },
+      "Farmers Market": {
+        "price": 4,
+        "pkg": 0.28,
+        "demand_type": "weekly_varying",
+        "demand_value": 2000,
+        "demand_season": "W20-W40"
+      }
+    }
+  }
+};
+const CROP_DEFAULTS = DEMO_CROPS.map(name => ({
+  name, ...CROP_TEMPLATES[name], ...(DEMO_OVERRIDES[name] || {}),
+}));
 
 const BLANK_CROP = {
   name:"New Crop", days_to_maturity:42, planting_weeks:1, harvest_weeks:2,
@@ -4318,6 +4459,7 @@ const CSV_TEMPLATE_HEADERS = [
   'fert_plant_lb_ac','fert_grow_lb_ac','fert_harv_lb_ac',
   'fuel_plant_L_ac','fuel_grow_L_ac','fuel_harv_L_ac',
   'seed_cost_per_ac',
+  'sellable_weeks','needs_cold_storage','sell_through_pct',
   'channel_name','price_per_lb','packaging_cost_per_lb',
   'demand_cap_type','demand_annual_lbs','demand_weekly_lbs',
   'demand_season_start_week','demand_season_end_week',
@@ -4357,17 +4499,18 @@ function downloadCropTemplate() {
     uL('fert_plant'),uL('fert_grow'),uL('fert_harv'),
     uL('fuel_plant'),uL('fuel_grow'),uL('fuel_harv'),
     '$/' + unitStr(U_ACRE),
+    'weeks int 1-52, incl. harvest week','TRUE = cooler / FALSE = barn','% optional, blank = farm default',
     '(text)','$/' + unitStr(U_LB),'$/' + unitStr(U_LB),
     'annual|weekly_flat|weekly_varying',
     unitStr(U_LB) + '/yr (annual only)',unitStr(U_LB) + '/wk (weekly* types)',
     'wk# 1-52 (weekly_varying only)','wk# 1-52 (weekly_varying only)',
   ];
   // Example: Spinach Wholesale (annual demand)
-  const EX1 = ['Spinach','3-1','9-1','','','42','1','2','8000','20','2','0.4','15','4','25','10400','12700','9200','0.46','0.35','0.23','3.5','2.0','4.0','280','Wholesale','1.10','0.09','annual','1200000','','',''];
+  const EX1 = ['Spinach','3-1','9-1','','','42','1','2','8000','20','2','0.4','15','4','25','10400','12700','9200','0.46','0.35','0.23','3.5','2.0','4.0','280','2','TRUE','','Wholesale','1.10','0.09','annual','1200000','','',''];
   // Example: Spinach Farmers Market (weekly_varying demand)
-  const EX2 = ['Spinach','3-1','9-1','','','42','1','2','8000','20','2','0.4','15','4','25','10400','12700','9200','0.46','0.35','0.23','3.5','2.0','4.0','280','Farmers Market','2.10','0.18','weekly_varying','','6000','18','42'];
+  const EX2 = ['Spinach','3-1','9-1','','','42','1','2','8000','20','2','0.4','15','4','25','10400','12700','9200','0.46','0.35','0.23','3.5','2.0','4.0','280','2','TRUE','','Farmers Market','2.10','0.18','weekly_varying','','6000','18','42'];
   // Example: Garlic (annual, one channel)
-  const EX3 = ['Garlic','10-1','4-30','','','196','1','1','2000','40','5','0.6','5','1','10','8000','6000','5000','0.40','0.20','0.15','4.0','1.5','3.0','150','Wholesale','3.00','0.20','annual','200000','','',''];
+  const EX3 = ['Garlic','10-1','4-30','','','196','1','1','2000','40','5','0.6','5','1','10','8000','6000','5000','0.40','0.20','0.15','4.0','1.5','3.0','150','16','FALSE','90','Wholesale','3.00','0.20','annual','200000','','',''];
   const esc = v => '"' + String(v).replace(/"/g,'""') + '"';
   const csv = [CSV_TEMPLATE_HEADERS, UNIT_ROW, toTemplateDisplay(EX1), toTemplateDisplay(EX2), toTemplateDisplay(EX3)]
     .map(row => row.map(esc).join(',')).join('\n');
@@ -4559,6 +4702,12 @@ function parseCropCSV(text) {
         min_acreage_if_planted:        impC(parseFloat(get('min_acreage_if_planted')) || 1, 'min_acreage_if_planted'),
         crop_diversity_max:            parseFloat(get('diversity_max_fraction')) || 0.5,
         seed_transplant_cost_per_acre: impC(parseFloat(get('seed_cost_per_ac'))     || 0, 'seed_transplant_cost_per_acre'),
+        // Unitless, so no impC(). Absent column → the same defaults the form uses, which keeps
+        // a pre-B.3 CSV importing exactly as it did before these columns existed.
+        sales_spread_weeks:            parseInt(get('sellable_weeks')) || 1,
+        cold_storage:                  /^(false|no|0|ambient)$/i.test(String(get('needs_cold_storage') || '').trim())
+                                         ? false : true,
+        ...(get('sell_through_pct') ? { sell_through_pct: parseFloat(get('sell_through_pct')) } : {}),
         labor_plant: impC(parseFloat(get('labor_plant_hr_ac')) || 0, 'labor_plant'),
         labor_grow:  impC(parseFloat(get('labor_grow_hr_ac'))  || 0, 'labor_grow'),
         labor_harv:  impC(parseFloat(get('labor_harv_hr_ac'))  || 0, 'labor_harv'),
@@ -6570,258 +6719,7 @@ from farm_v2.utils.water import get_rainfall_weekly
 # ----------------------------------------------------------------
 # Crop and channel definitions
 # ----------------------------------------------------------------
-CROPS = [
-    {
-        "name": "Spinach",
-        "days_to_maturity": 42,
-        "planting_weeks": 1,
-        "harvest_weeks": 2,
-        "seasons": [{"start": "02-01", "end": "06-15"},
-                    {"start": "08-01", "end": "11-15"}],
-        "min_acreage_if_planted": 2,
-        "crop_diversity_max": 0.50,
-        "yield_per_acre": 5000,
-        "crop_size_m3_per_lb": 0.0022,
-        "seed_transplant_cost_per_acre": 280,
-        "labor_plant": 15.0, "labor_grow": 4.0, "labor_harv": 50.0,
-        "water_plant": 10400, "water_grow": 12700, "water_harv": 9200,
-        "fert_plant": 0.46, "fert_grow": 0.35, "fert_harv": 0.23,
-        "fuel_plant": 3.5, "fuel_grow": 1.8, "fuel_harv": 4.6,
-        "channels": {
-            "Wholesale": {
-                "price_per_lb": 1.00,
-                "packaging_cost_per_lb": 0.09,
-                "demand_cap_type": "annual",
-                "annual_demand_lbs": 1200000,
-            },
-            "Farmers Market": {
-                "price_per_lb": 2.75,
-                "packaging_cost_per_lb": 0.18,
-                "demand_cap_type": "weekly_flat",
-                "weekly_demand_lbs": 6000,
-            },
-        },
-    },
-    {
-        "name": "Cucumbers",
-        "days_to_maturity": 70,
-        "planting_weeks": 1,
-        "harvest_weeks": 3,
-        "seasons": [{"start": "05-01", "end": "09-01"}],
-        "min_acreage_if_planted": 2,
-        "crop_diversity_max": 0.40,
-        "yield_per_acre": 12000,
-        "crop_size_m3_per_lb": 0.0030,
-        "seed_transplant_cost_per_acre": 190,
-        "labor_plant": 15.0, "labor_grow": 2.0, "labor_harv": 43.0,
-        "water_plant": 13900, "water_grow": 19600, "water_harv": 17300,
-        "fert_plant": 0.69, "fert_grow": 0.46, "fert_harv": 0.23,
-        "fuel_plant": 4.2, "fuel_grow": 2.3, "fuel_harv": 5.1,
-        "channels": {
-            "Wholesale": {
-                "price_per_lb": 0.55,
-                "packaging_cost_per_lb": 0.06,
-                "demand_cap_type": "annual",
-                "annual_demand_lbs": 900000,
-            },
-            "Farmers Market": {
-                "price_per_lb": 1.25,
-                "packaging_cost_per_lb": 0.12,
-                "demand_cap_type": "weekly_varying",
-                "demand_ranges": [{"weeks": "W18-W40", "weekly_lbs": 4000}],
-            },
-        },
-    },
-    {
-        "name": "Kale",
-        "days_to_maturity": 60,
-        "planting_weeks": 1,
-        "harvest_weeks": 4,
-        "seasons": [{"start": "02-01", "end": "06-01"},
-                    {"start": "07-15", "end": "12-01"}],
-        "min_acreage_if_planted": 2,
-        "crop_diversity_max": 0.30,
-        "yield_per_acre": 8000,
-        "crop_size_m3_per_lb": 0.0012,
-        "seed_transplant_cost_per_acre": 220,
-        "labor_plant": 3.5, "labor_grow": 2.0, "labor_harv": 22.0,
-        "water_plant": 9200, "water_grow": 11500, "water_harv": 8100,
-        "fert_plant": 0.38, "fert_grow": 0.28, "fert_harv": 0.15,
-        "fuel_plant": 3.2, "fuel_grow": 1.5, "fuel_harv": 3.8,
-        "channels": {
-            "Wholesale": {
-                "price_per_lb": 0.70,
-                "packaging_cost_per_lb": 0.07,
-                "demand_cap_type": "annual",
-                "annual_demand_lbs": 500000,
-            },
-            "Farmers Market": {
-                "price_per_lb": 2.00,
-                "packaging_cost_per_lb": 0.14,
-                "demand_cap_type": "weekly_varying",
-                "demand_ranges": [{"weeks": "W10-W50", "weekly_lbs": 3500}],
-            },
-        },
-    },
-    {
-        "name": "Tomatoes",
-        "days_to_maturity": 85,
-        "planting_weeks": 2,
-        "harvest_weeks": 8,
-        "seasons": [{"start": "04-15", "end": "10-15"}],
-        "min_acreage_if_planted": 2,
-        "crop_diversity_max": 0.45,
-        "yield_per_acre": 22000,
-        "crop_size_m3_per_lb": 0.0015,
-        "seed_transplant_cost_per_acre": 450,
-        "labor_plant": 5.5, "labor_grow": 3.5, "labor_harv": 35.0,
-        "water_plant": 17300, "water_grow": 23100, "water_harv": 19600,
-        "fert_plant": 0.69, "fert_grow": 0.58, "fert_harv": 0.35,
-        "fuel_plant": 4.5, "fuel_grow": 3.0, "fuel_harv": 5.5,
-        "channels": {
-            "Wholesale": {
-                "price_per_lb": 0.65,
-                "packaging_cost_per_lb": 0.06,
-                "demand_cap_type": "annual",
-                "annual_demand_lbs": 900000,
-            },
-            "Farmers Market": {
-                "price_per_lb": 1.80,
-                "packaging_cost_per_lb": 0.15,
-                "demand_cap_type": "weekly_varying",
-                "demand_ranges": [{"weeks": "W25-W42", "weekly_lbs": 7000}],
-            },
-        },
-    },
-    {
-        "name": "Napa Cabbage",
-        "days_to_maturity": 70,
-        "planting_weeks": 1,
-        "harvest_weeks": 2,
-        "seasons": [{"start": "03-01", "end": "07-01"},
-                    {"start": "07-15", "end": "11-01"}],
-        "min_acreage_if_planted": 2,
-        "crop_diversity_max": 0.40,
-        "yield_per_acre": 18000,
-        "crop_size_m3_per_lb": 0.0025,
-        "seed_transplant_cost_per_acre": 160,
-        "labor_plant": 8.0, "labor_grow": 0.7, "labor_harv": 30.0,
-        "water_plant": 9000, "water_grow": 12000, "water_harv": 10000,
-        "fert_plant": 0.40, "fert_grow": 0.28, "fert_harv": 0.18,
-        "fuel_plant": 3.0, "fuel_grow": 1.5, "fuel_harv": 3.8,
-        "channels": {
-            "Wholesale": {
-                "price_per_lb": 0.70,
-                "packaging_cost_per_lb": 0.07,
-                "demand_cap_type": "annual",
-                "annual_demand_lbs": 700000,
-            },
-            "Farmers Market": {
-                "price_per_lb": 1.60,
-                "packaging_cost_per_lb": 0.14,
-                "demand_cap_type": "weekly_flat",
-                "weekly_demand_lbs": 3600,
-            },
-        },
-    },
-    {
-        "name": "Hot Peppers",
-        "days_to_maturity": 147,
-        "planting_weeks": 2,
-        "harvest_weeks": 10,
-        "seasons": [{"start": "04-01", "end": "10-15"}],
-        "min_acreage_if_planted": 2,
-        "crop_diversity_max": 0.55,
-        "yield_per_acre": 12000,
-        "crop_size_m3_per_lb": 0.0018,
-        "seed_transplant_cost_per_acre": 420,
-        "labor_plant": 10.0, "labor_grow": 1.7, "labor_harv": 24.0,
-        "water_plant": 16200, "water_grow": 23100, "water_harv": 19600,
-        "fert_plant": 0.69, "fert_grow": 0.46, "fert_harv": 0.35,
-        "fuel_plant": 4.2, "fuel_grow": 2.8, "fuel_harv": 5.8,
-        "channels": {
-            "Wholesale": {
-                "price_per_lb": 1.50,
-                "packaging_cost_per_lb": 0.14,
-                "demand_cap_type": "annual",
-                "annual_demand_lbs": 300000,
-            },
-            "Farmers Market": {
-                "price_per_lb": 3.75,
-                "packaging_cost_per_lb": 0.25,
-                "demand_cap_type": "weekly_varying",
-                "demand_ranges": [{"weeks": "W22-W44", "weekly_lbs": 1600}],
-            },
-        },
-    },
-    {
-        "name": "Garlic",
-        "days_to_maturity": 196,
-        "planting_weeks": 3,
-        "harvest_weeks": 1,
-        "seasons": [{"start": "01-01", "end": "08-01"}],
-        "min_acreage_if_planted": 2,
-        "crop_diversity_max": 0.60,
-        "yield_per_acre": 10000,
-        "crop_size_m3_per_lb": 0.0012,
-        "sales_spread_weeks": 8,
-        "seed_transplant_cost_per_acre": 380,
-        "labor_plant": 6.7, "labor_grow": 0.3, "labor_harv": 75.0,
-        "water_plant": 13900, "water_grow": 9200, "water_harv": 8100,
-        "fert_plant": 0.46, "fert_grow": 0.23, "fert_harv": 0.12,
-        "fuel_plant": 4.6, "fuel_grow": 1.8, "fuel_harv": 3.5,
-        "channels": {
-            "Wholesale": {
-                "price_per_lb": 2.75,
-                "packaging_cost_per_lb": 0.20,
-                "demand_cap_type": "weekly_flat",
-                "weekly_demand_lbs": 30000,
-            },
-            "Farmers Market": {
-                "price_per_lb": 6.00,
-                "packaging_cost_per_lb": 0.40,
-                "demand_cap_type": "weekly_varying",
-                "demand_ranges": [{"weeks": "W22-W35", "weekly_lbs": 2000}],
-            },
-        },
-    },
-    {
-        "name": "Basil",
-        "days_to_maturity": 35,
-        "planting_weeks": 1,
-        "harvest_weeks": 3,
-        "seasons": [{"start": "05-01", "end": "09-15"}],
-        "min_acreage_if_planted": 1,
-        "crop_diversity_max": 0.25,
-        "yield_per_acre": 4500,
-        "crop_size_m3_per_lb": 0.0010,
-        "seed_transplant_cost_per_acre": 280,
-        "labor_plant": 5.0, "labor_grow": 3.0, "labor_harv": 40.0,
-        "water_plant": 9200, "water_grow": 11500, "water_harv": 8100,
-        "fert_plant": 0.40, "fert_grow": 0.30, "fert_harv": 0.18,
-        "fuel_plant": 3.0, "fuel_grow": 1.5, "fuel_harv": 3.5,
-        "sales_spread_weeks": 1,
-        "channels": {
-            "Wholesale": {
-                "price_per_lb": 1.50,
-                "packaging_cost_per_lb": 0.12,
-                "demand_cap_type": "annual",
-                "annual_demand_lbs": 150000,
-            },
-            "Farmers Market": {
-                "price_per_lb": 4.00,
-                "packaging_cost_per_lb": 0.28,
-                "demand_cap_type": "weekly_varying",
-                "demand_ranges": [{"weeks": "W20-W40", "weekly_lbs": 2000}],
-            },
-        },
-    },
-]
 
-CHANNELS = [
-    {"name": "Wholesale"},
-    {"name": "Farmers Market"},
-]
 
 # ----------------------------------------------------------------
 # Chart helpers
@@ -7018,10 +6916,11 @@ def run_from_js(params_json):
 
         # Fallback if no employees defined
         if not year_round_employees and not seasonal_employees:
-            year_round_employees = [{"position":"Farm Manager","count":1,"type":"salary","wage":95000,"hours_per_week":45},
-                                    {"position":"Equipment Operator","count":2,"type":"hourly","wage":26,"hours_per_week":40}]
-            seasonal_employees   = [{"position":"Seasonal Field Crew","count":15,"type":"FT","wage":20,"hours_per_week":40,"start_week":10,"end_week":42},
-                                    {"position":"Harvest Crew","count":10,"type":"FT","wage":19,"hours_per_week":40,"start_week":14,"end_week":40}]
+            # Was: silently staff 28 people (1 manager, 2 operators, 15 field, 10 harvest) and
+            # bill them. The worst of the three phantom fallbacks — labor is both a cost line
+            # and a capacity constraint, so an unstated crew changes the plan AND the P&L.
+            raise ValueError("no labor positions in payload: the plan's capacity and payroll "
+                             "would both be invented")
 
         # Apply the farm-wide payroll load to every position (UI-defined and fallback).
         for _e in year_round_employees + seasonal_employees:
@@ -7029,7 +6928,9 @@ def run_from_js(params_json):
 
         # --- Channels from UI ---
         channels_from_ui = p.get('channels', None)
-        channels = [{"name": ch['name']} for ch in channels_from_ui] if channels_from_ui else CHANNELS
+        if not channels_from_ui:
+            raise ValueError("no channels in payload: a farm with no way to sell is not a plan")
+        channels = [{"name": ch['name']} for ch in channels_from_ui]
 
         # Variable selling cost per lb (deducted from net price per channel)
         ch_var_cost = {ch['name']: float(ch.get('variable_selling_cost_per_lb', 0))
@@ -7039,7 +6940,15 @@ def run_from_js(params_json):
                               for ch in (channels_from_ui or []))
 
         # --- Crops (fully dynamic from UI) ---
-        raw_crops = p.get('crops', CROPS)
+        # (The CROPS and CHANNELS literals that used to sit above run_from_js were deleted with
+        # these fallbacks — they existed only to be defaulted to.)
+        # No fallback. A payload without crops used to silently solve a stale 8-crop demo
+        # (pre-b6bde4a, still carrying Napa Cabbage) and return a confident plan for a farm
+        # nobody described. Unreachable from the app — every caller sends getCropsFromForm() —
+        # but the server path is exactly where a phantom farm would be believed.
+        raw_crops = p.get('crops')
+        if not raw_crops:
+            raise ValueError("no crops in payload: refusing to solve a farm that was not described")
         # Subtract variable selling cost from each crop-channel price.
         # Phase 3.5.1: also normalise sales_spread_weeks (int 1-8, default 1).
         crops = []

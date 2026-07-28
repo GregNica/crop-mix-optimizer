@@ -132,6 +132,7 @@ const EPILOGUE = `
   parseCropCSV, parseMCMultiTab, parseRainfallXLSX,
   downloadCropTemplate, downloadMCXLSX, downloadRainfallXLSX,
   rainfallUnitOfFile, cropCSVUnitSystem, MC_TAB_UNITS, parseMCXLSX, diversitySelect,
+  CSV_TEMPLATE_HEADERS,
   U_LB, U_ACRE, U_PER_LB, U_MM,
   dispVal, toCanonicalActive,
 };`;
@@ -408,6 +409,38 @@ if (!csvUS || !csvME) {
       });
     });
   });
+}
+
+// ---- crop CSV: the fields B.3 added must survive the round-trip -------------------------------
+// Without these columns the writer drops shelf life and the cold flag, the parser defaults them
+// to strict-1-week + refrigerated, and every export/import cycle silently re-creates the B.3
+// regression the audit exists to undo. Garlic is the case that shows it: 16 sellable weeks in a
+// barn is the whole point of the ambient pool.
+{
+  const hdr = T.CSV_TEMPLATE_HEADERS;
+  ['sellable_weeks', 'needs_cold_storage', 'sell_through_pct'].forEach(col => {
+    if (!hdr.includes(col)) fail(`crop CSV: header contract is missing "${col}"`);
+  });
+  const row = ['Garlic','10-1','4-30','','','196','1','1','2000','40','5','0.6','5','1','10',
+               '8000','6000','5000','0.40','0.20','0.15','4.0','1.5','3.0','150',
+               '16','FALSE','90','Wholesale','3.00','0.20','annual','200000','','',''];
+  if (row.length !== hdr.length) {
+    fail(`crop CSV: test row has ${row.length} cells for ${hdr.length} headers — fix the row`);
+  } else {
+    const r = withSystem('us', () => T.parseCropCSV(hdr.join(',') + '\n' + row.join(',')));
+    if ((r.errors || []).length) fail('crop CSV: parse errors ' + JSON.stringify(r.errors));
+    else {
+      const c = r.crops[0];
+      if (c.sales_spread_weeks !== 16)
+        fail(`crop CSV: sellable_weeks 16 came back as ${c.sales_spread_weeks} — a clamp or a `
+           + `missing column is eating shelf life on import`);
+      if (c.cold_storage !== false)
+        fail(`crop CSV: needs_cold_storage FALSE came back as ${c.cold_storage} — an ambient `
+           + `crop silently returns to the cooler through the import door`);
+      if (c.sell_through_pct !== 90)
+        fail(`crop CSV: sell_through_pct 90 came back as ${c.sell_through_pct}`);
+    }
+  }
 }
 
 if (failures) { console.error(`\n${failures} FAILURE(S)`); process.exit(1); }

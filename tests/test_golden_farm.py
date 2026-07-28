@@ -184,6 +184,41 @@ def run_from_js():
 
 
 @pytest.fixture(scope="module")
+def golden_payload():
+    return json.loads(PAYLOAD.read_text())
+
+
+class TestNoPhantomFarm:
+    """A payload that omits a farm's essentials is refused, not quietly invented.
+
+    All three fallbacks were unreachable from the app (every caller sends the real thing) and
+    all three were live on the planned server path, where a confident plan for a farm nobody
+    described is the worst failure this tool can have. The labor one was the worst: it staffed
+    28 people, which moves the capacity constraint AND the payroll line.
+    """
+
+    @pytest.mark.parametrize("drop,expect", [("crops", "no crops"), ("channels", "no channels")])
+    def test_missing_collection_is_refused(self, run_from_js, golden_payload, drop, expect):
+        p = dict(golden_payload)
+        p.pop(drop, None)
+        out = json.loads(run_from_js(json.dumps(p)))
+        assert out["status"] == "error", (
+            f"a payload with no {drop} returned {out['status']!r} — it used to solve a stale "
+            f"built-in default silently"
+        )
+        assert expect in out.get("error", "").lower(), out.get("error")
+
+    def test_missing_labor_is_refused(self, run_from_js, golden_payload):
+        # The payload carries one `employees` list; the adapter splits it into year-round and
+        # seasonal. Emptying that list is what an unstaffed farm looks like on the wire.
+        p = dict(golden_payload)
+        p["employees"] = []
+        out = json.loads(run_from_js(json.dumps(p)))
+        assert out["status"] == "error", "an unstaffed farm must not be silently given a crew"
+        assert "labor" in out.get("error", "").lower(), out.get("error")
+
+
+@pytest.fixture(scope="module")
 def result(run_from_js):
     params = json.loads(PAYLOAD.read_text())
     out = json.loads(run_from_js(json.dumps(params)))
