@@ -96,6 +96,8 @@
     harvest_storage_cap:        { measure: 'vol_bulk' },
     equip_storage_cost_per_m3:  { measure: 'vol_bulk', inverse: true },    // $/m³ (capital)
     harvest_storage_cost_per_m3:{ measure: 'vol_bulk', inverse: true },    // $/m³ (capital)
+    ambient_storage_cap:        { measure: 'vol_bulk' },
+    ambient_storage_cost_per_m3:{ measure: 'vol_bulk', inverse: true },    // $/m³ (capital)
     // --- liquid volume ---
     fuel_storage:               { measure: 'vol_liquid' },
     water_storage_capacity:     { measure: 'vol_liquid' },

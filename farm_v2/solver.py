@@ -16,7 +16,7 @@ Constraint order (rows of A):
   C2   labor (52)
   C3   water (52)
   C4a  inventory balance — EQUALITY, inv[c,0]=0 (n_crops × 52)
-  C4b  storage capacity on HELD stock (52)
+  C4b  storage capacity on room occupancy — cold pool then ambient pool (2 × 52)
   C4c  shelf life — rolling bound on inv (n_crops × 52)
   C6   sales ≤ sales-capacity cap (n_crops × n_channels × 52)
   C8   crop diversity — annual acre-weeks per crop (n_crops)
@@ -123,6 +123,14 @@ def solve_farm_v2(
     rate_property_mortgage_rent: float = 0.0,  # $/week — land lease or mortgage payment
     other_debt_service_per_week: float = 0.0,  # $/week — P&I on other long-term loans (buildings, land improvements, carried debt) not already in the machinery/property lines
     fixed_selling_per_week: float = 0.0,       # $/week — channel fixed selling (stall fees, retainers); in cash flow only, P&L handles it below the line
+    # --- Ambient (non-refrigerated) produce storage ---
+    # A second pool for crops whose `cold_storage` flag is False: cured alliums, winter squash
+    # (chilling-injured below 50°F), potatoes. It is CAPPED and PRICED, never free — an
+    # uncapped ambient pool was measured as a $91,274/yr exploit, since marking every crop
+    # ambient then removes storage cost from the plan without changing it. Barn space is
+    # cheap (~$120/m³ against ~$500/m³ refrigerated), not free.
+    ambient_storage_cap: float = 0.0,      # m³
+    rate_ambient_storage: float = 0.0,     # $/m³/week
     # --- Cash flow constraint ---
     cash_constraint_enabled: bool = True,  # if False, skip C13 weekly cash floor entirely
     # --- Realism factors (sell-through in-objective; overhead & interest below the line) ---
@@ -420,6 +428,7 @@ def solve_farm_v2(
     irrigation_fixed = total_land * rate_irrigation * N_WEEKS
     fixed_cost = (
         harvest_storage_cap * rate_harvest_storage * N_WEEKS
+        + ambient_storage_cap * rate_ambient_storage * N_WEEKS
         + water_storage_capacity * rate_water_storage * N_WEEKS
         + irrigation_fixed
         + equip_storage * rate_equip_storage * N_WEEKS
@@ -568,7 +577,7 @@ def solve_farm_v2(
     # per-crop defaults — and the holding cost that has to precede them, because holding is
     # currently free in every dimension and a long shelf life is pure upside in the objective.
     shelf_life_weeks = [
-        max(1, min(8, int(c.get("shelf_life_weeks", c.get("sales_spread_weeks", 1)) or 1)))
+        max(1, min(N_WEEKS, int(c.get("shelf_life_weeks", c.get("sales_spread_weeks", 1)) or 1)))
         for c in crops
     ]
 
@@ -659,27 +668,63 @@ def solve_farm_v2(
             ]
             add_row(cols, 0.0, 0.0)   # equality
 
-    # C4b — Storage capacity: what is actually HELD, not what was harvested this week (52 rows)
+    # C4b — Storage capacity: everything that is IN THE ROOM during the week (2 x 52 rows)
     #
-    # Produce sold in its harvest week never enters `inv`, so field-to-truck sales consume no
-    # capacity — deliberate. Consequence worth knowing: with v2's C4 gone there is now no
-    # volumetric THROUGHPUT cap at all (C11/C12 cap harvest acres, not m³). SPEC_v3 §3.3
-    # records `max_harvest_m3_per_week` as the fix if that ever matters.
+    #     Σ_c m3/lb · ( inv[c,w-1] + st·H[c,w] )  ≤  capacity
     #
-    # One pool for now. SPEC_v3 §3.3 splits it into refrigerated + ambient with a per-crop
-    # `storage_type`, because cured storables (garlic, onions, winter squash — which takes
-    # chilling injury below 50°F) do not belong in a cooler, and one bulky storable can crowd
-    # out the perishables that do.
-    for w in range(1, N_WEEKS + 1):
-        cols = [
-            (idx_inv_start + _cw_index(c_idx, w, N_WEEKS), crops[c_idx]["crop_size_m3_per_lb"])
-            for c_idx in range(n_crops)
-        ]
+    # Opening stock plus this week's harvest — NOT end-of-week stock. A cooler is sized by what
+    # passes THROUGH it, not by what sleeps in it: field heat has to come off greens within the
+    # hour whether they ship Tuesday or Friday, so produce sold in its own harvest week occupies
+    # the room all the same. Measuring end-of-week `inv` reported ZERO storage for a farm that
+    # sells everything the week it picks, which is why that number could only ever be published
+    # as a lower bound. This form can size a building.
+    #
+    # Conservative on purpose: the whole week's harvest is counted as being in the room before
+    # any of it ships. You size a cooler for the worst Tuesday, not for the weekly average.
+    #
+    # TWO POOLS, split by the per-crop `cold_storage` flag. Cured storables (garlic, onions,
+    # winter squash — chilling-injured below 50°F, so the cooler actively damages it) belong in
+    # a barn and must not crowd out the perishables that need refrigeration. Ambient is capped
+    # and priced like any other owned building; see the note on `ambient_storage_cap`.
+    def _room_cols(w, want_cold):
+        cols = []
+        for c_idx in range(n_crops):
+            if bool(crops[c_idx].get("cold_storage", True)) != want_cold:
+                continue
+            m3 = crops[c_idx]["crop_size_m3_per_lb"]
+            if w > 1:   # inv[c,0] is anchored at zero, so week 1 has no opening stock
+                cols.append((idx_inv_start + _cw_index(c_idx, w - 1, N_WEEKS), m3))
+            cols += [
+                (idx_x_start + i, m3 * succ_weekly_sellable_lbs[i])
+                for i in range(N_S)
+                if successions[i]["crop"] == c_idx and phase_table[i][w] == 2
+            ]
+        return cols
+
+    # Kept, not discarded: the reported series is these very columns evaluated against the
+    # solution, so "what we publish" and "what we enforce" are the same arithmetic object
+    # rather than two derivations a test has to keep in agreement. This branch has shipped a
+    # report-vs-enforce divergence twice (B.1's 5x overstatement, and the pre-B.2
+    # inflow-vs-held mismatch); this makes the third one unrepresentable.
+    cold_room_cols = [_room_cols(w, True) for w in range(1, N_WEEKS + 1)]
+    ambient_room_cols = [_room_cols(w, False) for w in range(1, N_WEEKS + 1)]
+    for cols in cold_room_cols:
         add_row(cols, -np.inf, harvest_storage_cap)
+    for cols in ambient_room_cols:
+        # Emitted unconditionally even when no crop is ambient: an all-empty row is 0 <= cap,
+        # which presolve drops, and branching on crop data would add a case to reason about
+        # for no gain.
+        add_row(cols, -np.inf, ambient_storage_cap)
 
     # C4c — Shelf life: nothing in store is older than L weeks (n_crops × 52 rows)
     #
-    #     inv[c,w] ≤ st[c] · Σ_{k=0..L−1} H[c, w−k]
+    #     inv[c,w] ≤ st[c] · Σ_{k=0..L−2} H[c, w−k]
+    #
+    # L is the number of weeks the crop can be SOLD IN, counting its harvest week. So L=1 means
+    # "sold the week it is picked" and bounds held stock to zero — the sum is empty. Decided
+    # 2026-07-28: the field previously read L=1 as "harvest week plus one more", which was
+    # measured (a W14-15 harvest sold to a W16-only buyer at L=1) and judged not to match what
+    # the label promises. Anything relying on the old reading needs its value raised by one.
     #
     # "Inventory cannot exceed what arrived in the last L weeks." A rolling bound, NOT the
     # cumulative construction SPEC_v3 originally specified: §3.0(b) showed those doubled
@@ -692,14 +737,15 @@ def solve_farm_v2(
     # is discarded rather than the row forcing a sale demand cannot absorb.
     for c_idx in range(n_crops):
         L = shelf_life_weeks[c_idx]
-        if L >= N_WEEKS:
+        if L > N_WEEKS:
             # Unreachable today: shelf_life_weeks is clamped to <= 8 above, so this never
             # fires. Kept because B.3 raises that clamp for honest shelf lives (carrots 12,
             # garlic 16), at which point a crop marked non-perishable genuinely skips the
             # row. Do not read the row count as if this branch were live.
             continue
         for w in range(1, N_WEEKS + 1):
-            window = range(max(1, w - L + 1), w + 1)
+            # L-1, not L: the harvest week is a SELLING week, not a storage week.
+            window = range(max(1, w - L + 2), w + 1)
             cols = [(idx_inv_start + _cw_index(c_idx, w, N_WEEKS), 1.0)]
             for i in range(N_S):
                 if successions[i]["crop"] != c_idx:
@@ -936,7 +982,12 @@ def solve_farm_v2(
         }
 
     m3_per_lb = np.array([c["crop_size_m3_per_lb"] for c in crops], dtype=float)
-    storage_m3_weekly = (m3_per_lb @ inv_sol[:, 1:]).tolist()
+    # C4b's own rows, evaluated against the solution — see the note where they are built.
+    def _row_value(cols):
+        return float(sum(coeff * z[col] for col, coeff in cols))
+
+    storage_m3_weekly = [_row_value(cols) for cols in cold_room_cols]
+    ambient_m3_weekly = [_row_value(cols) for cols in ambient_room_cols]
 
     # Revenue and costs
     revenue = 0.0
@@ -1132,6 +1183,8 @@ def solve_farm_v2(
                              for w in range(N_WEEKS)]},
         "water":   {"used": water_used_weekly,
                     "cap":  [float(free_water[w] + city_weekly[w]) for w in range(N_WEEKS)]},
+        "storage_ambient": {"used": ambient_m3_weekly,
+                            "cap":  [float(ambient_storage_cap)] * N_WEEKS},
         "storage": {"used": storage_m3_weekly,
                     "cap":  [float(harvest_storage_cap)] * N_WEEKS},
     }
@@ -1180,6 +1233,7 @@ def solve_farm_v2(
         # key to read, and that copy understates any plan that holds stock. SPEC_v3 §9.
         "capacity_series":  capacity_series,
         "storage_peak_m3":  max(storage_m3_weekly) if storage_m3_weekly else 0.0,
+        "ambient_peak_m3":  max(ambient_m3_weekly) if ambient_m3_weekly else 0.0,
         "successions":      successions,
         "crops":            crops,
         "channels":         channels,

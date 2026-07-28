@@ -43,15 +43,32 @@ pytestmark = pytest.mark.skipif(not PAYLOAD.exists(), reason="golden payload mis
 
 # The P&L of the shipped default farm. Captured 2026-07-27 from the app's own default payload.
 GOLDEN = {
-    "revenue":          2_304_930,
-    "variable_cost":      808_398,
+    "revenue":          2_114_051,
+    "variable_cost":      718_312,
     "fixed_cost":         212_347,
-    "overhead_cost":      368_789,
-    "interest_cost":        1_160,
-    "profit":             901_236,
-    "operating_profit": 1_284_185,
+    "overhead_cost":      338_248,
+    "interest_cost":        1_098,
+    "profit":             831_046,
+    "operating_profit": 1_183_392,
 }
 # Baseline history — re-pin ONLY with a reason, and record it here.
+#   2026-07-28 (re-pinned, B.3): shelf life became STRICT — `shelf_life_weeks` is now the
+#     number of weeks a crop can be SOLD IN counting its harvest week, so 1 means "sold the
+#     week it is picked" and holds nothing. It previously meant "harvest week plus one more",
+#     measured directly (a W14-15 harvest reaching a W16-only buyer at L=1). Every crop
+#     therefore loses one selling week: revenue 2,304,930 -> 2,114,051 and profit 901,236 ->
+#     831,046 (-70,190, -7.8%).
+#     This is the change landing ahead of its data, and the loss is expected to be mostly
+#     recovered: 27 of the 29 crop templates carry NO shelf life at all, so they all fell to
+#     the strictest possible reading. Honest per-crop values are the agronomy audit's job, and
+#     five of the seven demo crops were separately measured as worth +$48,970 together. Do not
+#     read this baseline as the model getting worse.
+#     Storage also changed in the same pass (C4b now counts everything in the room during the
+#     week, not end-of-week stock) but that alone did NOT move the P&L — cold storage does not
+#     bind. Reported peak 95.6 -> 181.4 m3, i.e. 66% of the 275 m3 cap.
+#     (An earlier draft of this note said 200.7 m3 / 73%. That was measured after the storage
+#     change but BEFORE the strict shelf life below, which reduces what is held. Caught in
+#     review. Re-measure before quoting a figure from a half-applied change.)
 #   2026-07-27 (first pin): fixed 341,812 / profit 443,458.
 #   2026-07-27 (re-pinned): the water-tank capital benchmark was $3.74/L, which made the
 #     stock 270,000 L tank a $1,009,800 asset and 15% of ALL fixed cost on an 80-acre farm.

@@ -186,7 +186,7 @@ class TestBalanceReconciles:
             )
 
 
-class TestStorageBindsOnHeldStock:
+class TestStorageBindsOnRoomOccupancy:
     """C4b. The cap must see product that is SITTING there, not product that arrived."""
 
     def test_a_cap_above_weekly_inflow_still_binds_on_accumulated_stock(self, full_params):
@@ -227,9 +227,27 @@ class TestStorageBindsOnHeldStock:
 
     def test_solver_reports_the_peak_it_enforced(self, solved):
         """`storage_peak_m3` is what a grower sizes a building from, so it must be the
-        constraint's own number rather than anything re-derived downstream."""
-        r, _ = solved
-        assert r["storage_peak_m3"] == pytest.approx(max(_held_m3_weekly(r)), rel=1e-9)
+        constraint's own number rather than anything re-derived downstream.
+
+        C4b measures everything IN THE ROOM during the week — opening stock plus that week's
+        harvest — because field heat has to come off produce whether it ships that week or not.
+        Rebuilt here from x and the calendar, independently of the array the solver returned.
+        """
+        r, p = solved
+        H = _weekly_sellable_inflow(r, p["total_land"], p["sell_through_fraction"])
+        crops = r["crops"]
+        room = [
+            sum(crops[c]["crop_size_m3_per_lb"]
+                * (H[c, w] + (r["inventory"][c, w - 1] if w > 1 else 0.0))
+                for c in range(len(crops))
+                if crops[c].get("cold_storage", True))
+            for w in range(1, W + 1)
+        ]
+        assert r["storage_peak_m3"] == pytest.approx(max(room), rel=1e-9)
+        assert max(room) > max(_held_m3_weekly(r)), (
+            "the room measure must exceed held-only stock, or same-week harvest is not being "
+            "counted and the reported peak is back to being a lower bound"
+        )
 
 
 class TestShelfLife:
@@ -239,12 +257,17 @@ class TestShelfLife:
         r, p = solved
         H = _weekly_sellable_inflow(r, p["total_land"], p["sell_through_fraction"])
         for c, crop in enumerate(r["crops"]):
-            L = max(1, min(8, int(crop.get("shelf_life_weeks",
+            L = max(1, min(W, int(crop.get("shelf_life_weeks",
                                            crop.get("sales_spread_weeks", 1)) or 1)))
-            if L >= W:
+            if L > W:
                 continue
             for w in range(1, W + 1):
-                window = H[c, max(1, w - L + 1):w + 1].sum()
+                # w-L+2, matching the STRICT reading: L counts selling weeks INCLUDING the
+                # harvest week, so only L-1 of them are storage weeks. Using w-L+1 here (the
+                # pre-B.3 window) makes this assertion pass under both readings — strictly
+                # wider than the real bound — so it could no longer detect a revert. Found
+                # inert by review, not by failing.
+                window = H[c, max(1, w - L + 2):w + 1].sum()
                 assert r["inventory"][c, w] <= window + max(TOL, 1e-6 * max(1.0, window)), (
                     f"{crop['name']} W{w}: holds {r['inventory'][c, w]:,.1f} lb, more than the "
                     f"{L}-week rolling inflow of {window:,.1f} lb — product is older than its "

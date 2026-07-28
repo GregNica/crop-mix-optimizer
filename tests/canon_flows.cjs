@@ -116,6 +116,29 @@ const near = (name, got, want, rel) => {
     w.setUnitSystem('us');
   }
 
+  // ---- FLOW 3b: the per-crop cold-storage flag survives save/restore -----------------------
+  // It did not, and nothing noticed: renderCrop hard-coded `checked` and serializeCrops had no
+  // key, so the field was absent from BOTH sides of the round-trip and the existing check above
+  // passed vacuously. A crop parked in the barn silently returned to the cooler on every
+  // restore, moving the plan and the P&L with no user action. Untick, round-trip, re-read.
+  {
+    const boxes = () => Array.from(d.querySelectorAll('[data-f="cold_storage"]'));
+    if (!boxes().length) {
+      fail('cold-storage round-trip: no crop cards rendered, the check would be vacuous');
+    } else {
+      boxes()[0].checked = false;
+      const saved = w.serializeFormState();
+      boxes()[0].checked = true;            // wipe, so a no-op restore cannot pass
+      w.applyFormState(saved);
+      const after = boxes()[0];
+      if (!after) fail('cold-storage round-trip: crop card vanished after restore');
+      else if (after.checked !== false)
+        fail('cold-storage round-trip: crop unticked before saving came back ticked — it '
+           + 'silently moves from the barn to the cooler on every restore');
+      // silence on success matches the rest of this harness
+    }
+  }
+
   // ---- FLOW 4: a chatbot proposal carries CANONICAL schema units --------------------------
   // CHATBOT_FIELDS/CROP_DETAIL_FIELDS declare fixed units (acres, liters/week, lbs/acre), so a
   // value written with .value gets re-canonicalised in whatever system is on screen: "80 acres"

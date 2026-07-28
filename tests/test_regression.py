@@ -46,10 +46,20 @@ from farm_v2.solver import solve_farm_v2
 #     nothing under the new model — every pound grown is sold.
 #     The balance is verified to the pound, per crop, per week, by tests/test_inventory.py;
 #     this file only pins that the headline did not drift afterwards.
+#
+#   2026-07-28 (Phase B.3, strict shelf life): `shelf_life_weeks` now counts SELLING weeks
+#     including the harvest week, so the default of 1 means "sold the week it is picked" where
+#     it previously allowed one more. Revenue 1,761,684 -> 1,628,917 (-7.5%) but profit
+#     197,860 -> 87,933 (-55.6%): this fixture carries 1,184,316 of fixed cost, so a 7.5%
+#     revenue cut takes more than half the profit with it. Operating leverage, not a modelling
+#     error — and the reason this fixture is a sharper alarm than the golden farm (-7.8%).
+#     ⚠️ This is the change landing AHEAD OF ITS DATA. None of this fixture's crops carry a
+#     shelf life, so every one fell to the strictest possible reading. The agronomy audit sets
+#     honest per-crop values; expect most of this back. Do not treat 87,933 as a target.
 # ---------------------------------------------------------------------------
 
-EXPECTED_PROFIT  = 197_860      # ± 10%  (rebaselined 2026-07-27, Phase B.2)
-EXPECTED_REVENUE = 1_761_684    # ± 10%  (rebaselined 2026-07-27, Phase B.2)
+EXPECTED_PROFIT  = 87_933       # ± 10%  (rebaselined 2026-07-28, Phase B.3 — see note below)
+EXPECTED_REVENUE = 1_628_917    # ± 10%  (rebaselined 2026-07-28, Phase B.3)
 EXPECTED_FIXED   = 1_184_316    # ± 5%   (rebaselined 2026-07-27: annual, not 48-week)
 TOLERANCE_PCT    = 0.10         # 10% relative tolerance
 
