@@ -43,15 +43,33 @@ pytestmark = pytest.mark.skipif(not PAYLOAD.exists(), reason="golden payload mis
 
 # The P&L of the shipped default farm. Captured 2026-07-27 from the app's own default payload.
 GOLDEN = {
-    "revenue":          2_248_859,
-    "variable_cost":      781_261,
+    "revenue":          1_780_854,
+    "variable_cost":      633_679,
     "fixed_cost":         213_097,
-    "overhead_cost":      359_817,
-    "interest_cost":        1_149,
-    "profit":             880_534,
-    "operating_profit": 1_254_500,
+    "overhead_cost":      284_937,
+    "interest_cost":          837,
+    "profit":             635_305,
+    "operating_profit":   934_078,
 }
 # Baseline history — re-pin ONLY with a reason, and record it here.
+#   2026-07-28 (audit Phase B, water + fertiliser): profit 880,534 -> 635,305 (-245,229, -27.8%),
+#     revenue -468,005. Variable cost also FELL 147,582 — the farm grows less, it is not paying
+#     more. Water is essentially all of it; fertiliser adds only ~3,600 on top because the plan
+#     has already shrunk by then.
+#     Water: rates rebuilt from FAO-56 Table 12 Kc x a 5 mm/day mid-season ETo. They were ~10x
+#     below crop ET, so the 65% rainfall offset exceeded every crop's need and net irrigation was
+#     identically ZERO — C3 has never bound in this app's history. It binds now.
+#     Fertiliser: Penn State's three-tier N recommendation, split 40/45/15 across the phases.
+#     Was ~6 lb N/acre/season for tomatoes against a real 130.
+#     ⚠️ THE NEXT SUSPECT IS THE WELL, NOT THE CROPS. The demo's well_weekly_cap_L of 2,500,000
+#     is 0.30 in/acre/week across 80 acres; irrigated vegetables need 1-1.5. It covers about 24
+#     of the 80 acres at peak ET, so the model is now correctly reporting a farm that cannot
+#     irrigate itself. That default was never audited BECAUSE crop water was 10x too low and the
+#     constraint never bound. It is deliberately NOT adjusted here: tuning an input to restore a
+#     profit figure is the exact move this project forbids, and changing it in the same commit
+#     would confound the measurement above. Audit it next, with a source.
+#     Note the net margin is 35.7% — still far above the 5-15% real range, so these two fixes did
+#     NOT resolve the margin thesis; the plan shrank roughly in proportion to the revenue.
 #   2026-07-28 (audit Phase B, shelf lives): sourced values entered for all 29 templates from
 #     USDA AH-66 via UMaine Ext. Bulletin 4135 and SDSU Extension, by one stated rule (low end of
 #     the published range for the regime the crop is actually stored in on a diversified farm,
