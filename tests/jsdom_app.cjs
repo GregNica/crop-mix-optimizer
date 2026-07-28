@@ -28,12 +28,13 @@ function bootApp({ quiet = true } = {}) {
                          `<script>${units}</script>`);
   if (doc === html) throw new Error(
     'units.js <script src> tag not found — jsdom would boot the app with UNITS undefined');
-  // Drop the Pyodide loader: it fetches WASM, which jsdom cannot run. Nothing in these flows
-  // needs the solver.
+  // Drop the Pyodide kick-off: it injects a loader that fetches WASM, which jsdom cannot run.
+  // Nothing in these flows needs the solver. (The loader is injected by bootPyodide() rather
+  // than a static <script src>, so disabling the call is what stops the fetch.)
   const beforeStrip = doc;
-  doc = doc.replace(/<script[^>]*pyodide[^>]*>[\s\S]*?<\/script>/gi, '');
+  doc = doc.replace(/^bootPyodide\(\);$/m, '/* bootPyodide() disabled under jsdom */');
   if (doc === beforeStrip) throw new Error(
-    'pyodide loader not found — jsdom would try to fetch WASM it cannot run');
+    'bootPyodide() kick-off not found — jsdom would try to fetch WASM it cannot run');
 
   const dom = new JSDOM(doc, {
     runScripts: 'dangerously',

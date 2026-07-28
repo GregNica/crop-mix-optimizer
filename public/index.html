@@ -4,6 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Farm Crop-Mix Optimizer</title>
+<!-- The Pyodide runtime (~25 MB) is fetched from this origin by bootPyodide(). Warming the
+     connection here takes DNS + TCP + TLS off the boot path. -->
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="dns-prefetch" href="https://cdn.jsdelivr.net">
 <style>
   /* ─── PHASE 4.3: DESIGN SYSTEM VARIABLES ─── */
   :root {
@@ -54,6 +58,8 @@
     display: none;
   }
   #status-bar.visible { display: block; }
+  #status-bar.error { background: #7f1d1d; }
+  #status-bar .edit-btn { margin-left: 0.5rem; padding: 0.1rem 0.7rem; }
 
   main { padding: 0; }
 
@@ -3399,6 +3405,69 @@ let _suppressDirty = false;  // true while applyFormState() programmatically set
 let _saveTimer = null;
 let _knownPlanNames = [];     // saved names, for unique Untitled naming
 let _defaultFormState = null; // pristine form captured at load, for "New plan" (true reset)
+let _saveFailures = 0;        // consecutive failed saves, drives the backoff
+let _saveOffline = false;     // the API said "not signed in" — stop asking
+
+// The server is not the only copy. Every save attempt mirrors the form to localStorage FIRST,
+// so a failed round-trip costs sync, not work: the design promises Docs-style auto-save with
+// no unsaved-changes nag, and without a local copy that promise is false the moment the API is
+// unreachable. Cleared on a confirmed server save.
+const LOCAL_DRAFT_KEY = 'farm_local_draft';
+const LOCAL_DRAFT_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+// Real backoff. The previous 5s retry was dead code — the `finally` block below cancelled it
+// and rescheduled at 1.5s whenever edits were pending, which after a failure is always, so a
+// logged-out visitor hammered the API every 1.5s for the life of the tab.
+const SAVE_BACKOFF_MS = [2000, 5000, 15000, 30000, 60000];
+
+function writeLocalDraft() {
+  try {
+    localStorage.setItem(LOCAL_DRAFT_KEY, JSON.stringify(
+      { savedAt: Date.now(), name: _currentPlan, formState: serializeFormState() }));
+  } catch (_) { /* quota, or private mode — the in-page state is still live */ }
+}
+
+function clearLocalDraft() {
+  try { localStorage.removeItem(LOCAL_DRAFT_KEY); } catch (_) { /* nothing to undo */ }
+}
+
+function readLocalDraft() {
+  try {
+    const raw = localStorage.getItem(LOCAL_DRAFT_KEY);
+    if (!raw) return null;
+    const d = JSON.parse(raw);
+    if (!d || !d.formState) return null;
+    if (Date.now() - (d.savedAt || 0) > LOCAL_DRAFT_MAX_AGE_MS) { clearLocalDraft(); return null; }
+    return d;
+  } catch (_) { clearLocalDraft(); return null; }
+}
+
+// Offered, never auto-applied: silently resurrecting an old draft over the form the grower is
+// looking at would be worse than losing it.
+function offerLocalDraft() {
+  const draft = readLocalDraft();
+  const bar = document.getElementById('save-status');
+  if (!draft || !bar) return;
+  const when = new Date(draft.savedAt).toLocaleString();
+  bar.textContent = '';
+  const msg = document.createElement('span');
+  msg.textContent = `Unsaved draft from ${when} `;
+  const restore = document.createElement('button');
+  restore.type = 'button';
+  restore.className = 'acct-btn';
+  restore.textContent = 'Restore';
+  restore.addEventListener('click', () => {
+    applyFormState(draft.formState);
+    _currentPlan = draft.name || null;
+    setPlanNameLabel();
+    setSaveStatus('Draft restored');
+  });
+  const discard = document.createElement('button');
+  discard.type = 'button';
+  discard.className = 'acct-btn';
+  discard.textContent = 'Discard';
+  discard.addEventListener('click', () => { clearLocalDraft(); setSaveStatus(''); });
+  bar.append(msg, restore, discard);
+}
 
 function escHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
@@ -3461,6 +3530,8 @@ async function saveNow() {
   clearTimeout(_saveTimer);
   if (_planSaving) return;                 // in flight; the finally block reschedules if needed
   if (!_planDirty && _currentPlan) return; // nothing to do
+  writeLocalDraft();            // before the network, so the local copy never depends on it
+  if (_saveOffline) return;     // not signed in: the draft above is the only store there is
   _planSaving = true;
   setSaveStatus('Saving…');
   const isNew = !_currentPlan;
@@ -3470,19 +3541,31 @@ async function saveNow() {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name, formState: serializeFormState() }),
     });
+    // 401 is an answer, not a failure: retrying cannot fix "you are not signed in", and the
+    // old code looped on it forever for every logged-out visitor.
+    if (res.status === 401) {
+      _saveOffline = true;
+      setSaveStatus('Not signed in — changes kept in this browser only');
+      return;
+    }
     if (!res.ok) throw new Error('HTTP ' + res.status);
     _currentPlan = name;
     _planDirty = false;
+    _saveFailures = 0;
+    clearLocalDraft();          // the server now has it; a stale draft would only confuse
     setSaveStatus('Saved ✓');
     setPlanNameLabel();
     if (isNew) await refreshScenarios(name);
+    // Edits that landed while the request was in flight are not covered by the save just
+    // confirmed, so take them now rather than waiting for the next keystroke.
+    if (_planDirty) { clearTimeout(_saveTimer); _saveTimer = setTimeout(saveNow, 1500); }
   } catch (e) {
-    setSaveStatus('Save failed — retrying');
+    const delay = SAVE_BACKOFF_MS[Math.min(_saveFailures++, SAVE_BACKOFF_MS.length - 1)];
+    setSaveStatus(`Save failed — kept in this browser, retrying in ${Math.round(delay / 1000)}s`);
     clearTimeout(_saveTimer);
-    _saveTimer = setTimeout(saveNow, 5000);
+    _saveTimer = setTimeout(saveNow, delay);
   } finally {
     _planSaving = false;
-    if (_planDirty) { clearTimeout(_saveTimer); _saveTimer = setTimeout(saveNow, 1500); }
   }
 }
 
@@ -3844,6 +3927,10 @@ function initAutoSave() {
   // Closing/reloading → best-effort flush (no nag; auto-save already covers the rest).
   window.addEventListener('beforeunload', () => {
     if (!_planDirty && !_planSaving) return;
+    // The local draft first: it is the only one of the two that cannot fail, and this is the
+    // last moment the form still exists.
+    writeLocalDraft();
+    if (_saveOffline) return;   // a beacon to an endpoint that already said 401 goes nowhere
     try {
       const name = _currentPlan || uniqueUntitledName();
       navigator.sendBeacon('/api/scenarios',
@@ -6315,6 +6402,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // (independent of Pyodide; auth is enforced server-side).
   loadCurrentUser();
   refreshScenarios();
+  offerLocalDraft();
   initAutoSave();
   setPlanNameLabel();
   // Keep each field's canonical source-of-truth in sync on user edits, then convert the
@@ -6332,13 +6420,70 @@ let pyReady = false;
 const statusBar = document.getElementById('status-bar');
 statusBar.classList.add('visible');
 
-async function loadPyodideAndPackages() {
-  statusBar.textContent = 'Loading Pyodide v0.29.3…';
-  pyodide = await loadPyodide({
-    indexURL: "https://cdn.jsdelivr.net/pyodide/v0.29.3/full/"
+const PYODIDE_VERSION = "0.29.3";
+const PYODIDE_INDEX_URL = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
+const PYODIDE_PACKAGES = ["numpy", "scipy", "matplotlib"];
+const PACKAGE_LOAD_ATTEMPTS = 3;
+
+// The loader used to be a static <script onload/onerror>, which split boot failure across
+// two reporters — and the half with no Retry was the script fetch, the most transient
+// failure of the three. Injecting it here puts the whole chain (script → runtime →
+// packages → filesystem) behind one catch and one Retry button. The preconnect hint in
+// <head> keeps the connection setup off this critical path.
+function loadPyodideScript() {
+  if (window.loadPyodide) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const tag = document.createElement('script');
+    tag.src = PYODIDE_INDEX_URL + 'pyodide.js';
+    tag.crossOrigin = 'anonymous';
+    tag.onload = resolve;
+    tag.onerror = () => reject(new Error(
+      'Could not load Pyodide from the CDN. Try: (1) use Chrome, (2) disable Edge Tracking ' +
+      'Prevention for localhost, or (3) check your internet connection.'
+    ));
+    document.head.appendChild(tag);
   });
-  statusBar.textContent = 'Installing numpy, scipy, matplotlib…';
-  await pyodide.loadPackage(["numpy", "scipy", "matplotlib"]);
+}
+
+// loadPackage() resolves even when a wheel download fails, so a dropped connection
+// surfaces much later as a ModuleNotFoundError from whichever line first touches the
+// missing library — a Python traceback whose real cause is the network. Prove the
+// packages arrived by importing them here, and retry the download instead of letting
+// the app proceed in a broken state. (Seen 2026-07-28: numpy missing on a first load,
+// present after a plain refresh.)
+async function loadPackagesVerified() {
+  for (let attempt = 1; attempt <= PACKAGE_LOAD_ATTEMPTS; attempt++) {
+    if (attempt === 1) {
+      statusBar.textContent = `Installing ${PYODIDE_PACKAGES.join(', ')}…`;
+    } else {
+      statusBar.textContent = `Download incomplete — retrying (attempt ${attempt} of ${PACKAGE_LOAD_ATTEMPTS})…`;
+      await new Promise(resolve => setTimeout(resolve, 1000 * (attempt - 1)));
+    }
+    try {
+      await pyodide.loadPackage(PYODIDE_PACKAGES);
+      // Import the submodules the solver actually uses, not just the top-level names —
+      // a partially-written wheel can satisfy `import scipy` and still be unusable.
+      await pyodide.runPythonAsync("import numpy, scipy.optimize, matplotlib");
+      return;
+    } catch (err) {
+      console.error(`Package load attempt ${attempt} of ${PACKAGE_LOAD_ATTEMPTS} failed:`, err);
+    }
+  }
+  throw new Error(
+    `Could not download the Python packages (${PYODIDE_PACKAGES.join(', ')}) after ` +
+    `${PACKAGE_LOAD_ATTEMPTS} attempts. This is almost always a dropped or blocked ` +
+    `connection rather than a problem with your farm data.`
+  );
+}
+
+async function loadPyodideAndPackages() {
+  // Guard so a retry reuses the interpreter instead of building a second one.
+  if (!pyodide) {
+    statusBar.textContent = `Loading Pyodide v${PYODIDE_VERSION}…`;
+    await loadPyodideScript();
+    pyodide = await loadPyodide({ indexURL: PYODIDE_INDEX_URL });
+  }
+  await loadPackagesVerified();
 
   statusBar.textContent = 'Writing farm_v2 package to virtual filesystem…';
   for (const [path, content] of Object.entries(FARM_V2_FILES)) {
@@ -6360,6 +6505,28 @@ async function loadPyodideAndPackages() {
   pyReady = true;
   statusBar.textContent = 'Ready. Configure parameters and click Optimize.';
   setTimeout(() => { statusBar.classList.remove('visible'); }, 3000);
+}
+
+// A failed boot is usually transient, so offer the action that fixes it rather than
+// leaving the grower to guess that a refresh would have worked.
+function showBootFailure(message) {
+  statusBar.classList.add('error');
+  statusBar.textContent = message;
+  const retryBtn = document.createElement('button');
+  retryBtn.type = 'button';
+  retryBtn.className = 'edit-btn';
+  retryBtn.textContent = 'Retry';
+  retryBtn.addEventListener('click', bootPyodide);
+  statusBar.appendChild(retryBtn);
+}
+
+function bootPyodide() {
+  statusBar.classList.add('visible');
+  statusBar.classList.remove('error');
+  loadPyodideAndPackages().catch(err => {
+    console.error('Pyodide bootstrap failed:', err);
+    showBootFailure(err?.message || String(err));
+  });
 }
 
 // ============================================================
@@ -13687,22 +13854,9 @@ function switchMCTab(tabId) {
 // ============================================================
 // Kick off Pyodide load
 // ============================================================
-// loadPyodideAndPackages() is called by the onload handler below,
-// after pyodide.js has fully executed.
-</script>
-<!-- Load Pyodide first, then kick off initialization via onload -->
-<script
-  src="https://cdn.jsdelivr.net/pyodide/v0.29.3/full/pyodide.js"
-  onload="loadPyodideAndPackages().catch(err => {
-    document.getElementById('status-bar').textContent = 'Failed to load Pyodide: ' + err.toString();
-    document.getElementById('status-bar').style.background = '#7f1d1d';
-  })"
-  onerror="(function(){
-    var s = document.getElementById('status-bar');
-    s.textContent = 'Could not load Pyodide from CDN. Try: (1) use Chrome, (2) disable Edge Tracking Prevention for localhost, or (3) check your internet connection.';
-    s.style.background = '#7f1d1d';
-  })()"
-  crossorigin="anonymous">
+// bootPyodide() injects the loader itself, so every step of the boot — script, runtime,
+// packages, filesystem — fails into the same reporter and the same Retry button.
+bootPyodide();
 </script>
 </body>
 </html>
