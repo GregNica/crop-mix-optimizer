@@ -189,7 +189,68 @@ should be *derived and disclosed*, never *asked*.
 **Acceptance test for any future results screen:** it must answer #1 *and* speak to the other
 three, in the farmer's order — obligations before optimisation.
 
-## Status
+## Status (amended after three-agent review, 2026-07-28)
 
-- Phase A of SPEC_agronomy proceeds in parallel (shape-agnostic plumbing).
-- SPEC_agronomy Phases B–D and the D3 holding-cost build are HELD until the diff exists.
+- The hold below **expired on arrival** — its condition was "until the diff exists" and the diff is
+  in this file. What remains is a scoping *decision*, not an input. Narrowed accordingly:
+  **held** = the channel-adjacent slice (demand/price laugh-test, per-channel fields);
+  **not held** = B.3 recovery (holding cost → storable shelf lives → re-pin), the consistency
+  sweep, water, fertiliser. Holding a wrong-by-10× constraint behind a decision that cannot affect
+  it is ordering by narrative, not by dependency.
+- SPEC_agronomy Phase A is ~70% landed (`9f808e7`, `3456c7d`); remainder is shape-agnostic.
+
+## Review corrections to THE DIFF (2026-07-28) — read these before acting on the list above
+
+1. **The headline was over-claimed and is now narrowed** (see STRATEGY.md). Survives: the app has
+   no commitment primitive; demand is ceilings only. Refuted: that this "explains" the What-If
+   swings, the margin hurdle, or `crop_diversity_max`'s overloading — the first two have a
+   documented different cause (near-break-even LP indifference, decided fixes already recorded),
+   and land never binds on the shipped farm (peak 0.847), so there are no big blocks absorbing it.
+   Demand ceilings are doing *correct* work — Farmers-Market caps bind in essentially every selling
+   week — so a commitment floor is a **second object inside the ceiling**, not a replacement.
+2. **Floors are mostly slack at realistic economics.** Garlic×Wholesale still sells 91% of volume
+   at a 30% discount; abandonment needs ~−85%, because serving a channel costs only marginal cost
+   once the ground is planted (the average-vs-marginal insight already locked in
+   [[margin-kernel-and-hurdle]]). Build floors for *expressibility and pricing*, and rank
+   payment terms / CSA-financing / cost-to-serve above them for output impact.
+3. **`min_acreage_if_planted` is NOT the machinery.** It is conditional on the plant binary, so a
+   floor is escaped by abandoning the crop (measured: ≥14 ac → garlic 0 ac, −$344k). Obligations
+   must be floors on weekly deliveries `v[c,ch,w]`, with shortfall slack + a penalty, and they are
+   only meaningful *after* the shelf-life recovery — today 27 of 29 crops can sell only in their
+   harvest week, so a season-spanning weekly commitment is infeasible by construction.
+4. **I misused the grower's words on rotation.** Prompt 8's plot-agnosticism was used to validate
+   keeping rotation out of scope, but rotation is on the grower's *first page of January*
+   (prompt 1) and prompt 8 is about plot-level variation. The defensible position — "rotation
+   lives in the farmer's head and enters through the floors they type" — is a design decision, not
+   something the grower validated. State it as such.
+5. **The allocation rule lost half its content.** The same answer gives two logics: stake, *and*
+   "the farm store got short listed because it had the lowest/least reliable demand" — expected
+   value. Per-channel demand *reliability* is as supported as stake. And stake is **situational**,
+   not a static rank: it moves with season (an October box is a renewal decision), with
+   *consecutive* shortfalls, and by crop×channel; it inverts under glut. The grower generalised the
+   logic and explicitly not the ranking. For a winter-planning tool the real deliverable is
+   **buffer sizing**, not a runtime allocator.
+6. **#5 "weekly variety requirement" inverts what the grower said.** CSA was described as a
+   flexible *absorber* — "pawn off… while still providing value" — not an N-items-per-week floor.
+   A box does need 7–10 items, but that is imported domain knowledge; model the absorber or the
+   value is missed. (The "limited direct experience" flag on prompt 2 was also dropped in transit.)
+7. **CSA-as-financing is right in direction, dangerous alone.** A 10–15% discount for a 4–6 month
+   float implies a 25–40% APR — model the float *only* and the app concludes CSA is a terrible loan
+   and says drop it, which is a new way to give the same bad advice. The discount buys prepay **+
+   ~100% sell-through of volume sold before it is planted + a demand floor**; risk-sharing and
+   retention can be disclosure rather than math.
+8. **A 13th primitive, missing from all twelve: per-channel cost-to-serve.** Delivery, packing
+   labour, selling hours — collapsed today into `packaging_cost_per_lb`. It is the engine under
+   "direct retail wasn't worth it" *and* under "which channels are doing well", and without it the
+   app cannot reproduce the grower's own verdict.
+9. **Past-year actuals (#10) belong near the top, not tenth.** First item on the grower's January
+   page, the trust engine in a real planning session (play their own numbers back before offering
+   benchmarks), and the only credible source for the demand floors #1 needs. Note it also carries a
+   *yield* history signal ("what grew well"), which the entry as written omits.
+10. **Prices move with glut** ("this usually comes with changes in pricing etc") never made the
+    list. The grower's "too much to predict" hedge applies to forecasting the glut, not to
+    modelling the response.
+11. **Scale risk.** All of this rests on one one-pager from the small-direct end of a 20–150 acre
+    range, from someone who flagged limited institutional experience. Expect a wholesale-scale
+    informant to confirm floors/formality/payment terms and contradict the CSA and variety work.
+    Get that second page before locking channel semantics.
