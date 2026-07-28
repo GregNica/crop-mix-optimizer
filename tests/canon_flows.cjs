@@ -151,14 +151,26 @@ const near = (name, got, want, rel) => {
       const read = w.eval('getCropsFromForm()')[0].sales_spread_weeks;
       if (read !== 16)
         fail(`shelf-life flow: typed 16, getCropsFromForm returned ${read} — a clamp is back`);
+      // Expected values are read FROM the template, not hardcoded — the transfer is what is
+      // under test, and pinning the data here made this fail the moment Phase B entered real
+      // shelf lives (it did, on 2026-07-28).
+      const tpl = w.eval('CROP_TEMPLATES');
       w.eval("loadCropTemplate(0, 'Garlic')");
-      const afterTpl = spreadEls()[0].value;
-      if (String(afterTpl) !== '8')
-        fail(`shelf-life flow: Garlic template carries sales_spread_weeks:8 but the loader `
-           + `wrote ${JSON.stringify(afterTpl)} — template shelf lives are dead on load`);
+      const wantSpread = String(tpl['Garlic'].sales_spread_weeks);
+      const gotSpread = String(spreadEls()[0].value);
+      if (gotSpread !== wantSpread)
+        fail(`shelf-life flow: Garlic's template carries sales_spread_weeks:${wantSpread} but the `
+           + `loader wrote ${JSON.stringify(gotSpread)} — template shelf lives are dead on load`);
       const coldAfter = d.querySelectorAll('[data-f="cold_storage"]')[0];
-      if (!coldAfter || coldAfter.checked !== true)
-        fail('shelf-life flow: template load must leave an unflagged crop refrigerated');
+      const wantCold = tpl['Garlic'].cold_storage !== false;
+      if (!coldAfter || coldAfter.checked !== wantCold)
+        fail(`shelf-life flow: Garlic's template says cold_storage=${wantCold} but the loader `
+           + `left the box ${coldAfter && coldAfter.checked ? 'ticked' : 'unticked'}`);
+      // And a crop with NO flag must come back refrigerated — absence means cooler, not barn.
+      w.eval("loadCropTemplate(0, 'Spinach')");
+      const coldDefault = d.querySelectorAll('[data-f="cold_storage"]')[0];
+      if (!coldDefault || coldDefault.checked !== true)
+        fail('shelf-life flow: a template with no cold_storage key must load as refrigerated');
     }
   }
 

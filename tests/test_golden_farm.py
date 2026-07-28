@@ -43,15 +43,30 @@ pytestmark = pytest.mark.skipif(not PAYLOAD.exists(), reason="golden payload mis
 
 # The P&L of the shipped default farm. Captured 2026-07-27 from the app's own default payload.
 GOLDEN = {
-    "revenue":          2_114_051,
-    "variable_cost":      718_312,
-    "fixed_cost":         212_347,
-    "overhead_cost":      338_248,
-    "interest_cost":        1_098,
-    "profit":             831_046,
-    "operating_profit": 1_183_392,
+    "revenue":          2_248_859,
+    "variable_cost":      781_261,
+    "fixed_cost":         213_097,
+    "overhead_cost":      359_817,
+    "interest_cost":        1_149,
+    "profit":             880_534,
+    "operating_profit": 1_254_500,
 }
 # Baseline history — re-pin ONLY with a reason, and record it here.
+#   2026-07-28 (audit Phase B, shelf lives): sourced values entered for all 29 templates from
+#     USDA AH-66 via UMaine Ext. Bulletin 4135 and SDSU Extension, by one stated rule (low end of
+#     the published range for the regime the crop is actually stored in on a diversified farm,
+#     rounded down, counting the harvest week). Provenance per value in CROP_PROVENANCE.
+#     Profit 831,046 -> 880,534 (+49,488); revenue 2,114,051 -> 2,248,859. Recovers ~70% of the
+#     strict-semantics loss below. Fixed cost +750 is the new 150 m3 ambient barn's depreciation,
+#     which had to exist or garlic (now ambient) would be un-plantable.
+#     ⚠️ PREDICTION PARTLY FALSIFIED. SPEC_agronomy predicted recovery would concentrate in the 8
+#     storables. On THIS farm it came entirely from perishables moving 1 -> 2 weeks (spinach,
+#     cucumbers, kale, peppers); garlic — the only storable here — contributed ZERO, because its
+#     shelf life stops binding around 6 weeks (measured separately: 8, 16 and 24 give bit-identical
+#     plans). The prediction was about the LIBRARY and is untestable on a farm with no storables.
+#     Do not read this as confirmation.
+#     Residual: still ~20,700 below the pre-B.3 901,236, and that gap is honest — tomatoes and
+#     basil are genuinely 1-week crops where the old blank default gave them two.
 #   2026-07-28 (re-pinned, B.3): shelf life became STRICT — `shelf_life_weeks` is now the
 #     number of weeks a crop can be SOLD IN counting its harvest week, so 1 means "sold the
 #     week it is picked" and holds nothing. It previously meant "harvest week plus one more",
