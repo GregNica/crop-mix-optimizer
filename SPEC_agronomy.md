@@ -171,6 +171,24 @@ the 39% margin thesis.
 - **D4 Basil → accepted:** its protection is `shelf_life = 1`; the regime flag follows operational
   truth and carries little weight either way.
 
+## Two model gaps the transplant work surfaced (grower, 2026-07-29) — NOT data problems
+
+**1. No propagation greenhouse.** Raising your own transplants means seeding in midwinter, which
+needs a heated GREENHOUSE, not a high tunnel — a building, winter heat, and the labour to run it.
+The model has no such cost line, so "raise your own instead of buying plugs" would read as almost
+free. This is the ambient-barn error in a new place: a choice looks cheap because the asset that
+makes it possible is not charged. Until the line exists, purchased plugs is the only honest basis
+the app can ship, and `seed_transplant_cost_basis` cannot become a real user choice — offering
+"own propagation" as an option would be offering a saving the model invents.
+
+**2. Transplant timing quality is invisible, and it is not small.** Yield is one number per crop,
+so the model cannot express that a transplant set at its prime massively outproduces the same
+seeding set a week later under stress — the grower reports that difference persisting through the
+entire life of the plant. Every transplanted crop in the library is implicitly priced as if set at
+its prime, which is the optimistic end. Related: buying finished transplants removes raising loss
+(you receive only survivors) but surrenders that timing control, so the two options differ in
+RISK and YIELD, not just in cost per plant — and the model can currently see only the cost.
+
 ## Done when
 
 29 templates carry provenance-tagged values, cold flags, families, sell-through, stated bases

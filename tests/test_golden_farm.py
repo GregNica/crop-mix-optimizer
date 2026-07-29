@@ -43,15 +43,31 @@ pytestmark = pytest.mark.skipif(not PAYLOAD.exists(), reason="golden payload mis
 
 # The P&L of the shipped default farm. Captured 2026-07-27 from the app's own default payload.
 GOLDEN = {
-    "revenue":          2_287_977,
-    "variable_cost":      859_164,
+    "revenue":          2_221_362,
+    "variable_cost":      870_669,
     "fixed_cost":         213_097,
-    "overhead_cost":      366_076,
-    "interest_cost":        2_457,
-    "profit":             834_155,
-    "operating_profit": 1_215_716,
+    "overhead_cost":      355_418,
+    "interest_cost":        3_104,
+    "profit":             766_074,
+    "operating_profit": 1_137_596,
 }
 # Baseline history — re-pin ONLY with a reason, and record it here.
+#   2026-07-29 (transplant costs, purchased-plug basis): profit 834,155 -> 766,074 (-68,081).
+#     Ten transplanted crops re-costed as plants/acre (published spacing, 43,560 sq ft/acre) x a
+#     published flat price: 72-cell @ $15 for solanaceae and cucurbits, 128-cell @ $12 for
+#     brassicas, lettuce and basil. Every one was 2-8x low — Basil 280 -> 2,722 at 29,040
+#     plants/acre, Bell Peppers 400 -> 2,017, Kale 300 -> 1,089.
+#     BASIS IS EXPLICIT NOW, because the grower's answer was that there is no single right one
+#     and the real question is INFRASTRUCTURE: raising your own means midwinter seeding, which
+#     means a heated GREENHOUSE, not a high tunnel. This model has no propagation greenhouse, so
+#     "raise your own" would read as nearly free — the ambient-barn error again. Purchased plugs
+#     is therefore the honest shipped basis, and it is also the grower's own recommendation
+#     (skips early-seedling loss and midwinter seeding while keeping control of field timing).
+#     ⚠️ Commercial bulk plugs are quoted custom, not published, so these are the published-price
+#     UPPER bound. Onions and Strawberries were deliberately NOT touched — they are bare-root
+#     (bunched plants, crowns), plug pricing does not apply, and no price source was found.
+#     Net margin 34.5%, from 36.5%. Still outside 5-15%, and now most of the remaining gap is in
+#     labour season totals, which is the one family still entirely unaudited.
 #   2026-07-29 (two more sourced values): profit 834,760 -> 834,155 (-605). Small because
 #     neither crop is a large block here, but both were wrong and both are now citable.
 #     Bell pepper HARVEST labour 111 -> 200 h/acre (UC Davis Rural Migration labor data). Garlic
