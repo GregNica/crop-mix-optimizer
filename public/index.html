@@ -438,6 +438,22 @@
   #progress-wrap { display: none; margin: 0.6rem 0; }
   #progress-bar-track { background: #e5e7eb; border-radius: 6px; height: 8px; overflow: hidden; }
   #progress-bar-fill { height: 100%; background: #2d6a4f; width: 0%; transition: width 0.4s; border-radius: 6px; }
+  /* INDETERMINATE, and it must animate on the COMPOSITOR. Pyodide solves on the main thread,
+     so during a solve no timer fires, no rAF fires, and no layout happens. A bar that animates
+     `width` (as the determinate one above does) is therefore frozen for exactly the seconds it
+     exists to cover. `transform` and `opacity` are composited, so they keep moving while the
+     main thread is blocked — the same reason .spinner above keeps spinning. */
+  #progress-bar-track.is-indeterminate #progress-bar-fill {
+    width: 35%; transition: none; will-change: transform;
+    animation: pb-slide 1.15s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  }
+  @keyframes pb-slide {
+    0%   { transform: translateX(-110%); }
+    100% { transform: translateX(320%); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #progress-bar-track.is-indeterminate #progress-bar-fill { animation-duration: 2.4s; }
+  }
   #progress-label { font-size: 0.75rem; color: #6b7280; margin-top: 3px; }
 
   /* Error box */
@@ -7536,40 +7552,32 @@ function showError(errBox, msg, isWarning) {
 }
 
 function startProgress(fillEl, labelEl) {
-  // Fake progress: ~80% over 60s, then holds until done
-  // ⚠️ These are SIMULATED stages on timers, not solver progress — and they only advance
-  // while the main thread is free. Pyodide solves on this thread, so once run_from_js is
-  // called none of these fire until it returns. In practice the bar shows "Starting…",
-  // freezes for the length of the solve, then jumps to "Done!". Treat the percentages as
-  // reassurance that the click registered, not as information.
+  // Indeterminate, on purpose, and CSS-driven for a reason.
   //
-  // Phase B.2's inventory core made the golden farm's solve 19.6x slower natively
-  // (110ms -> 2,156ms, 1 branch-and-bound node -> 41), so the freeze is now materially
-  // longer. Re-time these against a real browser measurement before trusting the wording,
-  // and prefer moving Pyodide to a Web Worker over tuning the numbers.
-  const steps = [
-    {pct:  5, t:  1000, label: 'Building model…'},
-    {pct: 15, t:  4000, label: 'Generating successions…'},
-    {pct: 30, t:  8000, label: 'Setting up constraints…'},
-    {pct: 50, t: 15000, label: 'Running HiGHS solver…'},
-    {pct: 65, t: 25000, label: 'Optimizing (may take 30–60 s)…'},
-    {pct: 75, t: 40000, label: 'Optimizing…'},
-    {pct: 80, t: 60000, label: 'Almost there…'},
-  ];
-  const timers = [];
-  steps.forEach(s => {
-    timers.push(setTimeout(() => {
-      fillEl.style.width = s.pct + '%';
-      labelEl.textContent = s.label;
-    }, s.t));
-  });
-  return timers;
+  // This was a fake staged bar: seven setTimeout steps narrating "Running HiGHS solver…",
+  // "Optimizing (may take 30-60 s)…". None of it could ever run. Pyodide solves on this
+  // thread, so from the moment run_from_js is called no timer fires, no rAF fires, and no
+  // layout happens — the bar sat at 0% saying "Initializing…" for the whole solve and then
+  // jumped to "Done!". It animated `width`, which needs layout, so it was blocked twice over.
+  // The stage copy was also calibrated for a 60-second solve; measured in the browser
+  // 2026-07-29 the default farm takes about 5 seconds.
+  //
+  // The honest version: we cannot know progress — HiGHS reports none back through Pyodide —
+  // so do not claim any. Show that the app is alive, using a compositor-animated transform
+  // that keeps moving while the main thread is blocked, and say how long it usually takes.
+  const track = fillEl && fillEl.parentElement;
+  if (track) track.classList.add('is-indeterminate');
+  if (fillEl) fillEl.style.width = '';
+  if (labelEl) labelEl.textContent = 'Solving — usually a few seconds…';
+  return [];   // no timers to cancel; the return value is kept for the existing call sites
 }
 
 function stopProgress(timers, fillEl, labelEl, success) {
-  timers.forEach(t => clearTimeout(t));
-  fillEl.style.width = success ? '100%' : '0%';
-  labelEl.textContent = success ? 'Done!' : '';
+  (timers || []).forEach(t => clearTimeout(t));
+  const track = fillEl && fillEl.parentElement;
+  if (track) track.classList.remove('is-indeterminate');
+  if (fillEl) { fillEl.style.width = success ? '100%' : '0%'; }
+  if (labelEl) labelEl.textContent = success ? 'Done!' : '';
 }
 
 function validateParams(params) {
@@ -7751,10 +7759,9 @@ async function runOptimizer() {
     return;
   }
 
-  // Show progress bar
+  // Show progress bar. startProgress owns the width and the label — setting them here too
+  // just flashed a 2% determinate stub before the indeterminate animation took over.
   progressWrap.style.display = 'block';
-  fillEl.style.width = '2%';
-  labelEl.textContent = 'Starting…';
   const progressTimers = startProgress(fillEl, labelEl);
 
   // Let the browser PAINT the running state before we hand it a blocking solve.

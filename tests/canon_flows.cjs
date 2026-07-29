@@ -384,6 +384,44 @@ const near = (name, got, want, rel) => {
     }
   }
 
+  // ---- the solve progress bar must animate on the compositor, not on timers --------------
+  // Pyodide solves on the main thread, so during a solve no setTimeout fires, no rAF fires and
+  // no layout runs. The old bar was seven setTimeout stages animating `width` — blocked twice
+  // over — and it narrated "may take 30-60 s" for what the browser measured at ~5s. A bar that
+  // is frozen for exactly the seconds it exists to cover is worse than none, because it reads
+  // as a hung app.
+  {
+    const w5 = await bootApp();
+    const doc = w5.document;
+    const fill = doc.getElementById('progress-bar-fill');
+    const label = doc.getElementById('progress-label');
+    const track = fill && fill.parentElement;
+    if (!fill || !label || !track) {
+      fail('progress: #progress-bar-fill / #progress-label / track missing');
+    } else {
+      const timers = w5.startProgress(fill, label);
+      if (!track.classList.contains('is-indeterminate'))
+        fail('progress: startProgress did not put the track into its indeterminate state, so '
+           + 'the bar is driven by something the blocked main thread controls');
+      if (!/solving/i.test(label.textContent))
+        fail(`progress: label reads "${label.textContent}" — it should say the solve is running`);
+      if (/30.60|60 s|minute/i.test(label.textContent))
+        fail(`progress: label still quotes the old 60-second staging: "${label.textContent}"`);
+      w5.stopProgress(timers, fill, label, true);
+      if (track.classList.contains('is-indeterminate'))
+        fail('progress: stopProgress left the bar animating after the solve returned');
+    }
+    // And the CSS must animate a COMPOSITED property. `width` needs layout, which is exactly
+    // what is unavailable while Pyodide holds the thread.
+    const css = require('fs').readFileSync(
+      require('path').join(ROOT, 'public', 'index.html'), 'utf8');
+    const kf = css.match(/@keyframes pb-slide\s*{[^}]*}[^}]*}/);
+    if (!kf) fail('progress: @keyframes pb-slide not found');
+    else if (!/transform:\s*translateX/.test(kf[0]))
+      fail(`progress: pb-slide does not animate transform — a non-composited property will be `
+         + `frozen for the whole solve: ${kf[0].replace(/\s+/g, ' ')}`);
+  }
+
   if (failures) { console.error(`\n${failures} FAILURE(S)`); process.exit(1); }
   console.log('data-canon flows: all checks passed '
             + '(channel restore, zero-crop restore, save/restore round-trip, chatbot update)');
