@@ -2570,7 +2570,30 @@ const CROP_PROVENANCE = {
   // ~1.5 workers/acre over a 16-week season), and strawberries are reported as the most
   // labour-intensive crop grown in California. Anything else above ~530 should be suspected.
   //
-  // ⚠️ ONLY TWO CROPS ARE DONE. The other 27 still carry flat labor_harv values with no rate
+  // ⚠️ WHY HARVEST HOURS ARE HARD TO SOURCE — checked, not assumed (2026-07-29).
+  // Commercial vegetable enterprise budgets DO NOT REPORT HARVEST IN HOURS, because commercial
+  // farms contract harvest out. Verified in three independent studies pulled and read in full:
+  //   UC Davis Imperial cabbage ...... "Cut, pack, haul, cool and sell — 600 cartons @ $4.00" —
+  //                                    $2,400/acre custom, ZERO grower hours
+  //   UC Davis organic spinach ....... "Harvest/Packing/Transporting — 0.00 Hrs/A, $1,300 custom"
+  //   UC Davis bell pepper ........... "$71 per gross ton harvesting and hauling", "$2.82 per
+  //                                    packed box" — priced per unit, no hours
+  // So the absence is structural, not a search failure. This app's persona (20-150 acres,
+  // diversified, own crew, CSA/market/restaurant) genuinely DOES harvest in hours — the model is
+  // right for them — but the mainstream published record is written for operations that do not.
+  //
+  // PRE-harvest hours ARE published, and they VALIDATE the library. Against the same studies:
+  //   Spinach      library 14 h/ac pre-harvest   vs UC Davis 7.7 machine hrs + contract weeding
+  //   Cabbage      library 21 h/ac               vs UC Davis 28 h/ac hand labour
+  // Same order of magnitude, library slightly higher for spinach — which is what you would
+  // expect of a farm doing its own weeding rather than contracting it. labor_plant and
+  // labor_grow are therefore in reasonable shape; HARVEST is the family with the real gap.
+  //
+  // ⚠️ ALSO NOT EXPRESSIBLE: a custom harvest priced per carton/ton/acre. The model has only
+  // hours x wage. A farm that contracts its harvest cannot say so, and its harvest cost will be
+  // wrong by whatever the contract rate is over the crew rate.
+  //
+  // The other 26 still carry flat labor_harv values with no rate
   // behind them, and the whole labor_grow column is untouched everywhere. Known-suspect and
   // deliberately not guessed: Garlic at 133 lb/hour for an operation that is dig, pull, field-cure
   // and haul (the domain review put garlic harvest at 100-250 h/acre against the library's 75),
