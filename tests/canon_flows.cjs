@@ -357,6 +357,33 @@ const near = (name, got, want, rel) => {
     }
   }
 
+  // ---- loading a template must CLEAR the previous crop's season 2 --------------------------
+  // setMMDD routed the empty case through set(), which deliberately ignores '' because it
+  // carries canonical unit values where blank means "leave alone". So a one-season template
+  // loaded onto a two-season card inherited the old second window. Under the whole-cycle rule
+  // that leftover generated nothing and was invisible; now that windows are PLANTING windows
+  // it generates real successions — measured at 23 garlic successions instead of 3, including
+  // a mid-July planting harvesting in March.
+  {
+    const w4 = await bootApp();
+    const before = w4.getCropsFromForm();
+    const twoSeason = before.findIndex(c => (c.seasons || []).length > 1);
+    if (twoSeason < 0) {
+      fail('template load: no demo crop has two seasons — the guard cannot be exercised');
+    } else {
+      w4.loadCropTemplate(twoSeason, 'Garlic');
+      const after = w4.getCropsFromForm()[twoSeason];
+      if (after.name !== 'Garlic')
+        fail(`template load: expected Garlic on card ${twoSeason}, got ${after.name}`);
+      if ((after.seasons || []).length !== 1)
+        fail(`template load: Garlic is a one-season template but the card kept `
+           + `${JSON.stringify(after.seasons)} — the previous crop's window survived and will `
+           + `generate successions that template never described`);
+      if (after.overwinters !== true)
+        fail('template load: Garlic must arrive with overwinters set');
+    }
+  }
+
   if (failures) { console.error(`\n${failures} FAILURE(S)`); process.exit(1); }
   console.log('data-canon flows: all checks passed '
             + '(channel restore, zero-crop restore, save/restore round-trip, chatbot update)');

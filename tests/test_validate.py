@@ -156,11 +156,17 @@ class TestCropValidation:
         with pytest.raises(ValueError, match="season"):
             _call(minimal_params, crops=[bad])
 
-    def test_season_end_before_start_raises(self, minimal_params, spinach_crop):
-        bad = copy.deepcopy(spinach_crop)
-        bad["seasons"] = [{"start": "09-01", "end": "03-01"}]
-        with pytest.raises(ValueError, match="before start|end.*before"):
-            _call(minimal_params, crops=[bad])
+    def test_season_end_before_start_is_a_wrapping_window_not_an_error(
+            self, minimal_params, spinach_crop):
+        """A window that ends before it starts WRAPS the year — Sept-to-March planting.
+
+        This used to raise. generate_successions handles it explicitly (B6), so rejecting it
+        here contradicted the generator and would have failed exactly the fall-planted crops
+        the wrap exists to support.
+        """
+        wrapping = copy.deepcopy(spinach_crop)
+        wrapping["seasons"] = [{"start": "09-01", "end": "03-01"}]
+        _call(minimal_params, crops=[wrapping])   # must not raise
 
     def test_diversity_max_out_of_range_raises(self, minimal_params, spinach_crop):
         bad = copy.deepcopy(spinach_crop)
@@ -174,16 +180,42 @@ class TestCropValidation:
         with pytest.raises(ValueError, match="crop_diversity_max"):
             _call(minimal_params, crops=[bad])
 
-    def test_narrow_season_window_produces_warning(self, minimal_params, spinach_crop):
-        """One narrow window (< crop cycle) alongside a valid window → warning, not error."""
+    def test_narrow_season_window_no_longer_warns(self, minimal_params, spinach_crop):
+        """A window shorter than the cycle is a short PLANTING window, not an empty one.
+
+        The old warning said "No successions will be generated for this window" — which was the
+        B5 defect stated as if it were intended behaviour. A grower acting on it would widen a
+        window for no reason and change their plan.
+        """
         narrow = copy.deepcopy(spinach_crop)
-        # 6-week crop: add a 4-week window (too narrow) alongside a valid one
-        narrow["seasons"] = [
-            {"start": "04-01", "end": "04-28"},   # only 4 weeks — too narrow, warning
-            {"start": "08-01", "end": "11-15"},   # plenty wide — ensures successions exist
-        ]
+        narrow["seasons"] = [{"start": "04-01", "end": "04-28"}]   # 4 weeks, 6-week crop
         warnings = _call(minimal_params, crops=[narrow])
-        assert any("narrow" in w.lower() or "window" in w.lower() for w in warnings)
+        assert not any("no successions" in w.lower() for w in warnings), (
+            f"validator still claims a narrow window yields nothing: {warnings}"
+        )
+
+    def test_late_window_without_overwinters_warns(self, minimal_params, spinach_crop):
+        """The replacement warning: start weeks whose cycle would run past week 52 are skipped."""
+        late = copy.deepcopy(spinach_crop)
+        # A workable window alongside the late one, so the crop still generates successions —
+        # otherwise the "no successions at all" error fires first and there are no warnings.
+        late["seasons"] = [{"start": "04-01", "end": "06-15"},
+                           {"start": "12-01", "end": "12-24"}]
+        warnings = _call(minimal_params, crops=[late])
+        assert any("past week 52" in w for w in warnings), (
+            f"expected a skipped-start-weeks warning, got {warnings}"
+        )
+
+    def test_late_window_with_overwinters_does_not_warn(self, minimal_params, spinach_crop):
+        """...and it must go quiet once the crop declares it overwinters."""
+        ow = copy.deepcopy(spinach_crop)
+        ow["seasons"] = [{"start": "04-01", "end": "06-15"},
+                         {"start": "12-01", "end": "12-24"}]
+        ow["overwinters"] = True
+        warnings = _call(minimal_params, crops=[ow])
+        assert not any("past week 52" in w for w in warnings), (
+            f"an overwintering crop must not be warned about wrapping: {warnings}"
+        )
 
     def test_missing_price_per_lb_raises(self, minimal_params, spinach_crop):
         bad = copy.deepcopy(spinach_crop)

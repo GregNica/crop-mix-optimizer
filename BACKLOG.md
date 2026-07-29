@@ -95,6 +95,10 @@ All are `defect` class — they need no consultation.
 
 ---
 
+| ⛔ **S16** | **B5 removed the only de-facto frost guard INSIDE the year, and only the wrap case was gated.** Every shipped window's END date was authored to mean "the cycle finishes by then"; it now bounds only the PLANTING. `/code-review` found this live in the re-pinned golden plan: **`Hot Peppers W25` (2.4 acres) harvests weeks 36–45, i.e. through ~8 November, against an authored window ending 10-15 (week 42)** — a frost-tender crop harvesting after frost. That succession did not exist before B5 and is part of the +3.8% revenue re-pin. There is no temperature or frost model to catch it. **Options, neither free:** re-author the library's windows as true planting windows (29 templates, needs data), or add a per-crop last-harvest/frost bound (also needs data). Until then the honest statement is that late-planted successions of frost-tender crops are permitted and the grower must sanity-check them | `farm_v2/utils/calendar.py`; verified in the golden plan | value | D1, D3 |
+
+---
+
 ## Tier 2b — Practice coverage (from the 2026-07-29 research, evidence in `STRATEGY.md`)
 
 The external survey plus an own-research pass that filled its gaps. Two new cost categories, one

@@ -135,8 +135,10 @@ def validate_params(
 
     if not succs:
         raise ValueError(
-            "No successions generated for any crop. "
-            "Check that season windows are wide enough to fit the crop cycle."
+            "No successions generated for any crop. Season windows are PLANTING windows, so "
+            "check that each one holds at least one start week whose cycle finishes by week 52 "
+            "— or tick 'overwinters' for a crop that is fall-planted and harvested the "
+            "following year."
         )
 
     # Per-crop check
@@ -294,16 +296,22 @@ def _validate_crop(crop: dict, ch_names: list[str], year: int) -> list[str]:
             raise ValueError(f"Crop '{name}' season entry missing 'start' or 'end'.")
         sw = week_of_year(s["start"], year)
         ew = week_of_year(s["end"],   year)
-        if ew < sw:
-            raise ValueError(
-                f"Crop '{name}' season end ({s['end']}) is before start ({s['start']})."
-            )
-        window_size = ew - sw + 1
-        if window_size < total_weeks:
+        # A window that ends before it starts WRAPS the year (e.g. Nov-to-Feb planting) and is
+        # generated correctly by generate_successions. Rejecting it here contradicted the
+        # generator and would have failed exactly the fall-planted crops B6 exists to support.
+        window_size = (ew - sw + 1) if ew >= sw else (52 - sw + 1) + ew
+
+        # NOT a warning any more: seasons are PLANTING windows, so a window narrower than the
+        # cycle is an ordinary short planting window, not an empty one. The old text asserted
+        # "No successions will be generated for this window", which was the B5 defect stated as
+        # if it were intended behaviour — a grower acting on it would widen a window for no
+        # reason and change their plan.
+        if not crop.get("overwinters", False) and sw + total_weeks - 1 > 52:
             warnings.append(
-                f"Crop '{name}' season window {s['start']}–{s['end']} "
-                f"({window_size} weeks) is narrower than crop cycle ({total_weeks} weeks). "
-                f"No successions will be generated for this window."
+                f"Crop '{name}' season window {s['start']}–{s['end']}: a cycle started at the "
+                f"beginning of this window ({total_weeks} weeks) would run past week 52. Those "
+                f"start weeks are skipped. Tick 'overwinters' if this crop is meant to be "
+                f"fall-planted and harvested the following year."
             )
 
     # Channel validation

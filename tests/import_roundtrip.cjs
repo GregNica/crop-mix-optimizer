@@ -132,7 +132,7 @@ const EPILOGUE = `
   parseCropCSV, parseMCMultiTab, parseRainfallXLSX,
   downloadCropTemplate, downloadMCXLSX, downloadRainfallXLSX,
   rainfallUnitOfFile, cropCSVUnitSystem, MC_TAB_UNITS, parseMCXLSX, diversitySelect,
-  CSV_TEMPLATE_HEADERS,
+  CSV_TEMPLATE_HEADERS, parseCSVLine,
   U_LB, U_ACRE, U_PER_LB, U_MM,
   dispVal, toCanonicalActive,
 };`;
@@ -457,6 +457,26 @@ if (!csvUS || !csvME) {
 // must still import to the SAME numbers, because the stored value was always per-week.
 {
   const hdr = T.CSV_TEMPLATE_HEADERS;
+  // The unit row is the second line of the template and is what a grower reads while filling
+  // it in. It is a positional array with no key, so adding a header without adding its unit
+  // entry shifts every hint after it by one column — silently. That shipped: `overwinters` was
+  // added to the headers and not here, which labelled demand_annual_lbs "lbs/wk" and
+  // demand_weekly_lbs "lbs/yr". The importer accepts both, so the swapped caps would have gone
+  // straight into the solve with no error.
+  {
+    const csv = withSystem('metric', () => { captured.csv = null; T.downloadCropTemplate(); return captured.csv; });
+    const lines = String(csv || '').split('\n');
+    // Split with the app's own CSV parser: unit hints contain commas ("weeks int 1-52,
+    // incl. harvest week"), so a naive split counts cells that are not there.
+    const hdrCells = T.parseCSVLine(lines[0]).length;
+    const unitCells = T.parseCSVLine(lines[1]).length;
+    if (hdrCells !== unitCells)
+      fail(`crop CSV: header row has ${hdrCells} cells but the unit row has ${unitCells} — `
+         + `every unit hint after the mismatch describes the wrong column`);
+    if (/undefined/.test(lines[1]))
+      fail(`crop CSV: unit row contains "undefined" — it is shorter than the header row`);
+  }
+
   const BARE = /^(labor|water|fert|fuel)_(plant|grow|harv)_(hr|L|lb)_ac$/;
   ['labor_plant_hr_ac_wk','water_grow_L_ac_wk','fert_harv_lb_ac_wk','fuel_plant_L_ac_wk'].forEach(c => {
     if (!hdr.includes(c)) fail(`crop CSV: header contract is missing "${c}"`);

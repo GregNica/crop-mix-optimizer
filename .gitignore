@@ -1,11 +1,14 @@
-.venv/
-__pycache__/
 
 # Node / Cloudflare Worker (Phase 1)
-node_modules/
-.dev.vars
-.wrangler/
-dist/
 *.log
 .DS_Store
+.coverage
+.dev.vars
 .gstack/
+.ipynb_checkpoints/
+.venv/
+.wrangler/
+__pycache__/
+dist/
+htmlcov/
+node_modules/
