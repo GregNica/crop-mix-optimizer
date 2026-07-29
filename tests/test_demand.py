@@ -49,6 +49,46 @@ class TestExpandChannelDemand:
         assert arr[29] == 200.0   # W30 (0-indexed: 29)
         assert arr[1] == 0.0      # W2 — outside both ranges
 
+    def test_weekly_varying_overlapping_ranges_accumulate(self):
+        """Overlapping ranges are two buyers, not one restated.
+
+        This was `arr[...] = value`, so the LAST range listed silently replaced the earlier one
+        over the overlap — order-dependent, and usually resolving to the lower cap, so the model
+        under-planned with nothing on screen to explain it. A standing W1-W20 contract plus a
+        W10-W15 seasonal top-up must be the SUM in the overlap.
+        """
+        spec = {
+            "demand_cap_type": "weekly_varying",
+            "demand_ranges": [
+                {"weeks": "W1-W20", "weekly_lbs": 1000},
+                {"weeks": "W10-W15", "weekly_lbs": 400},
+            ],
+        }
+        arr = expand_channel_demand(spec)
+        assert arr[0] == 1000.0     # W1  — contract only
+        assert arr[9] == 1400.0     # W10 — contract + top-up
+        assert arr[14] == 1400.0    # W15 — last overlapping week
+        assert arr[15] == 1000.0    # W16 — top-up has ended
+        assert arr[20] == 0.0       # W21 — outside both
+
+    def test_weekly_varying_overlap_is_order_independent(self):
+        """Same two ranges, listed in the other order, must give the identical array."""
+        a = expand_channel_demand({
+            "demand_cap_type": "weekly_varying",
+            "demand_ranges": [
+                {"weeks": "W1-W20", "weekly_lbs": 1000},
+                {"weeks": "W10-W15", "weekly_lbs": 400},
+            ],
+        })
+        b = expand_channel_demand({
+            "demand_cap_type": "weekly_varying",
+            "demand_ranges": [
+                {"weeks": "W10-W15", "weekly_lbs": 400},
+                {"weeks": "W1-W20", "weekly_lbs": 1000},
+            ],
+        })
+        np.testing.assert_array_equal(a, b)
+
     def test_weekly_varying_no_ranges_all_zeros(self):
         spec = {"demand_cap_type": "weekly_varying", "demand_ranges": []}
         arr = expand_channel_demand(spec)

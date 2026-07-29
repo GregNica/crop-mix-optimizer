@@ -267,6 +267,96 @@ const near = (name, got, want, rel) => {
     }
   }
 
+  // ---- renaming a channel must not wipe every crop's numbers for it ---------------------
+  // `prev` inside updateCropChannels is keyed by the channel name as it stands in the DOM
+  // BEFORE the re-render, and the lookup uses the name AFTER it. So a rename missed on every
+  // crop and silently blanked price, packaging, demand type, volume and season across the whole
+  // farm. Nothing warned; the numbers were simply gone.
+  {
+    // Fresh window: earlier blocks in this file deliberately restore a zero-crop plan, so the
+    // shared `w` has no crop cards left by the time we get here.
+    const w2 = await bootApp();
+    const doc = w2.document;
+    const card = doc.getElementById('crop-0');
+    const defs = w2.getChannelDefs();
+    const readCh = () => {
+      const sec = card && card.querySelector('.crop-channel-section');
+      if (!sec) return null;
+      const g = f => { const el = sec.querySelector(`[data-f="${f}"]`); return el ? el.value : null; };
+      return { name: sec.getAttribute('data-ch'), price: g('ch_price'), pkg: g('ch_pkg'),
+               dtype: g('ch_demand_type'), dval: g('ch_demand_value') };
+    };
+    const before = readCh();
+    if (!card || !defs || defs.length === 0 || !before || before.price === null) {
+      fail('channel rename: could not read a crop channel section to test');
+    } else {
+      const renamed = defs.map((d, i) => (i === 0 ? { ...d, name: d.name + ' (East)' } : d));
+      w2.updateCropChannels(card, renamed, null);
+      const after = readCh();
+      if (!after) fail('channel rename: the channel section vanished after the rename');
+      else {
+        if (after.name !== renamed[0].name)
+          fail(`channel rename: section still labelled "${after.name}", expected "${renamed[0].name}"`);
+        ['price', 'pkg', 'dtype', 'dval'].forEach(k => {
+          if (after[k] !== before[k])
+            fail(`channel rename: ${k} was "${before[k]}" and came back "${after[k]}" — renaming a `
+               + `channel silently wiped this crop's numbers for it`);
+        });
+      }
+      // An INSERT AT THE FRONT must NOT pull the old first channel's numbers into the new one.
+      // Appending at the end cannot collide (there is no prior entry at that index), so the
+      // front is the position that actually exercises the count guard.
+      const inserted = [{ ...defs[0], name: 'Brand New Channel' }, ...defs];
+      w2.updateCropChannels(card, inserted, null);
+      const firstSec = card.querySelector('.crop-channel-section');
+      const firstPrice = firstSec && firstSec.querySelector('[data-f="ch_price"]');
+      if (firstSec && firstSec.getAttribute('data-ch') !== 'Brand New Channel')
+        fail('channel rename: inserted channel did not land first, test cannot check the guard');
+      else if (firstPrice && firstPrice.value !== '' && firstPrice.value === before.price)
+        fail('channel rename: a NEW channel inherited an existing channel\'s price by position '
+           + '— the positional fallback must only apply when the channel count is unchanged');
+    }
+  }
+
+  // ---- deleting a crop must leave no card holding a stale index -------------------------
+  // renderCrop() bakes the crop index into two inline handlers: the delete button and the
+  // template <select>. deleteCrop() renumbered the id and the button but NOT the select, so
+  // after any mid-list delete, choosing a template wrote into a DIFFERENT crop's fields.
+  {
+    const w3 = await bootApp();
+    const doc = w3.document;
+    const before = doc.querySelectorAll('#crop-list .crop-detail').length;
+    if (before < 3) {
+      fail(`crop delete: need >=3 crops to test a mid-list delete, found ${before}`);
+    } else {
+      const namesBefore = [...doc.querySelectorAll('#crop-list .crop-detail')]
+        .map(el => el.querySelector('.crop-name-inline')?.value);
+      w3.deleteCrop(1);                       // mid-list, not the last card
+      const cards = [...doc.querySelectorAll('#crop-list .crop-detail')];
+      if (cards.length !== before - 1)
+        fail(`crop delete: expected ${before - 1} cards, got ${cards.length}`);
+      cards.forEach((el, i) => {
+        if (el.id !== 'crop-' + i) fail(`crop delete: card ${i} has id "${el.id}"`);
+        const btn = el.querySelector('.delete-crop-btn');
+        if (btn && !String(btn.getAttribute('onclick')).includes(`deleteCrop(${i})`))
+          fail(`crop delete: card ${i} delete button still calls "${btn.getAttribute('onclick')}"`);
+        const sel = el.querySelector('select[onchange*="loadCropTemplate"]');
+        if (!sel) {
+          fail(`crop delete: card ${i} has no template select — the guard cannot check it`);
+        } else if (!String(sel.getAttribute('onchange')).includes(`loadCropTemplate(${i},`)) {
+          fail(`crop delete: card ${i} ("${el.querySelector('.crop-name-inline')?.value}") still `
+             + `calls ${sel.getAttribute('onchange')} — loading a template would overwrite `
+             + `another crop`);
+        }
+      });
+      // The surviving cards must be the right crops, in order.
+      const expect = namesBefore.filter((_, i) => i !== 1);
+      const got = cards.map(el => el.querySelector('.crop-name-inline')?.value);
+      if (JSON.stringify(got) !== JSON.stringify(expect))
+        fail(`crop delete: survivors are ${JSON.stringify(got)}, expected ${JSON.stringify(expect)}`);
+    }
+  }
+
   if (failures) { console.error(`\n${failures} FAILURE(S)`); process.exit(1); }
   console.log('data-canon flows: all checks passed '
             + '(channel restore, zero-crop restore, save/restore round-trip, chatbot update)');

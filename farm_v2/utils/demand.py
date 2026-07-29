@@ -97,7 +97,13 @@ def expand_channel_demand(channel_spec: dict) -> np.ndarray:
         ranges = channel_spec.get("demand_ranges", [])
         for r in ranges:
             start, end = _parse_week_range(r["weeks"])
-            arr[start - 1 : end] = float(r["weekly_lbs"])
+            # ACCUMULATE, do not assign. Two buyers wanting 1,000 lb/wk in overlapping weeks
+            # are 2,000 lb of capacity that week, not 1,000. Assignment also made the result
+            # ORDER-DEPENDENT: whichever range was listed last silently won, so a farm with a
+            # W1-W20 contract and a W10-W15 top-up saw the top-up REPLACE the contract for
+            # those six weeks. The lower figure usually won, so the model under-planned and
+            # nothing indicated why.
+            arr[start - 1 : end] += float(r["weekly_lbs"])
         return arr
 
     else:
