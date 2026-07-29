@@ -43,15 +43,36 @@ pytestmark = pytest.mark.skipif(not PAYLOAD.exists(), reason="golden payload mis
 
 # The P&L of the shipped default farm. Captured 2026-07-27 from the app's own default payload.
 GOLDEN = {
-    "revenue":          2_248_859,
-    "variable_cost":      793_120,
+    "revenue":          2_287_136,
+    "variable_cost":      857_880,
     "fixed_cost":         213_097,
-    "overhead_cost":      359_817,
-    "interest_cost":        1_189,
-    "profit":             868_594,
-    "operating_profit": 1_242_642,
+    "overhead_cost":      365_942,
+    "interest_cost":        2_457,
+    "profit":             834_760,
+    "operating_profit": 1_216_158,
 }
 # Baseline history — re-pin ONLY with a reason, and record it here.
+#   2026-07-29 (garlic seed cost + planting-labour consistency): profit 868,594 -> 834,760
+#     (-33,834). Variable cost +64,760; revenue +38,277 as the plan shifted away from garlic.
+#     GARLIC SEED 380 -> 2,500/acre. Garlic is planted from CLOVES at 800-1,200 lb/acre, not from
+#     seed by the packet. Seed stock runs $10-25/lb premium and $2-4/lb wholesale-grade with
+#     20-30% bulk discounts over 1,000 lb (Basaltic Farms / Grey Duck planting guides, 2025), so
+#     even the CHEAPEST defensible basis — own saved seed or bulk stock valued at wholesale — is
+#     $1,600-4,800/acre. 1,000 lb x $2.50 is the conservative end of that. The shipped $380 was
+#     4-25x low on the crop that dominates the plan. Purchased premium seed would be $8,000-30,000.
+#     PLANTING LABOUR: five outliers aligned to the library's OWN value for the same operation —
+#     Spinach 15 -> 2 (Baby Spinach is 2, identical direct-seeding), Cucumbers 15 -> 3 (Zucchini
+#     is 3), Napa 8 -> 2.5, Sweet Corn 10 -> 3, Hot Peppers 10 -> 4.6 (Bell Peppers is 4.6). Napa
+#     was the inversion: direct-seeded at 8.0 against TRANSPLANTED Cabbage at 3.5, and
+#     transplanting an acre cannot cost less than seeding it. Tagged `estimate` — this is a
+#     coherence fix, not a re-benchmark.
+#     ⚠️ NOT DONE, and not silently: the season TOTALS for labour, and transplant costs for the
+#     other 11 transplanted crops, are still unaudited. Every extension budget that publishes
+#     them was unreachable (403s, a corrupted PDF, a certificate failure), and the locked rule is
+#     that model-generated values are never entered as data. Known-suspect and left alone: garlic
+#     planting at 20 h/ac total against a real 40-100, garlic harvest at 75 h/ac in a single week,
+#     and strawberry harvest at 400 h/ac against 600-1,000 for hand-picking 25,000 lb.
+#     Net margin 36.5%, from 38.9%. First movement on the margin thesis; still outside 5-15%.
 #   2026-07-29 (review of the water/fert/well work): profit 875,354 -> 868,594 (-6,760).
 #     The -6,760 is the audit finally REACHING the demo farm. DEMO_OVERRIDES — the map built in
 #     Phase A to capture drift — had faithfully captured the demo's PRE-audit water and fertiliser
