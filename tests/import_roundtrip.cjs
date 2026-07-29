@@ -423,7 +423,7 @@ if (!csvUS || !csvME) {
   });
   const row = ['Garlic','10-1','4-30','','','196','1','1','2000','40','5','0.6','5','1','10',
                '8000','6000','5000','0.40','0.20','0.15','4.0','1.5','3.0','150',
-               '16','FALSE','90','Wholesale','3.00','0.20','annual','200000','','',''];
+               '16','FALSE','TRUE','90','Wholesale','3.00','0.20','annual','200000','','',''];
   if (row.length !== hdr.length) {
     fail(`crop CSV: test row has ${row.length} cells for ${hdr.length} headers — fix the row`);
   } else {
@@ -439,6 +439,12 @@ if (!csvUS || !csvME) {
            + `crop silently returns to the cooler through the import door`);
       if (c.sell_through_pct !== 90)
         fail(`crop CSV: sell_through_pct 90 came back as ${c.sell_through_pct}`);
+      // Without an `overwinters` column a round-trip silently clears the flag, and a
+      // fall-planted crop then has NO valid successions at all — garlic disappears from the
+      // plan with no warning, because weeks 46-48 plus a 35-week cycle cannot fit in the year.
+      if (c.overwinters !== true)
+        fail(`crop CSV: overwinters TRUE came back as ${c.overwinters} — a fall-planted crop `
+           + `loses its only route to a succession through the import door`);
     }
   }
 }
@@ -462,7 +468,7 @@ if (!csvUS || !csvME) {
 
   const row = ['Garlic','10-1','4-30','','','196','1','1','2000','40','5','0.6','5','1','10',
                '8000','6000','5000','0.40','0.20','0.15','4.0','1.5','3.0','150',
-               '16','FALSE','90','Wholesale','3.00','0.20','annual','200000','','',''];
+               '16','FALSE','TRUE','90','Wholesale','3.00','0.20','annual','200000','','',''];
   const legacyHdr = hdr.map(c => c.replace(/^((?:labor|water|fert|fuel)_(?:plant|grow|harv)_(?:hr|L|lb)_ac)_wk$/, '$1'));
   if (legacyHdr.join(',') === hdr.join(',')) {
     fail('crop CSV: legacy header derivation is a no-op — the rename test is inert');

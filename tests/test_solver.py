@@ -217,7 +217,15 @@ class TestPlantBinaryIsBounded:
         )
 
     def test_y_stays_binary_when_min_acreage_is_zero(self, minimal_params):
-        """The degenerate case: min_acreage 0 removes C10's grip on y entirely."""
+        """The degenerate case: min_acreage 0 removes C10's grip on y entirely.
+
+        With min_acreage_if_planted = 0, C10 collapses to `0 <= x` and C9 is only `x <= y`, so
+        y = 1 alongside x = 0 is feasible and costs nothing. The bound is then the ONLY thing
+        holding y down. Note what follows and is deliberately NOT asserted here: y is not pinned
+        to 0 for an unplanted succession in this case, so anything reporting "was this crop
+        planted" must read x, not y. Whether HiGHS happens to return 0 or 1 is an arbitrary
+        tie-break among equally optimal solutions — pinning it would test the solver's mood.
+        """
         params = dict(minimal_params)
         params["crops"] = [dict(c, min_acreage_if_planted=0.0) for c in params["crops"]]
         res = _solve(params)
@@ -246,23 +254,3 @@ class TestPlantBinaryIsBounded:
                     f"claiming to be planted"
                 )
 
-    def test_y_is_NOT_a_planted_flag_when_min_acreage_is_zero(self, minimal_params):
-        """Documents a real limitation rather than pretending it is fixed.
-
-        At min_acreage_if_planted = 0, C10 collapses to `0 <= x` and C9 is only `x <= y`, so
-        y = 1 with x = 0 is feasible and costs nothing. Bounding y to {0,1} stops it running
-        away, but nothing pins it to 0. Anything reporting "was this crop planted" must read
-        x, not y. If this test ever fails, someone has added a linkage that fixes it and this
-        caveat can be removed.
-        """
-        params = dict(minimal_params)
-        params["crops"] = [dict(c, min_acreage_if_planted=0.0) for c in params["crops"]]
-        res = _solve(params)
-        x = np.asarray(res["x"], dtype=float)
-        y = np.asarray(res["y"], dtype=float)
-        assert np.all(y <= 1 + 1e-6), f"y must still be bounded to 1: {y}"
-        # NOT asserted: that some succession actually shows x=0 with y=1. Whether HiGHS
-        # returns y=0 or y=1 for an unplanted succession here is an arbitrary tie-break among
-        # equally optimal solutions — pinning it would be testing the solver's mood, and it
-        # would break on a HiGHS upgrade. The point of this test is the bound above plus the
-        # documented caveat: at min_acreage 0, read x for "was this planted", never y.

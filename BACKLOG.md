@@ -91,6 +91,10 @@ All are `defect` class — they need no consultation.
 
 ---
 
+| ⛔ **S15** | **Solve time scales with succession count, and B5 grew it.** Only `x[i]` and `y[i]` scale with N_S — `v`, `inv` and `waste` are fixed-size — so the matrix grew ~50-100% but the **binary count** grew by the same amount, and branch-and-bound is exponential in binaries, not linear-algebra size. Measured: demo 101→155 successions, pytest suite 21s→71s, individual solve-backed tests now 3-8s each. ⚠️ **Pyodide is single-threaded and several × slower than native, so this needs a browser measurement.** Highest-leverage semantics-preserving mitigation identified: an opt-in `succession_spacing_weeks` (default 1) stepping the planting-window loop, since weekly resolution is already an approximation of continuous planting dates. **Not built — it is a knob, not a cleanup, and it should be measured in the browser before being added** | `farm_v2/utils/calendar.py`, `solver.py:832-846` | phase | all |
+
+---
+
 ## Tier 2b — Practice coverage (from the 2026-07-29 research, evidence in `STRATEGY.md`)
 
 The external survey plus an own-research pass that filled its gaps. Two new cost categories, one
