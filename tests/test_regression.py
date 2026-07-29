@@ -47,6 +47,14 @@ from farm_v2.solver import solve_farm_v2
 #     The balance is verified to the pound, per crop, per week, by tests/test_inventory.py;
 #     this file only pins that the headline did not drift afterwards.
 #
+#   2026-07-29 (honest water): profit -> 44,253. This fixture's crops got FAO-56 water rates and
+#     its well was sized by the same 8 gpm/acre rule as the shipped default (2.5M -> 16.35M L/wk
+#     for 150 acres, because 2.5M was 0.16 in/acre/week and could not irrigate the farm it
+#     described). Water now binds here, which is the point: before this, the fixture's ~10x-low
+#     rates meant the rainfall offset exceeded every crop's need and net irrigation was
+#     identically ZERO — so this regression pin, and every other test using full_params, was
+#     exercising a water constraint incapable of binding. Caught by the new binding test in
+#     test_binding.py, which is exactly what that file is for.
 #   2026-07-28 (Phase B.3, strict shelf life): `shelf_life_weeks` now counts SELLING weeks
 #     including the harvest week, so the default of 1 means "sold the week it is picked" where
 #     it previously allowed one more. Revenue 1,761,684 -> 1,628,917 (-7.5%) but profit
@@ -58,7 +66,7 @@ from farm_v2.solver import solve_farm_v2
 #     honest per-crop values; expect most of this back. Do not treat 87,933 as a target.
 # ---------------------------------------------------------------------------
 
-EXPECTED_PROFIT  = 87_933       # ± 10%  (rebaselined 2026-07-28, Phase B.3 — see note below)
+EXPECTED_PROFIT  = 44_253       # ± 10%  (rebaselined 2026-07-28, Phase B.3 — see note below)
 EXPECTED_REVENUE = 1_628_917    # ± 10%  (rebaselined 2026-07-28, Phase B.3)
 EXPECTED_FIXED   = 1_184_316    # ± 5%   (rebaselined 2026-07-27: annual, not 48-week)
 TOLERANCE_PCT    = 0.10         # 10% relative tolerance

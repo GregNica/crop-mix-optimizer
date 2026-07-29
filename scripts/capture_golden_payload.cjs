@@ -27,7 +27,8 @@ const CHECK = process.argv.includes('--check');
 // capturing it would put a key in the golden payload that the browser never sends — the exact
 // staleness this script exists to prevent.
 const OWNED = ['crops', 'ambient_storage_cap', 'rate_ambient_storage',
-               'harvest_storage_cap', 'rate_harvest_storage', 'well_weekly_cap_L'];
+               'harvest_storage_cap', 'rate_harvest_storage', 'well_weekly_cap_L',
+               'climate_zone'];
 
 bootApp().then(({ window: w }) => {
   const payload = JSON.parse(fs.readFileSync(PAYLOAD, 'utf8'));
@@ -39,6 +40,9 @@ bootApp().then(({ window: w }) => {
       "rateFromCapital('ambient_storage_cost_per_m3', 150, 'depreciation_ambient_years', 30)"),
     harvest_storage_cap: w.eval("readCanonical('harvest_storage_cap')"),
     well_weekly_cap_L: w.eval("readCanonical('well_weekly_cap_L')"),
+    // The rainfall series the water rates were benchmarked against — the payload pinned Fresno
+    // while every water number assumed humid temperate.
+    climate_zone: w.eval("document.getElementById('climate_zone').value"),
     rate_harvest_storage: w.eval(
       "rateFromCapital('harvest_storage_cost_per_m3', 500, 'depreciation_harvest_years', 20)"),
   };

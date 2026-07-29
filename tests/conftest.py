@@ -6,6 +6,14 @@ Fixtures are organized in tiers:
   - Minimal:    smallest possible valid parameter set (1 crop, 1 channel)
   - Full:       6-crop 2-channel demo model (matches notebook defaults)
 """
+
+# Water rates follow the same FAO-56 rule as the shipped crop templates (Kc x 141,640 L/acre/wk).
+# They used to be ~10x lower, which put net irrigation at identically ZERO for every fixture that
+# uses them — so every test here exercised a water constraint that could not bind, including the
+# regression pin. Found 2026-07-29 by the binding test in test_binding.py, which is the point of
+# having one. These are synthetic values with no provenance claim; they only have to be the right
+# ORDER so the constraint they feed is real.
+
 import sys
 import os
 import numpy as np
@@ -50,7 +58,7 @@ def spinach_crop():
         "planting_type": "seed",
         "seed_transplant_cost_per_acre": 200,
         "labor_plant": 0.7,  "labor_grow": 0.5,  "labor_harv": 1.9,
-        "water_plant": 10_000, "water_grow": 12_000, "water_harv": 9_000,
+        "water_plant": 99148, "water_grow": 141640, "water_harv": 134558,
         "fert_plant": 0.4,  "fert_grow": 0.3,  "fert_harv": 0.2,
         "fuel_plant": 3.5,  "fuel_grow": 1.8,  "fuel_harv": 4.6,
         "channels": {
@@ -80,7 +88,7 @@ def cucumber_crop():
         "planting_type": "seed",
         "seed_transplant_cost_per_acre": 150,
         "labor_plant": 0.9,  "labor_grow": 0.7,  "labor_harv": 2.3,
-        "water_plant": 14_000, "water_grow": 20_000, "water_harv": 17_000,
+        "water_plant": 84984, "water_grow": 141640, "water_harv": 106230,
         "fert_plant": 0.7,  "fert_grow": 0.5,  "fert_harv": 0.2,
         "fuel_plant": 4.2,  "fuel_grow": 2.3,  "fuel_harv": 5.1,
         "channels": {
@@ -163,7 +171,7 @@ def minimal_params(spinach_crop_high_demand, rainfall_flat):
         ],
         city_water_enabled=False,
         well_enabled=True,
-        well_weekly_cap_L=2_000_000.0,
+        well_weekly_cap_L=5_450_000.0,   # 8 gpm/ac x 50 ac x 60 h/wk
         catchment_enabled=False,
         catchment_surface_area_m2=0.0,
         max_plant_acres_per_week=1e9,
@@ -235,7 +243,7 @@ def two_crop_params(spinach_crop, cucumber_crop, rainfall_flat):
         ],
         city_water_enabled=False,
         well_enabled=True,
-        well_weekly_cap_L=2_000_000.0,
+        well_weekly_cap_L=5_450_000.0,   # 8 gpm/ac x 50 ac x 60 h/wk
         catchment_enabled=False,
         catchment_surface_area_m2=0.0,
         max_plant_acres_per_week=1e9,
@@ -277,7 +285,7 @@ def full_crops():
             "planting_type": "seed",
             "seed_transplant_cost_per_acre": 280,
             "labor_plant": 0.7, "labor_grow": 0.5, "labor_harv": 1.9,
-            "water_plant": 10_400, "water_grow": 12_700, "water_harv": 9_200,
+            "water_plant": 99148, "water_grow": 141640, "water_harv": 134558,
             "fert_plant": 0.46, "fert_grow": 0.35, "fert_harv": 0.23,
             "fuel_plant": 3.5, "fuel_grow": 1.8, "fuel_harv": 4.6,
             "channels": {
@@ -303,7 +311,7 @@ def full_crops():
             "planting_type": "seed",
             "seed_transplant_cost_per_acre": 190,
             "labor_plant": 0.9, "labor_grow": 0.7, "labor_harv": 2.3,
-            "water_plant": 13_900, "water_grow": 19_600, "water_harv": 17_300,
+            "water_plant": 84984, "water_grow": 141640, "water_harv": 106230,
             "fert_plant": 0.69, "fert_grow": 0.46, "fert_harv": 0.23,
             "fuel_plant": 4.2, "fuel_grow": 2.3, "fuel_harv": 5.1,
             "channels": {
@@ -330,7 +338,7 @@ def full_crops():
             "planting_type": "seed",
             "seed_transplant_cost_per_acre": 120,
             "labor_plant": 0.9, "labor_grow": 0.5, "labor_harv": 2.3,
-            "water_plant": 11_500, "water_grow": 18_500, "water_harv": 15_000,
+            "water_plant": 42492, "water_grow": 162886, "water_harv": 148722,
             "fert_plant": 0.58, "fert_grow": 0.46, "fert_harv": 0.35,
             "fuel_plant": 4.6, "fuel_grow": 2.3, "fuel_harv": 5.8,
             "channels": {
@@ -360,7 +368,7 @@ def full_crops():
             "planting_type": "seed",
             "seed_transplant_cost_per_acre": 160,
             "labor_plant": 0.7, "labor_grow": 0.5, "labor_harv": 2.1,
-            "water_plant": 10_400, "water_grow": 15_000, "water_harv": 12_700,
+            "water_plant": 99148, "water_grow": 148722, "water_harv": 134558,
             "fert_plant": 0.46, "fert_grow": 0.35, "fert_harv": 0.23,
             "fuel_plant": 3.5, "fuel_grow": 1.8, "fuel_harv": 4.6,
             "channels": {
@@ -386,7 +394,7 @@ def full_crops():
             "planting_type": "transplant",
             "seed_transplant_cost_per_acre": 420,
             "labor_plant": 1.2, "labor_grow": 0.7, "labor_harv": 2.8,
-            "water_plant": 16_200, "water_grow": 23_100, "water_harv": 19_600,
+            "water_plant": 84984, "water_grow": 148722, "water_harv": 127476,
             "fert_plant": 0.69, "fert_grow": 0.46, "fert_harv": 0.35,
             "fuel_plant": 4.2, "fuel_grow": 2.8, "fuel_harv": 5.8,
             "channels": {
@@ -413,7 +421,7 @@ def full_crops():
             "planting_type": "seed",
             "seed_transplant_cost_per_acre": 380,
             "labor_plant": 0.9, "labor_grow": 0.5, "labor_harv": 1.4,
-            "water_plant": 13_900, "water_grow": 9_200, "water_harv": 8_100,
+            "water_plant": 99148, "water_grow": 141640, "water_harv": 99148,
             "fert_plant": 0.46, "fert_grow": 0.23, "fert_harv": 0.12,
             "fuel_plant": 4.6, "fuel_grow": 1.8, "fuel_harv": 3.5,
             "channels": {
@@ -477,7 +485,7 @@ def full_params(full_crops, full_channels, full_rainfall):
         ],
         city_water_enabled=False,
         well_enabled=True,
-        well_weekly_cap_L=2_500_000.0,
+        well_weekly_cap_L=16_350_000.0,  # 8 gpm/ac x 150 ac x 60 h/wk
         catchment_enabled=False,
         catchment_surface_area_m2=0.0,
         max_plant_acres_per_week=1e9,

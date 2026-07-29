@@ -44,14 +44,31 @@ pytestmark = pytest.mark.skipif(not PAYLOAD.exists(), reason="golden payload mis
 # The P&L of the shipped default farm. Captured 2026-07-27 from the app's own default payload.
 GOLDEN = {
     "revenue":          2_248_859,
-    "variable_cost":      786_402,
+    "variable_cost":      793_120,
     "fixed_cost":         213_097,
     "overhead_cost":      359_817,
     "interest_cost":        1_189,
-    "profit":             875_354,
-    "operating_profit": 1_249_360,
+    "profit":             868_594,
+    "operating_profit": 1_242_642,
 }
 # Baseline history — re-pin ONLY with a reason, and record it here.
+#   2026-07-29 (review of the water/fert/well work): profit 875,354 -> 868,594 (-6,760).
+#     The -6,760 is the audit finally REACHING the demo farm. DEMO_OVERRIDES — the map built in
+#     Phase A to capture drift — had faithfully captured the demo's PRE-audit water and fertiliser
+#     and was shadowing the corrected templates ever since: Cucumbers and Hot Peppers were still
+#     charged ~1/8 of their evapotranspiration, Kale and Basil still carried old fertiliser. So
+#     three of seven demo crops had the fix and four did not, and every measurement in the two
+#     entries below was taken on that hybrid. 19 override keys deleted; they were pure drift with
+#     no adjudication behind them, which is what Ruling 0 says burns to empty.
+#     Also in this pass: the shipped climate_zone was CALIFORNIA CENTRAL VALLEY (Fresno) while the
+#     water rates were benchmarked for humid temperate and the well from a Wisconsin design
+#     standard — three regions in one farm. Now northeast/Philadelphia, zone 7a, which is what
+#     decision D2 locked and what every one of those numbers already assumed.
+#     Water peaks at 60.5% of supply with the coherent pairing (Fresno's near-zero summer rain
+#     against humid-temperate ET was the incoherence, not the well). Beets took the small-vegetable
+#     Kc where FAO-56 lists it under Roots & Tubers; Melon took the Sweet Melons row where the
+#     table has a Cantaloupe one; mesclun had grow_weeks = 0, so 45% of its nitrogen and all of
+#     its grow-phase water were never read by the solver at all.
 #   2026-07-29 (audit Phase B, well capacity): profit 635,305 -> 875,354 (+240,049). Revenue
 #     returns to 2,248,859 — the EXACT figure from before the water fix.
 #     That coincidence is the finding: crop water was ~10x too low and the well was ~3.5x too
@@ -474,4 +491,5 @@ class TestOneKernelNoDrift:
                     assert m["margin_pct"] < 0, f"{crop}/{ch}"
                     assert m["margin_per_acre_day"] < 0, f"{crop}/{ch}"
                     assert m["margin_per_acre_cycle"] < 0, f"{crop}/{ch}"
+
 

@@ -21,6 +21,10 @@ def _labor_bound(two_crop_params, crew=2):
     p = copy.deepcopy(two_crop_params)
     p["total_land"] = 200.0
     p["harvest_storage_cap"] = 100_000.0   # lift storage so labor is the real limiter
+    # ...and water, for the same reason. The fixture's well is sized for its own 50 acres; at
+    # 200 acres with honest FAO-56 water rates (2026-07-29) water binds first and these tests
+    # stop being about labor at all. Isolate the constraint under test.
+    p["well_weekly_cap_L"] = 1e12
     p["seasonal_employees"] = [{
         "position": "Field Hand", "count": crew, "type": "FT",
         "start_week": 8, "end_week": 46, "wage": 18.0, "hours_per_week": 40,

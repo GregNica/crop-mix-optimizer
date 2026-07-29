@@ -173,11 +173,23 @@ class TestEconomicSanity:
             assert better["profit"] >= base["profit"] - 1.0
 
     def test_more_land_does_not_decrease_profit(self, minimal_params):
-        """More total land relaxes the land constraint, profit should not fall."""
+        """More total land relaxes the land constraint, so profit should not fall.
+
+        The premise only holds when land is what is actually scarce. Irrigation is charged per
+        acre of TOTAL land (you installed the system) while water SUPPLY does not scale with
+        acreage — so on a water-limited farm, buying land you cannot water costs real money and
+        profit correctly falls. That is not a solver defect; it is the model telling you not to
+        buy it. Found 2026-07-29 when honest FAO-56 water rates made this fixture water-limited
+        and this assertion started failing at -$575k.
+
+        So the water constraint is lifted here to isolate the one under test.
+        """
         import copy
-        base = _solve(minimal_params)
-        more_land = copy.deepcopy(minimal_params)
-        more_land["total_land"] = minimal_params["total_land"] * 2
+        p = copy.deepcopy(minimal_params)
+        p["well_weekly_cap_L"] = 1e12
+        base = _solve(p)
+        more_land = copy.deepcopy(p)
+        more_land["total_land"] = p["total_land"] * 2
         better = _solve(more_land)
         if base["status"] == "optimal" and better["status"] == "optimal":
             assert better["profit"] >= base["profit"] - 1.0

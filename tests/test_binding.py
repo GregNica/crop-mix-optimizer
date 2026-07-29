@@ -8,8 +8,9 @@ COVERAGE, so completeness stays auditable (SPEC_v3 §10 wants a squeeze/relax pa
     land ............ here
     harvest storage . tests/test_inventory.py::TestStorageBindsOnHeldStock
     shelf life ...... tests/test_inventory.py::TestShelfLife
+    water ........... here (TestWaterBinds)
     labor ........... NOT COVERED — needs a demand-rich fixture, see below
-    water / cash / diversity ... NOT COVERED
+    cash / diversity  NOT COVERED
 
 Storage moved out when SPEC_v3 §3 replaced C4 with an inventory balance: the quantity changed
 from harvest inflow to stock actually held, so those tests were replaced rather than
@@ -76,4 +77,46 @@ class TestLandBinds:
         looser = _solve(full_params, total_land=90.0, **_FREE)
         assert _peak_land_fraction(looser) <= _peak_land_fraction(tight) + 1e-9, (
             "relaxing the land cap should leave peak utilization no higher (more slack)"
+        )
+
+
+class TestWaterBinds:
+    """C3. Until 2026-07-29 this family had NO binding test anywhere, and the constraint was
+    mathematically incapable of binding: crop water rates were ~10x below evapotranspiration, so
+    the 65% rainfall offset exceeded every crop's need and net irrigation was identically zero.
+    A whole constraint family sat present, costed, and decorative for the life of the app.
+
+    That is the failure this class exists to make impossible to repeat: squeeze the well and the
+    plan must respond. It does NOT assert that water binds on the shipped farm — it should not,
+    a well is sized with headroom — only that the row is capable of biting when supply is short,
+    which is exactly what was untrue before.
+    """
+
+    # NOTE: capacity_series, not weekly_water_used — the latter is the JS adapter's key and
+    # reading it here returns [] silently, which made this test "detect" a vacuous constraint
+    # that was not there. A guard that fails for the wrong reason is still a broken guard.
+    def _params(self, full_params, well_L):
+        p = dict(full_params)
+        p["well_weekly_cap_L"] = well_L
+        p["city_water_enabled"] = False        # no second tap to escape through
+        return p
+
+    def test_squeezing_the_well_squeezes_the_plan(self, full_params):
+        roomy = solve_farm_v2(**self._params(full_params, 1e12))
+        assert roomy["status"] == "optimal"
+        peak_need = max(roomy["capacity_series"]["water"]["used"] or [0])
+        assert peak_need > 0, (
+            "the plan uses NO water at any point — net irrigation is zero, which is the "
+            "vacuous-constraint state this test exists to detect"
+        )
+
+        tight = solve_farm_v2(**self._params(full_params, peak_need * 0.5))
+        assert tight["status"] == "optimal"
+        assert max(tight["capacity_series"]["water"]["used"] or [0]) <= peak_need * 0.5 + 1e-6, (
+            "weekly draw exceeded the well cap it was solved against — C3 is not enforced"
+        )
+        assert tight["profit"] < roomy["profit"], (
+            f"halving the well changed nothing (profit {tight['profit']:,.0f} vs "
+            f"{roomy['profit']:,.0f}) — the water constraint is slack at any supply, so it "
+            f"cannot be steering the plan"
         )
