@@ -130,6 +130,47 @@ Baby Spinach 2 (identical operation, 7.5×); Cucumbers 15 vs Zucchini 3; transpl
 vs Bell 4.6 (and demo 8.0 — a 6th divergence); **Napa (seeded) 8 vs Cabbage (transplanted) 3.5 —
 inverted**, transplanting always costs more; corn dearer than beans; `grow_weeks` smells (S1).
 
+**B0 planting-labour: DONE (`d2526cf`, provenance corrected 2026-07-29).** The five landed at
+Cucumbers 15.0→**3.0**, Spinach 15.0→**2.0**, Sweet Corn 10.0→**3.0**, Napa 8.0→**2.5**,
+Hot Peppers 10.0→**4.6**.
+
+⚠️ **Only Spinach rests on new evidence** (the grower's own ~2 h/acre figure). The other four are
+**peer-anchored** — each set equal to a library neighbour, which is the method rejected below.
+What the correction established is that the OLD values were not credible, not that the new ones
+are right. Treat them as placeholders that remove an outlier, to be re-derived once the
+establishment axis exists.
+
+Two facts govern every remaining B0 ratio check:
+
+- **`labor_plant` is charged PER PLANTING WEEK**, so ratio checks are only valid at
+  `planting_weeks` parity (Hot Peppers 4.6 × 2 wk = 9.2 h/acre).
+- **`planting_type` is read by nothing in `farm_v2`** — the establishment axis is carried as data
+  and dropped before the math. Out of scope here; tabled in SPEC_product ("Labour: the missing
+  establishment and mechanisation axis").
+
+**The lesson from the redo:** "internal consistency" is not a justification. Pulling two numbers
+toward each other silently fixes a mechanisation level, and the grower rejected it on that ground.
+What survives is **pairwise**, not global — transplanting an operation costs more than
+direct-seeding *the same* operation — plus the grower's own figure (~2 h/acre to direct-seed
+spinach, bed prep depending). ⚠️ **Do NOT mechanise this as a seed-vs-transplant test: Garlic is
+`planting_type: "seed"` at 6.7 × 3 wk = 20.1 h/acre, above every transplanted crop, and rightly
+so — cloves are hand-set.** A global invariant would fail on legitimate untouched data, which is
+itself the evidence that `planting_type` is too coarse to carry the rule.
+
+**OPEN (deferred deliberately — baseline first, per the grower 2026-07-29):** three templates
+could defensibly carry either `planting_type`. **Napa Cabbage** ships `seed` (spring Napa is
+commonly transplanted, fall direct-seeded), **Melon** ships `transplant` (direct-seeding is normal
+in long seasons), **Spinach** ships `seed` (the mainstream, and the least ambiguous of the three).
+Each is currently *internally consistent* — Napa is labelled seed and costed as seed at $160/acre,
+Melon is labelled transplant and costed on the plug basis at $504 — so nothing is broken and
+flipping a label alone would change no *solver* math. ⚠️ **But a flip is not free: it orphans the
+citation.** Napa's `labor_plant` provenance is founded entirely on the seed label ("planting_type
+seed, so it sits below transplanted Cabbage (3.5)"). Flip it to transplant and the pairwise rule
+puts Napa at or above Cabbage's 3.5, voiding the stated reason for 2.5. Re-derive the labour
+number with the label, never after it. ⚠️ **When this is picked up, the money is in
+`seed_transplant_cost_per_acre`, not `labor_plant`:** Napa would swing $160 → $1,089/acre
+(Cabbage's plug basis) against a labour swing of ~1 h/acre. ~40× the leverage, opposite field.
+
 **B — water & fert & shelf/cold, all 29.** PREREQUISITE (D3): `storage_loss_pct_per_week`
 lands in the solver first — holding must cost something before honest shelf lives are entered,
 or long-keeping crops become pure upside. Water first (constraint currently vacuous), fert

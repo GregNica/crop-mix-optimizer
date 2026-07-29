@@ -102,6 +102,8 @@ own Phase C came to sit unexecuted.
 | 2026-07-28 | Potatoes cold; zone 7 with disclosure; holding cost before honest shelf lives |
 | 2026-07-28 | Strict shelf life: weeks sellable *including* the harvest week |
 | 2026-07-29 | **Model complexity is decided by what a farmer can actually answer** — see below |
+| 2026-07-29 | "Internal consistency" is not a justification for a value: pulling two numbers toward each other silently fixes an assumption (mechanisation level) neither number declared |
+| 2026-07-29 | Get defensible defaults in for a baseline before chasing nuance the model has no structure to hold |
 
 ## The complexity test (locked 2026-07-29, grower)
 

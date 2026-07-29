@@ -185,6 +185,10 @@ def compute_labor_rates(
     week-index 0 unused).
 
     Phase keys expected in crop dict: "labor_plant", "labor_grow", "labor_harv".
+
+    Each rate is PER WEEK of its phase, charged once for every week the phase occupies —
+    a crop with planting_weeks 2 costs 2 x labor_plant per acre to plant. Comparing the
+    raw fields across crops is therefore only valid at equal phase length.
     """
     _LABOR_KEY = ["labor_plant", "labor_grow", "labor_harv"]
     n = len(successions)

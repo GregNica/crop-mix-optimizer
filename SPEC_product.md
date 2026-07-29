@@ -152,6 +152,52 @@ about which primitives are worth their input cost. Related model gap recorded in
 transplant TIMING quality is invisible to a single yield number, so buy-vs-raise differs in risk
 and yield, not just cost.
 
+### TABLED — labour: the missing establishment and mechanisation axis
+
+**Raised by the grower 2026-07-29, deliberately not built.** Same complexity test as propagation
+above, and the same instruction: ground it in what growers actually do first, then build the
+simplest model that answers to that. Not to be designed from this page.
+
+**What the model cannot say today.** It has one labour primitive: hours × wage, split three ways
+(`labor_plant`, `labor_grow`, `labor_harv`). Everything else about how the work gets done is
+either absent or carried and ignored:
+
+| Reality the grower named | Model today |
+|---|---|
+| Direct-seeded vs transplanted | `planting_type` is in every template and in the crop form, and **nothing in `farm_v2` reads it**. The axis the grower says dominates planting time is dropped before the math. |
+| Bed prep / tilth, and the implements that change it | No representation. It is the "depending on" in the grower's own ~2 h/acre spinach figure, and it swings by implement (a flat, tilthy bed is critical for shallow seed; tilling to oblivion gives tilth but not a flat bed and costs soil structure). |
+| Transplant implements (water wheel, paper-chain planter) | No representation. |
+| Nursery / propagation time | No representation. Cost side is tabled separately above; the **labour** side is the same gap. |
+| Mechanical vs hand harvest | No representation — and the library already mixes them silently. Baby Spinach implies 167 lb/hour and Cut Salad Greens 115, which is not hand picking; UC Davis's organic spinach budget books harvest as 0.00 hours / $1,300 custom. |
+| Contract labour / custom harvest priced per carton, ton or acre | No representation. A farm that contracts its harvest cannot say so. |
+
+**Why this is not a values problem.** Attempting to fix the five planting-labour outliers by
+making them "consistent" with each other failed on 2026-07-29 *in kind, not degree* — see
+SPEC_agronomy B0 for the full reasoning. What replaced it only *bounds* values pairwise; it does
+not give the model the axis. And the axis cannot be faked from `planting_type`, because that flag
+is too coarse to carry it: Garlic is `planting_type: "seed"` yet costs more to plant than every
+transplanted crop in the library, correctly, because cloves are hand-set.
+
+**Consequence to state plainly:** every labour number in the library carries an unstated
+assumption about how the farm operates. Recorded in `CROP_PROVENANCE` at the head of the labour
+block — which nothing in the UI renders today, so a user has no way to see it.
+
+**The complexity test applies with force here** ([STRATEGY.md, locked 2026-07-29](STRATEGY.md)).
+A grower knows whether they direct-seed or transplant a crop, whether they buy plugs or raise
+them, and whether they contract the harvest — facts about their own operation, readily available.
+A grower does *not* hold a per-acre hours figure that nets implement choice, bed condition and
+crew skill.
+
+Plausible shapes to weigh when this is picked up (do NOT pick one from here):
+  • leave hours as the input and fix only the values, accepting that each carries a hidden
+    assumption (what ships today);
+  • ask the categorical question a grower can answer — direct-seed or transplant, buy or raise,
+    own crew or contract — and derive the hours from benchmarks, with visible provenance;
+  • carry a farm-level mechanisation setting that scales the library rather than per-crop flags.
+
+Which categories are worth their input cost is the open question, blocked on the same thing as
+the rest of bet ①.
+
 ### Missing primitives, ranked by leverage
 
 1. **Obligations / must-plant floors** (prompt 1). The first thing on the page; absent from the app.

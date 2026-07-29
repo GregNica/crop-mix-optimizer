@@ -443,5 +443,50 @@ if (!csvUS || !csvME) {
   }
 }
 
+// ---- crop CSV: phase-resource columns must carry their PER-WEEK dimension --------------------
+// Every phase rate is charged once for EACH week of the phase (farm_v2/utils/labor.py and
+// water.py, solver.py for fert/fuel). The columns were named `labor_plant_hr_ac` etc until
+// 2026-07-29 — "hours per acre", no week in it — so a grower who entered a per-acre TOTAL for a
+// 3-week planting was charged 3x. Renaming is only half the fix: files saved under the old names
+// must still import to the SAME numbers, because the stored value was always per-week.
+{
+  const hdr = T.CSV_TEMPLATE_HEADERS;
+  const BARE = /^(labor|water|fert|fuel)_(plant|grow|harv)_(hr|L|lb)_ac$/;
+  ['labor_plant_hr_ac_wk','water_grow_L_ac_wk','fert_harv_lb_ac_wk','fuel_plant_L_ac_wk'].forEach(c => {
+    if (!hdr.includes(c)) fail(`crop CSV: header contract is missing "${c}"`);
+  });
+  hdr.forEach(c => {
+    if (BARE.test(c)) fail(`crop CSV: "${c}" names no week, but the solver charges it once per `
+                         + `week of the phase — the label invites a per-acre total`);
+  });
+
+  const row = ['Garlic','10-1','4-30','','','196','1','1','2000','40','5','0.6','5','1','10',
+               '8000','6000','5000','0.40','0.20','0.15','4.0','1.5','3.0','150',
+               '16','FALSE','90','Wholesale','3.00','0.20','annual','200000','','',''];
+  const legacyHdr = hdr.map(c => c.replace(/^((?:labor|water|fert|fuel)_(?:plant|grow|harv)_(?:hr|L|lb)_ac)_wk$/, '$1'));
+  if (legacyHdr.join(',') === hdr.join(',')) {
+    fail('crop CSV: legacy header derivation is a no-op — the rename test is inert');
+  } else if (row.length !== hdr.length) {
+    fail(`crop CSV: test row has ${row.length} cells for ${hdr.length} headers — fix the row`);
+  } else {
+    const now = withSystem('us', () => T.parseCropCSV(hdr.join(',')       + '\n' + row.join(',')));
+    const old = withSystem('us', () => T.parseCropCSV(legacyHdr.join(',') + '\n' + row.join(',')));
+    if ((now.errors || []).length) fail('crop CSV: new headers failed to parse ' + JSON.stringify(now.errors));
+    else if ((old.errors || []).length) fail('crop CSV: legacy headers failed to parse ' + JSON.stringify(old.errors));
+    else {
+      const a = now.crops[0], b = old.crops[0];
+      ['labor_plant','labor_grow','labor_harv','water_plant','water_grow','water_harv',
+       'fert_plant','fert_grow','fert_harv','fuel_plant','fuel_grow','fuel_harv'].forEach(f => {
+        if (a[f] !== b[f])
+          fail(`crop CSV: "${f}" imports as ${a[f]} under the new header but ${b[f]} under the `
+             + `legacy one — the rename silently rescaled a saved file`);
+      });
+      if (a.labor_plant !== 5)
+        fail(`crop CSV: labor_plant 5 came back as ${a.labor_plant} — a phase rate is being `
+           + `rescaled on import`);
+    }
+  }
+}
+
 if (failures) { console.error(`\n${failures} FAILURE(S)`); process.exit(1); }
 console.log('import round-trip: all checks passed (past-data, rainfall, crop CSV; both unit systems)');
