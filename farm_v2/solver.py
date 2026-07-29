@@ -549,6 +549,15 @@ def solve_farm_v2(
     lb = np.zeros(n_vars)
     ub = np.full(n_vars, np.inf)
     ub[idx_x_start : idx_x_start + N_S] = 1.0  # x[i] ∈ [0, 1]
+    # y[i] ∈ {0, 1}. Integrality alone (Step 8) only makes y an INTEGER — without this it is an
+    # unbounded non-negative integer, which is not what "plant this succession or not" means and
+    # is not what the rest of the model assumes. y appears only in C9 (x ≤ y) and C10
+    # (min_frac·y ≤ x), so when min_acreage_if_planted is 0 — a value the form accepts — min_frac
+    # is 0, C10 collapses to 0 ≤ x, and y becomes entirely free. Every value of y is then equally
+    # optimal: infinitely many optima for branch-and-bound to wander through, and a meaningless
+    # y_sol for the "was this planted" report read below. Bounding it costs nothing and restores
+    # the documented semantics.
+    ub[idx_y_start : idx_y_start + N_S] = 1.0
 
     # Per-week caps on the labor-flex levers (the "max additional capacity by period").
     if overtime_enabled and idx_ot_start is not None and max_overtime_hrs_per_week is not None:

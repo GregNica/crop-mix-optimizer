@@ -193,3 +193,76 @@ class TestEconomicSanity:
         better = _solve(more_land)
         if base["status"] == "optimal" and better["status"] == "optimal":
             assert better["profit"] >= base["profit"] - 1.0
+
+# ---------------------------------------------------------------------------
+# y[i] is a BINARY, not merely an integer
+# ---------------------------------------------------------------------------
+
+class TestPlantBinaryIsBounded:
+    """`integrality` alone makes y an integer; without an upper bound it is unbounded.
+
+    y appears only in C9 (x <= y) and C10 (min_frac * y <= x). `min_acreage_if_planted` of 0 is
+    a value the form accepts, and it drives min_frac to 0, which collapses C10 to `0 <= x` and
+    leaves y completely free. Every value of y is then equally optimal — infinitely many optima,
+    and a y_sol that cannot be trusted to answer "was this succession planted".
+    """
+
+    def test_y_is_binary_on_a_normal_solve(self, minimal_params):
+        res = _solve(minimal_params)
+        y = np.asarray(res["y"], dtype=float)
+        assert np.all(y >= -1e-6), f"y went negative: {y}"
+        assert np.all(y <= 1 + 1e-6), (
+            f"y exceeded 1: {y}. y[i] means plant-or-not; an integer above 1 is not a "
+            f"meaningful answer and indicates the upper bound was dropped."
+        )
+
+    def test_y_stays_binary_when_min_acreage_is_zero(self, minimal_params):
+        """The degenerate case: min_acreage 0 removes C10's grip on y entirely."""
+        params = dict(minimal_params)
+        params["crops"] = [dict(c, min_acreage_if_planted=0.0) for c in params["crops"]]
+        res = _solve(params)
+        y = np.asarray(res["y"], dtype=float)
+        assert np.all(y <= 1 + 1e-6), (
+            f"with min_acreage_if_planted=0 the y bound is the ONLY thing holding y down, "
+            f"and it did not: {y}"
+        )
+
+    def test_unplanted_succession_reports_y_zero_when_min_acreage_is_set(self, minimal_params):
+        """With a real min_acreage, C10 (min_frac * y <= x) forces y to 0 when x is 0.
+
+        This is the contract the "was this planted" report depends on, and it holds for every
+        shipped template — all of them set min_acreage_if_planted >= 1.
+        """
+        res = _solve(minimal_params)
+        x = np.asarray(res["x"], dtype=float)
+        y = np.asarray(res["y"], dtype=float)
+        assert any(c.get("min_acreage_if_planted", 0) > 0 for c in minimal_params["crops"]), (
+            "fixture must set a non-zero min_acreage for this test to mean anything"
+        )
+        for i, (xi, yi) in enumerate(zip(x, y)):
+            if xi <= 1e-9:
+                assert yi <= 1e-6, (
+                    f"succession {i} has x={xi} but reports y={yi} — an unplanted succession "
+                    f"claiming to be planted"
+                )
+
+    def test_y_is_NOT_a_planted_flag_when_min_acreage_is_zero(self, minimal_params):
+        """Documents a real limitation rather than pretending it is fixed.
+
+        At min_acreage_if_planted = 0, C10 collapses to `0 <= x` and C9 is only `x <= y`, so
+        y = 1 with x = 0 is feasible and costs nothing. Bounding y to {0,1} stops it running
+        away, but nothing pins it to 0. Anything reporting "was this crop planted" must read
+        x, not y. If this test ever fails, someone has added a linkage that fixes it and this
+        caveat can be removed.
+        """
+        params = dict(minimal_params)
+        params["crops"] = [dict(c, min_acreage_if_planted=0.0) for c in params["crops"]]
+        res = _solve(params)
+        x = np.asarray(res["x"], dtype=float)
+        y = np.asarray(res["y"], dtype=float)
+        assert np.all(y <= 1 + 1e-6), f"y must still be bounded to 1: {y}"
+        # NOT asserted: that some succession actually shows x=0 with y=1. Whether HiGHS
+        # returns y=0 or y=1 for an unplanted succession here is an arbitrary tie-break among
+        # equally optimal solutions — pinning it would be testing the solver's mood, and it
+        # would break on a HiGHS upgrade. The point of this test is the bound above plus the
+        # documented caveat: at min_acreage 0, read x for "was this planted", never y.
