@@ -190,9 +190,9 @@ def build_annual_caps(
     """
     caps: dict[tuple[int, int], float] = {}
     for c_idx, crop in enumerate(crops):
-        crop_channels = crop.get("channels", {}) or {}
+        crop_channels = crop.get("channels", {})
         for ch_idx, ch in enumerate(channels):
-            spec = crop_channels.get(ch["name"])
+            spec = crop_channels.get(ch["name"]) if crop_channels else None
             if not spec:
                 continue
             if str(spec.get("demand_cap_type", "")).lower() == "annual":

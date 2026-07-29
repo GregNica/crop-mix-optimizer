@@ -155,6 +155,16 @@ class TestWaterStorageActuallyStores:
     # rate_water_storage is zeroed on purpose: capacity is billed per litre per week, so a
     # tank big enough to matter costs more than the farm has and the solve goes infeasible on
     # CASH, not on water. These tests are about whether the tank stores, not what it costs.
+    def _inflow(self, p):
+        """Week-by-week free supply. Was retyped verbatim in three tests before this existed."""
+        from farm_v2.utils.water import compute_free_water, CATCHMENT_EFFICIENCY
+        return compute_free_water(
+            p["rainfall_weekly_L_per_acre"], p.get("catchment_enabled", False),
+            p.get("catchment_surface_area_m2", 0.0),
+            p.get("catchment_efficiency", CATCHMENT_EFFICIENCY),
+            p.get("well_enabled", False), p.get("well_weekly_cap_L", 0.0),
+        )
+
     def _solve(self, full_params, capacity):
         from farm_v2.solver import solve_farm_v2
         # city_water OFF as well: with it on, a week can already exceed its inflow by BUYING
@@ -167,26 +177,15 @@ class TestWaterStorageActuallyStores:
                                 "city_water_enabled": False})
 
     def test_a_tank_lets_a_week_draw_more_than_its_own_inflow(self, full_params):
-        """Assert on USE, not on the reported cap.
+        """What distinguishes a tank is that a week can SPEND more than arrives in it.
 
-        An earlier version of this test compared the published capacity against inflow. That
-        passed even with the carry term deleted, because the published cap reads wstore — and
-        with no row constraining it, wstore is unconstrained garbage anywhere in [0, capacity].
-        The test was checking the report rather than the behaviour. What actually distinguishes
-        a tank is that a week can SPEND more than arrives that week, which the flow-only row
-        makes impossible.
+        Assert on USE, not on the reported cap: the cap reads wstore, and an unconstrained
+        wstore is garbage anywhere in [0, capacity], so a cap-based check passes even with the
+        carry term deleted.
         """
-        from farm_v2.utils.water import compute_free_water, CATCHMENT_EFFICIENCY
         r = self._solve(full_params, 5_000_000)
         assert r["status"] in ("optimal", "time_limit_feasible"), r["status"]
-        inflow = compute_free_water(
-            full_params["rainfall_weekly_L_per_acre"],
-            full_params.get("catchment_enabled", False),
-            full_params.get("catchment_surface_area_m2", 0.0),
-            full_params.get("catchment_efficiency", CATCHMENT_EFFICIENCY),
-            full_params.get("well_enabled", False),
-            full_params.get("well_weekly_cap_L", 0.0),
-        )
+        inflow = self._inflow(full_params)
         used = r["capacity_series"]["water"]["used"]
         drawn_down = [w for w, (u, f) in enumerate(zip(used, inflow), start=1)
                       if u > float(f) + 1.0]
@@ -201,16 +200,8 @@ class TestWaterStorageActuallyStores:
         Total draw over the year cannot exceed total inflow (the tank starts empty), which is
         the check that stops the carry term from becoming a source of free water.
         """
-        from farm_v2.utils.water import compute_free_water, CATCHMENT_EFFICIENCY
         r = self._solve(full_params, 5_000_000)
-        inflow = compute_free_water(
-            full_params["rainfall_weekly_L_per_acre"],
-            full_params.get("catchment_enabled", False),
-            full_params.get("catchment_surface_area_m2", 0.0),
-            full_params.get("catchment_efficiency", CATCHMENT_EFFICIENCY),
-            full_params.get("well_enabled", False),
-            full_params.get("well_weekly_cap_L", 0.0),
-        )
+        inflow = self._inflow(full_params)
         total_used = sum(r["capacity_series"]["water"]["used"])
         total_in = float(sum(inflow)) + float(r.get("city_water_cost", 0.0) and 0.0)
         assert total_used <= total_in + 1.0, (
@@ -219,16 +210,8 @@ class TestWaterStorageActuallyStores:
         )
 
     def test_no_tank_means_no_banking(self, full_params):
-        from farm_v2.utils.water import compute_free_water, CATCHMENT_EFFICIENCY
         r = self._solve(full_params, 0.0)
-        inflow = compute_free_water(
-            full_params["rainfall_weekly_L_per_acre"],
-            full_params.get("catchment_enabled", False),
-            full_params.get("catchment_surface_area_m2", 0.0),
-            full_params.get("catchment_efficiency", CATCHMENT_EFFICIENCY),
-            full_params.get("well_enabled", False),
-            full_params.get("well_weekly_cap_L", 0.0),
-        )
+        inflow = self._inflow(full_params)
         caps = r["capacity_series"]["water"]["cap"]
         for w, (c, f) in enumerate(zip(caps, inflow), start=1):
             assert c <= float(f) + 1e-6, (

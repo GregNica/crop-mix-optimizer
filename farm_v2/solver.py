@@ -83,78 +83,57 @@ def _cw_index(c: int, w: int, n_weeks: int) -> int:
 # ---------------------------------------------------------------------------
 
 def _diagnose_unplanted_crops(
-    crops, successions, x_sol, total_land, demand_table, excluded_channels,
+    crops, successions, crop_contribution, annual_caps, demand_table, excluded_channels,
     capacity_series, phase_table, n_weeks,
 ):
-    """Say WHY each crop got zero acres. audit Part 3: the highest-value trust feature.
+    """Say WHY each crop got zero acres — as DATA, not as sentences.
 
-    A crop can reach zero from at least four causes and only one of them (the margin hurdle)
-    had any banner. The rest looked identical to the grower: a crop they asked for, absent from
-    the plan, with nothing on screen. This returns a structured reason per unplanted crop.
+    A crop can reach zero from at least four causes and only one (the margin hurdle) had any
+    banner; the rest were indistinguishable to the grower. This returns a structured record per
+    unplanted crop and leaves the wording to the presentation layer, which is where the locked
+    rule puts it — the solver owns the numbers, the UI renders them — and which a future
+    assistant needs, since it cannot narrate from prose it would have to re-parse.
 
-    Deliberately conservative about the LAST case. An LP does not "reject" a crop for a single
-    reason — it declines the whole bundle at these prices — so when no structural cause is
-    found the honest answer is "it did not compete", plus which resource was tightest during
-    the weeks it would have occupied. Naming a binding constraint as THE cause would be a
-    story, not a finding.
+    `outcompeted` is deliberately the weakest claim available. An LP declines a whole bundle at
+    these prices; it does not reject a crop for one reason. `tightest` is therefore reported as
+    context, never as the cause, and only when a resource is genuinely near its limit.
     """
+    NEAR_LIMIT = 0.95
     out = []
-    planted_land = {}
-    for i, s in enumerate(successions):
-        if x_sol[i] > 1e-9:
-            planted_land[s["crop"]] = planted_land.get(s["crop"], 0.0) + x_sol[i] * total_land
-
+    annual_crops = {c for (c, _ch) in (annual_caps or {})}
     excluded_by_crop = {}
     for e in (excluded_channels or []):
+        # Entries are always keyed by crop NAME where they are built.
         excluded_by_crop.setdefault(e.get("crop"), []).append(e.get("channel"))
 
     for c_idx, crop in enumerate(crops):
-        if planted_land.get(c_idx, 0.0) > 1e-6:
-            continue
         name = crop.get("name", f"Crop {c_idx + 1}")
+        if float((crop_contribution.get(name) or {}).get("acres_planted", 0.0)) > 1e-6:
+            continue
+
         succ_idx = [i for i, s in enumerate(successions) if s["crop"] == c_idx]
+        cycle_weeks = int(round(float(crop.get("days_to_maturity", 0)) / 7.0))
+        rec = {
+            "crop": name,
+            "cycle_weeks": cycle_weeks,
+            "min_acres": float(crop.get("min_acreage_if_planted", 0.0) or 0.0),
+            "excluded_channels": excluded_by_crop.get(name) or [],
+            "tightest": None,
+        }
 
         if not succ_idx:
-            out.append({
-                "crop": name, "reason": "no_plantable_window",
-                "detail": (
-                    f"No planting date works. Every start week in this crop's season window "
-                    f"would run its {int(round(crop.get('days_to_maturity', 0) / 7))}-week "
-                    f"cycle past week 52. Widen the window, shorten the cycle, or tick "
-                    f"'overwinters' if it is fall-planted and harvested the following year."
-                ),
-            })
+            rec["reason"] = "no_plantable_window"
+            out.append(rec)
             continue
 
-        total_demand = float(demand_table[c_idx].sum()) if demand_table is not None else 0.0
-        finite_demand = float(
-            np.nansum(np.where(np.isfinite(demand_table[c_idx]), demand_table[c_idx], 0.0))
-        ) if demand_table is not None else 0.0
-        has_annual = bool(demand_table is not None and np.isinf(demand_table[c_idx]).any())
-        if finite_demand <= 0.0 and not has_annual:
-            dropped = excluded_by_crop.get(name) or excluded_by_crop.get(c_idx) or []
-            if dropped:
-                out.append({
-                    "crop": name, "reason": "all_channels_excluded",
-                    "detail": (
-                        f"Every sales channel for {name} was dropped before solving: "
-                        f"{', '.join(str(d) for d in dropped)}. They did not clear the minimum "
-                        f"viable margin, so there was nowhere to sell it."
-                    ),
-                })
-            else:
-                out.append({
-                    "crop": name, "reason": "no_demand",
-                    "detail": (
-                        f"No channel has any sales capacity for {name}, so nothing it grew "
-                        f"could be sold. Set a price and a weekly or annual volume on at least "
-                        f"one channel."
-                    ),
-                })
+        sellable = float(np.sum(np.where(np.isfinite(demand_table[c_idx]),
+                                         demand_table[c_idx], 0.0)))
+        if sellable <= 0.0 and c_idx not in annual_crops:
+            rec["reason"] = ("all_channels_excluded" if rec["excluded_channels"]
+                             else "no_demand")
+            out.append(rec)
             continue
 
-        min_acres = float(crop.get("min_acreage_if_planted", 0.0) or 0.0)
-        tightest = None
         if capacity_series:
             weeks = sorted({w for i in succ_idx for w in range(1, n_weeks + 1)
                             if phase_table[i][w] is not None})
@@ -165,24 +144,12 @@ def _diagnose_unplanted_crops(
                     if w - 1 < len(used) and w - 1 < len(cap) and cap[w - 1] > 0:
                         ratio = used[w - 1] / cap[w - 1]
                         if ratio > best:
-                            best, tightest = ratio, (res_name, w, ratio)
-
-        detail = (
-            f"{name} was plantable and sellable, but did not earn its place: every acre it "
-            f"would have taken was worth more under another crop at these prices and costs."
-        )
-        if min_acres > 0:
-            detail += (
-                f" It is also all-or-nothing at {min_acres:g} acres — it cannot be planted in a "
-                f"small trial strip."
-            )
-        if tightest and tightest[2] > 0.95:
-            detail += (
-                f" During the weeks it would have occupied, {tightest[0]} was effectively full "
-                f"(week {tightest[1]}, {tightest[2] * 100:.0f}% used), so land was not the only "
-                f"thing it was competing for."
-            )
-        out.append({"crop": name, "reason": "outcompeted", "detail": detail})
+                            best = ratio
+                            if ratio >= NEAR_LIMIT:
+                                rec["tightest"] = {"resource": res_name, "week": w,
+                                                   "utilization": float(ratio)}
+        rec["reason"] = "outcompeted"
+        out.append(rec)
 
     return out
 
@@ -585,6 +552,11 @@ def solve_farm_v2(
     idx_waste_start = idx_inv_start + INV_off
     # Sequentially lay out the optional weekly variable blocks after the fixed ones.
     _next = idx_waste_start + INV_off
+    # Two allocation conventions live here, on purpose. city water / overtime / hire are gated
+    # on an explicit *_enabled flag because each carries its own cost rate and cap that would be
+    # wrong to allocate at zero. wstore below is gated on its CAPACITY instead: its off state is
+    # a single scalar collapse with no separate wiring, so allocating it unconditionally avoids
+    # forking one flow-balance row. Pick deliberately when adding the next optional resource.
     idx_cw_start = None
     if city_water_enabled:
         idx_cw_start = _next; _next += N_WEEKS
@@ -651,16 +623,12 @@ def solve_farm_v2(
     # lands, delete this.
     c_obj[idx_inv_start : idx_inv_start + INV_off] = INVENTORY_TIE_BREAK_PER_LB_WEEK
 
-    # Plant-flag tie-break — makes y[i] mean what its name says in EVERY case.
+    # Plant-flag tie-break — makes y[i] mean what its name says. See the y upper-bound note
+    # below for why y is otherwise free when min_acreage_if_planted is 0.
     #
-    # y is pinned to 0 for an unplanted succession by C10 (min_frac·y ≤ x), but only while
-    # min_acreage_if_planted > 0. At 0 — a value the form accepts — C10 collapses to `0 ≤ x`,
-    # C9 is only `x ≤ y`, and y = 1 alongside x = 0 becomes feasible at no cost. Every value of
-    # y is then equally optimal, so "was this succession planted" has no reliable answer.
-    #
-    # A vanishing cost on y makes the minimum strictly optimal, exactly as the holding
-    # tie-break above does for inventory. Bounded by a test: at 1e-6 per succession, a farm
-    # planting every one of ~155 successions pays under a fifth of a cent.
+    # A vanishing cost makes the minimum strictly optimal, exactly as the holding tie-break
+    # above does for inventory. Bounded by a test: at 1e-6 per succession, a farm planting all
+    # ~155 of them pays under a fifth of a cent.
     c_obj[idx_y_start : idx_y_start + N_S] += PLANT_FLAG_TIE_BREAK
 
     # Overtime cost (incremental rate above regular pay)
@@ -773,23 +741,14 @@ def solve_farm_v2(
             cols.append((idx_hire_start + w - 1, -1.0))
         add_row(cols, -np.inf, rhs)
 
-    # C3 — Water, WITH the tank actually storing something (audit B7)
+    # C3 — Water, with the tank actually storing something (audit B7)
     #
     #     wstore[w] ≤ wstore[w-1] + free_water[w] + city_water[w] − use[w]
     #
-    # `water_storage_capacity` used to appear in exactly one place: as a multiplier on the
-    # fixed-cost line. The constraint itself was a pure per-week flow balance, so a tank was
-    # billed every week of the year and banked nothing — catchment that arrived in a wet week
-    # was simply lost, which makes rainwater harvesting unmodellable in any climate where the
-    # rain and the demand fall in different months.
-    #
-    # The inequality (rather than an equality) is what lets surplus water be dumped: you can
-    # always spill, so no separate spill variable is needed. Combined with wstore ≥ 0 it also
-    # enforces `use[w] ≤ wstore[w-1] + free + city` — you cannot spend water you do not have.
-    #
-    # This SUBSUMES the old row rather than sitting beside it: at capacity 0 every wstore is
-    # pinned to 0 and the row collapses to `use[w] ≤ free_water[w] + city_water[w]`, which is
-    # exactly what C3 said before.
+    # The inequality rather than an equality is what lets surplus be dumped, so no spill
+    # variable is needed; with wstore ≥ 0 it also enforces that a week cannot spend water it
+    # does not have. At capacity 0 every level pins to 0 and the row collapses to the pure
+    # flow balance this replaced — one water constraint, not a tank path and a no-tank path.
     #
     # wstore[0] = 0 — the tank starts the year empty, the same anchoring choice as the
     # inventory balance below and for the same reason: a periodic boundary leaves the level
@@ -958,12 +917,9 @@ def solve_farm_v2(
                 flat_idx = idx_v_start + _vcw_index(c_idx, ch_idx, w, n_channels, N_WEEKS)
                 add_row([(flat_idx, 1.0)], -np.inf, cap_w)
 
-    # C6b — Channel sales ≤ ANNUAL demand cap (one row per crop-channel that has one)
-    #
-    # An annual cap is a sum across the year, which no per-week row can state. It used to be
-    # spread as `annual / 52` into every week, so a 52,000 lb contract became a flat
-    # 1,000 lb/wk ceiling and a crop harvesting in ten weeks could deliver 10,000 lb of it —
-    # while the docstring promised the optimizer could front- or back-load freely. Now it can.
+    # C6b — Channel sales ≤ ANNUAL demand cap (one row per crop-channel that has one).
+    # A yearly total is a sum across weeks, which no per-week row can express; see
+    # expand_channel_demand and build_annual_caps in demand.py for the rest.
     for (c_idx, ch_idx), annual_lbs in annual_caps.items():
         # A channel dropped by the margin hurdle has its weekly caps zeroed above, which
         # already forces v to 0; the annual row would be slack. Skip it rather than carry a row
@@ -1466,8 +1422,8 @@ def solve_farm_v2(
         # rather than in the client so every entry point gets it — the What-If sweep and Monte
         # Carlo never touch the browser's reporting code.
         "unplanted_crops":  _diagnose_unplanted_crops(
-            crops, successions, x_sol, total_land, demand_table, excluded_channels,
-            capacity_series, phase_table, N_WEEKS,
+            crops, successions, crop_contribution, annual_caps, demand_table,
+            excluded_channels, capacity_series, phase_table, N_WEEKS,
         ),
         "storage_peak_m3":  max(storage_m3_weekly) if storage_m3_weekly else 0.0,
         "ambient_peak_m3":  max(ambient_m3_weekly) if ambient_m3_weekly else 0.0,

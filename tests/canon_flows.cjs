@@ -438,26 +438,46 @@ const near = (name, got, want, rel) => {
       if (host.style.display !== 'none')
         fail('unplanted crops: banner shown with nothing to say');
 
+      // Structured in, sentence out: the solver sends a reason code and numbers, this layer
+      // writes the English. A `detail` string from the solver would put narration in the
+      // wrong place and leave a future assistant re-parsing prose.
       w6.renderUnplantedCrops({
-        unplanted_crops: [{ crop: 'Garlic', reason: 'no_demand',
-                            detail: 'No channel has any sales capacity for Garlic.' }],
+        unplanted_crops: [{ crop: 'Garlic', reason: 'no_demand', cycle_weeks: 34,
+                            min_acres: 5, excluded_channels: [], tightest: null }],
         warnings: ['Crop Kale season window is unusually short.'],
       });
       if (host.style.display === 'none')
         fail('unplanted crops: a crop was dropped and the banner stayed hidden');
       const txt = host.textContent || '';
-      ['Garlic', 'No channel has any sales capacity', 'Kale'].forEach(frag => {
+      ['Garlic', 'sales capacity', 'Kale'].forEach(frag => {
         if (!txt.includes(frag))
           fail(`unplanted crops: rendered text is missing "${frag}" — got: ${txt.slice(0, 160)}`);
       });
 
       // User-controlled crop names go through escHtml at the render boundary.
       w6.renderUnplantedCrops({
-        unplanted_crops: [{ crop: '<img src=x onerror=alert(1)>', reason: 'no_demand',
-                            detail: 'x' }], warnings: [],
+        unplanted_crops: [{ crop: '<img src=x onerror=alert(1)>', reason: 'outcompeted',
+                            cycle_weeks: 6, min_acres: 0, excluded_channels: [],
+                            tightest: null }], warnings: [],
       });
       if (host.querySelector('img'))
         fail('unplanted crops: a crop name was injected as live markup rather than escaped');
+
+      // Each reason must read differently. A switch that quietly falls through to the generic
+      // case for everything would still pass a test that only checked the banner is visible.
+      const seen = new Set();
+      ['no_plantable_window', 'all_channels_excluded', 'no_demand', 'outcompeted'].forEach(rc => {
+        const txt = w6.unplantedReasonText({
+          crop: 'X', reason: rc, cycle_weeks: 6, min_acres: 0,
+          excluded_channels: ['Wholesale'], tightest: null,
+        });
+        if (!txt || txt.length < 30) fail(`unplanted crops: ${rc} produced no usable sentence`);
+        if (seen.has(txt)) fail(`unplanted crops: ${rc} reads identically to another reason`);
+        seen.add(txt);
+      });
+      if (!w6.unplantedReasonText({ crop: 'X', reason: 'no_plantable_window', cycle_weeks: 6 })
+             .toLowerCase().includes('overwinter'))
+        fail('unplanted crops: the calendar reason names the symptom but not the fix');
     }
   }
 

@@ -356,8 +356,8 @@ class TestUnplantedCropsExplainThemselves:
         assert self._reasons(res).get("Too Late") == "no_plantable_window", (
             f"expected a calendar explanation, got {res['unplanted_crops']}"
         )
-        detail = next(d["detail"] for d in res["unplanted_crops"] if d["crop"] == "Too Late")
-        assert "overwinters" in detail, "the fix is not mentioned, only the symptom"
+        rec = next(d for d in res["unplanted_crops"] if d["crop"] == "Too Late")
+        assert rec["cycle_weeks"] > 0, "the calendar reason must carry the cycle length"
 
     def test_no_demand_is_named_as_such(self, minimal_params):
         params = dict(minimal_params)
@@ -401,5 +401,12 @@ class TestUnplantedCropsExplainThemselves:
         crop["seasons"] = [{"start": "12-15", "end": "12-24"}]
         params["crops"] = [viable, crop]
         for d in _solve(params)["unplanted_crops"]:
-            assert d.get("crop") and d.get("reason") and d.get("detail"), d
-            assert len(d["detail"]) > 40, f"detail too thin to act on: {d}"
+            assert d.get("crop") and d.get("reason"), d
+            # STRUCTURED, not prose: the solver returns the reason code and the numbers, and
+            # the UI builds the sentence. A `detail` string here would put narration in the
+            # solver and give a future assistant prose to re-parse instead of data to read.
+            assert "detail" not in d, (
+                f"the solver is writing sentences again: {d}"
+            )
+            for k in ("cycle_weeks", "min_acres", "excluded_channels", "tightest"):
+                assert k in d, f"missing structured field {k!r}: {d}"
