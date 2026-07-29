@@ -90,6 +90,73 @@ zero-research consistency sweep, water, and fertiliser.
 Phases C–G). Waits behind both: shipping a shape we are about to change is how the July plan's
 own Phase C came to sit unexecuted.
 
+## The interface direction (recorded 2026-07-29 — a constraint on today's work, not a schedule)
+
+**The grower's vision, in their terms:** turn the UI into an LLM-chatbot-driven, tax-wizard-style
+setup. Parameter input is *progressively prompted*, tailored to the farm's specific situation, in
+bite-size sections. The assistant navigates the user through dashboards as their questions arise
+and explains what they do not understand or what is missing. **The chatbot does not do the
+calculations, tables or fields** — it does walk-through, explanation, guidance, information
+gathering and prompting. Most of the current UI is recycled as the views it drives. The main
+interface is a split screen with the assistant guiding the second half.
+
+This is recorded here **before** it is scheduled, for one reason the grower named: it changes the
+deliverable, so it must stop us building things the assistant will subsume.
+
+**It resolves an ambiguity the plans carried.** The July audit has *Phase F — UI system + wizard*
+and bet ③ has *LLM chatbot* as separate tracks. They are one thing: **the wizard IS the chatbot.**
+Phase F's hand-rolled progressive disclosure is not to be built.
+
+**It is already seeded, not greenfield.** `worker/grounding.ts` ships a curated `CHATBOT_FIELDS`
+allowlist, a `set_form_fields` tool and a propose-then-confirm flow; the panel's own copy already
+states the division of labour ("I help with inputs — the optimizer does the math"). What changes
+is *hosting* (corner FAB → split screen) and *scope* (flat farm basics → crops, channels, labor).
+
+### Stop building — the assistant subsumes these
+
+1. **A hand-rolled multi-step wizard** (Phase F as specced).
+2. **Progressive-disclosure toggle machinery** (the `pd-*` pattern). The assistant surfaces a
+   field when it is relevant instead of asking the grower to find the switch that reveals it.
+   Applied 2026-07-29: the dead "crop-specific variable costs" toggle was **deleted, not wired**.
+3. **A provenance badge panel.** `CROP_PROVENANCE` renders nowhere today — under this direction
+   that is correct, not a gap. The assistant surfaces provenance on demand.
+4. **A zero-acre explanation panel.** Emit structured *reasons* from the solver; the assistant is
+   the renderer.
+5. **Tooltip/help-text expansion as a UI project.** Field meaning belongs in the registry the
+   assistant reads, not in `data-tip` attributes.
+
+### It does NOT subsume — and it raises the bar on all of it
+
+Model truth (bet ②), product shape (bet ①), and the deliverable (audit Phase C). **A chatbot
+explaining a wrong number is worse than a table showing one:** it converts something a grower
+might squint at into an assertion delivered with authority. The 39% net margin becomes
+trust-critical for the same reason — the assistant's entire value is being believed.
+
+Two items get *cheaper* under it: the tabled **labour establishment/mechanisation axis** and
+**propagation cost**, because the complexity test's "what can a farmer readily supply" is easier
+to satisfy when the question is categorical and asked conversationally. And **near-optimal
+alternative plans** (decided, unbuilt) becomes its natural shape — "three plans within 2% of each
+other, which fits your ground?" is a conversation, not a table. It was deferred for lack of UI.
+
+### What it adds that no plan covers
+
+- **One field registry.** There are three partial ones today — `DATA_F_REGISTRY` (units),
+  `CROP_PROVENANCE` (sources), `CHATBOT_FIELDS` (hand-curated chat descriptions, explicitly a
+  subset that excludes crops/channels/labor). They overlap and will drift. This promotes the
+  audit's **E5 declarative field registry** from code hygiene to *the substrate this direction
+  sits on*: what every field means, its units, its provenance, what depends on it, and what a good
+  answer looks like.
+- **Addressable views** — chat drives the second pane, so sections need stable names and a
+  navigation API.
+- **A solver that explains itself** — bindingness, why-zero, what-if deltas as *data*. Partially
+  present (`capacity_series`, the bottleneck ranking).
+
+**Status: strategy-tier.** Recorded, not scheduled. Reordering the bets around it requires its own
+session under the anti-lurch rule below. Standing recommendation for that session: this direction
+makes audit **Phase C — return the real answer** *more* important, not less. An assistant that
+walks a grower through inputs beautifully and then cannot hand them a seed order is a polished
+dead end; the split screen's right pane needs something worth navigating to.
+
 ## Locked decisions (do not re-litigate without new evidence)
 
 | Date | Decision |

@@ -1659,12 +1659,43 @@
     <div class="card span-3" id="crops-card">
       <h2>Crops</h2>
       <p style="font-size:0.73rem;color:#6b7280;margin:0 0 0.5rem">Configure every crop — growth cycle, seasons, resource use, and market channels. Click a crop to expand.</p>
-      <!-- PD Group (d1): crop-specific variable costs -->
-      <label class="pd-toggle-row" for="pd-crop-var-costs" style="margin-bottom:0.2rem">
-        <input type="checkbox" id="pd-crop-var-costs" onchange="setPDCropVarCosts(this.checked)">
-        Add crop-specific variable costs? (fertilizer, fuel — customize per crop)
-      </label>
-      <div id="pd-crop-var-costs-helper" class="pd-helper">Crop variable costs use benchmark rates. Enable to customize fertilizer and fuel usage per crop.</div>
+      <!-- PD Group (d1) REMOVED 2026-07-29 — it was a control that could not work.
+           setPDCropVarCosts() toggled elements with class `crop-var-cost-fields`, and that
+           class appeared exactly once in this file: inside the querySelectorAll looking for
+           it. No element ever carried it, so ticking the box hid a helper line and did
+           nothing else, while promising per-crop fertilizer and fuel customisation.
+           That customisation is real and lives under the (d2) toggle below, which shows the
+           per-phase labour/water/fertilizer/fuel fields. Removed rather than wired up: per
+           STRATEGY's chatbot direction, the progressive-disclosure toggle pattern is what the
+           assistant replaces — it surfaces a field when it is relevant instead of asking the
+           grower to find the switch that reveals it. -->
+      <!-- Crop CSV import/export. Both halves existed and NEITHER was reachable: as of
+           2026-07-29 downloadCropTemplate() and handleCSVUpload() had zero callers in the page,
+           so a full parser, template writer and test suite shipped behind no button at all.
+           Found when the grower went looking for the phase columns and was served the Past Data
+           XLSX instead. -->
+      <details class="csv-import-section" id="crop-csv-details">
+        <summary class="csv-import-summary">
+          <span id="crop-csv-arrow">▶</span> Import Crops from CSV
+          <span style="font-size:0.67rem;color:#9ca3af;font-weight:400">(optional — bulk-add crops and their channels)</span>
+        </summary>
+        <div class="csv-import-body">
+          <p style="margin:0;font-size:0.77rem;color:#6b7280">
+            The template carries one row per crop <em>per sales channel</em>, with a units row
+            underneath the header. Phase resource columns are per acre <strong>per week</strong>
+            of that phase — a crop with 2 planting weeks is charged its planting rate twice.
+          </p>
+          <div class="csv-upload-row">
+            <button class="section-toggle-btn" onclick="downloadCropTemplate()">↓ Download CSV Template</button>
+            <label class="section-toggle-btn" style="cursor:pointer;margin:0">
+              ↑ Upload CSV
+              <input type="file" id="crop-csv-file-input" accept=".csv,text/csv"
+                     style="display:none" onchange="handleCSVUpload(this)">
+            </label>
+          </div>
+          <div id="crop-csv-status"></div>
+        </div>
+      </details>
       <!-- PD Group (d2): phase-specific resource usage -->
       <label class="pd-toggle-row" for="pd-phase-detail" style="margin-bottom:0.2rem">
         <input type="checkbox" id="pd-phase-detail" onchange="setPDPhaseDetail(this.checked)">
@@ -3077,7 +3108,6 @@ const APP_STATE = {
   introDismissed: false,       // Phase 4.3.2: intro panel dismissed by user
   _pdChannelVarDetail: false,  // Phase 4.3.2: Group (c) show var/fixed sell in channels
   _pdPhaseDetail: false,       // Phase 4.3.2: Group (d) show phase-specific resource splits
-  _pdCropVarCosts: false,      // Phase 4.3.3: Group (d1) show crop-specific variable costs
   profitHistory: null,         // { years[], profits[], revenues[], fixedCosts[], excludedYears[] }
   profitForecast: null,        // { forecast, ci80Low, ci80High, growthRate, label, nYears }
   unitSystem: null,            // active display units: null/'canonical' (identity) until the
@@ -3601,7 +3631,6 @@ function serializeFormState() {
       dataMode:            APP_STATE.dataMode,
       _pdChannelVarDetail: APP_STATE._pdChannelVarDetail,
       _pdPhaseDetail:      APP_STATE._pdPhaseDetail,
-      _pdCropVarCosts:     APP_STATE._pdCropVarCosts,
       annualizeMargins:    APP_STATE.annualizeMargins,
       overriddenFields:    Array.from(APP_STATE.overriddenFields || []),
     },
@@ -3666,7 +3695,6 @@ function applyFormState(state) {
   if (ui.dataMode) APP_STATE.dataMode = ui.dataMode;
   APP_STATE._pdChannelVarDetail = !!ui._pdChannelVarDetail;
   APP_STATE._pdPhaseDetail      = !!ui._pdPhaseDetail;
-  APP_STATE._pdCropVarCosts     = !!ui._pdCropVarCosts;
   APP_STATE.annualizeMargins    = !!ui.annualizeMargins;
 
   // 2) flat fields
@@ -3694,7 +3722,6 @@ function applyFormState(state) {
   // 4) re-assert visual PD detail toggles now that collections re-rendered
   if (typeof setPDChannelVarDetail === 'function') setPDChannelVarDetail(APP_STATE._pdChannelVarDetail);
   if (typeof setPDPhaseDetail === 'function')      setPDPhaseDetail(APP_STATE._pdPhaseDetail);
-  if (typeof setPDCropVarCosts === 'function')     setPDCropVarCosts(APP_STATE._pdCropVarCosts);
 
   // 5) uploaded data
   const up = state.uploads || {};
@@ -4733,7 +4760,10 @@ function downloadCropTemplate() {
 function handleCSVUpload(input) {
   const file = input.files[0];
   if (!file) return;
-  const statusEl = document.getElementById('csv-status');
+  // Crop CSV has its own status line in the Crops section; #csv-status belongs to the
+  // Past Data XLSX importer in the hub and would report crop errors on the wrong screen.
+  const statusEl = document.getElementById('crop-csv-status')
+                || document.getElementById('csv-status');
   if (statusEl) statusEl.innerHTML = '<span style="color:#6b7280;font-size:0.78rem">Reading file…</span>';
   const reader = new FileReader();
   reader.onload = e => {
@@ -6542,14 +6572,8 @@ function setPDPhaseDetail(show) {
   APP_STATE._pdPhaseDetail = show;
 }
 
-function setPDCropVarCosts(show) {
-  const helper = document.getElementById('pd-crop-var-costs-helper');
-  if (helper) helper.style.display = show ? 'none' : '';
-  document.querySelectorAll('.crop-var-cost-fields').forEach(el => {
-    el.style.display = show ? '' : 'none';
-  });
-  APP_STATE._pdCropVarCosts = show;
-}
+/* setPDCropVarCosts() removed 2026-07-29 with the (d1) toggle it served — see the note at the
+   Crops section header. It targeted `.crop-var-cost-fields`, a class no element ever had. */
 
 /* Phase 4.2: Render the hub section cards with 3-state completion */
 function renderHub() {
@@ -7436,11 +7460,25 @@ const SOLVER_TIMEOUT_MS = 90000; // 90 seconds
 
 function showError(errBox, msg, isWarning) {
   if (!errBox) return;
+  // ONE ERROR BOX, TWO VIEWS. #error-box is markup inside #hub-view, but every section's
+  // Optimize button lives in #input-view. A validation failure raised from a section wrote its
+  // message onto a screen the user was not looking at, so refusing to solve was pixel-identical
+  // to a dead button: click Optimize, nothing happens, no explanation anywhere. Reported from
+  // real use 2026-07-29 against the ambient-storage guard, which fired exactly as designed and
+  // still read as a broken app. Re-home the box into whichever view is actually on screen.
+  const host = ['input-view', 'hub-view']
+    .map(id => document.getElementById(id))
+    .find(v => v && v.style.display !== 'none');
+  if (host && errBox.parentElement !== host) host.appendChild(errBox);
   errBox.textContent = msg;
   // A time-limited solve still produced a plan, so it must not be styled as a failure —
   // the results below it are real (SPEC_v3 §7.1).
   errBox.style.display = 'block';
   errBox.classList.toggle('is-warning', !!isWarning);
+  // jsdom has no layout, so scrollIntoView is absent there — the harness must not crash on it.
+  if (typeof errBox.scrollIntoView === 'function') {
+    errBox.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
 }
 
 function startProgress(fillEl, labelEl) {
@@ -11733,7 +11771,6 @@ window._testWhatIf = function() {
     console.assert('mcUncertaintyFileName' in APP_STATE, 'T109b: APP_STATE.mcUncertaintyFileName exists');
     console.assert('annualizeMargins'      in APP_STATE, 'T109c: APP_STATE.annualizeMargins exists');
     console.assert(APP_STATE.annualizeMargins === false, 'T109d: annualizeMargins defaults to false (Phase 4.3.2)');
-    console.assert('_pdCropVarCosts' in APP_STATE, 'T109e: APP_STATE._pdCropVarCosts exists');
     console.log('T109: APP_STATE new fields present ✓');
   }
 
@@ -13206,8 +13243,6 @@ window._testWhatIf = function() {
     console.assert(cvEl !== null, 'T184a: #pd-crop-var-costs toggle exists');
     if (cvEl) console.assert(cvEl.checked === false, 'T184b: pd-crop-var-costs unchecked by default');
     console.assert(typeof setPDCropVarCosts === 'function', 'T184c: setPDCropVarCosts() is a function');
-    console.assert('_pdCropVarCosts' in APP_STATE, 'T184d: APP_STATE._pdCropVarCosts exists');
-    console.assert(APP_STATE._pdCropVarCosts === false, 'T184e: _pdCropVarCosts defaults to false');
     console.log('T184: Dual-toggle crop structure verified ✓');
   }
 

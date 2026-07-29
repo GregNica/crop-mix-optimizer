@@ -233,6 +233,40 @@ const near = (name, got, want, rel) => {
     }
   }
 
+  // ---- an error raised from the input view must be VISIBLE there ------------------------
+  // #error-box is markup inside #hub-view, but every section's Optimize button is in
+  // #input-view. validateParams would refuse to solve, showError would write the reason onto
+  // the hub screen, and the grower — sitting in the Crops section — saw a button that did
+  // nothing. Reported from real use 2026-07-29 against the ambient-storage guard, which was
+  // working correctly the whole time. A refusal nobody can read is a refusal that did not happen.
+  {
+    const doc = w.document;
+    const hub = doc.getElementById('hub-view');
+    const inp = doc.getElementById('input-view');
+    const box = doc.getElementById('error-box');
+    if (!hub || !inp || !box) {
+      fail('error visibility: #hub-view, #input-view or #error-box is missing');
+    } else {
+      hub.style.display = 'none';
+      inp.style.display = '';
+      w.showError(box, 'ambient capacity is 0');
+      if (!inp.contains(box))
+        fail('error visibility: an error raised while the input view is open landed outside it '
+           + '— the message is written to a screen the user is not looking at, which reads as '
+           + 'a dead Optimize button');
+      if (box.style.display !== 'block')
+        fail(`error visibility: box not displayed (display=${box.style.display})`);
+      if (!String(box.textContent).includes('ambient capacity is 0'))
+        fail('error visibility: message text did not reach the box');
+      // And it must go back to the hub when the hub is the visible view.
+      inp.style.display = 'none';
+      hub.style.display = '';
+      w.showError(box, 'back on the hub');
+      if (!hub.contains(box))
+        fail('error visibility: error raised from the hub view did not land in the hub view');
+    }
+  }
+
   if (failures) { console.error(`\n${failures} FAILURE(S)`); process.exit(1); }
   console.log('data-canon flows: all checks passed '
             + '(channel restore, zero-crop restore, save/restore round-trip, chatbot update)');
