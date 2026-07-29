@@ -52,6 +52,7 @@ from farm_v2.utils.water import (
 )
 from farm_v2.utils.labor import compute_labor_arrays, compute_labor_rates
 from farm_v2.utils.demand import build_demand_table, build_annual_caps
+from farm_v2.validate import validate_params
 
 
 # ---------------------------------------------------------------------------
@@ -277,6 +278,58 @@ def solve_farm_v2(
     N_WEEKS = 52
     n_crops    = len(crops)
     n_channels = len(channels)
+
+    # -----------------------------------------------------------------------
+    # Step 0 — Pre-flight validation (audit 1.4 / S1)
+    # -----------------------------------------------------------------------
+    # This lives HERE, not in the browser and not in the JS-embedded adapter, because this is
+    # the point every caller converges on: the Optimize button, the What-If sweep, the
+    # sensitivity runs, Monte Carlo, the tests, and the server path that does not exist yet.
+    # The adapter looked like a convergence point only while the app was browser-only.
+    #
+    # It also puts the guard under ordinary pytest import. In the adapter it was reachable only
+    # by string-slicing a JS template literal out of index.html.
+    #
+    # Errors are RETURNED, not raised: callers already branch on `status`, and a traceback is
+    # not an error message.
+    validation_warnings: list[str] = []
+    try:
+        validation_warnings = validate_params(
+            total_land=total_land,
+            harvest_storage_cap=harvest_storage_cap,
+            operating_weeks=operating_weeks,
+            crops=crops,
+            channels=channels,
+            rainfall_weekly_L_per_acre=rainfall_weekly_L_per_acre,
+            opening_cash=opening_cash,
+            credit_line=credit_line,
+            year_round_employees=year_round_employees,
+            seasonal_employees=seasonal_employees,
+            city_water_enabled=city_water_enabled,
+            well_enabled=well_enabled,
+            catchment_enabled=catchment_enabled,
+            catchment_surface_area_m2=catchment_surface_area_m2,
+            well_weekly_cap_L=well_weekly_cap_L,
+            year=year,
+        ) or []
+    except ValueError as ve:
+        return {
+            "status": "invalid_input",
+            "profit": None,
+            "errors": [str(ve)],
+            "warnings": [],
+            "crops": crops,
+            "channels": channels,
+            "successions": [],
+        }
+    except Exception as ge:
+        # A guard that crashes must not cost a computable plan — but it must not go quiet
+        # either. Silently continuing is how this branch has shipped inert guards before, and
+        # this exact path swallowed a NameError of mine while the guard lived in the adapter.
+        validation_warnings = [
+            f"Pre-flight checks could not run ({type(ge).__name__}: {ge}). The plan was still "
+            f"computed, but it was NOT checked for bad inputs."
+        ]
 
     # -----------------------------------------------------------------------
     # Step 1 — Generate successions and lookup tables
@@ -1446,6 +1499,7 @@ def solve_farm_v2(
         # The storage series the CONSTRAINT used. The client must render this rather than
         # rebuild it — B.1 left the adapter recomputing harvest inflow because there was no
         # key to read, and that copy understates any plan that holds stock. SPEC_v3 §9.
+        "warnings":         validation_warnings,
         "capacity_series":  capacity_series,
         # WHY each requested crop is absent from the plan (audit Part 3 / S2). Computed here
         # rather than in the client so every entry point gets it — the What-If sweep and Monte
