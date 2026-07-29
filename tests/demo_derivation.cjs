@@ -73,7 +73,21 @@ bootApp().then(({ window: w }) => {
   //   • an override identical to its template is ballast — delete it, it hides the real ones;
   //   • an override on a field the audit sources needs a written reason, because it means the
   //     demo deliberately disagrees with a citation.
-  const AUDITED = [/^water_/, /^fert_/, /^sales_spread_weeks$/, /^cold_storage$/];
+  // What counts as "sourced" is DATA-DRIVEN, not a hand-kept list — a hardcoded list lags the
+  // audit, which is exactly how three overrides on labour and transplant cost sailed through
+  // while the list still said water/fert only, leaving two of five "fixed" labour outliers and
+  // one of four transplanted demo crops unreached on the shipped farm.
+  // Two ways a field counts:
+  //   • its family is derived by a uniform documented rule (water, fert — the rule lives in the
+  //     CROP_PROVENANCE header rather than in 29 per-crop records);
+  //   • or this crop has an explicit CROP_PROVENANCE record for that field.
+  // The second clause means the guard's reach grows automatically as citations are added, which
+  // is the property the hardcoded version lacked. Fields Phase C has not sourced yet — yield,
+  // DTM, harvest weeks — correctly do NOT fire: overriding an uncited value is not shadowing.
+  const prov = w.eval('CROP_PROVENANCE');
+  const AUDITED_FAMILY = [/^water_/, /^fert_/];
+  const isAudited = (crop, field) =>
+    AUDITED_FAMILY.some(re => re.test(field)) || Boolean((prov[crop] || {})[field]);
   // crop -> field -> why the demo legitimately differs from the sourced value. Empty on purpose.
   const OVERRIDE_REASONS = {};
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -89,10 +103,23 @@ bootApp().then(({ window: w }) => {
       } else leaves.push([k, v, tpl[k]]);
     }
     for (const [field, ovVal, tplVal] of leaves) {
+      // Channel-level orphan check. `channels_data.X.Y` must name a channel the template has and
+      // a field that channel has — otherwise the deep merge quietly ADDS the typo and leaves the
+      // real value in place. (The shallow spread used to replace the channel wholesale, so a
+      // typo was loud; the merge that fixed 32 ballast leaves is what made it silent.)
+      if (field.startsWith('channels_data.')) {
+        const [, ch, ck] = field.split('.');
+        if (!(tpl.channels_data || {})[ch])
+          fail(`DEMO_OVERRIDES ${crop}.${field} names channel "${ch}", which the template does `
+             + `not have — the deep merge will add it silently`);
+        else if (tplVal === undefined)
+          fail(`DEMO_OVERRIDES ${crop}.${field} names field "${ck}", which channel "${ch}" does `
+             + `not have — likely a typo that adds a dead key and leaves the real value alone`);
+      }
       if (same(ovVal, tplVal))
         fail(`DEMO_OVERRIDES ${crop}.${field} is identical to the template (${JSON.stringify(ovVal)}) `
            + `— ballast that hides the real divergences; delete it`);
-      if (AUDITED.some(re => re.test(field)) && !((OVERRIDE_REASONS[crop] || {})[field]))
+      if (isAudited(crop, field) && !((OVERRIDE_REASONS[crop] || {})[field]))
         fail(`DEMO_OVERRIDES ${crop}.${field} shadows a SOURCED value `
            + `(template ${JSON.stringify(tplVal)}, override ${JSON.stringify(ovVal)}) with no `
            + `reason. Either delete the override so the demo uses the audited number, or add an `
@@ -130,7 +157,6 @@ bootApp().then(({ window: w }) => {
 
   // 4 — provenance is CHECKED, not decorative. It duplicates values from CROP_TEMPLATES, and an
   // unchecked parallel map is a citation that can quietly stop describing the number it cites.
-  const prov = w.eval('CROP_PROVENANCE');
   for (const [crop, fields] of Object.entries(prov)) {
     const tpl = templates[crop];
     if (!tpl) { fail(`CROP_PROVENANCE cites "${crop}", which is not a template`); continue; }

@@ -1,8 +1,5 @@
 {
  "Cucumbers": {
-  "labor_plant": 12,
-  "labor_grow": 1.8,
-  "labor_harv": 38,
   "fuel_plant": 3.5,
   "fuel_grow": 2,
   "fuel_harv": 4.5,
@@ -20,9 +17,6 @@
   "crop_diversity_max": 0.3,
   "yield_per_acre": 8000,
   "lbs_per_tote": 18,
-  "seed_transplant_cost_per_acre": 220,
-  "labor_plant": 3.5,
-  "labor_grow": 2,
   "fuel_plant": 3.2,
   "fuel_harv": 3.8,
   "channels_data": {
@@ -48,9 +42,6 @@
   }
  },
  "Hot Peppers": {
-  "labor_plant": 8,
-  "labor_grow": 1.4,
-  "labor_harv": 20,
   "fuel_plant": 3.5,
   "fuel_grow": 2.3,
   "fuel_harv": 4.8,
@@ -65,9 +56,6 @@
  },
  "Basil": {
   "yield_per_acre": 4500,
-  "labor_plant": 5,
-  "labor_grow": 3,
-  "labor_harv": 40,
   "fuel_plant": 3,
   "fuel_grow": 1.5,
   "channels_data": {

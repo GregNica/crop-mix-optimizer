@@ -2680,9 +2680,6 @@ const CROP_PROVENANCE = {
 const DEMO_CROPS = ["Spinach", "Cucumbers", "Kale", "Tomatoes", "Hot Peppers", "Garlic", "Basil"];
 const DEMO_OVERRIDES = {
   "Cucumbers": {
-    "labor_plant": 12,
-    "labor_grow": 1.8,
-    "labor_harv": 38,
     "fuel_plant": 3.5,
     "fuel_grow": 2,
     "fuel_harv": 4.5,
@@ -2700,9 +2697,6 @@ const DEMO_OVERRIDES = {
     "crop_diversity_max": 0.3,
     "yield_per_acre": 8000,
     "lbs_per_tote": 18,
-    "seed_transplant_cost_per_acre": 220,
-    "labor_plant": 3.5,
-    "labor_grow": 2,
     "fuel_plant": 3.2,
     "fuel_harv": 3.8,
     "channels_data": {
@@ -2728,9 +2722,6 @@ const DEMO_OVERRIDES = {
     }
   },
   "Hot Peppers": {
-    "labor_plant": 8,
-    "labor_grow": 1.4,
-    "labor_harv": 20,
     "fuel_plant": 3.5,
     "fuel_grow": 2.3,
     "fuel_harv": 4.8,
@@ -2745,9 +2736,6 @@ const DEMO_OVERRIDES = {
   },
   "Basil": {
     "yield_per_acre": 4500,
-    "labor_plant": 5,
-    "labor_grow": 3,
-    "labor_harv": 40,
     "fuel_plant": 3,
     "fuel_grow": 1.5,
     "channels_data": {
@@ -2827,7 +2815,7 @@ function renderCrop(c, idx) {
           <option value="seed" ${v('planting_type')==='seed'?'selected':''}>Seed</option>
           <option value="transplant" ${v('planting_type')==='transplant'?'selected':''}>Transplant</option>
         </select></div>
-      <div class="form-group"><label>Seed/Transplant Cost ($/acre) <span class="tip" data-tip="Seed: $100–$600/acre. Transplant plugs/starts: $250–$900/acre.">?</span></label><input type="number" class="cf" data-f="seed_transplant_cost_per_acre" value="${v('seed_transplant_cost_per_acre',0)}" min="0" step="10" placeholder="e.g. 280"></div>
+      <div class="form-group"><label>Seed/Transplant Cost ($/acre) <span class="tip" data-tip="Seed: $100–$600/acre. Transplant plugs/starts: roughly $500–$2,700/acre depending on plant density — a crop at 29,000 plants/acre costs far more to set than one at 4,400.">?</span></label><input type="number" class="cf" data-f="seed_transplant_cost_per_acre" value="${v('seed_transplant_cost_per_acre',0)}" min="0" step="10" placeholder="e.g. 280"></div>
 
       <div class="crop-section-label">Agronomy &amp; Diversity</div>
       <div class="form-group"><label>Yield per Acre (lbs) <span class="tip" data-tip="Expected lbs harvested per acre per planting. Typical: Spinach 4,000–6,000 · Lettuce 14,000–18,000 · Tomatoes 18,000–25,000 · Corn 7,000–12,000 · Garlic 8,000–12,000. For storage crops (garlic, onions, potatoes) that harvest in 1–2 weeks, set the wholesale demand cap to at least yield × min_acreage ÷ sales_spread_weeks to allow meaningful planting.">?</span>${uploadPill('Upload historical yield data')}</label><input type="number" class="cf" data-f="yield_per_acre" value="${v('yield_per_acre',2000)}" min="1" step="50" placeholder="e.g. 3250"></div>
@@ -2845,7 +2833,7 @@ function renderCrop(c, idx) {
       <div class="phase-detail-fields" style="display:${APP_STATE._pdPhaseDetail ? '' : 'none'};grid-column:1/-1">
         <div class="crop-grid" style="gap:0.3rem 0.8rem">
           <div class="crop-section-label">Labor (hrs/acre/wk per phase) <span class="tip" data-tip="Hand-harvest labor per acre per week during that phase. Typical: plant 3–15 · grow 1–5 · harvest 20–75 hrs/acre/wk.">?</span></div>
-          <div class="form-group"><label>Plant (hrs/acre/wk)</label><input type="number" class="cf" data-f="labor_plant" value="${v('labor_plant',3.0)}" min="0" step="0.1" placeholder="e.g. 15"></div>
+          <div class="form-group"><label>Plant (hrs/acre/wk)</label><input type="number" class="cf" data-f="labor_plant" value="${v('labor_plant',3.0)}" min="0" step="0.1" placeholder="e.g. 3"></div>
           <div class="form-group"><label>Grow (hrs/acre/wk)</label><input type="number" class="cf" data-f="labor_grow" value="${v('labor_grow',2.0)}" min="0" step="0.1" placeholder="e.g. 4"></div>
           <div class="form-group"><label>Harvest (hrs/acre/wk)</label><input type="number" class="cf" data-f="labor_harv" value="${v('labor_harv',20.0)}" min="0" step="0.1" placeholder="e.g. 50"></div>
           <div class="crop-section-label">Water (L/acre per phase)</div>

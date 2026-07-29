@@ -43,15 +43,26 @@ pytestmark = pytest.mark.skipif(not PAYLOAD.exists(), reason="golden payload mis
 
 # The P&L of the shipped default farm. Captured 2026-07-27 from the app's own default payload.
 GOLDEN = {
-    "revenue":          2_221_362,
-    "variable_cost":      870_669,
+    "revenue":          2_084_368,
+    "variable_cost":      782_031,
     "fixed_cost":         213_097,
-    "overhead_cost":      355_418,
-    "interest_cost":        3_104,
-    "profit":             766_074,
-    "operating_profit": 1_137_596,
+    "overhead_cost":      333_499,
+    "interest_cost":        2_974,
+    "profit":             739_767,
+    "operating_profit": 1_089_240,
 }
 # Baseline history — re-pin ONLY with a reason, and record it here.
+#   2026-07-29 (review: the audit had STILL not reached the farm): profit 766,074 -> 739,767.
+#     Twelve more override keys deleted. The shadow guard added the day before covered only
+#     water_* and fert_* — and the previous commit had deleted every water/fert override, so the
+#     list matched NOTHING while three overrides quietly shadowed the fields this same audit had
+#     just sourced: Cucumbers.labor_plant 12 (template 3), Hot Peppers.labor_plant 8 (template
+#     4.6), Kale.seed_transplant_cost_per_acre 220 (template 1,089). Two of five "fixed" labour
+#     outliers and one of four transplanted demo crops had never reached the shipped farm.
+#     The guard no longer keeps a hand-written list of what counts as sourced — it reads
+#     CROP_PROVENANCE, so its reach grows automatically as citations are added. A list maintained
+#     alongside the work it guards will always lag it; that is how this happened twice.
+#     Net margin 35.5%.
 #   2026-07-29 (transplant costs, purchased-plug basis): profit 834,155 -> 766,074 (-68,081).
 #     Ten transplanted crops re-costed as plants/acre (published spacing, 43,560 sq ft/acre) x a
 #     published flat price: 72-cell @ $15 for solanaceae and cucurbits, 128-cell @ $12 for
