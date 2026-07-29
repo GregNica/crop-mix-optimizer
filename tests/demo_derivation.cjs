@@ -100,6 +100,34 @@ bootApp().then(({ window: w }) => {
     }
   }
 
+  // 3c — NO DUPLICATE KEYS IN THE HAND-MAINTAINED LITERALS.
+  //
+  // This one has to read the SOURCE TEXT, and that is the whole point. In a JS object literal a
+  // repeated key silently wins WHOLE — not merged, replaced — so by the time the page has parsed
+  // CROP_PROVENANCE the evidence is gone and no amount of inspecting the live object can find it.
+  // Every other check in this file reads the parsed object and would have passed forever.
+  //
+  // It happened: appending each research batch as a new block at the top of CROP_PROVENANCE
+  // wrote 44 records of which 29 survived, silently discarding 10 transplant-cost citations and
+  // 5 planting-labour ones. The values shipped and the golden re-pinned; only the provenance
+  // vanished, which is the half nobody re-reads. The success line even printed "29 provenance
+  // records" against 44 written, four times, and nobody noticed — including me.
+  {
+    const src = fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8');
+    for (const name of ['CROP_PROVENANCE', 'CROP_TEMPLATES', 'DEMO_OVERRIDES']) {
+      const at = src.indexOf(`const ${name} = {`);
+      if (at < 0) { fail(`${name} not found in public/index.html`); continue; }
+      const body = src.slice(src.indexOf('\n', at) + 1, src.indexOf('\n};', at));
+      const keys = [...body.matchAll(/^  "([^"]+)":/gm)].map(m => m[1]);
+      const seen = new Set(), dupes = new Set();
+      keys.forEach(k => (seen.has(k) ? dupes.add(k) : seen.add(k)));
+      if (dupes.size)
+        fail(`${name} declares duplicate keys: ${[...dupes].join(', ')}. A repeated key in a JS `
+           + `object literal REPLACES the earlier record whole — those citations/values are `
+           + `silently gone and nothing that reads the parsed object can tell`);
+    }
+  }
+
   // 4 — provenance is CHECKED, not decorative. It duplicates values from CROP_TEMPLATES, and an
   // unchecked parallel map is a citation that can quietly stop describing the number it cites.
   const prov = w.eval('CROP_PROVENANCE');
@@ -131,6 +159,6 @@ bootApp().then(({ window: w }) => {
   console.log(`demo derivation: all checks passed (form identical, ${Object.keys(ovActual).length}`
             + ` overridden crops match snapshot, no orphan keys, `
             + `${Object.keys(prov).length} provenance records agree with their templates, `
-            + `no override shadows a sourced value)`);
+            + `no override shadows a sourced value, no duplicate keys in any literal)`);
   process.exit(0);
 }).catch(e => { console.error('FATAL:', e.message); process.exit(1); });
