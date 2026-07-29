@@ -485,6 +485,10 @@ def solve_farm_v2(
     idx_hire_start = None
     if hire_enabled:
         idx_hire_start = _next; _next += N_WEEKS
+    # wstore[w] — litres held in the on-farm tank at the END of week w. Always allocated: when
+    # water_storage_capacity is 0 the whole block is bounded to 0 and presolve removes it,
+    # which keeps ONE water balance in the code instead of a tank path and a no-tank path.
+    idx_ws_start = _next; _next += N_WEEKS
     n_vars = _next
 
     # -----------------------------------------------------------------------
@@ -575,6 +579,8 @@ def solve_farm_v2(
     # y_sol for the "was this planted" report read below. Bounding it costs nothing and restores
     # the documented semantics.
     ub[idx_y_start : idx_y_start + N_S] = 1.0
+    # The tank holds at most its capacity. At 0 this pins the block and presolve drops it.
+    ub[idx_ws_start : idx_ws_start + N_WEEKS] = float(water_storage_capacity)
 
     # Per-week caps on the labor-flex levers (the "max additional capacity by period").
     if overtime_enabled and idx_ot_start is not None and max_overtime_hrs_per_week is not None:
@@ -658,7 +664,27 @@ def solve_farm_v2(
             cols.append((idx_hire_start + w - 1, -1.0))
         add_row(cols, -np.inf, rhs)
 
-    # C3 — Water
+    # C3 — Water, WITH the tank actually storing something (audit B7)
+    #
+    #     wstore[w] ≤ wstore[w-1] + free_water[w] + city_water[w] − use[w]
+    #
+    # `water_storage_capacity` used to appear in exactly one place: as a multiplier on the
+    # fixed-cost line. The constraint itself was a pure per-week flow balance, so a tank was
+    # billed every week of the year and banked nothing — catchment that arrived in a wet week
+    # was simply lost, which makes rainwater harvesting unmodellable in any climate where the
+    # rain and the demand fall in different months.
+    #
+    # The inequality (rather than an equality) is what lets surplus water be dumped: you can
+    # always spill, so no separate spill variable is needed. Combined with wstore ≥ 0 it also
+    # enforces `use[w] ≤ wstore[w-1] + free + city` — you cannot spend water you do not have.
+    #
+    # This SUBSUMES the old row rather than sitting beside it: at capacity 0 every wstore is
+    # pinned to 0 and the row collapses to `use[w] ≤ free_water[w] + city_water[w]`, which is
+    # exactly what C3 said before.
+    #
+    # wstore[0] = 0 — the tank starts the year empty, the same anchoring choice as the
+    # inventory balance below and for the same reason: a periodic boundary leaves the level
+    # free, so the reported series would not be a physical quantity.
     for w in range(1, N_WEEKS + 1):
         cols = [
             (idx_x_start + i, total_land * net_water_rate[i][w])
@@ -667,6 +693,9 @@ def solve_farm_v2(
         ]
         if city_water_enabled and idx_cw_start is not None:
             cols.append((idx_cw_start + w - 1, -1.0))
+        cols.append((idx_ws_start + w - 1, 1.0))            # +wstore[w]
+        if w > 1:
+            cols.append((idx_ws_start + w - 2, -1.0))       # −wstore[w-1]
         add_row(cols, -np.inf, free_water[w - 1])
 
     # C4a — Inventory balance (equality rows, n_crops × 52)
@@ -1234,6 +1263,11 @@ def solve_farm_v2(
     # storage into refrigerated + ambient, and a scalar cap wedged into a dict of series
     # would have to be reshaped once consumers exist.
 
+    # wstore[w] is the END-of-week level; the water available TO week w is its opening level,
+    # i.e. the previous week's close. Week 1 opens empty (wstore[0] = 0, anchored like inv).
+    wstore_sol = z[idx_ws_start : idx_ws_start + N_WEEKS]
+    wstore_opening = [0.0] + [float(wstore_sol[w - 1]) for w in range(1, N_WEEKS)]
+
     water_used_weekly = [
         float(sum(total_land * net_water_rate[i][w] * x_sol[i]
                   for i in range(N_S) if phase_table[i][w] is not None))
@@ -1263,8 +1297,13 @@ def solve_farm_v2(
         "labor":   {"used": [float(v) for v in labor_used_weekly[1:]],
                     "cap":  [float(labor_capacity[w] + ot_weekly[w] + hire_weekly[w])
                              for w in range(N_WEEKS)]},
+        # The tank's OPENING level is part of the week's supply (B7): a week may legitimately
+        # draw more than that week's inflow by emptying stored water. Leaving it out made the
+        # published cap smaller than the row actually solved against, so `used` exceeded `cap`
+        # and the bottleneck ranking would have called water saturated when it was not.
         "water":   {"used": water_used_weekly,
-                    "cap":  [float(free_water[w] + city_weekly[w]) for w in range(N_WEEKS)]},
+                    "cap":  [float(free_water[w] + city_weekly[w] + wstore_opening[w])
+                             for w in range(N_WEEKS)]},
         "storage_ambient": {"used": ambient_m3_weekly,
                             "cap":  [float(ambient_storage_cap)] * N_WEEKS},
         "storage": {"used": storage_m3_weekly,

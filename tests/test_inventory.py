@@ -549,9 +549,19 @@ class TestCapacitySeriesIsTheConstraints:
             p.get("well_weekly_cap_L", 0.0),
         )
         got = r["capacity_series"]["water"]["cap"]
-        assert got == pytest.approx([float(v) for v in expected], rel=1e-9), (
-            "the reported water capacity is not C3's right-hand side"
+        # Since B7 the row's right-hand side is inflow PLUS the tank's opening level, so the
+        # reported cap is free_water + (city water) + wstore[w-1]. It must therefore be at
+        # least free_water in every week, and equal to it wherever the tank is empty — which
+        # week 1 always is, because wstore is anchored at zero like the inventory balance.
+        assert len(got) == len(expected)
+        assert got[0] == pytest.approx(float(expected[0]), rel=1e-9), (
+            "week 1 opens with an empty tank, so its cap must be exactly C3's inflow"
         )
+        for w, (g, e) in enumerate(zip(got, expected), start=1):
+            assert g >= float(e) - 1e-6, (
+                f"week {w}: reported water cap {g:,.0f} is BELOW the inflow {float(e):,.0f} — "
+                f"the published cap no longer contains the row's own right-hand side"
+            )
 
     def test_labor_cap_is_the_row_C2_used(self, solved):
         from farm_v2.utils.labor import compute_labor_arrays

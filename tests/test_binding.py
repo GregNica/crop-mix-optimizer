@@ -112,8 +112,16 @@ class TestWaterBinds:
 
         tight = solve_farm_v2(**self._params(full_params, peak_need * 0.5))
         assert tight["status"] == "optimal"
-        assert max(tight["capacity_series"]["water"]["used"] or [0]) <= peak_need * 0.5 + 1e-6, (
-            "weekly draw exceeded the well cap it was solved against — C3 is not enforced"
+        # A single week may legitimately draw MORE than that week's inflow by emptying the
+        # tank (B7) — that is what a tank is for. What must hold is the row as solved: draw
+        # never exceeds the week's supply, which is inflow plus the tank's opening level.
+        # Comparing against the well cap alone was only correct while storage banked nothing.
+        used = tight["capacity_series"]["water"]["used"] or [0]
+        cap  = tight["capacity_series"]["water"]["cap"] or [0]
+        over = [w for w, (u, c) in enumerate(zip(used, cap), start=1) if u > c * (1 + 1e-6) + 1e-6]
+        assert not over, (
+            f"weeks {over} drew more water than they had available (inflow + opening tank) — "
+            f"C3 is not enforced"
         )
         assert tight["profit"] < roomy["profit"], (
             f"halving the well changed nothing (profit {tight['profit']:,.0f} vs "
