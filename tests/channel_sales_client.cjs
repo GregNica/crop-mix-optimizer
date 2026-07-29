@@ -190,6 +190,28 @@ const PARAMS = {
       ok(`wk30 shows a nothing-sold message (got "${html30.slice(0, 120)}")`,
          /Nothing is sold this week/.test(html30));
       ok('wk30 does not still show week-12 pies', !/Farmers Market/.test(html30));
+
+      // A week where every channel sells UNDER A POUND renders no pie panels. Falling through
+      // blanked the area with no message at all. The old reconstruction could not produce this
+      // case (it spread a whole harvest week across channels); real `v` values can — a tail
+      // week clearing the last few ounces of stock. Found by /code-review on the W1 commit.
+      //
+      // NOTE: this fixture MUST carry succession_schedule. Without it updatePieChart returns
+      // early, the area keeps the PREVIOUS week's markup, and the assertion below passes on
+      // text it never wrote — the first version of this check did exactly that and survived
+      // its own mutation test.
+      const tiny = {
+        crop_names: ['Spinach'],
+        succession_schedule: RES.succession_schedule,
+        channel_sales: { Wholesale: { lbs_sold: 0.4, revenue: 0.4, by_crop: {
+          Spinach: { lbs_sold: 0.4, revenue: 0.4, weekly_lbs: mkWeeks({ 40: 0.4 }) } } } },
+      };
+      W._lastRes = tiny;
+      W.updatePieChart(40);
+      const htmlTiny = area.innerHTML;
+      ok(`sub-pound week explains itself rather than blanking (got "${JSON.stringify(htmlTiny.slice(0, 120))}")`,
+         htmlTiny.trim().length > 0 && /pound/i.test(htmlTiny));
+      W._lastRes = RES;
     }
   }
 

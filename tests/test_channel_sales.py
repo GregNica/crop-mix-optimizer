@@ -172,6 +172,38 @@ class TestItIsNotAReconstruction:
         assert res["v"].shape[2] == 53
 
 
+class TestDuplicateCropNamesAreRefused:
+    """Found by /code-review on the W1 commit, then reproduced before acting on it.
+
+    Every per-crop result the solver returns is a dict keyed by crop NAME, so two crops sharing
+    one silently collapse: `by_crop` is last-write-wins while the channel and farm totals still
+    count both. Measured on this fixture with both crops renamed the same — the channel reported
+    475,898 lb sold against by_crop entries summing to 118,578, so 357,320 lb (75%) vanished
+    from the pies and the sales CSV while the P&L revenue line stayed correct.
+
+    Fixed at the boundary (validate.py) rather than in `channel_sales`, because the same hazard
+    applies to `crop_contribution` and `waste_by_crop`, and because `validate.py` already guards
+    channel names for exactly this reason.
+    """
+
+    def test_duplicate_names_are_refused_with_a_reason(self, two_crop_params):
+        import copy
+        p = copy.deepcopy(two_crop_params)
+        p["crops"][1]["name"] = p["crops"][0]["name"]
+        out = solve_farm_v2(**p)
+        assert out["status"] == "invalid_input", (
+            f"a farm with two crops named the same solved anyway ({out['status']}) — its sales "
+            f"reports would be missing pounds with nothing raised"
+        )
+        joined = " ".join(out["errors"])
+        assert "unique" in joined and p["crops"][0]["name"] in joined, out["errors"]
+
+    def test_unique_names_still_solve(self, solved):
+        """The guard must not reject the farms it is meant to protect (the S14 lesson)."""
+        res, _ = solved
+        assert res["status"] == "optimal"
+
+
 class TestGuardCanFail:
     """Mutation checks: a guard that has never failed is unproven.
 

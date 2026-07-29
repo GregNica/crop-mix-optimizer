@@ -124,6 +124,24 @@ def validate_params(
     if not crops:
         raise ValueError("At least one crop must be defined.")
 
+    # Crop names must be unique for the same reason channel names must be, and the reason is
+    # not cosmetic: every per-crop report the solver returns is a dict KEYED BY NAME —
+    # `channel_sales[ch].by_crop`, `crop_contribution`, `waste_by_crop`. A duplicate name is
+    # last-write-wins in those maps while the channel and farm totals still accumulate BOTH
+    # crops, so the parts stop summing to the whole with nothing raised.
+    #
+    # Measured on the two-crop fixture with both crops renamed the same: the channel reported
+    # 475,898 lb sold while its by_crop entries summed to 118,578 — 357,320 lb (75%) missing
+    # from the pies and the sales CSV, with the P&L revenue line still correct. Silent, and
+    # only on the reporting side, which is the worst shape this project keeps finding.
+    crop_names = [c.get("name") for c in crops]
+    if len(crop_names) != len(set(crop_names)):
+        dupes = sorted({n for n in crop_names if crop_names.count(n) > 1})
+        raise ValueError(
+            f"Crop names must be unique — every per-crop result is keyed by name, so "
+            f"duplicates silently drop pounds from the sales reports. Rename: {dupes}."
+        )
+
     total_committed = 0.0
     for crop in crops:
         warnings.extend(_validate_crop(crop, ch_names, year))
