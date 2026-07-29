@@ -495,3 +495,37 @@ class TestCommittedAcres:
         res = _solve(params)
         assert res["status"] == "invalid_input", res["status"]
         assert any("committed" in e.lower() for e in res["errors"]), res["errors"]
+
+    def test_a_commitment_below_the_lot_size_minimum_is_refused_with_a_reason(
+            self, minimal_params):
+        """C15 + C9 + C10 make this infeasible, and the infeasible path has no diagnosis.
+
+        Reproduced before the check existed: 1 acre committed against a 45-acre minimum
+        returned status 'infeasible' with a raw HiGHS string, no errors and no unplanted_crops,
+        because _diagnose_unplanted_crops is never reached on that path.
+        """
+        params = self._unprofitable(minimal_params, 1.0)
+        crop = dict(params["crops"][0])
+        crop["min_acreage_if_planted"] = 45.0
+        params["crops"] = [crop]
+        res = _solve(params)
+        assert res["status"] == "invalid_input", (
+            f"got {res['status']!r} — a commitment below the lot-size minimum should be caught "
+            f"before the solver, not surface as a bare infeasibility"
+        )
+        assert any("cannot be planted in less than" in e for e in res["errors"]), res["errors"]
+
+    def test_a_commitment_on_a_two_season_crop_warns_about_window_substitution(
+            self, minimal_params):
+        """The floor is crop-level, so it cannot say which window the commitment belongs to."""
+        params = self._unprofitable(minimal_params, 2.0)
+        crop = dict(params["crops"][0])
+        crop["seasons"] = [{"start": "02-01", "end": "06-15"},
+                           {"start": "08-01", "end": "11-15"}]
+        params["crops"] = [crop]
+        res = _solve(params)
+        assert res["status"] in ("optimal", "time_limit_feasible"), res["status"]
+        assert any("more than one" in w and "season window" in w for w in res["warnings"]), (
+            f"a two-window crop with a commitment must warn that the model may substitute "
+            f"windows; got {res['warnings']}"
+        )

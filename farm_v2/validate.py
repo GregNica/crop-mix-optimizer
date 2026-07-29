@@ -139,6 +139,28 @@ def validate_params(
                 f"Crop '{crop['name']}' has {committed:g} acres already committed, more than "
                 f"the farm's {total_land:g} acres. No plan can be built around it."
             )
+        if committed > 0:
+            # A commitment BELOW the lot-size minimum is infeasible, not merely rounded up:
+            # C15 forces the crop in, C9 then forces its plant flag on, and C10 forces at least
+            # min_acreage_if_planted. Reproduced on a 50-acre farm — 1 acre committed against a
+            # 45-acre minimum returns status 'infeasible' with a raw HiGHS string and nothing
+            # else, because the infeasible path never reaches the zero-acre diagnosis.
+            min_acres = float(crop.get("min_acreage_if_planted", 0.0) or 0.0)
+            if committed < min_acres:
+                raise ValueError(
+                    f"Crop '{crop['name']}' has {committed:g} acres already committed but "
+                    f"cannot be planted in less than {min_acres:g} acres. Either raise the "
+                    f"committed acreage to {min_acres:g}, or lower the minimum planting size."
+                )
+            # A crop-level floor cannot say WHICH window the commitment belongs to, so with two
+            # disjoint windows the model may satisfy a fall planting with a spring one — a
+            # different labour month, cash timing and storage profile.
+            if len(crop.get("seasons", [])) > 1:
+                warnings.append(
+                    f"Crop '{crop['name']}' has {committed:g} committed acres and more than one "
+                    f"season window. The plan may satisfy that commitment in EITHER window, so "
+                    f"check the planting dates it returns."
+                )
         total_committed += committed
     if total_committed > total_land:
         raise ValueError(

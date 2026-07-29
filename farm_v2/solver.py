@@ -266,10 +266,12 @@ def solve_farm_v2(
         "crops"             : list[dict]
         "channels"          : list[dict]
     """
-    if crops is None:
-        raise ValueError("crops must be provided.")
-    if channels is None:
-        raise ValueError("channels must be provided.")
+    # Missing collections are normalised to empty and left to validate_params below, so there
+    # is ONE contract for bad input: solve_farm_v2 returns `invalid_input` with a reason and
+    # never raises for it. Raising here meant `crops=None` threw while `crops=[]` returned a
+    # status dict — same category of mistake, two different things for a caller to handle.
+    crops = crops or []
+    channels = channels or []
     if year_round_employees is None:
         year_round_employees = []
     if seasonal_employees is None:
@@ -282,16 +284,12 @@ def solve_farm_v2(
     # -----------------------------------------------------------------------
     # Step 0 — Pre-flight validation (audit 1.4 / S1)
     # -----------------------------------------------------------------------
-    # This lives HERE, not in the browser and not in the JS-embedded adapter, because this is
-    # the point every caller converges on: the Optimize button, the What-If sweep, the
-    # sensitivity runs, Monte Carlo, the tests, and the server path that does not exist yet.
-    # The adapter looked like a convergence point only while the app was browser-only.
-    #
-    # It also puts the guard under ordinary pytest import. In the adapter it was reachable only
-    # by string-slicing a JS template literal out of index.html.
+    # This is the point every caller converges on: the Optimize button, the What-If sweep,
+    # the sensitivity runs, Monte Carlo, the tests, and the server path that does not exist yet.
     #
     # Errors are RETURNED, not raised: callers already branch on `status`, and a traceback is
-    # not an error message.
+    # not an error message. A crash in the guard itself fails OPEN but LOUD — it costs the
+    # check, not the plan, and says so in the warnings.
     validation_warnings: list[str] = []
     try:
         validation_warnings = validate_params(
@@ -337,11 +335,22 @@ def solve_farm_v2(
     successions = generate_successions(crops, year)
     N_S = len(successions)
     if N_S == 0:
-        raise ValueError(
-            "No successions generated for ANY crop. Season windows are PLANTING "
-            "windows: each needs at least one start week whose cycle finishes by week "
-            "52, or the crop must be marked as overwintering."
-        )
+        # Normally unreachable — validate_params raises first and Step 0 turns it into
+        # `invalid_input`. It is reached only when the guard itself crashed and Step 0 failed
+        # open, so RETURN rather than raise: failing open must not cost a caller its contract.
+        return {
+            "status": "invalid_input",
+            "profit": None,
+            "errors": [
+                "No successions generated for ANY crop. Season windows are PLANTING windows, "
+                "so each needs at least one start week whose cycle finishes by week 52 — or the "
+                "crop must be marked as overwintering."
+            ],
+            "warnings": validation_warnings,
+            "crops": crops,
+            "channels": channels,
+            "successions": [],
+        }
 
     phase_table = build_phase_table(successions, N_WEEKS)  # [i][w] = 0/1/2/None
 
@@ -1043,19 +1052,16 @@ def solve_farm_v2(
 
     # C15 — Committed acres: land already in the ground is not a decision (S14)
     #
-    # Raised by the grower on seeing year-wrap land: "crop planning like this would happen in
-    # the winter months after garlic was already planted in November." The cyclic year is
-    # self-consistent annually, but the optimiser could still choose ZERO acres of a crop that
-    # is already planted and already paid for. That is not a plan a grower can act on.
+    # Without this the optimiser could choose ZERO acres of a crop that is already planted and
+    # already paid for, which is not a plan anyone can act on.
     #
-    # A floor on the crop's total land, not on a particular succession: the grower knows how
-    # many acres went in, not which of the model's generated start weeks it corresponds to.
+    # The floor is on the crop's TOTAL land rather than a particular succession: a grower knows
+    # how many acres went in, not which of the model's generated start weeks it corresponds to.
     #
-    # ⚠️ COSTS ARE STILL CHARGED. The seed, the labour and the fuel for a committed planting
-    # are sunk — already spent before this plan was made — so a truly honest P&L would exclude
-    # them. Charging them does not change the DECISION (a sunk cost is identical in every
-    # scenario, so it cannot alter the ranking) but it does understate profit by the amount
-    # already spent. Pricing the sunk portion is its own piece of work; see BACKLOG S14.
+    # ⚠️ COSTS ARE STILL CHARGED. The seed, labour and fuel for a committed planting are sunk —
+    # already spent before this plan was made — so profit is understated by that amount. It does
+    # not change the DECISION, since a sunk cost is identical in every scenario and cannot alter
+    # the ranking, but the P&L is not yet honest about it. See BACKLOG S14.
     for c_idx, crop in enumerate(crops):
         committed = float(crop.get("committed_acres", 0.0) or 0.0)
         if committed <= 0:
@@ -1194,6 +1200,11 @@ def solve_farm_v2(
             "status": status,
             "profit": None,
             "message": result.message,
+            # Present on EVERY branch. The adapter had to write result.get('errors', []) purely
+            # because this path omitted them — a caller band-aiding a schema the solver should
+            # simply keep consistent.
+            "errors": [],
+            "warnings": validation_warnings,
             "channel_margins": channel_margins,
             "excluded_channels": excluded_channels,
             "successions": successions,
