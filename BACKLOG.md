@@ -62,6 +62,11 @@ All are `defect` class — they need no consultation.
 
 ---
 
+| ✅ **S18** | **Status elements written to a hidden view** — `#error-box` and `#progress-wrap` are markup in `#hub-view`, but four of six Optimize buttons live in `#input-view` and results render in a third view. Writing to a hidden ancestor still "succeeds", so this failed silently and shipped **three times**: the error box (dead Optimize button), the unplanted-crops banner (feature invisible), the progress bar (no loading bar). Fixed at the class with `rehomeIntoVisibleView()`, keyed on **`APP_STATE.view`** rather than re-derived from `style.display`. ⚠️ **The first version checked only two of the three views and silently no-opped from results — the same defect, a fourth time, inside its own fix.** Two more found by review: the `gap_note` caveat was shown BEFORE `switchToResults` hid its container (the one warning that matters on a truncated solve), and `appendChild` put the bar below a section's whole card grid, so it still read as no loading bar. All three pinned | `public/index.html` | defect | D8 |
+| ✅ **S19** | ~~Hot Peppers dominate the default plan~~ — **RESOLVED by S17, not by a diversity change.** They fell 23.3 → **2.7 acres** once field occupancy was corrected (21 → 31 weeks). They were dominant *because* their occupancy was under-counted; with honest field time they are expensive in land despite the highest per-acre return ($19,426/ac). ⚠️ My first diagnosis blamed the acre-weeks diversity ceiling and **the numbers did not support it** — hot peppers used 489 of 2,288 allowed acre-weeks, so C8 was never binding. W5 (the acre-weeks label) is still a real and separate labelling defect | — | value | D1 |
+
+---
+
 ## Tier 1 — Wrong numbers currently shipping
 
 | ID | Item | Evidence | Class | Unblocks |

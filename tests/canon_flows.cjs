@@ -233,37 +233,73 @@ const near = (name, got, want, rel) => {
     }
   }
 
-  // ---- an error raised from the input view must be VISIBLE there ------------------------
-  // #error-box is markup inside #hub-view, but every section's Optimize button is in
-  // #input-view. validateParams would refuse to solve, showError would write the reason onto
-  // the hub screen, and the grower — sitting in the Crops section — saw a button that did
-  // nothing. Reported from real use 2026-07-29 against the ambient-storage guard, which was
-  // working correctly the whole time. A refusal nobody can read is a refusal that did not happen.
+  // ---- status elements must land in the view the user is looking at ------------------------
+  // #error-box and #progress-wrap are markup inside #hub-view, but four of the six Optimize
+  // buttons live in #input-view and results render in a third view. Writing to a hidden
+  // ancestor still "succeeds", so this fails silently — it shipped three times: the error box
+  // (read as a dead Optimize button), the unplanted-crops banner (whole feature invisible) and
+  // the progress bar (read as no loading bar). Reuses the shared window: nothing here depends
+  // on crop state, so a fresh boot would cost ~1s for nothing.
   {
     const doc = w.document;
     const hub = doc.getElementById('hub-view');
     const inp = doc.getElementById('input-view');
+    const rv = doc.getElementById('results-view');
     const box = doc.getElementById('error-box');
-    if (!hub || !inp || !box) {
-      fail('error visibility: #hub-view, #input-view or #error-box is missing');
+    const wrap = doc.getElementById('progress-wrap');
+    const fill = doc.getElementById('progress-bar-fill');
+    const label = doc.getElementById('progress-label');
+    const setView = (v, shown) => {
+      [hub, inp, rv].forEach(el => { if (el) el.style.display = 'none'; });
+      if (shown) shown.style.display = '';
+      w.eval(`APP_STATE.view = ${JSON.stringify(v)}`);
+    };
+    if (!hub || !inp || !rv || !box || !wrap) {
+      fail('status visibility: one of hub-view/input-view/results-view/error-box/progress-wrap '
+         + 'is missing');
     } else {
-      hub.style.display = 'none';
-      inp.style.display = '';
+      setView('section', inp);
       w.showError(box, 'ambient capacity is 0');
       if (!inp.contains(box))
-        fail('error visibility: an error raised while the input view is open landed outside it '
-           + '— the message is written to a screen the user is not looking at, which reads as '
-           + 'a dead Optimize button');
+        fail('status visibility: an error raised from a section landed outside input-view — '
+           + 'written to a screen the user is not looking at, which reads as a dead button');
       if (box.style.display !== 'block')
-        fail(`error visibility: box not displayed (display=${box.style.display})`);
+        fail(`status visibility: box not displayed (display=${box.style.display})`);
       if (!String(box.textContent).includes('ambient capacity is 0'))
-        fail('error visibility: message text did not reach the box');
-      // And it must go back to the hub when the hub is the visible view.
-      inp.style.display = 'none';
-      hub.style.display = '';
+        fail('status visibility: the message text did not reach the box');
+      w.startProgress(fill, label);
+      if (!inp.contains(wrap))
+        fail('status visibility: the progress bar stayed in hub-view while the user was in a '
+           + 'section — it animates where nobody can see it, which reads as no loading bar');
+
+      setView('hub', hub);
       w.showError(box, 'back on the hub');
-      if (!hub.contains(box))
-        fail('error visibility: error raised from the hub view did not land in the hub view');
+      if (!hub.contains(box)) fail('status visibility: error box did not return to hub-view');
+      w.startProgress(fill, label);
+      if (!hub.contains(wrap)) fail('status visibility: progress bar did not return to hub-view');
+
+      // The results view — the case the FIRST version of this helper missed entirely. It
+      // checked only hub-view and input-view, so with results on screen it found nothing
+      // visible and silently did nothing: the same defect, a fourth time, inside its own fix.
+      setView('results', rv);
+      w.showError(box, 'an error raised while results are on screen');
+      if (!rv.contains(box))
+        fail('status visibility: with results on screen the error box is outside results-view '
+           + '— invisible, and the helper silently did nothing');
+
+      // Restore the shared window properly: setView alone puts APP_STATE.view and the three
+      // display flags back, but NOT the DOM moves — the box would be left inside results-main
+      // and the wrap as hub-view's last child. Later blocks all boot fresh windows today, so
+      // nothing breaks, but a future block added here would fail for a reason the old comment
+      // said was impossible.
+      setView('hub', hub);
+      w.showError(box, '');          // homes the box back into hub-view
+      box.style.display = 'none';
+      w.startProgress(fill, label);  // homes the wrap back too
+      w.stopProgress([], fill, label, false);
+      if (!hub.contains(box) || !hub.contains(wrap))
+        fail('status visibility: the shared window was not restored — a later block asserting '
+           + 'on either element would fail for a reason this block caused');
     }
   }
 
@@ -549,6 +585,26 @@ const near = (name, got, want, rel) => {
           fail(`form round-trip: ${c.field} set to ${c.set} came back as ${got} — the payload `
              + `builder is not reading it, so the solver sees its default forever`);
       });
+    }
+  }
+
+  // ---- the gap_note caveat must be shown AFTER the results view is on screen ---------------
+  // switchToResults is what sets APP_STATE.view = 'results' and hides hub-view and input-view.
+  // Showing the caveat first homes it into a container that is hidden two statements later —
+  // and on a truncated solve this is the one warning that matters most: the plan is real but
+  // NOT proven optimal. A source-order check, because exercising it needs a real HiGHS solve
+  // that stops on the clock, which jsdom cannot run.
+  {
+    const src = require('fs').readFileSync(
+      require('path').join(ROOT, 'public', 'index.html'), 'utf8');
+    const gap = src.indexOf('if (res.gap_note) showError');
+    const swi = src.indexOf('switchToResults(params, res);');
+    if (gap < 0 || swi < 0) {
+      fail('gap_note ordering: could not locate both call sites to compare');
+    } else if (gap < swi) {
+      fail('gap_note ordering: showError(res.gap_note) runs BEFORE switchToResults, so the '
+         + '"not proven optimal" caveat is written into a view that is hidden immediately '
+         + 'afterwards');
     }
   }
 

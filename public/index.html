@@ -7549,18 +7549,36 @@ function fmt(n) {
 
 const SOLVER_TIMEOUT_MS = 90000; // 90 seconds
 
+// Move a status element into the view that is actually on screen.
+//
+// #error-box and #progress-wrap are markup inside #hub-view, but four of the six Optimize
+// buttons live in #input-view and results render in a third view. Writing to a hidden ancestor
+// still "succeeds", so this fails silently — it shipped three times: the error box, the
+// unplanted-crops banner, and the progress bar.
+//
+// Reads APP_STATE.view rather than re-deriving visibility from style.display. The first
+// version of this helper checked only hub-view and input-view, so from the results view it
+// found nothing visible and silently did nothing — the same defect, a fourth time, inside its
+// own fix. APP_STATE.view is what showHub/showSection/switchToResults already set, so it
+// cannot drift.
+//
+// ⚠️ Prefer STATIC placement over this. An element written from only one view (every banner in
+// #results-main, the hub hint, the two CSV status lines) belongs in that view's markup and
+// needs no runtime move. This helper is only for the genuinely cross-view cases, which today
+// are exactly these two.
+const VIEW_CONTAINER_ID = { hub: 'hub-view', section: 'input-view', results: 'results-main' };
+
+function rehomeIntoVisibleView(el) {
+  if (!el) return;
+  const id = VIEW_CONTAINER_ID[APP_STATE.view] || 'hub-view';
+  const host = document.getElementById(id) || document.getElementById('hub-view');
+  if (host && el.parentElement !== host) host.appendChild(el);
+}
+
 function showError(errBox, msg, isWarning) {
   if (!errBox) return;
-  // ONE ERROR BOX, TWO VIEWS. #error-box is markup inside #hub-view, but every section's
-  // Optimize button lives in #input-view. A validation failure raised from a section wrote its
-  // message onto a screen the user was not looking at, so refusing to solve was pixel-identical
-  // to a dead button: click Optimize, nothing happens, no explanation anywhere. Reported from
-  // real use 2026-07-29 against the ambient-storage guard, which fired exactly as designed and
-  // still read as a broken app. Re-home the box into whichever view is actually on screen.
-  const host = ['input-view', 'hub-view']
-    .map(id => document.getElementById(id))
-    .find(v => v && v.style.display !== 'none');
-  if (host && errBox.parentElement !== host) host.appendChild(errBox);
+  // Status must land in the view on screen — see rehomeIntoVisibleView.
+  rehomeIntoVisibleView(errBox);
   errBox.textContent = msg;
   // A time-limited solve still produced a plan, so it must not be styled as a failure —
   // the results below it are real (SPEC_v3 §7.1).
@@ -7586,6 +7604,14 @@ function startProgress(fillEl, labelEl) {
   // The honest version: we cannot know progress — HiGHS reports none back through Pyodide —
   // so do not claim any. Show that the app is alive, using a compositor-animated transform
   // that keeps moving while the main thread is blocked, and say how long it usually takes.
+  const wrap = document.getElementById('progress-wrap');
+  rehomeIntoVisibleView(wrap);
+  // Re-homing appends, so in a section the bar lands after the whole cards grid while the
+  // Optimize button sits at the top — thousands of pixels below the fold, which reads as no
+  // loading bar at all. showError already scrolls; this needs to as well.
+  if (wrap && typeof wrap.scrollIntoView === 'function') {
+    wrap.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
   const track = fillEl && fillEl.parentElement;
   if (track) track.classList.add('is-indeterminate');
   if (fillEl) fillEl.style.width = '';
@@ -7856,9 +7882,13 @@ async function runOptimizer() {
       window._lastParams = params;
       window._lastRes    = res;
       APP_STATE.hurdleExclusions = res.excluded_channels || [];
-      if (res.gap_note) showError(errBox, res.gap_note, /*warning=*/true);
       renderResults(res, params.total_land);
       switchToResults(params, res);
+      // AFTER switchToResults, not before. switchToResults is what sets APP_STATE.view to
+      // 'results' and hides hub-view and input-view — so showing this first homed the caveat
+      // into a container that was hidden two statements later. It is the one warning that
+      // matters most on a truncated solve: the plan is real but NOT proven optimal.
+      if (res.gap_note) showError(errBox, res.gap_note, /*warning=*/true);
     }
   } catch(e) {
     stopProgress(progressTimers, fillEl, labelEl, false);
