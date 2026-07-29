@@ -434,6 +434,22 @@ const near = (name, got, want, rel) => {
     if (!host) {
       fail('unplanted crops: #unplanted-crops-banner is missing from the page');
     } else {
+      // The banner must live in the RESULTS view. It was originally put in #hub-view, which
+      // switchToResults hides before rendering — so the whole feature was invisible in the app
+      // while this test passed, because calling the render function directly only proves the
+      // style property changed, not that anyone can see it. Check the ancestry.
+      {
+        let anc = host, view = null;
+        while (anc && anc.parentElement) {
+          anc = anc.parentElement;
+          if (anc.id === 'results-view' || anc.id === 'results-main') { view = anc.id; break; }
+          if (anc.id === 'hub-view' || anc.id === 'input-view') { view = anc.id; break; }
+        }
+        if (view !== 'results-view' && view !== 'results-main')
+          fail(`unplanted crops: banner lives in ${view || 'no known view'} — the results screen `
+             + `hides everything outside #results-view, so it can never be seen`);
+      }
+
       w6.renderUnplantedCrops({ unplanted_crops: [], warnings: [] });
       if (host.style.display !== 'none')
         fail('unplanted crops: banner shown with nothing to say');
@@ -478,6 +494,28 @@ const near = (name, got, want, rel) => {
       if (!w6.unplantedReasonText({ crop: 'X', reason: 'no_plantable_window', cycle_weeks: 6 })
              .toLowerCase().includes('overwinter'))
         fail('unplanted crops: the calendar reason names the symptom but not the fix');
+    }
+  }
+
+  // ---- a refused solve must say WHY --------------------------------------------------------
+  // run_from_js returns {status:'invalid_input', errors:[...]}. The failure branch rendered
+  // `res.error` (singular), which is never set on that path, so every reason was dropped and
+  // the grower saw a bare status code — precisely the failure the pre-flight guard exists to
+  // remove, reintroduced one layer above it.
+  {
+    const w7 = await bootApp();
+    const doc = w7.document;
+    const box = doc.getElementById('error-box');
+    if (!box) {
+      fail('invalid_input: #error-box missing');
+    } else {
+      w7.showError(box, 'reset');
+      const src = require('fs').readFileSync(
+        require('path').join(ROOT, 'public', 'index.html'), 'utf8');
+      if (!/res\.status === 'invalid_input'/.test(src))
+        fail('invalid_input: the failure branch does not special-case it, so `errors` is dropped');
+      if (!/res\.errors/.test(src))
+        fail('invalid_input: nothing reads res.errors — the reasons never reach the screen');
     }
   }
 

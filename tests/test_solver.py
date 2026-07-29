@@ -217,12 +217,13 @@ class TestPlantBinaryIsBounded:
         )
 
     def test_y_is_a_reliable_planted_flag_even_at_min_acreage_zero(self, minimal_params):
-        """The degenerate case, now pinned rather than documented as a caveat.
+        """y is REPORTED as a function of x, so it answers its question exactly.
 
-        With min_acreage_if_planted = 0, C10 collapses to `0 <= x` and C9 is only `x <= y`, so
-        y = 1 alongside x = 0 used to be feasible at zero cost — every value of y equally
-        optimal, and no reliable answer to "was this planted". PLANT_FLAG_TIE_BREAK makes the
-        minimum strictly optimal, so y now tracks x in every case.
+        The tie-break alone was not enough and the earlier claim here overstated it: its total
+        value across ~155 successions sits below HiGHS's default relative MIP gap, and it is
+        not enforced at all on the time_limit_feasible path. An incumbent could still carry
+        y=1 with x=0. Deriving the reported value removes the dependence on the tie-break's
+        magnitude — x is the quantity, y is "is x above zero".
         """
         params = dict(minimal_params)
         params["crops"] = [dict(c, min_acreage_if_planted=0.0) for c in params["crops"]]
@@ -373,6 +374,29 @@ class TestUnplantedCropsExplainThemselves:
             f"a crop with nowhere to sell must say so, got {res['unplanted_crops']}"
         )
 
+    def test_an_annual_channel_with_zero_volume_is_no_demand_not_outcompeted(
+            self, minimal_params):
+        """A blank demand box on an "annual" channel sends annual_demand_lbs: 0.
+
+        The crop then has nowhere at all to be sold, but the reason was gated on whether the
+        crop APPEARED in annual_caps rather than on the cap being positive — and a zero-volume
+        annual channel still has a key there. So it was reported as `outcompeted`, which the UI
+        renders as "was plantable and sellable, but did not earn its place". It was neither.
+        """
+        params = dict(minimal_params)
+        crop = dict(params["crops"][0])
+        ch_name = params["channels"][0]["name"]
+        chan = dict(crop["channels"][ch_name])
+        chan["demand_cap_type"] = "annual"
+        chan["annual_demand_lbs"] = 0
+        crop["channels"] = {ch_name: chan}
+        params["crops"] = [crop]
+        res = _solve(params)
+        assert self._reasons(res).get(crop["name"]) == "no_demand", (
+            f"a crop with a zero-volume annual contract has nowhere to sell; got "
+            f"{res['unplanted_crops']}"
+        )
+
     def test_outcompeted_is_the_conservative_default(self, minimal_params):
         """An LP declines a bundle at these prices; it does not reject a crop for one reason.
 
@@ -410,3 +434,17 @@ class TestUnplantedCropsExplainThemselves:
             )
             for k in ("cycle_weeks", "min_acres", "excluded_channels", "tightest"):
                 assert k in d, f"missing structured field {k!r}: {d}"
+
+    def test_y_tracks_x_on_a_truncated_solve_too(self, full_params):
+        """The tie-break is not enforced when HiGHS stops early — the derivation still is."""
+        res = solve_farm_v2(**{**full_params, "solver_time_limit": 0.5})
+        if res["status"] not in ("optimal", "time_limit_feasible"):
+            pytest.skip(f"no usable incumbent at this budget ({res['status']})")
+        x = np.asarray(res["x"], dtype=float)
+        y = np.asarray(res["y"], dtype=float)
+        for i, (xi, yi) in enumerate(zip(x, y)):
+            expected = 1.0 if xi > 1e-9 else 0.0
+            assert yi == expected, (
+                f"succession {i}: x={xi}, y={yi} — on a truncated solve the reported plant flag "
+                f"must still be derived from x, not read from the incumbent"
+            )

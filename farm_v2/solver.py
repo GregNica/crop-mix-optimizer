@@ -72,6 +72,10 @@ INVENTORY_TIE_BREAK_PER_LB_WEEK = 1e-6
 # above: module-level so a test can assert on the ACTUAL value rather than re-typing it.
 PLANT_FLAG_TIE_BREAK = 1e-6
 
+# Water-level tie-break, $/litre/week. Tiny because a tank holds millions of litres:
+# 5e-12 x 500,000 L x 52 wk is well under a ten-thousandth of a cent.
+WATER_LEVEL_TIE_BREAK_PER_L_WEEK = 5e-12
+
 
 def _cw_index(c: int, w: int, n_weeks: int) -> int:
     """Flat index into a per-crop-per-week block (inv, waste), 0-based within the block."""
@@ -100,7 +104,12 @@ def _diagnose_unplanted_crops(
     """
     NEAR_LIMIT = 0.95
     out = []
-    annual_crops = {c for (c, _ch) in (annual_caps or {})}
+    # Gate on a POSITIVE cap, not on key presence: a channel of type "annual" with a volume
+    # of 0 — which is what a blank demand box sends — still has a key here. Keying on
+    # presence made `no_demand` unreachable for such a crop and reported it as
+    # `outcompeted`, i.e. "plantable and sellable, but did not earn its place", when in
+    # fact it had nowhere at all to be sold.
+    annual_crops = {c for (c, _ch), cap in (annual_caps or {}).items() if cap > 0}
     excluded_by_crop = {}
     for e in (excluded_channels or []):
         # Entries are always keyed by crop NAME where they are built.
@@ -631,6 +640,17 @@ def solve_farm_v2(
     # ~155 of them pays under a fifth of a cent.
     c_obj[idx_y_start : idx_y_start + N_S] += PLANT_FLAG_TIE_BREAK
 
+    # Water-level tie-break — the tank level is PUBLISHED, so it has to be a function of the
+    # inputs rather than of a solver tie-break. wstore carries no cost of its own, so in any
+    # week where water is slack the level is degenerate: measured on the 29-crop fixture, weeks
+    # 1-3 left the tank empty against 16.35 M L of slack while week 3 filled it to exactly
+    # capacity. `capacity_series["water"]["cap"]` is built from these values and the client
+    # divides `used` by it for utilisation and bottleneck ranking, so two runs of the same plan
+    # could report different water pressure. This is the same defect
+    # INVENTORY_TIE_BREAK_PER_LB_WEEK exists to prevent; refusing it there and tolerating it
+    # here would be incoherent. Minimum-storage is now strictly optimal.
+    c_obj[idx_ws_start : idx_ws_start + N_WEEKS] += WATER_LEVEL_TIE_BREAK_PER_L_WEEK
+
     # Overtime cost (incremental rate above regular pay)
     if overtime_enabled and idx_ot_start is not None:
         ot_extra_rate = hourly_labor_rate * (overtime_rate_multiplier - 1.0)
@@ -1108,7 +1128,16 @@ def solve_farm_v2(
 
     z = result.x
     x_sol = z[idx_x_start : idx_x_start + N_S]
-    y_sol = z[idx_y_start : idx_y_start + N_S]
+    # y is REPORTED as a function of x, not read raw from the solution.
+    #
+    # PLANT_FLAG_TIE_BREAK makes minimum-y strictly optimal, but its total value across ~155
+    # successions (~1.6e-4) sits below HiGHS's default relative MIP gap, and it is not enforced
+    # at all on the `time_limit_feasible` path this solver deliberately supports. So a returned
+    # incumbent can still carry y=1 with x=0, and anything reading y as "was this planted"
+    # would list a zero-acre succession as planted. Deriving it removes the dependence on the
+    # tie-break's magnitude entirely: x is the quantity, y is the question "is x above zero".
+    y_raw = z[idx_y_start : idx_y_start + N_S]
+    y_sol = np.where(z[idx_x_start : idx_x_start + N_S] > 1e-9, 1.0, 0.0)
 
     v_flat = z[idx_v_start : idx_v_start + V_off]
     v_sol = np.zeros((n_crops, n_channels, N_WEEKS + 1), dtype=float)

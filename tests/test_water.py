@@ -227,3 +227,35 @@ class TestWaterStorageActuallyStores:
             f"adding storage capacity REDUCED profit ({tank['profit']:,.0f} vs "
             f"{none['profit']:,.0f}) — a tank cannot remove an option"
         )
+
+    def test_the_published_tank_level_is_not_a_solver_tie_break(self, full_params):
+        """The tank level is PUBLISHED, so it must be a function of the inputs.
+
+        wstore carries no cost of its own, so in any week where water is slack the level is
+        degenerate — measured before the fix, weeks 1-3 sat empty against 16.35 M L of slack
+        while week 3 filled to exactly capacity. `capacity_series["water"]["cap"]` is built from
+        those values and the client divides `used` by it for utilisation and bottleneck
+        ranking, so the same plan could report different water pressure run to run. Same defect
+        INVENTORY_TIE_BREAK_PER_LB_WEEK exists to prevent.
+
+        A micro-cost makes minimum-storage strictly optimal, and the observable consequence is
+        that the tank never ends the year holding water it never used.
+        """
+        r = self._solve(full_params, 500_000)
+        inflow = self._inflow(full_params)
+        cap = r["capacity_series"]["water"]["cap"]
+        opening = [cap[w - 1] - float(inflow[w - 1]) for w in range(1, 53)]
+        assert min(opening) > -1.0, f"negative tank level reported: {min(opening)}"
+        assert opening[-1] < 1.0, (
+            f"the year ends with {opening[-1]:,.0f} L still in the tank — water was banked and "
+            f"never used, so the published level is slack rather than a real quantity"
+        )
+
+    def test_the_water_tie_break_stays_negligible(self, full_params):
+        """It sits in the objective and not in the reported P&L, so it must stay invisible."""
+        from farm_v2.solver import WATER_LEVEL_TIE_BREAK_PER_L_WEEK
+        worst_case = WATER_LEVEL_TIE_BREAK_PER_L_WEEK * 500_000 * 52
+        assert worst_case < 0.01, (
+            f"a full tank all year would distort the objective by ${worst_case:.8f} — the "
+            f"tie-break is no longer negligible"
+        )

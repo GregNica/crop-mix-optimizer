@@ -598,9 +598,12 @@ class TestValidationRunsOnTheSolverPath:
         assert any("yield" in e.lower() for e in out["errors"]), out["errors"]
         assert out["profit"] is None
 
-    def test_a_valid_payload_still_solves_and_carries_warnings(self, run_from_js, golden_payload):
-        import json as _json
-        out = _json.loads(run_from_js(_json.dumps(golden_payload)))
+    def test_a_valid_payload_still_solves_and_carries_warnings(self, run_from_js, golden_payload,
+                                                              result):
+        # Reuses the module-scoped `result` fixture rather than re-solving the golden farm: the
+        # assertion is about the warnings CHANNEL existing, not about the plan, and a fresh
+        # 7-crop solve cost ~3.7s to prove a key is present.
+        out = result
         assert out["status"] in ("optimal", "time_limit_feasible"), out["status"]
         assert "warnings" in out, (
             "the solve path must carry validate.py's warnings back — they are the only "
@@ -609,9 +612,15 @@ class TestValidationRunsOnTheSolverPath:
         assert isinstance(out["warnings"], list)
 
     def test_the_guard_never_takes_the_solve_down_with_it(self, run_from_js, golden_payload):
-        """A crashing guard must degrade to no-guard, not to no-plan."""
+        """A crashing guard must degrade to no-guard, not to no-plan.
+
+        Trimmed to ONE crop: this asserts the guard does not abort the run, which needs a solve
+        but not the whole 7-crop farm. The full-farm version cost ~2.7s to prove `status !=
+        error`.
+        """
         import copy, json as _json
         odd = copy.deepcopy(golden_payload)
+        odd["crops"] = odd["crops"][:1]
         odd["crops"][0]["seasons"] = [{"start": "03-01", "end": "06-15"}]
         out = _json.loads(run_from_js(_json.dumps(odd)))
         assert out["status"] != "error", out.get("errors") or out.get("message")
