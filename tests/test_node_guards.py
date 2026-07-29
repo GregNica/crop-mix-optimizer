@@ -30,6 +30,13 @@ GUARDS = [
         "the same commit",
     ),
     (
+        "channel-sales-client",
+        ["tests/channel_sales_client.cjs"],
+        "the client is no longer reading the solver's per-channel sales schedule (W1/D4). If "
+        "computeWeeklySalesLbs starts deriving sales from harvest, prices or demand again, the "
+        "pies, the sales CSV and the P&L channel lines stop reconciling to the headline revenue",
+    ),
+    (
         "golden-payload-staleness",
         ["scripts/capture_golden_payload.cjs", "--check"],
         "tests/golden/default_farm_payload.json pins a farm the app no longer ships. Run "

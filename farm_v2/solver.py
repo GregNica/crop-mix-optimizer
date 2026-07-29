@@ -264,6 +264,11 @@ def solve_farm_v2(
         "x"                 : np.ndarray — succession land fractions
         "y"                 : np.ndarray — succession binary (plant/no-plant)
         "v"                 : np.ndarray — channel sales (n_crops, n_channels, 53)
+        "channel_sales"     : dict — the reportable form of `v`:
+                              {channel: {"lbs_sold", "revenue",
+                                         "by_crop": {crop: {"lbs_sold", "revenue",
+                                                            "weekly_lbs": [52]}}}}
+                              Channel revenues sum to "revenue"; weekly_lbs sums to lbs_sold.
         "successions"       : list[dict]
         "crops"             : list[dict]
         "channels"          : list[dict]
@@ -1351,6 +1356,47 @@ def solve_farm_v2(
             "by_channel":     by_channel,
         }
 
+    # The per-channel WEEKLY sales schedule, read straight off the solver's own `v` (W1 / D4).
+    #
+    # `v` has always been returned and nothing read it. The client rebuilt this instead, by
+    # splitting each week's GROSS harvest in proportion to demand x price — a formula that
+    # knows nothing about sell-through (~18% overstatement on its own), storage carry, the
+    # annual caps, the margin hurdle, or what the LP actually chose to sell. So the pies, the
+    # sales CSV and the P&L's channel revenue lines could not reconcile to the headline
+    # revenue printed on the same page.
+    #
+    # Two properties this structure is built to have, both pinned by tests:
+    #   * `revenue` per channel uses gross_price — the SAME product the headline `revenue`
+    #     total above is summed from — so the channel lines add up to it exactly.
+    #   * `weekly_lbs` sums to `lbs_sold`, so a weekly view and an annual view of the same
+    #     channel cannot disagree.
+    #
+    # Only non-zero series are emitted. A dense crops x channels x 52 grid is almost entirely
+    # zeros on any real farm, and this crosses the Pyodide boundary as JSON on every solve.
+    channel_sales = {}
+    for ch_idx, ch in enumerate(channels):
+        by_crop, ch_lbs, ch_rev = {}, 0.0, 0.0
+        for c_idx, crop in enumerate(crops):
+            weekly = v_sol[c_idx, ch_idx, 1:]            # index 0 = week 1
+            sold   = float(weekly.sum())
+            if sold <= 0.0:
+                continue
+            rev = sold * float(gross_price[c_idx, ch_idx])
+            by_crop[crop["name"]] = {
+                "lbs_sold":   sold,
+                "revenue":    rev,
+                "weekly_lbs": [float(t) for t in weekly],
+            }
+            ch_lbs += sold
+            ch_rev += rev
+        if not by_crop:
+            continue
+        channel_sales[ch["name"]] = {
+            "lbs_sold": ch_lbs,
+            "revenue":  ch_rev,
+            "by_crop":  by_crop,
+        }
+
     city_water_cost = 0.0
     if city_water_enabled and idx_cw_start is not None:
         cw_sol = z[idx_cw_start : idx_cw_start + N_WEEKS]
@@ -1530,6 +1576,10 @@ def solve_farm_v2(
         "channel_margins":   channel_margins,
         "excluded_channels": excluded_channels,
         "crop_contribution": crop_contribution,
+        # The weekly per-channel sales schedule the client renders (W1 / D4). Built here rather
+        # than in the adapter so every entry point gets it — the What-If sweep, the sensitivity
+        # runs and Monte Carlo never touch the browser's reporting code.
+        "channel_sales":     channel_sales,
         "profit":           profit,
         "operating_profit": operating_profit,
         "overhead_cost":    overhead_cost,

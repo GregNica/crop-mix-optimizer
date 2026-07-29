@@ -658,3 +658,79 @@ class TestValidationRunsOnTheSolverPath:
         odd["crops"][0]["seasons"] = [{"start": "03-01", "end": "06-15"}]
         out = _json.loads(run_from_js(_json.dumps(odd)))
         assert out["status"] != "error", out.get("errors") or out.get("message")
+
+
+# The per-channel sales lines as the app prints them (W1 / D4). Captured 2026-07-29, the day
+# the client stopped reconstructing them from demand x price and started reading the solver's
+# own `v`. These are the numbers under the Revenue line in the exported P&L.
+GOLDEN_CHANNEL_REVENUE = {
+    "Farmers Market": 1_278_660,
+    "Wholesale":        342_462,
+}
+
+
+class TestChannelSalesReachTheClient(object):
+    """W1 / D4 — the sales schedule crosses the adapter intact and adds up.
+
+    tests/test_channel_sales.py pins the same identities inside the solver. This class exists
+    because the adapter is a second place they can break: it re-serializes the whole structure
+    into JSON for Pyodide, rounding pounds for size. Nothing tested that forwarding, and the
+    golden farm is the only fixture here with more than one channel — so it is the only place
+    "the channel lines sum to the headline revenue" is a non-trivial statement.
+    """
+
+    def test_every_channel_is_present(self, result):
+        cs = result["channel_sales"]
+        assert set(cs) == set(GOLDEN_CHANNEL_REVENUE), (
+            f"expected {sorted(GOLDEN_CHANNEL_REVENUE)}, got {sorted(cs)}"
+        )
+
+    @pytest.mark.parametrize("ch", sorted(GOLDEN_CHANNEL_REVENUE))
+    def test_channel_revenue_line(self, result, ch):
+        got, want = result["channel_sales"][ch]["revenue"], GOLDEN_CHANNEL_REVENUE[ch]
+        assert abs(got - want) < 50, f"{ch} revenue {got:,.2f}, expected ~{want:,}"
+
+    def test_the_lines_sum_to_the_headline_revenue(self, result):
+        """The property the reconstruction could never have. Tolerance is a cent, not the $50
+        used for the P&L lines above: this is one arithmetic identity over one set of numbers,
+        not a re-solve, so there is no solver drift for it to absorb."""
+        total = sum(d["revenue"] for d in result["channel_sales"].values())
+        assert abs(total - result["revenue"]) < 0.01, (
+            f"channel lines sum to {total:,.2f} but the headline revenue on the same page is "
+            f"{result['revenue']:,.2f}"
+        )
+
+    def test_weekly_series_survives_serialization(self, result):
+        """The adapter rounds pounds to 2dp for payload size. That must not break the weekly
+        identity the pies and the CSV both depend on — 52 roundings of <=0.005 lb each."""
+        for ch, data in result["channel_sales"].items():
+            for crop, cp in data["by_crop"].items():
+                assert len(cp["weekly_lbs"]) == 52, f"{ch}/{crop}"
+                assert abs(sum(cp["weekly_lbs"]) - cp["lbs_sold"]) < 1.0, f"{ch}/{crop}"
+
+    def test_sales_are_below_gross_harvest(self, result, golden_payload):
+        """Sell-through — the single largest error in the reconstruction this replaced.
+
+        That code split GROSS harvest across channels, so it reported pounds the farm never
+        had to sell. Measured on this farm the day it was removed: 809,200 lb claimed against
+        686,415 lb actually sold, a **17.9% overstatement**, on the same screen as a revenue
+        figure computed from the honest number.
+
+        `grown` is derived from the planted acreage and the crops' yields — NOT from the sold
+        figure. Dividing sales back out by sell-through would make this test true by algebra
+        and prove nothing; the first version of it did exactly that.
+        """
+        st = golden_payload.get("sell_through_fraction", 1.0)
+        assert st < 1.0, "the golden farm has no shrink — this test would prove nothing"
+        ypa = {c["name"]: c["yield_per_acre"] for c in golden_payload["crops"]}
+        grown = sum(s["acres"] * ypa[s["crop"]] for s in result["succession_schedule"])
+        sold = sum(d["lbs_sold"] for d in result["channel_sales"].values())
+        assert grown > 0
+        assert sold <= grown * st + 1.0, (
+            f"sold {sold:,.0f} lb but only {grown * st:,.0f} lb of the {grown:,.0f} lb grown "
+            f"is sellable at sell-through {st}"
+        )
+        assert sold < grown * 0.95, (
+            f"sold {sold:,.0f} lb against {grown:,.0f} lb grown — that is too close to gross "
+            f"for shrink to be modelled at all, which is the defect this guards"
+        )

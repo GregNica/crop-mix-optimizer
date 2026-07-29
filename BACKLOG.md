@@ -25,7 +25,7 @@ sign-off in its own session).
 | **D1** | Crop calendar | ✅ exists |
 | **D2** | Seeding calendar for transplants (if grown onsite) | blocked |
 | **D3** | Yield projection calendar | close |
-| **D4** | Committed sales calendar by channel | data exists, **wrong number shipping** |
+| **D4** | Committed sales calendar by channel | ✅ numbers now correct (W1); the **report** is C2 |
 | **D5** | Seed ordering list | needs a new input |
 | **D6** | Risk mapping tool | partial |
 | **D7** | P&L that maps uncertainty | partial |
@@ -71,7 +71,7 @@ All are `defect` class — they need no consultation.
 
 | ID | Item | Evidence | Class | Unblocks |
 |---|---|---|---|---|
-| ⛔ **W1** | **Per-channel weekly sales are reconstructed in the client, not read from the solver.** `v` is now returned by Python and used by **nothing**. The client still splits gross harvest proportional to `demand × price`, ignoring sell-through (~18% overstatement), spread, caps and hurdle drops. This contaminates the pies, the sales CSV and the exported P&L's channel revenue lines, which **cannot reconcile to the headline revenue on the same page**. This is a correctness defect, not a missing report — and it is exactly **D4** | `v` in the result dict; reconstruction at `index.html:8761`, pinned by test T59 | defect | **D4**, D7 |
+| ✅ **W1** | ~~Per-channel weekly sales are reconstructed in the client~~ — **FIXED 2026-07-29.** The solver now returns `channel_sales` (the reportable form of `v`: per channel, per crop, 52 weekly pounds + revenue), the adapter forwards it, and `computeWeeklySalesLbs` is a LOOKUP — the demand × price split is deleted, along with the `params` argument that made recomputing possible. **The overstatement was measured, not estimated: 809,200 lb claimed against 686,415 lb actually sold on the demo farm — 17.9%**, printed beside a revenue figure derived from the honest number. The P&L's channel lines now sum to its Gross Revenue line **to the cent** ($342,461.85 + $1,278,660.00 = $1,621,121.85), verified in a real browser through Pyodide. Golden farm unchanged. New guards: `test_channel_sales.py` (13, solver identities + the four ways a reconstruction diverges), `TestChannelSalesReachTheClient` in `test_golden_farm.py` (6, adapter forwarding + the only multi-channel fixture), `channel_sales_client.cjs` (jsdom: the series is read, nothing is reconstructed, CSV and pies driven for real). All mutation-tested — including one mutation that passed and exposed a dead assertion, and one vacuous test (`sold < sold/st`, true by algebra) rewritten to compute gross independently | `farm_v2/solver.py`, `public/index.html` | defect | **D4**, D7 |
 | ❓ **W2** | Monte Carlo **re-optimizes the crop mix on every draw** — perfect foresight, presented as a "1-in-10 bad year planning floor". Fix: freeze `x`/`y`, re-evaluate under each draw, let only sales allocation re-optimize. The gap between modes is itself the value of perfect foresight | audit Part 3 | defect | **D6**, D7 |
 | ❓ **W3** | "Crop plan stability" labels crops **Fragile** based on selection frequency under re-optimization — an artifact of W2, not a risk measure | audit Part 3 | defect | D6 |
 | ⛔ **W4** | P&L cost-breakdown rows permanently blank — the renderer asks for `res.cost_seed` / `cost_fert` / … which the solver never returns. `vc_split` (labor, water, fert, fuel, seed) exists internally and is not exported | audit 1.3; `vc_split` in `solver.py` | defect | **D7**, D10 |
@@ -228,7 +228,7 @@ Still open:
 | ID | Item |
 |---|---|
 | ⛔ **T1** | The in-page browser suite (E1) — crashes, false-green, corrupts app state |
-| ❓ **T2** | `test_regression.py` pins a March-2026 baseline that no longer matches; red by design. Rebaseline with recorded provenance or delete it — a permanently red test trains everyone to ignore failures |
+| ✅ **T2** | ~~`test_regression.py` is red by design~~ — **RE-VERIFIED 2026-07-29: it is GREEN (11 passed).** It was rebaselined at some point and the "permanently red" note outlived the fact. Recorded here because a stale ❓ is exactly what this list exists to stop |
 | ❓ **T3** | Vitest for `worker/` — the LLM validators are the trust boundary between untrusted tool-call JSON and the user's form, and they are pure functions |
 | ❓ **T4** | Playwright smoke: load, solve with defaults, assert a numeric profit and no console errors |
 | **T5** | **A standing rule worth adopting:** four times on this branch a *working* guard produced no visible effect (the ambient guard writing to a hidden view being the latest). A guard is not done until something asserts a human would see it fire |
@@ -256,5 +256,7 @@ Three observations that fall out of the mapping, offered as input to X3 rather t
    same root gap as garlic's fabricated calendar, and garlic is ~32% of farm contribution. We have
    corrected garlic's seed cost, nitrogen, shelf life and labour while its *calendar* remains
    impossible to express.
-3. **D4 is a defect, not a feature.** W1 is a wrong number on screen today. Building the sales
-   calendar is deleting a reconstruction and reading a variable we already return.
+3. ~~**D4 is a defect, not a feature.**~~ **Closed 2026-07-29, and the prediction held exactly:**
+   building it deleted a reconstruction and read a variable already being returned. Net effect
+   on `index.html` was a REMOVAL. What is left of D4 is the report itself (**C2**, the contract
+   commitment schedule) — now sitting on numbers that reconcile.
