@@ -530,7 +530,7 @@ const near = (name, got, want, rel) => {
     const card = doc.getElementById('crop-0');
     const cases = [
       { field: 'committed_acres', set: '3.5', key: 'committed_acres', want: 3.5 },
-      { field: 'min_acreage_if_planted', set: '2', key: 'min_acreage_if_planted', want: 2 },
+      { field: 'min_acreage_if_planted', set: '7', key: 'min_acreage_if_planted', want: 7 },
     ];
     if (!card) {
       fail('form round-trip: crop-0 missing');
@@ -539,8 +539,11 @@ const near = (name, got, want, rel) => {
         const el = card.querySelector(`[data-f="${c.field}"]`);
         if (!el) return fail(`form round-trip: no input for ${c.field} — the field is not on `
                           + `the form at all, so a grower can never set it`);
-        el.value = c.set;
-        el.dispatchEvent(new w8.Event('change', { bubbles: true }));
+        // Write through the app's own path. Setting .value directly does NOT update
+        // data-canon, and readCanonicalEl reads data-canon for any unit-registered field — so
+        // an earlier version of this test set min_acreage_if_planted to the value it already
+        // held and proved nothing, while committed_acres read back as 0.
+        w8.writeFieldDisplay(el, c.set);
         const got = w8.getCropsFromForm()[0][c.key];
         if (Math.abs((got || 0) - c.want) > 1e-9)
           fail(`form round-trip: ${c.field} set to ${c.set} came back as ${got} — the payload `

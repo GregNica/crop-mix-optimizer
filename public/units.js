@@ -125,6 +125,7 @@
     // (ch_fixed_sell is $/wk — currency per time, no physical unit — deliberately absent.)
     lbs_per_tote:               { measure: 'mass' },                 // lbs
     min_acreage_if_planted:     { measure: 'area_land' },            // acres
+    committed_acres:     { measure: 'area_land' },            // acres
     seed_transplant_cost_per_acre: { measure: 'area_land', inverse: true }, // $/acre
     // Per-phase resource rates (behind pd-phase-detail) — per-area rates, /wk. The denominator
     // (area_land) converts acre⇄ha; the numerator converts by its own dimension (labor's is

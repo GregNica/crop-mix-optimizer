@@ -457,75 +457,101 @@ class TestUnplantedCropsExplainThemselves:
 class TestCommittedAcres:
     """Raised by the grower on seeing year-wrap land.
 
-    Planning happens in winter, after November garlic is already planted. The cyclic year is
-    self-consistent annually, but the optimiser could still choose ZERO acres of a crop that is
-    already in the ground and already paid for — a plan nobody can act on.
+    Planning happens in winter, after November garlic is already planted. "Already planted"
+    therefore means ground STANDING at the start of the planning year — week 1 — which is
+    exactly what an overwintering crop occupies.
     """
 
-    def _unprofitable(self, minimal_params, committed):
-        """A crop the optimiser would drop on the economics, with acres already committed."""
+    def _overwintering(self, minimal_params, committed, **crop_over):
+        """A fall-planted crop the optimiser would otherwise drop on the economics."""
         params = dict(minimal_params)
         crop = dict(params["crops"][0])
         ch_name = params["channels"][0]["name"]
         chan = dict(crop["channels"][ch_name])
-        chan["price_per_lb"] = 0.001          # nobody would choose to plant this
+        chan["price_per_lb"] = 0.001            # nobody would choose to plant this
         crop["channels"] = {ch_name: chan}
+        crop["seasons"] = [{"start": "11-15", "end": "12-01"}]
+        crop["overwinters"] = True
+        crop["days_to_maturity"] = 240
+        crop["harvest_weeks"] = 1
         crop["committed_acres"] = committed
         crop["min_acreage_if_planted"] = 0.0
+        crop.update(crop_over)
         params["crops"] = [crop]
         return params
 
+    def _standing_acres(self, res, total_land, week=1):
+        """Acreage actually in the ground in `week` — not the annual sum of plantings."""
+        succ = res["successions"]
+        return sum(x * total_land for i, x in enumerate(res["x"])
+                   if x > 1e-9 and week in succ[i]["weeks"])
+
     def test_without_a_commitment_an_unprofitable_crop_is_dropped(self, minimal_params):
         """The control. Without it, the test below could pass for the wrong reason."""
-        res = _solve(self._unprofitable(minimal_params, 0.0))
+        res = _solve(self._overwintering(minimal_params, 0.0))
         acres = sum(res["x"]) * minimal_params["total_land"]
         assert acres < 1e-6, f"the fixture is not actually unprofitable — planted {acres} acres"
 
-    def test_committed_acres_are_planted_even_when_unprofitable(self, minimal_params):
-        res = _solve(self._unprofitable(minimal_params, 3.0))
+    def test_committed_acres_are_STANDING_in_week_one(self, minimal_params):
+        """The floor is on ground in the field, not on the annual sum of plantings.
+
+        Flooring the sum was wrong and measured so: with a 3-acre commitment and a 1-acre/week
+        planting cap, the solver met it with eighteen separate 1-acre plantings from week 9 to
+        week 26 — annual sum 18, peak standing acreage 6, and not one acre of the commitment
+        actually reserved.
+        """
+        params = self._overwintering(minimal_params, 3.0)
+        params["max_plant_acres_per_week"] = 1.0     # the setup that exposed the sum bug
+        res = _solve(params)
         assert res["status"] in ("optimal", "time_limit_feasible"), res["status"]
-        acres = sum(res["x"]) * minimal_params["total_land"]
-        assert acres >= 3.0 - 1e-6, (
-            f"only {acres:.2f} acres planted against 3.0 already in the ground — the optimiser "
-            f"is still treating a committed planting as a free choice"
+        standing = self._standing_acres(res, params["total_land"])
+        assert standing >= 3.0 - 1e-6, (
+            f"only {standing:.2f} acres standing in week 1 against a 3.0-acre commitment — the "
+            f"floor is being satisfied by plantings that are not in the ground yet"
         )
 
+    def test_a_commitment_on_a_crop_that_cannot_overwinter_is_refused(self, minimal_params):
+        """Nothing is in the ground in week 1, so no plan can honour the commitment."""
+        params = self._overwintering(minimal_params, 2.0)
+        crop = dict(params["crops"][0])
+        crop["overwinters"] = False
+        crop["seasons"] = [{"start": "04-01", "end": "06-15"}]
+        crop["days_to_maturity"] = 42
+        params["crops"] = [crop]
+        res = _solve(params)
+        assert res["status"] == "invalid_input", res["status"]
+        assert any("already planted" in e for e in res["errors"]), res["errors"]
+
     def test_a_commitment_larger_than_the_farm_is_refused_with_a_reason(self, minimal_params):
-        params = self._unprofitable(minimal_params, minimal_params["total_land"] + 10)
+        params = self._overwintering(minimal_params, minimal_params["total_land"] + 10)
         res = _solve(params)
         assert res["status"] == "invalid_input", res["status"]
         assert any("committed" in e.lower() for e in res["errors"]), res["errors"]
 
-    def test_a_commitment_below_the_lot_size_minimum_is_refused_with_a_reason(
+    def test_a_commitment_above_the_diversity_ceiling_is_refused_with_a_reason(
             self, minimal_params):
-        """C15 + C9 + C10 make this infeasible, and the infeasible path has no diagnosis.
+        """C8 caps the crop; above it the solve is infeasible with no diagnosis otherwise."""
+        params = self._overwintering(minimal_params, 30.0, crop_diversity_max=0.05)
+        res = _solve(params)
+        assert res["status"] == "invalid_input", res["status"]
+        assert any("diversity ceiling" in e for e in res["errors"]), res["errors"]
 
-        Reproduced before the check existed: 1 acre committed against a 45-acre minimum
-        returned status 'infeasible' with a raw HiGHS string, no errors and no unplanted_crops,
-        because _diagnose_unplanted_crops is never reached on that path.
+    def test_a_commitment_below_the_lot_size_minimum_is_NOT_refused(self, minimal_params):
+        """The check that used to live here was wrong and rejected solvable farms.
+
+        C15 is a floor and C10 simply raises the planting to the lot size, so committing less
+        than the minimum is fine — the plan just plants the minimum. Measured before removal:
+        2 committed acres against a 10-acre minimum solved optimal at 147 acres. The old
+        message also told the grower to raise their committed acreage, i.e. to misstate what is
+        actually in the ground.
         """
-        params = self._unprofitable(minimal_params, 1.0)
-        crop = dict(params["crops"][0])
-        crop["min_acreage_if_planted"] = 45.0
-        params["crops"] = [crop]
+        params = self._overwintering(minimal_params, 2.0, min_acreage_if_planted=10.0)
         res = _solve(params)
-        assert res["status"] == "invalid_input", (
-            f"got {res['status']!r} — a commitment below the lot-size minimum should be caught "
-            f"before the solver, not surface as a bare infeasibility"
+        assert res["status"] in ("optimal", "time_limit_feasible"), (
+            f"a commitment below the lot size must not be refused; got {res['status']} "
+            f"{res.get('errors')}"
         )
-        assert any("cannot be planted in less than" in e for e in res["errors"]), res["errors"]
-
-    def test_a_commitment_on_a_two_season_crop_warns_about_window_substitution(
-            self, minimal_params):
-        """The floor is crop-level, so it cannot say which window the commitment belongs to."""
-        params = self._unprofitable(minimal_params, 2.0)
-        crop = dict(params["crops"][0])
-        crop["seasons"] = [{"start": "02-01", "end": "06-15"},
-                           {"start": "08-01", "end": "11-15"}]
-        params["crops"] = [crop]
-        res = _solve(params)
-        assert res["status"] in ("optimal", "time_limit_feasible"), res["status"]
-        assert any("more than one" in w and "season window" in w for w in res["warnings"]), (
-            f"a two-window crop with a commitment must warn that the model may substitute "
-            f"windows; got {res['warnings']}"
+        standing = self._standing_acres(res, params["total_land"])
+        assert standing >= 10.0 - 1e-6, (
+            f"the lot-size minimum should raise the planting to 10 acres, got {standing:.2f}"
         )

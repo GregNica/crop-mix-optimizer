@@ -18,9 +18,11 @@ Constraint order (rows of A):
   C4a  inventory balance — EQUALITY, inv[c,0]=0 (n_crops × 52)
   C4b  storage capacity on room occupancy — cold pool then ambient pool (2 × 52)
   C4c  shelf life — rolling bound on inv (n_crops × 52)
-  C6   sales ≤ sales-capacity cap (n_crops × n_channels × 52)
+  C6   sales ≤ WEEKLY sales-capacity cap (skipped for annual-cap channels)
+  C6b  sales ≤ ANNUAL cap — one row per crop-channel that has one
   C8   crop diversity — annual acre-weeks per crop (n_crops)
   C9   binary linkage upper x[i] ≤ y[i]  (N_S)
+  C15  committed acres — floor on ground STANDING in week 1 (one row per committed crop)
   C10  min acreage lower   x[i] ≥ y[i]×min_frac  (N_S)
   C11  max plant acres/week (52)
   C12  max harvest acres/week (52)
@@ -1052,24 +1054,47 @@ def solve_farm_v2(
 
     # C15 — Committed acres: land already in the ground is not a decision (S14)
     #
-    # Without this the optimiser could choose ZERO acres of a crop that is already planted and
-    # already paid for, which is not a plan anyone can act on.
+    # "Already planted" means STANDING IN THE GROUND when the plan is made. The planning year is
+    # anchored at 1 January, so that is week 1 — which is exactly the set of successions an
+    # overwintering crop occupies at the start of the year (garlic goes in around week 46 and
+    # runs through to July).
     #
-    # The floor is on the crop's TOTAL land rather than a particular succession: a grower knows
-    # how many acres went in, not which of the model's generated start weeks it corresponds to.
+    # ⚠️ The floor is on ACREAGE ACTIVE IN WEEK 1, not on the annual sum of plantings. Flooring
+    # the sum was wrong and measured so: with a 3-acre commitment and a 1-acre/week planting
+    # cap, the solver satisfied it with eighteen separate 1-acre plantings spread from week 9 to
+    # week 26 — annual sum 18, peak standing acreage 6, and not one acre of the commitment
+    # actually reserved. A commitment is a quantity of ground, not a quantity of activity.
     #
-    # ⚠️ COSTS ARE STILL CHARGED. The seed, labour and fuel for a committed planting are sunk —
-    # already spent before this plan was made — so profit is understated by that amount. It does
-    # not change the DECISION, since a sunk cost is identical in every scenario and cannot alter
-    # the ranking, but the P&L is not yet honest about it. See BACKLOG S14.
+    # ⚠️ COSTS ARE STILL CHARGED, and this CAN change the plan, not only the P&L. The seed,
+    # labour and fuel are sunk, but charging them consumes cash (C13) and labour (C2) in those
+    # weeks, so when either binds the forced planting crowds out other crops and the returned
+    # plan differs from the honest one. See BACKLOG S14.
     for c_idx, crop in enumerate(crops):
         committed = float(crop.get("committed_acres", 0.0) or 0.0)
         if committed <= 0:
             continue
         cols = [(idx_x_start + i, -total_land)
-                for i, s in enumerate(successions) if s["crop"] == c_idx]
-        if cols:
-            add_row(cols, -np.inf, -committed)
+                for i, s in enumerate(successions)
+                if s["crop"] == c_idx and phase_table[i][1] is not None]
+        if not cols:
+            # Nothing this crop can grow is in the ground in week 1, so the commitment cannot
+            # be honoured by any plan. Silently dropping it is the failure mode this whole
+            # sweep exists to remove.
+            return {
+                "status": "invalid_input",
+                "profit": None,
+                "errors": [
+                    f"Crop '{crop.get('name', c_idx)}' has {committed:g} acres recorded as "
+                    f"already planted, but none of its plantings are in the ground at the start "
+                    f"of the planning year. Mark it as overwintering, or set its committed "
+                    f"acres to 0."
+                ],
+                "warnings": validation_warnings,
+                "crops": crops,
+                "channels": channels,
+                "successions": successions,
+            }
+        add_row(cols, -np.inf, -committed)
 
     # C10 — Min acreage lower: x[i] ≥ y[i] × min_frac
     for i in range(N_S):
@@ -1535,6 +1560,7 @@ def solve_farm_v2(
         # rebuild it — B.1 left the adapter recomputing harvest inflow because there was no
         # key to read, and that copy understates any plan that holds stock. SPEC_v3 §9.
         "warnings":         validation_warnings,
+        "errors":           [],
         "capacity_series":  capacity_series,
         # WHY each requested crop is absent from the plan (audit Part 3 / S2). Computed here
         # rather than in the client so every entry point gets it — the What-If sweep and Monte

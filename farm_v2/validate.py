@@ -140,26 +140,28 @@ def validate_params(
                 f"the farm's {total_land:g} acres. No plan can be built around it."
             )
         if committed > 0:
-            # A commitment BELOW the lot-size minimum is infeasible, not merely rounded up:
-            # C15 forces the crop in, C9 then forces its plant flag on, and C10 forces at least
-            # min_acreage_if_planted. Reproduced on a 50-acre farm — 1 acre committed against a
-            # 45-acre minimum returns status 'infeasible' with a raw HiGHS string and nothing
-            # else, because the infeasible path never reaches the zero-acre diagnosis.
-            min_acres = float(crop.get("min_acreage_if_planted", 0.0) or 0.0)
-            if committed < min_acres:
+            # NOT checked here any more: `committed_acres < min_acreage_if_planted`. That was
+            # added on a mis-diagnosis and rejected farms that solve perfectly well — C15 is a
+            # floor and C10 simply raises the planting to the lot size. Measured: 2 committed
+            # acres against a 10-acre minimum solves optimal at 147 acres. The old message also
+            # told the grower to raise their committed acreage to match, i.e. to misstate what
+            # is actually in the ground.
+            #
+            # Still worth flagging: a commitment above the crop's diversity ceiling (C8) is
+            # infeasible, and the infeasible path returns a bare HiGHS string with no diagnosis.
+            div_max = float(crop.get("crop_diversity_max", 1.0) or 1.0)
+            if committed > total_land * div_max + 1e-9:
                 raise ValueError(
-                    f"Crop '{crop['name']}' has {committed:g} acres already committed but "
-                    f"cannot be planted in less than {min_acres:g} acres. Either raise the "
-                    f"committed acreage to {min_acres:g}, or lower the minimum planting size."
+                    f"Crop '{crop['name']}' has {committed:g} acres already committed, but its "
+                    f"diversity ceiling allows at most {total_land * div_max:g} acres "
+                    f"({div_max:g} of {total_land:g}). Raise the ceiling or correct the "
+                    f"committed acreage."
                 )
-            # A crop-level floor cannot say WHICH window the commitment belongs to, so with two
-            # disjoint windows the model may satisfy a fall planting with a spring one — a
-            # different labour month, cash timing and storage profile.
-            if len(crop.get("seasons", [])) > 1:
+            if not crop.get("overwinters", False):
                 warnings.append(
-                    f"Crop '{crop['name']}' has {committed:g} committed acres and more than one "
-                    f"season window. The plan may satisfy that commitment in EITHER window, so "
-                    f"check the planting dates it returns."
+                    f"Crop '{crop['name']}' has {committed:g} committed acres but is not marked "
+                    f"as overwintering. Committed acres are ground standing at the START of the "
+                    f"planning year, so only an overwintering crop can hold any."
                 )
         total_committed += committed
     if total_committed > total_land:
