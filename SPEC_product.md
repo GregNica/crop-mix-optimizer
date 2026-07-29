@@ -117,6 +117,41 @@ per-succession floor; C6 already indexes crop×channel×week). Obligations = com
 and/or committed weekly deliveries entered as floors; the optimiser then does what the farmer
 actually does second. This is the "tweak direction, not reroute" change.
 
+### TABLED — propagation infrastructure, and the complexity test that governs it
+
+**Raised by the grower 2026-07-29, deliberately not built.** The transplant-cost work exposed that
+the model has no propagation greenhouse: raising your own transplants means midwinter seeding,
+which needs a heated greenhouse (not a high tunnel), winter heat, and labour. So "raise your own"
+would read as almost free — the ambient-barn error again. Consequence: `seed_transplant_cost_basis`
+cannot honestly become a user choice until the cost line exists, because offering "own propagation"
+would be offering a saving the model invents.
+
+**The grower's own account of why the catch-all exists:** the single seed/transplant cost per acre
+was chosen *because* the real cost is complicated — there is too much behind it to compute
+honestly. That is the correct instinct and also the trap: a number that feels contrived either
+frustrates the user or gets answered confidently from poor information, and the model cannot
+distinguish a good estimate from a bad one.
+
+**So this is not a "make the model more detailed" task.** It is a test case for the complexity
+rule now locked in STRATEGY: *what information do farmers have readily available and are ready to
+give?* A farmer knows whether they buy plugs or raise their own. They probably know roughly what
+they pay per tray. Almost none of them hold a per-acre propagation cost that nets greenhouse
+depreciation, winter fuel and seeding labour against raising loss — so asking for one produces
+fiction, and computing one for them requires inputs they also do not hold.
+
+Plausible shapes to weigh when this is picked up (do NOT pick one from here):
+  • keep the catch-all, but make the BASIS explicit and disclosed, so at least the number means
+    something specific (what ships today);
+  • ask the one question a grower can answer — buy or raise — and derive the rest from benchmarks,
+    including the greenhouse, with visible provenance;
+  • model propagation as a real asset only for farms that say they raise their own, accepting that
+    it adds an input group most users will never open.
+
+Blocked on the same thing as the rest of bet ①: the wholesale-scale one-pager, and the decision
+about which primitives are worth their input cost. Related model gap recorded in SPEC_agronomy:
+transplant TIMING quality is invisible to a single yield number, so buy-vs-raise differs in risk
+and yield, not just cost.
+
 ### Missing primitives, ranked by leverage
 
 1. **Obligations / must-plant floors** (prompt 1). The first thing on the page; absent from the app.

@@ -101,6 +101,31 @@ own Phase C came to sit unexecuted.
 | 2026-07-28 | Model-generated values are never entered as data; models find sources and refute |
 | 2026-07-28 | Potatoes cold; zone 7 with disclosure; holding cost before honest shelf lives |
 | 2026-07-28 | Strict shelf life: weeks sellable *including* the harvest week |
+| 2026-07-29 | **Model complexity is decided by what a farmer can actually answer** — see below |
+
+## The complexity test (locked 2026-07-29, grower)
+
+Every "should the model represent this more precisely?" question is decided by one criterion:
+
+> **What information do farmers have readily available, and are ready to give the model?**
+
+Not what is most accurate, and not what is simplest. The failure mode runs in both directions,
+which is why neither of those works alone:
+
+- **Too coarse** and the number feels contrived. The user either gets frustrated, or supplies a
+  confident figure built on poor information — and the model cannot tell those apart from a good
+  one. A single seed/transplant cost per acre is the worked example: it exists precisely *because*
+  the true cost is complicated, and that is also what makes it hard to answer well.
+- **Too fine** and you are asking for inputs nobody holds. Per-phase fertiliser in lb/acre/week is
+  the worked example in the other direction — no grower knows it, and neither did we until it was
+  researched.
+
+Corollary already in evidence: the ~300 inputs are not simply "too many". The wizard asks for what
+a benchmark could supply and skips what only the grower knows (their accounts, their crew, their
+ground). Fixing the count without fixing that inversion changes nothing.
+
+This is why an input can be *right* and still wrong: correctness of a default never settles whether
+the field should exist. Ask the complexity test first.
 
 ## Non-goals — decided, not forgotten
 
