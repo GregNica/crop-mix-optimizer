@@ -43,15 +43,21 @@ pytestmark = pytest.mark.skipif(not PAYLOAD.exists(), reason="golden payload mis
 
 # The P&L of the shipped default farm. Captured 2026-07-27 from the app's own default payload.
 GOLDEN = {
-    "revenue":          2_287_136,
-    "variable_cost":      857_880,
+    "revenue":          2_287_977,
+    "variable_cost":      859_164,
     "fixed_cost":         213_097,
-    "overhead_cost":      365_942,
+    "overhead_cost":      366_076,
     "interest_cost":        2_457,
-    "profit":             834_760,
-    "operating_profit": 1_216_158,
+    "profit":             834_155,
+    "operating_profit": 1_215_716,
 }
 # Baseline history — re-pin ONLY with a reason, and record it here.
+#   2026-07-29 (two more sourced values): profit 834,760 -> 834,155 (-605). Small because
+#     neither crop is a large block here, but both were wrong and both are now citable.
+#     Bell pepper HARVEST labour 111 -> 200 h/acre (UC Davis Rural Migration labor data). Garlic
+#     nitrogen 90 -> 125 lb/acre (Rutgers NJAES FS1289, which also gives 150 P and 150 K) — Penn
+#     State's three-tier table had put garlic in the 90 bracket and the crop-specific source is
+#     better evidence than the tier.
 #   2026-07-29 (garlic seed cost + planting-labour consistency): profit 868,594 -> 834,760
 #     (-33,834). Variable cost +64,760; revenue +38,277 as the plan shifted away from garlic.
 #     GARLIC SEED 380 -> 2,500/acre. Garlic is planted from CLOVES at 800-1,200 lb/acre, not from
