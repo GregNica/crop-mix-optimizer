@@ -1,20 +1,46 @@
 """Unit tests for farm_v2.utils.demand."""
 import pytest
 import numpy as np
-from farm_v2.utils.demand import expand_channel_demand, build_demand_table
+from farm_v2.utils.demand import (expand_channel_demand, build_demand_table,
+                                  build_annual_caps)
 
 
 class TestExpandChannelDemand:
-    def test_annual_spreads_evenly(self):
+    def test_annual_imposes_no_weekly_ceiling(self):
+        """An annual cap is a yearly TOTAL, so it must not become a weekly ceiling.
+
+        This returned `annual / 52` in every week, which silently turned a 52,000 lb contract
+        into a flat 1,000 lb/wk limit — a crop harvesting in only ten weeks could deliver
+        10,000 lb of it and the rest was unsellable. The yearly total is enforced by its own
+        solver row (C6b) built from `build_annual_caps`.
+        """
         spec = {"demand_cap_type": "annual", "annual_demand_lbs": 52_000}
         arr = expand_channel_demand(spec)
         assert arr.shape == (52,)
-        assert np.allclose(arr, 1_000.0)   # 52_000 / 52
+        assert np.all(np.isinf(arr)), (
+            f"annual must leave the weekly rows unbounded, got {arr[:3]} — a weekly number "
+            f"here is the old spread bug"
+        )
 
-    def test_annual_zero(self):
-        spec = {"demand_cap_type": "annual", "annual_demand_lbs": 0}
-        arr = expand_channel_demand(spec)
-        assert np.all(arr == 0)
+    def test_annual_zero_still_forbids_sales(self):
+        """A zero annual contract must still be zero, not unbounded."""
+        caps = build_annual_caps(
+            [{"name": "Spinach", "channels": {"Direct": {
+                "demand_cap_type": "annual", "annual_demand_lbs": 0}}}],
+            [{"name": "Direct"}],
+        )
+        assert caps == {(0, 0): 0.0}
+
+    def test_build_annual_caps_only_picks_up_annual_channels(self):
+        crops = [{"name": "Spinach", "channels": {
+            "Direct":    {"demand_cap_type": "annual", "annual_demand_lbs": 12_000},
+            "Wholesale": {"demand_cap_type": "weekly_flat", "weekly_demand_lbs": 500},
+        }}]
+        channels = [{"name": "Direct"}, {"name": "Wholesale"}]
+        caps = build_annual_caps(crops, channels)
+        assert caps == {(0, 0): 12_000.0}, (
+            f"only annual-cap channels belong here, got {caps}"
+        )
 
     def test_weekly_flat_constant(self):
         spec = {"demand_cap_type": "weekly_flat", "weekly_demand_lbs": 500}
@@ -135,10 +161,15 @@ class TestBuildDemandTable:
         }
         table = build_demand_table([crop], channels)
         assert table.shape == (1, 2, 53)
-        # Wholesale: ~1923 lbs/week (100k/52)
-        assert table[0, 0, 1] == pytest.approx(100_000 / 52, rel=1e-3)
-        # Farmers Market: 500 flat
-        assert table[0, 1, 1] == pytest.approx(500.0, rel=1e-3)
+        # Wholesale is ANNUAL: no weekly ceiling — the yearly total lives in build_annual_caps
+        # and is enforced by its own solver row. A finite number here would be the old
+        # annual/52 spread, which capped a 100,000 lb contract at ~1,923 lb in every week.
+        assert np.all(np.isinf(table[0, 0, 1:])), (
+            f"annual channel must be weekly-unbounded, got {table[0, 0, 1]}"
+        )
+        assert build_annual_caps([crop], channels) == {(0, 0): 100_000.0}
+        # Farmers Market is weekly_flat: unchanged.
+        assert table[0, 1, 1] == pytest.approx(500.0)
 
     def test_crop_without_channel_is_zero(self, spinach_crop, direct_channel):
         """Crop not listed in a channel gets zero demand for that channel."""

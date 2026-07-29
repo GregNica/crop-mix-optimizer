@@ -84,9 +84,16 @@ def expand_channel_demand(channel_spec: dict) -> np.ndarray:
     cap_type = channel_spec.get("demand_cap_type", "").lower()
 
     if cap_type == "annual":
-        annual = float(channel_spec["annual_demand_lbs"])
-        weekly = annual / 52.0
-        return np.full(52, weekly, dtype=float)
+        # An ANNUAL cap is a yearly total, not a weekly one. It used to be spread as
+        # `annual / 52` in every week, which quietly turned a 52,000 lb contract into a flat
+        # 1,000 lb/wk ceiling — so a crop harvesting in only 10 weeks could deliver 10,000 lb
+        # of it and the rest was unsellable. A grower reads this field as a contract volume,
+        # and the docstring claimed front/back-loading was allowed.
+        #
+        # There is no weekly bound now. The yearly total is enforced by its own row in the
+        # solver (see `build_annual_caps` and C6b), which is the only place a sum over weeks
+        # can be expressed.
+        return np.full(52, np.inf, dtype=float)
 
     elif cap_type == "weekly_flat":
         weekly = float(channel_spec["weekly_demand_lbs"])
@@ -169,3 +176,25 @@ def build_demand_table(
 # Total market capacity per crop per week (used for C7)
 # ---------------------------------------------------------------------------
 
+
+def build_annual_caps(
+    crops: list[dict],
+    channels: list[dict],
+) -> dict[tuple[int, int], float]:
+    """Yearly total caps, keyed by (crop_index, channel_index).
+
+    Only channels whose `demand_cap_type` is "annual" appear. These cannot be expressed in the
+    weekly demand table at all — a yearly total is a sum across weeks, so it needs its own
+    constraint row. `expand_channel_demand` returns +inf for these weeks precisely so the
+    weekly rows impose nothing and this is the single binding statement.
+    """
+    caps: dict[tuple[int, int], float] = {}
+    for c_idx, crop in enumerate(crops):
+        crop_channels = crop.get("channels", {}) or {}
+        for ch_idx, ch in enumerate(channels):
+            spec = crop_channels.get(ch["name"])
+            if not spec:
+                continue
+            if str(spec.get("demand_cap_type", "")).lower() == "annual":
+                caps[(c_idx, ch_idx)] = float(spec["annual_demand_lbs"])
+    return caps

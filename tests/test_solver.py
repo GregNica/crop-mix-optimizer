@@ -216,41 +216,97 @@ class TestPlantBinaryIsBounded:
             f"meaningful answer and indicates the upper bound was dropped."
         )
 
-    def test_y_stays_binary_when_min_acreage_is_zero(self, minimal_params):
-        """The degenerate case: min_acreage 0 removes C10's grip on y entirely.
+    def test_y_is_a_reliable_planted_flag_even_at_min_acreage_zero(self, minimal_params):
+        """The degenerate case, now pinned rather than documented as a caveat.
 
         With min_acreage_if_planted = 0, C10 collapses to `0 <= x` and C9 is only `x <= y`, so
-        y = 1 alongside x = 0 is feasible and costs nothing. The bound is then the ONLY thing
-        holding y down. Note what follows and is deliberately NOT asserted here: y is not pinned
-        to 0 for an unplanted succession in this case, so anything reporting "was this crop
-        planted" must read x, not y. Whether HiGHS happens to return 0 or 1 is an arbitrary
-        tie-break among equally optimal solutions — pinning it would test the solver's mood.
+        y = 1 alongside x = 0 used to be feasible at zero cost — every value of y equally
+        optimal, and no reliable answer to "was this planted". PLANT_FLAG_TIE_BREAK makes the
+        minimum strictly optimal, so y now tracks x in every case.
         """
         params = dict(minimal_params)
         params["crops"] = [dict(c, min_acreage_if_planted=0.0) for c in params["crops"]]
         res = _solve(params)
-        y = np.asarray(res["y"], dtype=float)
-        assert np.all(y <= 1 + 1e-6), (
-            f"with min_acreage_if_planted=0 the y bound is the ONLY thing holding y down, "
-            f"and it did not: {y}"
-        )
-
-    def test_unplanted_succession_reports_y_zero_when_min_acreage_is_set(self, minimal_params):
-        """With a real min_acreage, C10 (min_frac * y <= x) forces y to 0 when x is 0.
-
-        This is the contract the "was this planted" report depends on, and it holds for every
-        shipped template — all of them set min_acreage_if_planted >= 1.
-        """
-        res = _solve(minimal_params)
         x = np.asarray(res["x"], dtype=float)
         y = np.asarray(res["y"], dtype=float)
-        assert any(c.get("min_acreage_if_planted", 0) > 0 for c in minimal_params["crops"]), (
-            "fixture must set a non-zero min_acreage for this test to mean anything"
-        )
+        assert np.all(y <= 1 + 1e-6), f"y must stay bounded to 1: {y}"
         for i, (xi, yi) in enumerate(zip(x, y)):
             if xi <= 1e-9:
                 assert yi <= 1e-6, (
                     f"succession {i} has x={xi} but reports y={yi} — an unplanted succession "
-                    f"claiming to be planted"
+                    f"claiming to be planted, at min_acreage_if_planted=0"
                 )
 
+    def test_the_plant_flag_tie_break_stays_negligible(self, minimal_params):
+        """It sits in the objective and NOT in the reported P&L, so it must stay invisible.
+
+        Imported rather than re-typed: a test that restates the constant cannot notice the
+        constant changing.
+        """
+        from farm_v2.solver import PLANT_FLAG_TIE_BREAK
+        res = _solve(minimal_params)
+        n_succ = len(res["successions"])
+        worst_case = PLANT_FLAG_TIE_BREAK * n_succ
+        assert worst_case < 0.01, (
+            f"planting every one of {n_succ} successions would cost ${worst_case:.6f} of "
+            f"objective distortion — the tie-break is no longer negligible"
+        )
+
+
+# ---------------------------------------------------------------------------
+# An annual demand cap is a yearly total, not a weekly ceiling (audit B4)
+# ---------------------------------------------------------------------------
+
+class TestAnnualDemandIsAnnual:
+    """A grower reads "annual total cap (lbs/yr)" as a contract volume.
+
+    It was enforced as `annual / 52` in every week, so a crop harvesting in only part of the
+    year could deliver only that fraction of a contract it had signed — and the docstring
+    claimed the optimizer could front- or back-load freely. The cap now has its own row.
+    """
+
+    def test_a_short_harvest_can_still_fill_a_whole_annual_contract(self, minimal_params):
+        params = dict(minimal_params)
+        crop = dict(params["crops"][0])
+        ch_name = params["channels"][0]["name"]
+        chan = dict(crop["channels"][ch_name])
+        chan["demand_cap_type"] = "annual"
+        # Small enough that the farm can physically grow it, so the CAP is what binds.
+        chan["annual_demand_lbs"] = 20_000
+        crop["channels"] = {ch_name: chan}
+        params["crops"] = [crop]
+
+        res = _solve(params)
+        assert res["status"] in ("optimal", "time_limit_feasible"), res["status"]
+        v = np.asarray(res["v"], dtype=float)
+        sold = float(v[0, 0, 1:].sum())
+
+        harvest_weeks = sum(
+            1 for i, s in enumerate(res["successions"])
+            for w, ph in zip(s["weeks"], s["phases"]) if ph == 2
+        )
+        old_ceiling = (20_000 / 52.0) * max(1, harvest_weeks)
+
+        assert sold <= 20_000 + 1e-6, (
+            f"sold {sold:,.0f} lb against a 20,000 lb annual cap — the annual row is not binding"
+        )
+        assert sold > old_ceiling * 1.001 or sold == pytest.approx(20_000, rel=1e-6), (
+            f"sold {sold:,.0f} lb, which the old annual/52 spread would also have permitted "
+            f"({old_ceiling:,.0f} lb) — this test is not exercising the fix"
+        )
+
+    def test_the_annual_cap_is_never_exceeded(self, minimal_params):
+        params = dict(minimal_params)
+        crop = dict(params["crops"][0])
+        ch_name = params["channels"][0]["name"]
+        chan = dict(crop["channels"][ch_name])
+        chan["demand_cap_type"] = "annual"
+        chan["annual_demand_lbs"] = 5_000        # deliberately tight
+        crop["channels"] = {ch_name: chan}
+        params["crops"] = [crop]
+
+        res = _solve(params)
+        v = np.asarray(res["v"], dtype=float)
+        assert float(v[0, 0, 1:].sum()) <= 5_000 + 1e-6, (
+            "removing the weekly ceiling must not leave the channel unbounded"
+        )

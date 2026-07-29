@@ -51,7 +51,7 @@ from farm_v2.utils.water import (
     CATCHMENT_EFFICIENCY,
 )
 from farm_v2.utils.labor import compute_labor_arrays, compute_labor_rates
-from farm_v2.utils.demand import build_demand_table
+from farm_v2.utils.demand import build_demand_table, build_annual_caps
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +67,10 @@ def _vcw_index(c: int, ch: int, w: int, n_channels: int, n_weeks: int) -> int:
 # a test that re-types the number cannot detect the number changing. See its use in the
 # objective for why it exists and why it must stay negligible.
 INVENTORY_TIE_BREAK_PER_LB_WEEK = 1e-6
+
+# Plant-flag tie-break, $ per planted succession. Same discipline as the holding tie-break
+# above: module-level so a test can assert on the ACTUAL value rather than re-typing it.
+PLANT_FLAG_TIE_BREAK = 1e-6
 
 
 def _cw_index(c: int, w: int, n_weeks: int) -> int:
@@ -230,6 +234,7 @@ def solve_farm_v2(
 
     # Demand
     demand_table = build_demand_table(crops, channels, N_WEEKS)  # (n_crops, n_ch, 53)
+    annual_caps  = build_annual_caps(crops, channels)            # {(c, ch): lbs/yr}
 
     # Fert and fuel rate arrays per succession per week
     _FERT_KEY = ["fert_plant", "fert_grow", "fert_harv"]
@@ -533,6 +538,18 @@ def solve_farm_v2(
     # lands, delete this.
     c_obj[idx_inv_start : idx_inv_start + INV_off] = INVENTORY_TIE_BREAK_PER_LB_WEEK
 
+    # Plant-flag tie-break — makes y[i] mean what its name says in EVERY case.
+    #
+    # y is pinned to 0 for an unplanted succession by C10 (min_frac·y ≤ x), but only while
+    # min_acreage_if_planted > 0. At 0 — a value the form accepts — C10 collapses to `0 ≤ x`,
+    # C9 is only `x ≤ y`, and y = 1 alongside x = 0 becomes feasible at no cost. Every value of
+    # y is then equally optimal, so "was this succession planted" has no reliable answer.
+    #
+    # A vanishing cost on y makes the minimum strictly optimal, exactly as the holding
+    # tie-break above does for inventory. Bounded by a test: at 1e-6 per succession, a farm
+    # planting every one of ~155 successions pays under a fifth of a cent.
+    c_obj[idx_y_start : idx_y_start + N_S] += PLANT_FLAG_TIE_BREAK
+
     # Overtime cost (incremental rate above regular pay)
     if overtime_enabled and idx_ot_start is not None:
         ot_extra_rate = hourly_labor_rate * (overtime_rate_multiplier - 1.0)
@@ -791,13 +808,35 @@ def solve_farm_v2(
                                  -succ_weekly_sellable_lbs[i] * weight))
             add_row(cols, -np.inf, 0.0)
 
-    # C6 — Channel sales ≤ demand cap
+    # C6 — Channel sales ≤ WEEKLY demand cap
     for c_idx in range(n_crops):
         for ch_idx in range(n_channels):
             for w in range(1, N_WEEKS + 1):
                 cap_w = demand_table[c_idx, ch_idx, w]
+                # +inf means "no weekly ceiling" — an annual-cap channel, bounded by C6b
+                # instead. Emitting the row anyway would be a vacuous `v <= inf`.
+                if not np.isfinite(cap_w):
+                    continue
                 flat_idx = idx_v_start + _vcw_index(c_idx, ch_idx, w, n_channels, N_WEEKS)
                 add_row([(flat_idx, 1.0)], -np.inf, cap_w)
+
+    # C6b — Channel sales ≤ ANNUAL demand cap (one row per crop-channel that has one)
+    #
+    # An annual cap is a sum across the year, which no per-week row can state. It used to be
+    # spread as `annual / 52` into every week, so a 52,000 lb contract became a flat
+    # 1,000 lb/wk ceiling and a crop harvesting in ten weeks could deliver 10,000 lb of it —
+    # while the docstring promised the optimizer could front- or back-load freely. Now it can.
+    for (c_idx, ch_idx), annual_lbs in annual_caps.items():
+        # A channel dropped by the margin hurdle has its weekly caps zeroed above, which
+        # already forces v to 0; the annual row would be slack. Skip it rather than carry a row
+        # that can never bind.
+        if float(demand_table[c_idx, ch_idx, 1:].max()) == 0.0:
+            continue
+        cols = [
+            (idx_v_start + _vcw_index(c_idx, ch_idx, w, n_channels, N_WEEKS), 1.0)
+            for w in range(1, N_WEEKS + 1)
+        ]
+        add_row(cols, -np.inf, float(annual_lbs))
 
     # C7 — DELETED (audit B1). It capped a succession's whole-cycle production at ONE week's
     # demand, which pinned any crop whose harvest is concentrated to `demand / yield` acres and

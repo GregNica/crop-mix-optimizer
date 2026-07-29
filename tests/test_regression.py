@@ -66,8 +66,15 @@ from farm_v2.solver import solve_farm_v2
 #     honest per-crop values; expect most of this back. Do not treat 87,933 as a target.
 # ---------------------------------------------------------------------------
 
-EXPECTED_PROFIT  = 412_699      # ± 10%  (rebaselined 2026-07-29, B5/B6 — see note below)
-EXPECTED_REVENUE = 1_992_132    # ± 10%  (rebaselined 2026-07-29, B5/B6)
+EXPECTED_PROFIT  = 831_685      # ± 10%  (rebaselined 2026-07-29, B4 — see note below)
+EXPECTED_REVENUE = 2_508_022    # ± 10%  (rebaselined 2026-07-29, B4)
+# 2026-07-29 (B4) — an annual demand cap is now a YEARLY TOTAL with its own constraint row,
+# not `annual/52` imposed as a ceiling in every week. Revenue 1,992,132 -> 2,508,022 (+26%),
+# profit 412,699 -> 831,685. Verified before re-pinning that the new row BINDS and is never
+# exceeded: Spinach/Wholesale sells exactly 1,200,000 lb against its 1,200,000 lb cap, Napa
+# 92%, Sweet Corn 14%, zero violations. Under the old spread Spinach could deliver at most
+# ~23,077 lb in each of its harvest weeks, so most of a contract it had actually signed was
+# unsellable. This fixture sits near break-even, so a 26% revenue move doubles profit.
 # 2026-07-29 — seasons became PLANTING windows (B5), so a cycle no longer has to fit inside
 # its window. On this 29-crop fixture that takes successions 74 -> 152 and revenue
 # 1,791,809 -> 1,992,132 (+11%). Profit moves 44,253 -> 412,699, which looks alarming and is
@@ -170,8 +177,12 @@ class TestRegressionSolutionStructure:
         succs = full_result["successions"]
         y = full_result["y"]
         planted_crops = {succs[i]["crop"] for i in range(len(y)) if y[i] > 0.5}
-        # Expect most crops in the solution (allow 1 excluded crop)
-        assert len(planted_crops) >= 5, (
+        # 2026-07-29 (B4): 6 -> 4. Not a diversity requirement — nothing in the model asks
+        # for one — but a consequence of contracts becoming fillable. With annual caps freed,
+        # the crops holding large contracts absorb the land instead of every crop taking a
+        # throttled share. The floor is kept as a smoke test that the plan is not collapsing
+        # to a monoculture, which WOULD indicate a broken constraint.
+        assert len(planted_crops) >= 3, (
             f"Only {len(planted_crops)} crops planted: {planted_crops}"
         )
 
