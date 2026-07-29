@@ -66,13 +66,29 @@ class TestGenerateSuccessions:
         assert 0 in crops_seen  # spinach
         assert 1 in crops_seen  # cucumber
 
-    def test_succession_fits_in_season(self, spinach_crop):
-        """All weeks in a succession must fall within the declared season."""
+    def test_field_occupancy_is_maturity_plus_the_harvest_window(self, spinach_crop):
+        """days_to_maturity is PLANT TO FIRST HARVEST, so the bed is held for longer.
+
+        This asserted `len(weeks) == ceil(dtm/7)`, i.e. that maturity WAS the whole occupancy.
+        That reading made harvest_weeks eat the growing season: basil came out with one week of
+        growing, and every crop with a long harvest under-charged land, labour, water and
+        fertiliser. You cannot pick for eight weeks and still clear the bed on the day the first
+        fruit ripens.
+        """
         import math
         succs = generate_successions([spinach_crop])
-        total_weeks = math.ceil(spinach_crop["days_to_maturity"] / 7)
+        to_harvest = math.ceil(spinach_crop["days_to_maturity"] / 7)
+        expected = to_harvest + spinach_crop["harvest_weeks"]
         for s in succs:
-            assert len(s["weeks"]) == total_weeks
+            assert len(s["weeks"]) == expected, (
+                f"occupancy {len(s['weeks'])} weeks, expected {to_harvest} to first harvest "
+                f"plus {spinach_crop['harvest_weeks']} harvest weeks"
+            )
+            grow = sum(1 for ph in s["phases"] if ph == 1)
+            assert grow == to_harvest - spinach_crop["planting_weeks"], (
+                f"grow phase is {grow} weeks; maturity minus planting is "
+                f"{to_harvest - spinach_crop['planting_weeks']}"
+            )
 
     def test_phases_length_matches_weeks(self, spinach_crop):
         succs = generate_successions([spinach_crop])

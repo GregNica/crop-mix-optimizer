@@ -43,15 +43,33 @@ pytestmark = pytest.mark.skipif(not PAYLOAD.exists(), reason="golden payload mis
 
 # The P&L of the shipped default farm. Captured 2026-07-27 from the app's own default payload.
 GOLDEN = {
-    "revenue":          2_163_463,
-    "variable_cost":      843_522,
+    "revenue":          1_621_122,
+    "variable_cost":      584_030,
     "fixed_cost":         213_097,
-    "overhead_cost":      346_154,
-    "interest_cost":          688,
-    "profit":             747_002,
-    "operating_profit": 1_106_844,
+    "overhead_cost":      259_379,
+    "interest_cost":        1_091,
+    "profit":             550_524,
+    "operating_profit":   823_994,
 }
 # Baseline history — re-pin ONLY with a reason, and record it here.
+#   2026-07-29 (days_to_maturity is PLANT TO FIRST HARVEST, not total field occupancy):
+#     revenue 2,163,463 -> 1,621,122 (-25%), profit 747,002 -> 550,524 (-26%).
+#
+#     The grower corrected the definition: DTM is how long before you can harvest, which is
+#     what every seed catalogue and extension budget publishes. The model read it as
+#     plant-to-bed-clear and derived grow = total - plant - harvest, so harvest_weeks ate the
+#     growing season — basil had ONE week of growing (35 days, 1 plant, 3 harvest) and tomatoes
+#     three. The crop was in the ground for less time than it takes to grow it.
+#
+#     Occupancy is now maturity PLUS the harvest window. Field weeks: Spinach 6->8,
+#     Cucumbers 10->13, Kale 9->13, Tomatoes 13->21, Hot Peppers 21->31, Basil 5->8,
+#     Garlic 35->36. Land is genuinely scarcer, which is why everything falls.
+#
+#     This is a correction of a real under-charge, not a loss: every crop with a harvest window
+#     was paying for less land, labour, water and fertiliser than it actually uses.
+#
+#     Net margin 34.5% -> 34.0% — essentially unmoved, so the standing margin problem is NOT
+#     explained by this and remains open.
 #   2026-07-29 (B5/B6: seasons became PLANTING windows, and garlic's calendar became real):
 #     profit 739,767 -> 747,002 (+7,235, +1.0%), revenue 2,084,368 -> 2,163,463 (+3.8%).
 #     Two changes, one commit, because shipping either alone would strand the other.
@@ -506,17 +524,33 @@ class TestPerAcreDayMargin:
             assert days >= dtm[crop] * 0.8, (
                 f"{crop}: occupancy {days}d is far below days-to-maturity {dtm[crop]}d")
 
-    def test_rate_and_total_can_disagree_and_both_are_real(self, result):
+    def test_rate_and_total_are_independent_measures(self, result):
         """Guards the insight the single fabricated metric was hiding: the best crop per
-        acre-day need not be the biggest contributor. Basil earns the most per day of ground
-        but occupies it briefly; Spinach contributes the most in total."""
+        acre-day need not be the biggest contributor.
+
+        This used to assert the two leaders are DIFFERENT crops. That is a property of the
+        fixture, not of the model — once field occupancy was corrected (DTM is plant-to-first-
+        harvest) Garlic led both, and the test failed while nothing was wrong. Pinning it would
+        have pinned an accident. What must hold is that both measures exist, are well-formed,
+        and are computed from different quantities: a RATE per day of ground occupied, and a
+        TOTAL over the season.
+        """
         cm, cc = result["channel_margins"], result["crop_contribution"]
-        best_rate = max(((c, m["margin_per_acre_day"])
-                         for c, chans in cm.items() for m in chans.values()), key=lambda t: t[1])[0]
-        biggest = max(cc.items(), key=lambda kv: kv[1]["contribution"])[0]
-        assert best_rate != biggest, (
-            "rate leader and contribution leader coincide — re-check the fixture; the point of "
-            "reporting both is that they answer different questions")
+        rates = [(c, m["margin_per_acre_day"], m["occupancy_days"])
+                 for c, chans in cm.items() for m in chans.values()]
+        assert rates, "no per-acre-day rates were reported"
+        for c, rate, days in rates:
+            assert days > 0, f"{c}: occupancy_days is {days}, so the rate has no denominator"
+        planted = {k: v for k, v in cc.items() if (v.get("acres_planted") or 0) > 0}
+        assert planted, "no crop was planted — this test would be vacuous"
+        for k, v in planted.items():
+            assert "contribution" in v, f"{k}: no seasonal contribution reported"
+        # The two answer different questions, so a crop leading one must not be ASSUMED to lead
+        # the other. Assert only that both rankings are computable and non-degenerate.
+        assert len({r for _, r, _ in rates}) > 1, (
+            "every crop-channel reports the same per-acre-day rate — the metric is not "
+            "discriminating between crops at all"
+        )
 
     def test_per_acre_day_agrees_in_sign_with_per_lb(self, result):
         for crop, chans in result["channel_margins"].items():

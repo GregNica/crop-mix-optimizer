@@ -58,6 +58,10 @@ All are `defect` class — they need no consultation.
 
 ---
 
+| ✅ **S17** | **`days_to_maturity` was read as TOTAL field occupancy** — grower correction 2026-07-29: it is **plant to first harvest**, which is what every seed catalogue and extension budget publishes. The model derived `grow = total − plant − harvest`, so `harvest_weeks` ate the growing season: **basil had ONE week of growing** (35 d, 1 plant, 3 harvest), tomatoes three. Every crop with a harvest window under-charged land, labour, water and fertiliser. Occupancy is now maturity **plus** the harvest window — Spinach 6→8 wk, Kale 9→13, Tomatoes 13→21, Hot Peppers 21→31, Basil 5→8. Golden farm revenue −25%, profit −26%; net margin 34.5%→34.0%, so **this does NOT explain the margin problem** | `farm_v2/utils/calendar.py` | value | D1, D3 |
+
+---
+
 ## Tier 1 — Wrong numbers currently shipping
 
 | ID | Item | Evidence | Class | Unblocks |

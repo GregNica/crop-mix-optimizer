@@ -66,8 +66,13 @@ from farm_v2.solver import solve_farm_v2
 #     honest per-crop values; expect most of this back. Do not treat 87,933 as a target.
 # ---------------------------------------------------------------------------
 
-EXPECTED_PROFIT  = 831_685      # ± 10%  (rebaselined 2026-07-29, B4 — see note below)
-EXPECTED_REVENUE = 2_508_022    # ± 10%  (rebaselined 2026-07-29, B4)
+EXPECTED_PROFIT  = 588_948      # ± 10%  (rebaselined 2026-07-29, DTM semantics)
+EXPECTED_REVENUE = 2_202_901    # ± 10%  (rebaselined 2026-07-29, DTM semantics)
+# 2026-07-29 — days_to_maturity is PLANT TO FIRST HARVEST, not total field occupancy. The
+# model derived grow = total - plant - harvest, so harvest_weeks ate the growing season and
+# every crop with a harvest window under-charged land, labour, water and fertiliser. Field
+# occupancy is now maturity PLUS the harvest window, land is genuinely scarcer, and revenue
+# 2,508,022 -> 2,202,901 with profit 831,685 -> 588,948. A correction of an under-charge.
 # 2026-07-29 (B4) — an annual demand cap is now a YEARLY TOTAL with its own constraint row,
 # not `annual/52` imposed as a ceiling in every week. Revenue 1,992,132 -> 2,508,022 (+26%),
 # profit 412,699 -> 831,685. Verified before re-pinning that the new row BINDS and is never

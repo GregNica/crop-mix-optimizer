@@ -73,21 +73,37 @@ def generate_successions(crops: list[dict], year: int = 2024) -> list[dict]:
         }
 
     Phase sequence: planting_weeks × [0]  +  grow_weeks × [1]  +  harvest_weeks × [2]
-    grow_weeks is derived as  ceil(days_to_maturity / 7) − planting_weeks − harvest_weeks
+
+    days_to_maturity is PLANT TO FIRST HARVEST, so:
+        grow_weeks  = ceil(days_to_maturity / 7) − planting_weeks
+        field weeks = ceil(days_to_maturity / 7) + harvest_weeks
     """
     successions = []
 
     for crop_idx, crop in enumerate(crops):
-        total_weeks   = math.ceil(crop["days_to_maturity"] / 7)
+        # days_to_maturity is PLANT TO FIRST HARVEST — the grower's definition, and what every
+        # seed catalogue and extension budget publishes. It is NOT total field occupancy.
+        #
+        # This used to read `total_weeks = ceil(dtm/7)` and derive grow as
+        # `total - plant - harvest`, so harvest_weeks ate the growing season: basil came out
+        # with ONE week of growing (35 days, 1 plant, 3 harvest) and tomatoes with three. The
+        # crop was in the ground for less time than it takes to grow it, and the model
+        # under-charged land, labour, water and fertiliser for every crop with a long harvest.
+        #
+        # Occupancy is maturity PLUS the harvest window: you cannot pick for eight weeks and
+        # still clear the bed on the day the first fruit ripens.
         plant_w       = crop["planting_weeks"]
         harv_w        = crop["harvest_weeks"]
-        grow_w        = total_weeks - plant_w - harv_w
+        weeks_to_harvest = math.ceil(crop["days_to_maturity"] / 7)
+        grow_w        = weeks_to_harvest - plant_w
+        total_weeks   = weeks_to_harvest + harv_w
 
         if grow_w < 0:
             raise ValueError(
-                f"Crop '{crop['name']}': planting_weeks ({plant_w}) + "
-                f"harvest_weeks ({harv_w}) exceed total cycle "
-                f"({total_weeks} weeks from {crop['days_to_maturity']} days_to_maturity)."
+                f"Crop '{crop['name']}': planting_weeks ({plant_w}) exceeds the "
+                f"{weeks_to_harvest} weeks to first harvest "
+                f"({crop['days_to_maturity']} days_to_maturity). Planting cannot take longer "
+                f"than the crop takes to mature."
             )
 
         phases = [0] * plant_w + [1] * grow_w + [2] * harv_w
