@@ -87,6 +87,35 @@ All are `defect` class — they need no consultation.
 
 ---
 
+## Tier 2b — Practice coverage (from the 2026-07-29 research, evidence in `STRATEGY.md`)
+
+The external survey plus an own-research pass that filled its gaps. Two new cost categories, one
+confirmed mechanism, and three proposed subtractions with verdicts.
+
+| ID | Item | Evidence | Class | Unblocks |
+|---|---|---|---|---|
+| ⛔ **R1** | **No crop-protection cost category.** Herbicide/insecticide/fungicide have no field; fertiliser and fuel do. ⚠️ The ">90% of farms" claim is **unsupported for any single class** — NASS 2022 (22 crops, 17 states) gives max 82% of planted acres for any one class. **The finding is the variance:** which class dominates flips by crop (squash fungicide-led 69%, sweet corn herbicide-led 82%). So this is a **per-crop cost like fertiliser**, not a farm-wide rate or an overhead line | NASS 2022 Ag Chemical Use — Vegetables | track | D7, D10 |
+| ⛔ **R2** | **No insurance of any kind** — crop, liability, equipment. Historically low on small farms but rising; the USDA Micro Farm Program now covers diversified revenue to $350k. Farm-level fixed cost; interacts with the deterministic-yield gap | external survey, *medium* confidence | track | D6, D7 |
+| ✅ **R3** | **The (crop × operation × cost basis) hypothesis is CONFIRMED** by an independent pass: contract labour and short-term equipment rental both came back tagged Crop × Operation, unprompted. **Grounds for building ONE mechanism instead of five features** — M4, M5, M6, P8 and P13 collapse into it | external survey | track | D2, D9 |
+| ⛔ **R4** | **Contract/custom work priced per unit** (per acre, carton, ton) is unexpressible — labour is hours × wage only. **195,000 US farms report contract-labour expense against 437,000 reporting hired labour**, so ~45% of farms that employ anyone also buy labour by contract. Not a specialty curiosity | USDA ERS Farm Labor Expenses 1997-2022 | track | D9 |
+| ⛔ **R5** | **U-pick / customer-harvest channels** zero out `labor_harv` for the volume sold that way. Unexpressible: harvest labour is a crop attribute charged on all volume regardless of destination. This is the per-channel cost-to-serve primitive, not a new practice flag | external survey | track | D4 |
+| ⛔ **R6** | **Rent vs own has a real constituency: 28% of US farms operate partly or entirely on rented land, and 39% of all acres are leased.** Strengthens P13, which was parked as a design question | AFBF/ERS on the 2022 Census | track | D7, D10 |
+
+### Proposed subtractions — verdicts, so they are not silently adopted later
+
+| Proposal | Verdict |
+|---|---|
+| **Delete `planting_type`** ("changes no arithmetic") | **REJECTED.** The reasoning is right and the conclusion is backwards — seed-vs-transplant is the input D2 (seeding calendar, the grower's #2 deliverable) is built on. It came from a brief that never mentioned D1-D10; our omission, not the researcher's error |
+| **Add `marketable_yield_pct`** (claims the model assumes 100% marketable yield) | **CHALLENGED — probably a duplicate.** `sell_through_fraction` (farm) and `sell_through_pct` (per crop) already mean "share of harvest that converts to cash: shrink, grade-out, spoilage", and both were in the brief. There may be a real distinction between field-level cull and post-harvest loss; a second knob for the same quantity is how two numbers come to disagree |
+| **Leave seed quantities out; keep cost only** | **REFUTED BY THE COMPETITIVE SCAN.** The argument was good — irregular catalogue package sizes, non-linear pricing — but **VeggieCropper ships seed and bed-spacing calculation as a core feature.** A direct competitor does it and the grower ranked it D5. It also misreads `crop_size_m3_per_lb` (produce storage volume per lb) as a seed field |
+
+**Null results worth recording:** the survey found **no practices we had not already listed**,
+despite the brief naming that as the highest-value possible finding. It returned **nothing on
+payment terms, CSA prepayment, or land tenure** — the last of which the Census reports directly
+and own-research filled in (R6).
+
+---
+
 ## Tier 3 — Product shape (bet ①, `SPEC_product.md`)
 
 Ranked as in the spec. All `track` or `strategy` class — none proceed without a decision.
@@ -189,7 +218,7 @@ Still open:
 
 | ID | Question |
 |---|---|
-| **X1** | **Persona: does this serve larger farms too?** Raised 2026-07-29 as "maybe the biggest thing missing". Larger-farm reality — low diversity, single crop per field per season, seasonal/contract labor, buy-not-make transplants, mechanization, herbicides/pesticides, insurance, loss, land renting. This collides with a **locked non-goal** (plot-level modelling), needs **two entirely missing cost categories** (chemicals, insurance), needs the tabled mechanisation axis (M5), and needs P13 (rent/buy). ⚠️ Trade to weigh: the small-farm persona is the one the grower can smell-test from experience; a larger-farm persona would be modelled from research with no one to check it — and this project's most expensive errors have all been numbers nobody could sanity-check |
+| ✅ **X1** | ~~Persona: does this serve larger farms too?~~ — **RESOLVED 2026-07-29, and it was never a persona change.** The grower's clarification: the persona stands (mixed vegetable, small/medium, manual labour, rotation, diversity, local channels); these farms *selectively adopt individual large-farm practices for individual crops* — contract labour for strawberries only, a rented water wheel for brassicas only, a potato digger for potatoes only, U-pick alongside conventional sales. That is `track` class, not `strategy`, so it needed no separate session. The research confirmed the shape: see **R3**. Remaining coverage work is R1–R6 |
 | **X2** | **The finish line.** `STRATEGY.md`: "N real growers produce a season plan they would act on. Until that number is set, bet ③ has phases but the product has no finish line." N, who, and roughly when |
 | **X3** | **Bet order after the interface direction.** ①②③ predates it. Phase C got more important, E5 got promoted, Phase F partly evaporated |
 | **X4** | **The crop CSV pipeline — a live contradiction.** The July audit recommended **deleting** it as ~230 lines of unreachable code. On 2026-07-29 it was **wired up instead**, after the grower went looking for it. Bulk crop import also serves the larger-farm persona (X1). Decide: keep and maintain, or delete |

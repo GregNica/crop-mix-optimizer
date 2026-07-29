@@ -90,6 +90,61 @@ zero-research consistency sweep, water, and fertiliser.
 Phases C–G). Waits behind both: shipping a shape we are about to change is how the July plan's
 own Phase C came to sit unexecuted.
 
+## Competitive position (researched 2026-07-29) — the sharpest thing we know about the value prop
+
+Four tools serve this grower: **VeggieCropper** (1–10 ac market gardens, deliberately minimal —
+crop planning, tasks, harvest lists, order form), **Tend** (small/mid direct-sales — crop planning
+married to CSA boxes, market POS, storefront, organic-certification records), **Farmbrite**
+(small/mid multi-species — crops plus livestock, accounting, e-commerce, 100+ reports),
+**FarmOS** (open-source, modular, GIS, input logging, for the technical grower or researcher).
+
+**None of them decides what to plant.** Every one is a system of record: it helps you *execute and
+log* a plan you already made in your head or a spreadsheet. Crop "planning" in their vocabulary
+means laying out and scheduling a decision already taken.
+
+**That is our differentiation, and it is the whole of it.** This app is the only one in the set
+that answers *what should I plant, given my land, crew, water, cash and buyers* — and prices the
+trade-offs. The solver is the moat. It is also why bet ② (model truth) is not optional: the one
+thing nobody else does is the one thing that has to be right.
+
+**The uncomfortable half.** The grower's ranked deliverables split cleanly against that:
+
+| | Deliverable | Competitive position |
+|---|---|---|
+| D1, D2, D5, D9 | crop calendar, seeding calendar, seed order, labor calendar | **Table stakes.** VeggieCropper already calculates seeds, bed spacing and seeding dates; Tend and Farmbrite ship task and labor scheduling. We are behind on all four |
+| D4 | committed sales calendar | Partly table stakes — Tend does CSA/market fulfilment — but *committing from an optimised plan* is ours |
+| D3, D6, D7, D8, D10 | yield projection, risk, P&L under uncertainty, plan explanation, optimisation recommendations | **Nobody does these.** They require a model, and none of them has one |
+
+So the deliverable list is half catch-up and half category-of-one. Catch-up still matters — a tool
+that cannot hand you a seed order loses to one that can, however good its reasoning — but the
+sequencing argument should stay honest about which is which.
+
+**Consequence for the interface direction below:** none of the four has a conversational setup
+layer. Combined with the solver, that is the pairing nothing else in the category offers.
+
+### Evidence filling the practice-research gaps (own research, 2026-07-29)
+
+The external practice survey returned adjectives where the brief required numbers. These are the
+figures, and one of them changes a recommendation:
+
+- **Land tenure** — **28% of US farms operate partly or entirely on rented land, and 39% of all
+  farmland acres are leased** ([USDA ERS / AFBF Market Intel, 2022 Census](https://www.fb.org/market-intel/agricultural-land-to-own-or-to-rent)).
+  Renting is not an edge case; P13 (rent vs buy per asset) has a real constituency.
+- **Contract labour** — **195,000 US farms reported contract-labour expense ($10B), against
+  437,000 reporting hired-labour expense ($42B)**
+  ([USDA ERS, Farm Labor Expenses 1997–2022](https://www.ers.usda.gov/publications/pub-details?pubid=113431)).
+  So roughly **45% of farms that hire anyone at all also buy labour by contract** — the practice
+  is mainstream among employers, not a specialty-crop curiosity.
+- **Crop protection** — the ">90%" claim is **not supported for any single chemical class.** NASS
+  surveyed 22 vegetable crops across 17 states; on the three featured crops, share of planted
+  acres treated was: snap beans herbicide **78%** / insecticide 52% / fungicide 41%; squash
+  fungicide **69%** / insecticide 63% / herbicide 39%; sweet corn herbicide **82%** / insecticide
+  72% / fungicide 40%
+  ([NASS 2022 Agricultural Chemical Use — Vegetables](https://www.nass.usda.gov/Publications/Highlights/2023/ChemHighlights-VegChem_FINAL.pdf)).
+  **The modelling lesson is in the variance, not the level:** which class dominates flips entirely
+  by crop. Crop protection therefore belongs as a **per-crop cost**, alongside fertiliser — not as
+  a farm-wide rate or an overhead line.
+
 ## The interface direction (recorded 2026-07-29 — a constraint on today's work, not a schedule)
 
 **The grower's vision, in their terms:** turn the UI into an LLM-chatbot-driven, tax-wizard-style
