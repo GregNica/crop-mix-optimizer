@@ -66,8 +66,9 @@ def generate_successions(crops: list[dict], year: int = 2024) -> list[dict]:
     Auto-generate all succession slots from crop definitions.
 
     For each crop, for each season window, one succession slot is created per
-    valid start week (weekly spacing).  A start week is valid when the full
-    crop cycle fits within the season window and within weeks 1–52.
+    valid start week (weekly spacing).  Season windows are PLANTING windows: a
+    start week is valid when it lies in the window.  The cycle runs from there
+    and may wrap past week 52 into the next cyclic year.
 
     Returns a flat list of succession dicts:
         {
@@ -97,20 +98,71 @@ def generate_successions(crops: list[dict], year: int = 2024) -> list[dict]:
             )
 
         phases = [0] * plant_w + [1] * grow_w + [2] * harv_w
+        # Opt-in year-wrap. Default False, so an unflagged crop behaves as it always has.
+        overwinters = bool(crop.get("overwinters", False))
+
+        # A cycle longer than the planning year would wrap onto itself and occupy the same week
+        # twice. That is a perennial, which the single cyclic year cannot represent — say so
+        # rather than silently double-charging its land and labour.
+        if total_weeks > 52:
+            raise ValueError(
+                f"Crop '{crop['name']}': cycle is {total_weeks} weeks "
+                f"({crop['days_to_maturity']} days_to_maturity), which exceeds the 52-week "
+                f"planning year. Perennial and multi-year crops cannot be modelled here."
+            )
 
         for season in crop["seasons"]:
             start_w = week_of_year(season["start"], year)
             end_w   = week_of_year(season["end"],   year)
 
-            # Last valid start: slot must finish by end_w and by week 52
-            last_start = min(end_w - total_weeks + 1, 52 - total_weeks + 1)
+            # SEASONS ARE PLANTING WINDOWS (B5), AND CYCLES MAY WRAP THE YEAR (B6).
+            #
+            # This used to require the WHOLE cycle to fit inside the window and inside weeks
+            # 1-52. Growers enter these as planting windows — "I can put spinach in the ground
+            # from February to mid-June" — so the old reading silently deleted any succession
+            # whose harvest fell outside the window. Three shipped templates generated ZERO
+            # successions and simply never appeared in a plan: Winter Squash, Melon and
+            # Snap/Snow Peas.
+            #
+            # It also made the year a wall. Nothing could be planted after about week 45, land
+            # sat structurally idle in November and December, and no crop could overwinter —
+            # which is why garlic, whose real planting is September to November, carried a
+            # fabricated January-to-August window just to produce any successions at all.
+            #
+            # A start week is now valid if it lies in the window, full stop. The cycle runs from
+            # there and wraps into the next cyclic year if it must. The model is a steady state:
+            # the weeks a wrapped succession occupies at the start of the year are the same
+            # weeks last year's planting occupies, so charging them here is correct.
+            #
+            # The window itself may also wrap (start > end), e.g. a November-to-February
+            # planting window, which was previously an empty range and therefore silent.
+            if end_w >= start_w:
+                starts = list(range(start_w, end_w + 1))
+            else:
+                starts = list(range(start_w, 53)) + list(range(1, end_w + 1))
 
-            for slot_start in range(start_w, last_start + 1):
-                slot_end = slot_start + total_weeks - 1
-                if slot_start < 1 or slot_end > 52:
+            for slot_start in starts:
+                if not (1 <= slot_start <= 52):
                     continue
 
-                weeks = list(range(slot_start, slot_start + total_weeks))
+                # WRAPPING IS OPT-IN, via the crop's `overwinters` flag.
+                #
+                # Relaxing containment (B5) and allowing wrap (B6) are separate changes, and
+                # making wrap universal would silently re-interpret every window in the library.
+                # Those windows were authored under the OLD meaning — "the whole cycle fits in
+                # here" — so read as planting windows they permit absurdities: Hot Peppers
+                # planted in mid-October and Tomatoes in early October, both frost-tender,
+                # harvesting into the following spring. Measured: universal wrap moved the
+                # golden farm's profit +63%, and that is where a good part of it came from.
+                #
+                # So a cycle must still finish inside the planning year unless the crop says it
+                # overwinters. Garlic is the one that does, and its window is grower-sourced.
+                # Every other template keeps exactly the behaviour its window was written for.
+                if not overwinters and slot_start + total_weeks - 1 > 52:
+                    continue
+
+                # 1-indexed weeks, wrapping 52 -> 1.
+                weeks = [((slot_start - 1 + k) % 52) + 1 for k in range(total_weeks)]
                 successions.append({
                     "name":       f"{crop['name']} W{slot_start:02d}",
                     "crop":       crop_idx,

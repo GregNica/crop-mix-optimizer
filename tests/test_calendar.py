@@ -88,14 +88,53 @@ class TestGenerateSuccessions:
         # Should produce ≥ 1 succession but fewer than wide season
         assert len(succs) >= 1
 
-    def test_season_too_narrow_produces_no_successions(self, spinach_crop):
-        """Season narrower than the crop cycle → 0 successions for that crop."""
+    def test_season_narrower_than_the_cycle_still_produces_successions(self, spinach_crop):
+        """A window shorter than the crop cycle is a short PLANTING window, not an empty one.
+
+        This test previously asserted the opposite — that a 3-week window on a 6-week crop
+        yields nothing — because a season had to contain the whole cycle. That reading is what
+        made Winter Squash and Melon generate zero successions and vanish from every plan
+        silently. Growers enter these as planting windows: "I can put spinach in the ground for
+        these three weeks" does not mean "and it must also be harvested by then".
+        """
         import copy
-        too_narrow = copy.deepcopy(spinach_crop)
-        # crop is 6 weeks, give it only 3
-        too_narrow["seasons"] = [{"start": "04-01", "end": "04-21"}]
-        succs = generate_successions([too_narrow])
-        assert all(s["crop"] != 0 for s in succs)  # no spinach successions
+        narrow = copy.deepcopy(spinach_crop)
+        # 6-week crop, 3-week planting window
+        narrow["seasons"] = [{"start": "04-01", "end": "04-21"}]
+        succs = generate_successions([narrow])
+        assert len(succs) >= 1, "a short planting window must still permit plantings"
+        for s in succs:
+            assert 13 <= s["start_week"] <= 17, (
+                f"start week {s['start_week']} is outside the 04-01..04-21 planting window"
+            )
+
+    def test_cycle_may_not_run_past_week_52_without_overwinters(self, spinach_crop):
+        """Relaxing containment must NOT silently let frost-tender crops wrap the year.
+
+        Every window in the shipped library was authored under the old whole-cycle meaning, so
+        making wrap universal let the solver plant Hot Peppers in mid-October to harvest the
+        following spring. Wrap is opt-in; without the flag the cycle still ends inside the year.
+        """
+        import copy
+        late = copy.deepcopy(spinach_crop)
+        late["seasons"] = [{"start": "12-15", "end": "12-31"}]   # 6-week crop, starts ~W51
+        assert generate_successions([late]) == [], (
+            "a cycle that cannot finish by week 52 must be dropped unless overwinters is set"
+        )
+
+    def test_overwinters_allows_the_cycle_to_wrap(self, spinach_crop):
+        """The opt-in path: fall-planted, harvested the following year."""
+        import copy
+        ow = copy.deepcopy(spinach_crop)
+        ow["seasons"] = [{"start": "12-15", "end": "12-31"}]
+        ow["overwinters"] = True
+        succs = generate_successions([ow])
+        assert succs, "overwinters=True must permit a wrapping cycle"
+        s = succs[0]
+        assert s["weeks"][-1] < s["weeks"][0], (
+            f"expected a wrap; got weeks {s['weeks'][0]}..{s['weeks'][-1]}"
+        )
+        assert len(s["weeks"]) == len(set(s["weeks"])), "a wrapped cycle must not reuse a week"
 
     def test_multiple_seasons(self, spinach_crop):
         """Spinach with spring + fall seasons should produce successions from both."""

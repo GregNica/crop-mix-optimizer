@@ -87,6 +87,10 @@ All are `defect` class — they need no consultation.
 
 ---
 
+| ⛔ **S14** | **Already-planted crops are modelled as a free decision.** Raised by the grower 2026-07-29 on seeing the year-wrap land: *"crop planning like this would happen in the winter months after garlic was already planted in November."* The cyclic year makes the annual arithmetic self-consistent, but the optimiser can still choose **zero acres of garlic** — which in reality means abandoning a crop already in the ground and paid for. A pre-committed planting is a **floor with a sunk cost**, not a choice. Overlaps P1 (must-plant floors) and P11 (perennials/carry-overs), and the grower listed it in the original one-pager: *"what perennials/carry-overs from the year before are there"* is one of the first things they establish when planning | `farm_v2/utils/calendar.py` + no input exists | track | D1, D2, D7 |
+
+---
+
 ## Tier 2b — Practice coverage (from the 2026-07-29 research, evidence in `STRATEGY.md`)
 
 The external survey plus an own-research pass that filled its gaps. Two new cost categories, one

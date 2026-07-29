@@ -670,10 +670,23 @@ class TestTimeLimitedSolveKeepsItsPlan:
 
     def test_a_time_limited_solve_returns_the_incumbent(self, full_params):
         # A budget small enough that HiGHS cannot prove optimality but will have something.
+        #
+        # Raised 0.05 -> 0.5 on 2026-07-29. When season windows became PLANTING windows this
+        # fixture went from 74 successions to 152, and at 50ms HiGHS no longer reaches a FIRST
+        # feasible solution at all — it returned status 1 with x=None, so the test failed
+        # claiming the incumbent was discarded when there was no incumbent to discard.
+        # Measured after the change: 0.05s -> no incumbent, 0.2s -> $101k, 0.5s -> $290k,
+        # 1.0s -> $291k and still not proven. 0.5 sits inside the window that exercises the
+        # rescue path.
         r = solve_farm_v2(**{**full_params, "sell_through_fraction": 0.85},
-                          solver_time_limit=0.05)
+                          solver_time_limit=0.5)
         if r["status"] == "optimal":
             pytest.skip("solved to optimality inside the budget; nothing to assert here")
+        # A budget so small that nothing was found makes this test vacuous rather than passing.
+        assert r["status"] != "iteration_limit" or r.get("profit") is not None, (
+            "HiGHS found no incumbent at all inside the budget — this test is exercising "
+            "nothing. Raise solver_time_limit until it does, rather than letting it pass."
+        )
         assert r["status"] == "time_limit_feasible", (
             f"expected a usable incumbent, got {r['status']!r} — the plan was thrown away"
         )

@@ -43,15 +43,44 @@ pytestmark = pytest.mark.skipif(not PAYLOAD.exists(), reason="golden payload mis
 
 # The P&L of the shipped default farm. Captured 2026-07-27 from the app's own default payload.
 GOLDEN = {
-    "revenue":          2_084_368,
-    "variable_cost":      782_031,
+    "revenue":          2_163_463,
+    "variable_cost":      843_522,
     "fixed_cost":         213_097,
-    "overhead_cost":      333_499,
-    "interest_cost":        2_974,
-    "profit":             739_767,
-    "operating_profit": 1_089_240,
+    "overhead_cost":      346_154,
+    "interest_cost":          688,
+    "profit":             747_002,
+    "operating_profit": 1_106_844,
 }
 # Baseline history — re-pin ONLY with a reason, and record it here.
+#   2026-07-29 (B5/B6: seasons became PLANTING windows, and garlic's calendar became real):
+#     profit 739,767 -> 747,002 (+7,235, +1.0%), revenue 2,084,368 -> 2,163,463 (+3.8%).
+#     Two changes, one commit, because shipping either alone would strand the other.
+#
+#     (a) A season window used to have to contain the WHOLE crop cycle. Growers enter these as
+#     PLANTING windows, so the old reading silently deleted any succession whose harvest fell
+#     outside the window — Winter Squash and Melon generated zero successions and never appeared
+#     in a plan at all. Windows are now planting windows.
+#
+#     (b) Garlic's 01-01 to 08-01 window was fabricated: it existed only because the calendar
+#     could not express fall planting. The grower's actual practice (zone 6) is saved cloves in
+#     late November before the ground freezes, straw-mulched, harvested the following July. Now
+#     11-15 to 12-01, overwinters=true, days_to_maturity 196 -> 240.
+#
+#     WHY 196 WAS NOT SIMPLY WRONG, which took the grower to see: 196 days from Jan 1 lands on
+#     July 14. It was measuring garlic's visible TAIL inside a planning year that starts on
+#     Jan 1 — real occupancy from an assumed Jan 1 start, not the crop's actual cycle. 240 days
+#     from Nov 15 lands on July 11: the same harvest, honestly measured. The old figure never
+#     charged garlic for November and December ground.
+#
+#     WRAPPING IS OPT-IN (`overwinters`), and that is the load-bearing decision. Making it
+#     universal was measured first and moved profit +63% to $1,208,966 — because every window in
+#     the library was authored under the old meaning, so read as planting windows they let the
+#     solver plant Hot Peppers in mid-October and Tomatoes in early October, both frost-tender,
+#     harvesting into the following spring. Opt-in keeps every other template behaving exactly as
+#     its window was written for. Successions 101 -> 155 (universal wrap would have been 199).
+#
+#     Note against the standing pattern: this is the first honest fix that did NOT raise net
+#     margin. 35.5% -> 34.5%.
 #   2026-07-29 (review: the audit had STILL not reached the farm): profit 766,074 -> 739,767.
 #     Twelve more override keys deleted. The shadow guard added the day before covered only
 #     water_* and fert_* — and the previous commit had deleted every water/fert override, so the

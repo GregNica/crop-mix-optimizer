@@ -66,8 +66,15 @@ from farm_v2.solver import solve_farm_v2
 #     honest per-crop values; expect most of this back. Do not treat 87,933 as a target.
 # ---------------------------------------------------------------------------
 
-EXPECTED_PROFIT  = 44_253       # ± 10%  (rebaselined 2026-07-28, Phase B.3 — see note below)
-EXPECTED_REVENUE = 1_628_917    # ± 10%  (rebaselined 2026-07-28, Phase B.3)
+EXPECTED_PROFIT  = 412_699      # ± 10%  (rebaselined 2026-07-29, B5/B6 — see note below)
+EXPECTED_REVENUE = 1_992_132    # ± 10%  (rebaselined 2026-07-29, B5/B6)
+# 2026-07-29 — seasons became PLANTING windows (B5), so a cycle no longer has to fit inside
+# its window. On this 29-crop fixture that takes successions 74 -> 152 and revenue
+# 1,791,809 -> 1,992,132 (+11%). Profit moves 44,253 -> 412,699, which looks alarming and is
+# arithmetic: this fixture sits close to break-even, so an 11% revenue change swings profit
+# by ~10x. Checked before re-pinning — no succession reuses a week, nothing wraps the year
+# (no crop here sets `overwinters`), so the extra successions are the containment fix working
+# rather than double-counting. Year-wrap is opt-in and does not touch this fixture.
 EXPECTED_FIXED   = 1_184_316    # ± 5%   (rebaselined 2026-07-27: annual, not 48-week)
 TOLERANCE_PCT    = 0.10         # 10% relative tolerance
 
@@ -144,7 +151,9 @@ class TestRegressionSolutionStructure:
     def test_successions_count(self, full_result):
         """74 successions expected for the default 6-crop config."""
         n = len(full_result["successions"])
-        assert 60 <= n <= 90, f"Expected ~74 successions, got {n}"
+        # 2026-07-29: 74 -> 152 when season windows became PLANTING windows. The old ceiling
+        # encoded the whole-cycle-containment rule, which is the defect B5 removed.
+        assert 130 <= n <= 175, f"Expected ~152 successions, got {n}"
 
     def test_some_successions_planted(self, full_result):
         """At least some successions should be active in the optimal plan."""
