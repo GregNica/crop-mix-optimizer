@@ -576,3 +576,42 @@ class TestOneKernelNoDrift:
                     assert m["margin_per_acre_cycle"] < 0, f"{crop}/{ch}"
 
 
+class TestValidationRunsOnTheSolverPath:
+    """audit 1.4 / S1 + S8 — validate.py used to be imported only by pytest.
+
+    A broken crop produced 0 acres and no explanation. It is wired into the ADAPTER rather
+    than into validateParams() in the browser, because only the Optimize button goes through
+    the JS guard: the What-If sweep, the sensitivity runs and Monte Carlo all call the solver
+    directly and were unguarded. Validating where every path converges covers all of them.
+    """
+
+    def test_a_broken_crop_is_refused_with_a_reason(self, run_from_js, golden_payload):
+        import copy, json as _json
+        bad = copy.deepcopy(golden_payload)
+        bad["crops"][0]["yield_per_acre"] = 0          # validate.py rejects non-positive yield
+        out = _json.loads(run_from_js(_json.dumps(bad)))
+        assert out["status"] == "invalid_input", (
+            f"a zero-yield crop solved anyway with status {out['status']!r} — it would have "
+            f"produced 0 acres and no explanation"
+        )
+        assert out.get("errors"), "refused the solve without saying why"
+        assert any("yield" in e.lower() for e in out["errors"]), out["errors"]
+        assert out["profit"] is None
+
+    def test_a_valid_payload_still_solves_and_carries_warnings(self, run_from_js, golden_payload):
+        import json as _json
+        out = _json.loads(run_from_js(_json.dumps(golden_payload)))
+        assert out["status"] in ("optimal", "time_limit_feasible"), out["status"]
+        assert "warnings" in out, (
+            "the solve path must carry validate.py's warnings back — they are the only "
+            "pre-flight signal the grower gets"
+        )
+        assert isinstance(out["warnings"], list)
+
+    def test_the_guard_never_takes_the_solve_down_with_it(self, run_from_js, golden_payload):
+        """A crashing guard must degrade to no-guard, not to no-plan."""
+        import copy, json as _json
+        odd = copy.deepcopy(golden_payload)
+        odd["crops"][0]["seasons"] = [{"start": "03-01", "end": "06-15"}]
+        out = _json.loads(run_from_js(_json.dumps(odd)))
+        assert out["status"] != "error", out.get("errors") or out.get("message")

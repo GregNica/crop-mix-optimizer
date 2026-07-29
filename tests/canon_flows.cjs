@@ -422,6 +422,45 @@ const near = (name, got, want, rel) => {
          + `frozen for the whole solve: ${kf[0].replace(/\s+/g, ' ')}`);
   }
 
+  // ---- unplanted crops and pre-flight warnings must reach the screen ----------------------
+  // The audit called the zero-acre explanation the single highest-value trust feature, because
+  // of what it replaces: a crop the grower asked for, missing from the plan, nothing on screen,
+  // and four different causes that all looked identical. Computing it in Python is only half
+  // the job — S1's warnings and S2's reasons both have to be rendered.
+  {
+    const w6 = await bootApp();
+    const doc = w6.document;
+    const host = doc.getElementById('unplanted-crops-banner');
+    if (!host) {
+      fail('unplanted crops: #unplanted-crops-banner is missing from the page');
+    } else {
+      w6.renderUnplantedCrops({ unplanted_crops: [], warnings: [] });
+      if (host.style.display !== 'none')
+        fail('unplanted crops: banner shown with nothing to say');
+
+      w6.renderUnplantedCrops({
+        unplanted_crops: [{ crop: 'Garlic', reason: 'no_demand',
+                            detail: 'No channel has any sales capacity for Garlic.' }],
+        warnings: ['Crop Kale season window is unusually short.'],
+      });
+      if (host.style.display === 'none')
+        fail('unplanted crops: a crop was dropped and the banner stayed hidden');
+      const txt = host.textContent || '';
+      ['Garlic', 'No channel has any sales capacity', 'Kale'].forEach(frag => {
+        if (!txt.includes(frag))
+          fail(`unplanted crops: rendered text is missing "${frag}" — got: ${txt.slice(0, 160)}`);
+      });
+
+      // User-controlled crop names go through escHtml at the render boundary.
+      w6.renderUnplantedCrops({
+        unplanted_crops: [{ crop: '<img src=x onerror=alert(1)>', reason: 'no_demand',
+                            detail: 'x' }], warnings: [],
+      });
+      if (host.querySelector('img'))
+        fail('unplanted crops: a crop name was injected as live markup rather than escaped');
+    }
+  }
+
   if (failures) { console.error(`\n${failures} FAILURE(S)`); process.exit(1); }
   console.log('data-canon flows: all checks passed '
             + '(channel restore, zero-crop restore, save/restore round-trip, chatbot update)');

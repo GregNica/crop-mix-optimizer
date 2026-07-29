@@ -310,3 +310,96 @@ class TestAnnualDemandIsAnnual:
         assert float(v[0, 0, 1:].sum()) <= 5_000 + 1e-6, (
             "removing the weekly ceiling must not leave the channel unbounded"
         )
+
+
+# ---------------------------------------------------------------------------
+# Every zero-acre crop says WHY (audit Part 3 / S2)
+# ---------------------------------------------------------------------------
+
+class TestUnplantedCropsExplainThemselves:
+    """A crop can reach zero acres from at least four causes.
+
+    Only one of them (the margin hurdle) ever had a banner. The rest were identical to the
+    grower: a crop they asked for, missing from the plan, nothing on screen. Each branch is
+    pinned separately here — a diagnosis that collapses to one generic answer for everything
+    is the failure mode, and it would still "pass" a test that only checked the list is
+    non-empty.
+    """
+
+    def _reasons(self, res):
+        return {d["crop"]: d["reason"] for d in res["unplanted_crops"]}
+
+    def test_a_planted_crop_is_not_listed(self, minimal_params):
+        res = _solve(minimal_params)
+        planted = {
+            res["successions"][i]["crop"]
+            for i, xi in enumerate(res["x"]) if xi > 1e-9
+        }
+        names = {res["crops"][c]["name"] for c in planted}
+        assert names, "fixture planted nothing — this test would be vacuous"
+        for d in res["unplanted_crops"]:
+            assert d["crop"] not in names, (
+                f"{d['crop']} is in the plan but was reported as unplanted"
+            )
+
+    def test_no_plantable_window_is_named_as_such(self, minimal_params):
+        """A cycle that cannot finish inside the year, with no overwinters flag."""
+        params = dict(minimal_params)
+        viable = dict(params["crops"][0])
+        crop = dict(viable)
+        crop["name"] = "Too Late"
+        crop["seasons"] = [{"start": "12-15", "end": "12-24"}]
+        # A viable crop alongside it: with NO crop plantable the solver raises globally and
+        # there is no plan to diagnose against.
+        params["crops"] = [viable, crop]
+        res = _solve(params)
+        assert self._reasons(res).get("Too Late") == "no_plantable_window", (
+            f"expected a calendar explanation, got {res['unplanted_crops']}"
+        )
+        detail = next(d["detail"] for d in res["unplanted_crops"] if d["crop"] == "Too Late")
+        assert "overwinters" in detail, "the fix is not mentioned, only the symptom"
+
+    def test_no_demand_is_named_as_such(self, minimal_params):
+        params = dict(minimal_params)
+        crop = dict(params["crops"][0])
+        ch_name = params["channels"][0]["name"]
+        chan = dict(crop["channels"][ch_name])
+        chan["demand_cap_type"] = "weekly_flat"
+        chan["weekly_demand_lbs"] = 0
+        crop["channels"] = {ch_name: chan}
+        params["crops"] = [crop]
+        res = _solve(params)
+        assert self._reasons(res).get(crop["name"]) == "no_demand", (
+            f"a crop with nowhere to sell must say so, got {res['unplanted_crops']}"
+        )
+
+    def test_outcompeted_is_the_conservative_default(self, minimal_params):
+        """An LP declines a bundle at these prices; it does not reject a crop for one reason.
+
+        So when nothing structural is wrong the answer must be "it did not compete", NOT a
+        confidently-named binding constraint. Naming one would be a story, not a finding.
+        """
+        params = dict(minimal_params)
+        good = dict(params["crops"][0])
+        bad = dict(good)
+        bad["name"] = "Unprofitable Twin"
+        ch_name = params["channels"][0]["name"]
+        chan = dict(bad["channels"][ch_name])
+        chan["price_per_lb"] = 0.01            # plantable, sellable, simply not worth it
+        bad["channels"] = {ch_name: chan}
+        params["crops"] = [good, bad]
+        res = _solve(params)
+        reason = self._reasons(res).get("Unprofitable Twin")
+        assert reason == "outcompeted", (
+            f"expected the conservative default, got {reason!r}: {res['unplanted_crops']}"
+        )
+
+    def test_every_entry_returns_a_crop_a_reason_and_a_detail(self, minimal_params):
+        params = dict(minimal_params)
+        viable = dict(params["crops"][0])
+        crop = dict(viable); crop["name"] = "Too Late"
+        crop["seasons"] = [{"start": "12-15", "end": "12-24"}]
+        params["crops"] = [viable, crop]
+        for d in _solve(params)["unplanted_crops"]:
+            assert d.get("crop") and d.get("reason") and d.get("detail"), d
+            assert len(d["detail"]) > 40, f"detail too thin to act on: {d}"

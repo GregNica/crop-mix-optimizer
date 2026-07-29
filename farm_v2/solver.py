@@ -82,6 +82,111 @@ def _cw_index(c: int, w: int, n_weeks: int) -> int:
 # Main solver
 # ---------------------------------------------------------------------------
 
+def _diagnose_unplanted_crops(
+    crops, successions, x_sol, total_land, demand_table, excluded_channels,
+    capacity_series, phase_table, n_weeks,
+):
+    """Say WHY each crop got zero acres. audit Part 3: the highest-value trust feature.
+
+    A crop can reach zero from at least four causes and only one of them (the margin hurdle)
+    had any banner. The rest looked identical to the grower: a crop they asked for, absent from
+    the plan, with nothing on screen. This returns a structured reason per unplanted crop.
+
+    Deliberately conservative about the LAST case. An LP does not "reject" a crop for a single
+    reason — it declines the whole bundle at these prices — so when no structural cause is
+    found the honest answer is "it did not compete", plus which resource was tightest during
+    the weeks it would have occupied. Naming a binding constraint as THE cause would be a
+    story, not a finding.
+    """
+    out = []
+    planted_land = {}
+    for i, s in enumerate(successions):
+        if x_sol[i] > 1e-9:
+            planted_land[s["crop"]] = planted_land.get(s["crop"], 0.0) + x_sol[i] * total_land
+
+    excluded_by_crop = {}
+    for e in (excluded_channels or []):
+        excluded_by_crop.setdefault(e.get("crop"), []).append(e.get("channel"))
+
+    for c_idx, crop in enumerate(crops):
+        if planted_land.get(c_idx, 0.0) > 1e-6:
+            continue
+        name = crop.get("name", f"Crop {c_idx + 1}")
+        succ_idx = [i for i, s in enumerate(successions) if s["crop"] == c_idx]
+
+        if not succ_idx:
+            out.append({
+                "crop": name, "reason": "no_plantable_window",
+                "detail": (
+                    f"No planting date works. Every start week in this crop's season window "
+                    f"would run its {int(round(crop.get('days_to_maturity', 0) / 7))}-week "
+                    f"cycle past week 52. Widen the window, shorten the cycle, or tick "
+                    f"'overwinters' if it is fall-planted and harvested the following year."
+                ),
+            })
+            continue
+
+        total_demand = float(demand_table[c_idx].sum()) if demand_table is not None else 0.0
+        finite_demand = float(
+            np.nansum(np.where(np.isfinite(demand_table[c_idx]), demand_table[c_idx], 0.0))
+        ) if demand_table is not None else 0.0
+        has_annual = bool(demand_table is not None and np.isinf(demand_table[c_idx]).any())
+        if finite_demand <= 0.0 and not has_annual:
+            dropped = excluded_by_crop.get(name) or excluded_by_crop.get(c_idx) or []
+            if dropped:
+                out.append({
+                    "crop": name, "reason": "all_channels_excluded",
+                    "detail": (
+                        f"Every sales channel for {name} was dropped before solving: "
+                        f"{', '.join(str(d) for d in dropped)}. They did not clear the minimum "
+                        f"viable margin, so there was nowhere to sell it."
+                    ),
+                })
+            else:
+                out.append({
+                    "crop": name, "reason": "no_demand",
+                    "detail": (
+                        f"No channel has any sales capacity for {name}, so nothing it grew "
+                        f"could be sold. Set a price and a weekly or annual volume on at least "
+                        f"one channel."
+                    ),
+                })
+            continue
+
+        min_acres = float(crop.get("min_acreage_if_planted", 0.0) or 0.0)
+        tightest = None
+        if capacity_series:
+            weeks = sorted({w for i in succ_idx for w in range(1, n_weeks + 1)
+                            if phase_table[i][w] is not None})
+            best = -1.0
+            for res_name, series in capacity_series.items():
+                used, cap = series.get("used") or [], series.get("cap") or []
+                for w in weeks:
+                    if w - 1 < len(used) and w - 1 < len(cap) and cap[w - 1] > 0:
+                        ratio = used[w - 1] / cap[w - 1]
+                        if ratio > best:
+                            best, tightest = ratio, (res_name, w, ratio)
+
+        detail = (
+            f"{name} was plantable and sellable, but did not earn its place: every acre it "
+            f"would have taken was worth more under another crop at these prices and costs."
+        )
+        if min_acres > 0:
+            detail += (
+                f" It is also all-or-nothing at {min_acres:g} acres — it cannot be planted in a "
+                f"small trial strip."
+            )
+        if tightest and tightest[2] > 0.95:
+            detail += (
+                f" During the weeks it would have occupied, {tightest[0]} was effectively full "
+                f"(week {tightest[1]}, {tightest[2] * 100:.0f}% used), so land was not the only "
+                f"thing it was competing for."
+            )
+        out.append({"crop": name, "reason": "outcompeted", "detail": detail})
+
+    return out
+
+
 def solve_farm_v2(
     # --- Farm infrastructure ---
     total_land: float,
@@ -203,7 +308,11 @@ def solve_farm_v2(
     successions = generate_successions(crops, year)
     N_S = len(successions)
     if N_S == 0:
-        raise ValueError("No successions generated. Check crop season windows.")
+        raise ValueError(
+            "No successions generated for ANY crop. Season windows are PLANTING "
+            "windows: each needs at least one start week whose cycle finishes by week "
+            "52, or the crop must be marked as overwintering."
+        )
 
     phase_table = build_phase_table(successions, N_WEEKS)  # [i][w] = 0/1/2/None
 
@@ -1353,6 +1462,13 @@ def solve_farm_v2(
         # rebuild it — B.1 left the adapter recomputing harvest inflow because there was no
         # key to read, and that copy understates any plan that holds stock. SPEC_v3 §9.
         "capacity_series":  capacity_series,
+        # WHY each requested crop is absent from the plan (audit Part 3 / S2). Computed here
+        # rather than in the client so every entry point gets it — the What-If sweep and Monte
+        # Carlo never touch the browser's reporting code.
+        "unplanted_crops":  _diagnose_unplanted_crops(
+            crops, successions, x_sol, total_land, demand_table, excluded_channels,
+            capacity_series, phase_table, N_WEEKS,
+        ),
         "storage_peak_m3":  max(storage_m3_weekly) if storage_m3_weekly else 0.0,
         "ambient_peak_m3":  max(ambient_m3_weekly) if ambient_m3_weekly else 0.0,
         "successions":      successions,
