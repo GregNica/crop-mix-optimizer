@@ -27,7 +27,7 @@ const CHECK = process.argv.includes('--check');
 // capturing it would put a key in the golden payload that the browser never sends — the exact
 // staleness this script exists to prevent.
 const OWNED = ['crops', 'ambient_storage_cap', 'rate_ambient_storage',
-               'harvest_storage_cap', 'rate_harvest_storage'];
+               'harvest_storage_cap', 'rate_harvest_storage', 'well_weekly_cap_L'];
 
 bootApp().then(({ window: w }) => {
   const payload = JSON.parse(fs.readFileSync(PAYLOAD, 'utf8'));
@@ -38,6 +38,7 @@ bootApp().then(({ window: w }) => {
     rate_ambient_storage: w.eval(
       "rateFromCapital('ambient_storage_cost_per_m3', 150, 'depreciation_ambient_years', 30)"),
     harvest_storage_cap: w.eval("readCanonical('harvest_storage_cap')"),
+    well_weekly_cap_L: w.eval("readCanonical('well_weekly_cap_L')"),
     rate_harvest_storage: w.eval(
       "rateFromCapital('harvest_storage_cost_per_m3', 500, 'depreciation_harvest_years', 20)"),
   };

@@ -442,7 +442,7 @@
  "total_land": 80,
  "water_storage_capacity": 270000,
  "well_enabled": true,
- "well_weekly_cap_L": 2500000,
+ "well_weekly_cap_L": 8700000,
  "ambient_storage_cap": 150,
  "rate_ambient_storage": 0.09615384615384616
 }

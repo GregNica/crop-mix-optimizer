@@ -1461,7 +1461,7 @@
         <!-- Well -->
         <div class="water-source-row">
           <div class="water-source-toggle"><input type="checkbox" id="well_enabled" checked><label for="well_enabled">Well Water</label></div>
-          <div class="form-group"><label>Weekly Cap (L/wk) <span class="tip" data-tip="Max litres your well can supply per week. Typical ~80-acre CA farm: 1.5–2.5M L/wk.">?</span></label><input type="number" id="well_weekly_cap_L" value="2500000" min="0" step="10000"></div>
+          <div class="form-group"><label>Weekly Cap (L/wk) <span class="tip" data-tip="Most litres your well and pump can deliver in a week — a CAPACITY, not a permit.&#10;&#10;The 8.7M default is the UW-Madison Extension design minimum of 8 gpm per irrigated acre, across 80 acres, run 60 hours a week. That works out at 1.06 in/acre/week, which independently matches the 1–1.5 in/week that irrigated vegetables need at peak.&#10;&#10;Scale it to YOUR acreage and pump: gpm x 60 x hours-you-actually-run x 3.785. A farm that irrigates selectively, or shares a well, will be well below this — and that is a real constraint the plan should see.&#10;&#10;⚠️ If you are permit-limited rather than pump-limited, enter the permit.">?</span></label><input type="number" id="well_weekly_cap_L" value="8700000" min="0" step="10000"></div>
           <div></div>
         </div>
         <!-- Catchment -->
@@ -2141,7 +2141,7 @@ const BENCHMARK_DEFAULTS = {
   rate_property_mortgage_rent: { value: 0, label: 'Property Mortgage/Rent ($/wk)', source: 'USDA ERS land value survey — user override recommended', vintage: '2023', confidence: 'low' },
   cost_fert_per_lb:     { value: 0.82,     label: 'Fertilizer Rate',      source: 'USDA NASS fertilizer price survey',   vintage: '2023', confidence: 'high'   },
   cost_fuel_per_L:      { value: 1.25,     label: 'Fuel Rate ($/L)',      source: 'EIA diesel fuel CA avg',              vintage: '2023', confidence: 'medium' },
-  well_weekly_cap_L:    { value: 2500000,  label: 'Well Weekly Cap',      source: 'CA State Water Board (~80 ac permit)', vintage: '2021', confidence: 'low'   },
+  well_weekly_cap_L:    { value: 8700000,  label: 'Well Weekly Cap',      source: 'UW-Madison Extension: 8 gpm/irrigated acre x 80 ac x 60 h/wk (= 1.06 in/ac/wk; cross-checks against the 1-1.5 in/wk peak need)', vintage: '2016', confidence: 'medium' },
 };
 
 function renderChannelRow(ch, idx) {

@@ -43,15 +43,32 @@ pytestmark = pytest.mark.skipif(not PAYLOAD.exists(), reason="golden payload mis
 
 # The P&L of the shipped default farm. Captured 2026-07-27 from the app's own default payload.
 GOLDEN = {
-    "revenue":          1_780_854,
-    "variable_cost":      633_679,
+    "revenue":          2_248_859,
+    "variable_cost":      786_402,
     "fixed_cost":         213_097,
-    "overhead_cost":      284_937,
-    "interest_cost":          837,
-    "profit":             635_305,
-    "operating_profit":   934_078,
+    "overhead_cost":      359_817,
+    "interest_cost":        1_189,
+    "profit":             875_354,
+    "operating_profit": 1_249_360,
 }
 # Baseline history — re-pin ONLY with a reason, and record it here.
+#   2026-07-29 (audit Phase B, well capacity): profit 635,305 -> 875,354 (+240,049). Revenue
+#     returns to 2,248,859 — the EXACT figure from before the water fix.
+#     That coincidence is the finding: crop water was ~10x too low and the well was ~3.5x too
+#     low, so the two errors cancelled and the plan looked reasonable while neither number was.
+#     With both corrected the plan is nearly identical, but the model can now reason about water:
+#     peak utilisation 80%, nine weeks above 70%, none binding — a live constraint with realistic
+#     headroom, where before it was mathematically incapable of binding at all.
+#     The well default was 2,500,000 L/wk sourced from a CALIFORNIA WATER BOARD PERMIT — a
+#     regulatory cap in a water-scarce state — while this app's reference region is zone 7 humid
+#     temperate, where a well is sized to peak demand and irrigation supplements rain. A category
+#     error, and its own record already said confidence: low. Re-benchmarked to 8,700,000 L/wk =
+#     UW-Madison Extension's design minimum of 8 gpm per irrigated acre x 80 acres x 60 h/week,
+#     which is 1.06 in/acre/week and cross-checks against the independent 1-1.5 in/wk peak need.
+#     NET EFFECT OF THE WHOLE WATER/FERT/WELL AUDIT: -5,180 against the pre-audit 880,534, which
+#     is the honest fertiliser cost and nothing else. Three order-of-magnitude errors, and the
+#     money barely moved — because they were offsetting. Net margin 38.9%, still outside the real
+#     5-15% band, so the margin thesis remains unresolved and is NOT explained by these inputs.
 #   2026-07-28 (audit Phase B, water + fertiliser): profit 880,534 -> 635,305 (-245,229, -27.8%),
 #     revenue -468,005. Variable cost also FELL 147,582 — the farm grows less, it is not paying
 #     more. Water is essentially all of it; fertiliser adds only ~3,600 on top because the plan
@@ -457,3 +474,4 @@ class TestOneKernelNoDrift:
                     assert m["margin_pct"] < 0, f"{crop}/{ch}"
                     assert m["margin_per_acre_day"] < 0, f"{crop}/{ch}"
                     assert m["margin_per_acre_cycle"] < 0, f"{crop}/{ch}"
+
