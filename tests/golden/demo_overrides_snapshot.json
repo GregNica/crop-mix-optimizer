@@ -8,18 +8,10 @@
   "fuel_harv": 4.5,
   "channels_data": {
    "Wholesale": {
-    "price": 0.55,
-    "pkg": 0.06,
-    "demand_type": "weekly_flat",
-    "demand_value": 50000,
-    "demand_season": ""
+    "demand_value": 50000
    },
    "Farmers Market": {
-    "price": 1.25,
-    "pkg": 0.12,
-    "demand_type": "weekly_varying",
-    "demand_value": 6000,
-    "demand_season": "W18-W40"
+    "demand_value": 6000
    }
   }
  },
@@ -38,14 +30,10 @@
     "price": 0.7,
     "pkg": 0.07,
     "demand_type": "annual",
-    "demand_value": 500000,
-    "demand_season": ""
+    "demand_value": 500000
    },
    "Farmers Market": {
-    "price": 2,
     "pkg": 0.14,
-    "demand_type": "weekly_varying",
-    "demand_value": 3500,
     "demand_season": "W10-W50"
    }
   }
@@ -54,18 +42,8 @@
   "crop_diversity_max": 0.45,
   "channels_data": {
    "Wholesale": {
-    "price": 0.65,
-    "pkg": 0.06,
     "demand_type": "annual",
-    "demand_value": 900000,
-    "demand_season": ""
-   },
-   "Farmers Market": {
-    "price": 1.8,
-    "pkg": 0.15,
-    "demand_type": "weekly_varying",
-    "demand_value": 7000,
-    "demand_season": "W25-W42"
+    "demand_value": 900000
    }
   }
  },
@@ -78,18 +56,10 @@
   "fuel_harv": 4.8,
   "channels_data": {
    "Wholesale": {
-    "price": 1.5,
-    "pkg": 0.14,
-    "demand_type": "weekly_flat",
-    "demand_value": 15000,
-    "demand_season": ""
+    "demand_value": 15000
    },
    "Farmers Market": {
-    "price": 3.75,
-    "pkg": 0.25,
-    "demand_type": "weekly_varying",
-    "demand_value": 3000,
-    "demand_season": "W22-W44"
+    "demand_value": 3000
    }
   }
  },
@@ -105,15 +75,11 @@
     "price": 1.5,
     "pkg": 0.12,
     "demand_type": "annual",
-    "demand_value": 150000,
-    "demand_season": ""
+    "demand_value": 150000
    },
    "Farmers Market": {
-    "price": 4,
     "pkg": 0.28,
-    "demand_type": "weekly_varying",
-    "demand_value": 2000,
-    "demand_season": "W20-W40"
+    "demand_value": 2000
    }
   }
  }

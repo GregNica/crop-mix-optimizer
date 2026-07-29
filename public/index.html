@@ -2612,18 +2612,10 @@ const DEMO_OVERRIDES = {
     "fuel_harv": 4.5,
     "channels_data": {
       "Wholesale": {
-        "price": 0.55,
-        "pkg": 0.06,
-        "demand_type": "weekly_flat",
-        "demand_value": 50000,
-        "demand_season": ""
+        "demand_value": 50000
       },
       "Farmers Market": {
-        "price": 1.25,
-        "pkg": 0.12,
-        "demand_type": "weekly_varying",
-        "demand_value": 6000,
-        "demand_season": "W18-W40"
+        "demand_value": 6000
       }
     }
   },
@@ -2642,14 +2634,10 @@ const DEMO_OVERRIDES = {
         "price": 0.7,
         "pkg": 0.07,
         "demand_type": "annual",
-        "demand_value": 500000,
-        "demand_season": ""
+        "demand_value": 500000
       },
       "Farmers Market": {
-        "price": 2,
         "pkg": 0.14,
-        "demand_type": "weekly_varying",
-        "demand_value": 3500,
         "demand_season": "W10-W50"
       }
     }
@@ -2658,18 +2646,8 @@ const DEMO_OVERRIDES = {
     "crop_diversity_max": 0.45,
     "channels_data": {
       "Wholesale": {
-        "price": 0.65,
-        "pkg": 0.06,
         "demand_type": "annual",
-        "demand_value": 900000,
-        "demand_season": ""
-      },
-      "Farmers Market": {
-        "price": 1.8,
-        "pkg": 0.15,
-        "demand_type": "weekly_varying",
-        "demand_value": 7000,
-        "demand_season": "W25-W42"
+        "demand_value": 900000
       }
     }
   },
@@ -2682,18 +2660,10 @@ const DEMO_OVERRIDES = {
     "fuel_harv": 4.8,
     "channels_data": {
       "Wholesale": {
-        "price": 1.5,
-        "pkg": 0.14,
-        "demand_type": "weekly_flat",
-        "demand_value": 15000,
-        "demand_season": ""
+        "demand_value": 15000
       },
       "Farmers Market": {
-        "price": 3.75,
-        "pkg": 0.25,
-        "demand_type": "weekly_varying",
-        "demand_value": 3000,
-        "demand_season": "W22-W44"
+        "demand_value": 3000
       }
     }
   },
@@ -2709,22 +2679,32 @@ const DEMO_OVERRIDES = {
         "price": 1.5,
         "pkg": 0.12,
         "demand_type": "annual",
-        "demand_value": 150000,
-        "demand_season": ""
+        "demand_value": 150000
       },
       "Farmers Market": {
-        "price": 4,
         "pkg": 0.28,
-        "demand_type": "weekly_varying",
-        "demand_value": 2000,
-        "demand_season": "W20-W40"
+        "demand_value": 2000
       }
     }
   }
 };
-const CROP_DEFAULTS = DEMO_CROPS.map(name => ({
-  name, ...CROP_TEMPLATES[name], ...(DEMO_OVERRIDES[name] || {}),
-}));
+
+// channels_data merges TWO levels deep. With a shallow spread, overriding one channel field
+// forced restating all twelve, which left 32 of 78 override leaves byte-identical to the
+// template they "override" — pure ballast that hides the real divergences and makes Phase C's
+// burn-down a hand-check of no-ops.
+function mergeCropOverride(tpl, ov) {
+  const out = { ...tpl, ...ov };
+  if (ov.channels_data) {
+    out.channels_data = { ...(tpl.channels_data || {}) };
+    for (const [ch, fields] of Object.entries(ov.channels_data)) {
+      out.channels_data[ch] = { ...(out.channels_data[ch] || {}), ...fields };
+    }
+  }
+  return out;
+}
+const CROP_DEFAULTS = DEMO_CROPS.map(name =>
+  ({ name, ...mergeCropOverride(CROP_TEMPLATES[name], DEMO_OVERRIDES[name] || {}) }));
 
 const BLANK_CROP = {
   name:"New Crop", days_to_maturity:42, planting_weeks:1, harvest_weeks:2,

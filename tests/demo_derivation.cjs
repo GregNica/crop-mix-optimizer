@@ -60,6 +60,46 @@ bootApp().then(({ window: w }) => {
     }
   }
 
+  // 3b — NO OVERRIDE MAY SHADOW AN AUDITED VALUE, AND NONE MAY BE REDUNDANT.
+  //
+  // This is the guard that was missing. Check 3 above only asks whether an override KEY exists
+  // on the template; it cannot see that the VALUE has stopped agreeing with sourced data. On
+  // 2026-07-29 that let DEMO_OVERRIDES keep the demo's pre-audit water and fertiliser and shadow
+  // the rebuilt templates for four of seven crops, so an audit that "rebuilt 29 templates" never
+  // reached the shipped farm — and the measurements taken off it were reported as fact.
+  //
+  // Phase C of the crop-data audit burns this map toward empty one adjudication at a time, so
+  // every future edit touches exactly this mechanism. Two rules:
+  //   • an override identical to its template is ballast — delete it, it hides the real ones;
+  //   • an override on a field the audit sources needs a written reason, because it means the
+  //     demo deliberately disagrees with a citation.
+  const AUDITED = [/^water_/, /^fert_/, /^sales_spread_weeks$/, /^cold_storage$/];
+  // crop -> field -> why the demo legitimately differs from the sourced value. Empty on purpose.
+  const OVERRIDE_REASONS = {};
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+  for (const [crop, fields] of Object.entries(ovActual)) {
+    const tpl = templates[crop] || {};
+    const leaves = [];
+    for (const [k, v] of Object.entries(fields)) {
+      if (k === 'channels_data') {
+        for (const [ch, cv] of Object.entries(v))
+          for (const [ck, cvv] of Object.entries(cv))
+            leaves.push([`channels_data.${ch}.${ck}`, cvv, ((tpl.channels_data || {})[ch] || {})[ck]]);
+      } else leaves.push([k, v, tpl[k]]);
+    }
+    for (const [field, ovVal, tplVal] of leaves) {
+      if (same(ovVal, tplVal))
+        fail(`DEMO_OVERRIDES ${crop}.${field} is identical to the template (${JSON.stringify(ovVal)}) `
+           + `— ballast that hides the real divergences; delete it`);
+      if (AUDITED.some(re => re.test(field)) && !((OVERRIDE_REASONS[crop] || {})[field]))
+        fail(`DEMO_OVERRIDES ${crop}.${field} shadows a SOURCED value `
+           + `(template ${JSON.stringify(tplVal)}, override ${JSON.stringify(ovVal)}) with no `
+           + `reason. Either delete the override so the demo uses the audited number, or add an `
+           + `entry to OVERRIDE_REASONS saying why this farm legitimately differs`);
+    }
+  }
+
   // 4 — provenance is CHECKED, not decorative. It duplicates values from CROP_TEMPLATES, and an
   // unchecked parallel map is a citation that can quietly stop describing the number it cites.
   const prov = w.eval('CROP_PROVENANCE');
@@ -90,6 +130,7 @@ bootApp().then(({ window: w }) => {
   if (failures) { console.error(`\n${failures} FAILURE(S)`); process.exit(1); }
   console.log(`demo derivation: all checks passed (form identical, ${Object.keys(ovActual).length}`
             + ` overridden crops match snapshot, no orphan keys, `
-            + `${Object.keys(prov).length} provenance records agree with their templates)`);
+            + `${Object.keys(prov).length} provenance records agree with their templates, `
+            + `no override shadows a sourced value)`);
   process.exit(0);
 }).catch(e => { console.error('FATAL:', e.message); process.exit(1); });
