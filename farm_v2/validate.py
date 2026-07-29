@@ -124,8 +124,27 @@ def validate_params(
     if not crops:
         raise ValueError("At least one crop must be defined.")
 
+    total_committed = 0.0
     for crop in crops:
         warnings.extend(_validate_crop(crop, ch_names, year))
+        # Acres already in the ground (S14). Checked here rather than in _validate_crop
+        # because it is only meaningful against the farm's size.
+        committed = float(crop.get("committed_acres", 0.0) or 0.0)
+        if committed < 0:
+            raise ValueError(
+                f"Crop '{crop['name']}' committed_acres must be >= 0, got {committed:g}."
+            )
+        if committed > total_land:
+            raise ValueError(
+                f"Crop '{crop['name']}' has {committed:g} acres already committed, more than "
+                f"the farm's {total_land:g} acres. No plan can be built around it."
+            )
+        total_committed += committed
+    if total_committed > total_land:
+        raise ValueError(
+            f"Committed plantings total {total_committed:g} acres against a {total_land:g}-acre "
+            f"farm. Reduce them, or the plan is infeasible before it starts."
+        )
 
     # 8. Global succession check
     try:

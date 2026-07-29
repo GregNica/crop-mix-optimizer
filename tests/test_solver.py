@@ -448,3 +448,50 @@ class TestUnplantedCropsExplainThemselves:
                 f"succession {i}: x={xi}, y={yi} — on a truncated solve the reported plant flag "
                 f"must still be derived from x, not read from the incumbent"
             )
+
+
+# ---------------------------------------------------------------------------
+# Land already in the ground is not a decision (S14)
+# ---------------------------------------------------------------------------
+
+class TestCommittedAcres:
+    """Raised by the grower on seeing year-wrap land.
+
+    Planning happens in winter, after November garlic is already planted. The cyclic year is
+    self-consistent annually, but the optimiser could still choose ZERO acres of a crop that is
+    already in the ground and already paid for — a plan nobody can act on.
+    """
+
+    def _unprofitable(self, minimal_params, committed):
+        """A crop the optimiser would drop on the economics, with acres already committed."""
+        params = dict(minimal_params)
+        crop = dict(params["crops"][0])
+        ch_name = params["channels"][0]["name"]
+        chan = dict(crop["channels"][ch_name])
+        chan["price_per_lb"] = 0.001          # nobody would choose to plant this
+        crop["channels"] = {ch_name: chan}
+        crop["committed_acres"] = committed
+        crop["min_acreage_if_planted"] = 0.0
+        params["crops"] = [crop]
+        return params
+
+    def test_without_a_commitment_an_unprofitable_crop_is_dropped(self, minimal_params):
+        """The control. Without it, the test below could pass for the wrong reason."""
+        res = _solve(self._unprofitable(minimal_params, 0.0))
+        acres = sum(res["x"]) * minimal_params["total_land"]
+        assert acres < 1e-6, f"the fixture is not actually unprofitable — planted {acres} acres"
+
+    def test_committed_acres_are_planted_even_when_unprofitable(self, minimal_params):
+        res = _solve(self._unprofitable(minimal_params, 3.0))
+        assert res["status"] in ("optimal", "time_limit_feasible"), res["status"]
+        acres = sum(res["x"]) * minimal_params["total_land"]
+        assert acres >= 3.0 - 1e-6, (
+            f"only {acres:.2f} acres planted against 3.0 already in the ground — the optimiser "
+            f"is still treating a committed planting as a free choice"
+        )
+
+    def test_a_commitment_larger_than_the_farm_is_refused_with_a_reason(self, minimal_params):
+        params = self._unprofitable(minimal_params, minimal_params["total_land"] + 10)
+        res = _solve(params)
+        assert res["status"] == "invalid_input", res["status"]
+        assert any("committed" in e.lower() for e in res["errors"]), res["errors"]

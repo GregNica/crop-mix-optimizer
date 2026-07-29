@@ -519,6 +519,36 @@ const near = (name, got, want, rel) => {
     }
   }
 
+  // ---- per-crop fields must survive the form -> payload trip -------------------------------
+  // A field can reach the solver without ever being READ from the form, and nothing fails: the
+  // solver just sees its default forever. That shipped twice on this branch — `overwinters`
+  // missed the CSV contract, and `committed_acres` was unguarded until this test. Set each
+  // field on a card, read the crops back, and check the value arrived.
+  {
+    const w8 = await bootApp();
+    const doc = w8.document;
+    const card = doc.getElementById('crop-0');
+    const cases = [
+      { field: 'committed_acres', set: '3.5', key: 'committed_acres', want: 3.5 },
+      { field: 'min_acreage_if_planted', set: '2', key: 'min_acreage_if_planted', want: 2 },
+    ];
+    if (!card) {
+      fail('form round-trip: crop-0 missing');
+    } else {
+      cases.forEach(c => {
+        const el = card.querySelector(`[data-f="${c.field}"]`);
+        if (!el) return fail(`form round-trip: no input for ${c.field} — the field is not on `
+                          + `the form at all, so a grower can never set it`);
+        el.value = c.set;
+        el.dispatchEvent(new w8.Event('change', { bubbles: true }));
+        const got = w8.getCropsFromForm()[0][c.key];
+        if (Math.abs((got || 0) - c.want) > 1e-9)
+          fail(`form round-trip: ${c.field} set to ${c.set} came back as ${got} — the payload `
+             + `builder is not reading it, so the solver sees its default forever`);
+      });
+    }
+  }
+
   if (failures) { console.error(`\n${failures} FAILURE(S)`); process.exit(1); }
   console.log('data-canon flows: all checks passed '
             + '(channel restore, zero-crop restore, save/restore round-trip, chatbot update)');

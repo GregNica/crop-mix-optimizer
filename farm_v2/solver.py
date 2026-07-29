@@ -1041,6 +1041,30 @@ def solve_farm_v2(
             -np.inf, 0.0,
         )
 
+    # C15 — Committed acres: land already in the ground is not a decision (S14)
+    #
+    # Raised by the grower on seeing year-wrap land: "crop planning like this would happen in
+    # the winter months after garlic was already planted in November." The cyclic year is
+    # self-consistent annually, but the optimiser could still choose ZERO acres of a crop that
+    # is already planted and already paid for. That is not a plan a grower can act on.
+    #
+    # A floor on the crop's total land, not on a particular succession: the grower knows how
+    # many acres went in, not which of the model's generated start weeks it corresponds to.
+    #
+    # ⚠️ COSTS ARE STILL CHARGED. The seed, the labour and the fuel for a committed planting
+    # are sunk — already spent before this plan was made — so a truly honest P&L would exclude
+    # them. Charging them does not change the DECISION (a sunk cost is identical in every
+    # scenario, so it cannot alter the ranking) but it does understate profit by the amount
+    # already spent. Pricing the sunk portion is its own piece of work; see BACKLOG S14.
+    for c_idx, crop in enumerate(crops):
+        committed = float(crop.get("committed_acres", 0.0) or 0.0)
+        if committed <= 0:
+            continue
+        cols = [(idx_x_start + i, -total_land)
+                for i, s in enumerate(successions) if s["crop"] == c_idx]
+        if cols:
+            add_row(cols, -np.inf, -committed)
+
     # C10 — Min acreage lower: x[i] ≥ y[i] × min_frac
     for i in range(N_S):
         crop = crops[successions[i]["crop"]]
