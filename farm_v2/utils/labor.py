@@ -57,7 +57,10 @@ def compute_labor_arrays(
     seasonal_employees : list[dict]
         Each dict with keys: position, count, type ("FT"|"PT"),
         start_week, end_week, wage ($/hour), hours_per_week, benefits_pct,
-        and optionally: min_guaranteed_hours (int), piece_rate_per_lb (float).
+        and optionally: piece_rate_per_lb (float).
+        ⚠️ `min_guaranteed_hours` is ACCEPTED AND IGNORED (W11/W14). It can never bind: committed
+        wages already pay count x hours_per_week, which is >= count x min(min_guaranteed, hours)
+        for every input. Wiring it back would put a floor underneath a floor and double-charge.
 
     n_weeks : int
         Planning horizon (52).
@@ -74,16 +77,12 @@ def compute_labor_arrays(
         "salaried_weekly_cost"      float — $/week for salaried staff.
                                     ⚠️ DEAD, and do NOT add it to fixed cost: this money
                                     is already inside `committed_weekly_wages` (W12/W14)
-        "guaranteed_hourly_cost"    np.ndarray shape (n_weeks,) — $/week for guaranteed mins.
-                                    ⚠️ DEAD, and can never bind: committed wages already pay
-                                    count x hours >= any guaranteed minimum (W11/W14)
         "piece_rate_workers"        list[dict] — seasonal workers with piece_rate_per_lb set
     """
     labor_capacity        = np.zeros(n_weeks, dtype=float)
     labor_capacity_hourly = np.zeros(n_weeks, dtype=float)
     hourly_weighted_wages = np.zeros(n_weeks, dtype=float)   # sum(count × hrs × rate)
     hourly_weighted_hours = np.zeros(n_weeks, dtype=float)   # sum(count × hrs)
-    guaranteed_cost       = np.zeros(n_weeks, dtype=float)
 
     salaried_weekly_cost  = 0.0
     # Wages the farm has COMMITTED to, per week, across every listed worker (W12). A worker on
@@ -139,7 +138,6 @@ def compute_labor_arrays(
         wage       = emp["wage"]           # $/hour
         hrs        = emp["hours_per_week"]
         bene       = emp.get("benefits_pct", 0.0)
-        min_hrs    = emp.get("min_guaranteed_hours", 0)
         piece_rate = emp.get("piece_rate_per_lb", None)
         field      = max(0.0, min(1.0, emp.get("field_time_pct", 100.0) / 100.0))
 
@@ -182,10 +180,6 @@ def compute_labor_arrays(
             hourly_weighted_wages[w_idx] += total_hrs_per_week * effective_rate
             hourly_weighted_hours[w_idx] += total_hrs_per_week
 
-            # Guaranteed minimum hours: must pay even if less work available
-            if min_hrs > 0:
-                guaranteed_hrs   = count * min(min_hrs, hrs)
-                guaranteed_cost[w_idx] += guaranteed_hrs * effective_rate
 
     # --- Blended hourly rate ---
     # Where no hourly employees are available, rate = 0 (no variable labor cost)
@@ -215,7 +209,6 @@ def compute_labor_arrays(
         "labor_capacity_hourly":  labor_capacity_hourly,
         "hourly_labor_rate":      hourly_labor_rate,
         "salaried_weekly_cost":   salaried_weekly_cost,
-        "guaranteed_hourly_cost": guaranteed_cost,
         "piece_rate_workers":     piece_rate_workers,
     }
 
