@@ -70,21 +70,15 @@ def compute_labor_arrays(
     dict with keys:
         "labor_capacity"            np.ndarray shape (n_weeks,) — total hrs/week (1-indexed)
         "hourly_labor_rate"         np.ndarray shape (n_weeks,) — blended $/hr
-        "labor_capacity_hourly"     np.ndarray shape (n_weeks,) — hourly-only hrs/week
         "committed_weekly_wages"    np.ndarray shape (n_weeks,) — $/week owed to ALL listed staff
         "committed_weekly_hours"    np.ndarray shape (n_weeks,) — PAID hrs/week (not field-adj)
         "fallback_hourly_wage"      float — $/hr for bought hours when a week has no blend
-        "salaried_weekly_cost"      float — $/week for salaried staff.
-                                    ⚠️ DEAD, and do NOT add it to fixed cost: this money
-                                    is already inside `committed_weekly_wages` (W12/W14)
         "piece_rate_workers"        list[dict] — seasonal workers with piece_rate_per_lb set
     """
     labor_capacity        = np.zeros(n_weeks, dtype=float)
-    labor_capacity_hourly = np.zeros(n_weeks, dtype=float)
     hourly_weighted_wages = np.zeros(n_weeks, dtype=float)   # sum(count × hrs × rate)
     hourly_weighted_hours = np.zeros(n_weeks, dtype=float)   # sum(count × hrs)
 
-    salaried_weekly_cost  = 0.0
     # Wages the farm has COMMITTED to, per week, across every listed worker (W12). A worker on
     # the payroll is paid for their stated hours over their stated weeks whether or not the crops
     # need them — the same basis the salaried line has always used, now applied to hourly and
@@ -111,7 +105,6 @@ def compute_labor_arrays(
         if emp_type == "salary":
             # Annual wage → weekly cost
             weekly_cost = count * wage * (1 + bene) / 52
-            salaried_weekly_cost += weekly_cost
             committed_weekly_wages += weekly_cost
             committed_weekly_hours += count * hrs
 
@@ -119,7 +112,6 @@ def compute_labor_arrays(
             effective_rate = wage * (1 + bene)
             committed_weekly_wages += count * hrs * effective_rate
             committed_weekly_hours += count * hrs
-            labor_capacity_hourly += total_hrs_per_week
             hourly_weighted_wages += total_hrs_per_week * effective_rate
             hourly_weighted_hours += total_hrs_per_week
 
@@ -176,7 +168,6 @@ def compute_labor_arrays(
             committed_weekly_wages[w_idx] += count * hrs * effective_rate
             committed_weekly_hours[w_idx] += count * hrs
             labor_capacity[w_idx]        += total_hrs_per_week
-            labor_capacity_hourly[w_idx] += total_hrs_per_week
             hourly_weighted_wages[w_idx] += total_hrs_per_week * effective_rate
             hourly_weighted_hours[w_idx] += total_hrs_per_week
 
@@ -206,9 +197,7 @@ def compute_labor_arrays(
         "committed_weekly_hours": committed_weekly_hours,
         "fallback_hourly_wage":   fallback_wage,
         "labor_capacity":         labor_capacity,
-        "labor_capacity_hourly":  labor_capacity_hourly,
         "hourly_labor_rate":      hourly_labor_rate,
-        "salaried_weekly_cost":   salaried_weekly_cost,
         "piece_rate_workers":     piece_rate_workers,
     }
 

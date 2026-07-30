@@ -1,8 +1,38 @@
 """
 build_notebook_v2.py — Creates farm_optimization_v2.ipynb using Python's json module.
-Run: python3 build_notebook_v2.py
+
+⚠️ STALE AS OF 2026-07-31 (W12) AND REFUSES TO RUN. Read this before re-enabling it.
+
+This is legacy reference, but it is NOT a frozen artifact: it imports the LIVE `farm_v2.solver`
+and calls `solve_farm_v2`, then decomposes the result with its own cost model. That model is now
+wrong, because W12 made wages a committed weekly cost:
+
+  * it computes `labor_vcost` as hours x blended wage and subtracts it from the solver's
+    `variable_cost` to get a packaging residual — but labour is no longer IN variable_cost, so
+    `pkg_cost` comes out short. Measured on the 29-crop fixture: $71,560.53 short.
+  * it computes `sal_cost` from `salaried_weekly_cost` and treats the REST of fixed cost as
+    "Infra & Equipment" — but fixed cost now carries the whole payroll. Measured on the same
+    fixture: $684,000.00 of hourly and seasonal WAGES would be charted as infrastructure.
+
+So it would generate a notebook whose waterfall misattributes two-thirds of the farm's costs,
+against numbers that look authoritative because they came from the real solver. Producing wrong
+money silently is the failure this codebase has spent the most effort removing, so this raises
+instead.
+
+TO REPAIR: rebuild the decomposition from what the solver now publishes — `variable_cost_split`
+and `fixed_cost_split` — rather than re-deriving costs here. Both sum to their totals by
+construction, which is the whole point of them (W4). Then delete the raise below.
+
+TO RETIRE: delete this file and `farm_optimization_v2.ipynb`. CLAUDE.md already calls the
+notebooks legacy reference; the shipped deliverable is the web app.
 """
 import json
+
+raise SystemExit(
+    "build_notebook_v2.py is STALE and refuses to run: its cost decomposition predates W12, so "
+    "the notebook it generates would misattribute ~$684k of wages to infrastructure and understate "
+    "packaging by ~$72k. See the module docstring for how to repair or retire it."
+)
 
 def code_cell(lines):
     if isinstance(lines, str):

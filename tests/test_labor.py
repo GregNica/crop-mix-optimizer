@@ -46,12 +46,12 @@ class TestComputeLaborArrays:
     def test_returns_dict_with_required_keys(self):
         result = compute_labor_arrays([SALARIED_MANAGER], [])
         assert "labor_capacity" in result
-        assert "salaried_weekly_cost" in result
+        assert "committed_weekly_wages" in result
 
     def test_no_employees_zero_capacity(self):
         result = compute_labor_arrays([], [])
         assert np.all(result["labor_capacity"] == 0)
-        assert result["salaried_weekly_cost"] == 0.0
+        assert np.all(result["committed_weekly_wages"] == 0.0)
 
     def test_salaried_contributes_to_capacity_all_weeks(self):
         result = compute_labor_arrays([SALARIED_MANAGER], [])
@@ -74,10 +74,15 @@ class TestComputeLaborArrays:
         more = compute_labor_arrays([], [more_emp])
         assert np.all(more["labor_capacity"] >= fewer["labor_capacity"])
 
-    def test_salaried_weekly_cost_is_annual_over_52(self):
+    def test_a_salary_is_charged_as_an_annual_wage_over_52_weeks(self):
+        """Was `salaried_weekly_cost`, deleted with W14 — that output had no consumer left once
+        W12 folded every worker's pay into one committed bill. The property it pinned is real and
+        still worth pinning, so it moved to the key that carries it."""
         result = compute_labor_arrays([SALARIED_MANAGER], [])
         expected = SALARIED_MANAGER["wage"] / 52
-        assert abs(result["salaried_weekly_cost"] - expected) < 0.01
+        assert abs(result["committed_weekly_wages"][0] - expected) < 0.01
+        assert abs(float(result["committed_weekly_wages"].sum())
+                   - SALARIED_MANAGER["wage"]) < 0.01
 
     def test_seasonal_pt_half_capacity_of_ft(self):
         ft = compute_labor_arrays([], [SEASONAL_FT])
