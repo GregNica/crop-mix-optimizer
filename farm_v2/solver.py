@@ -482,6 +482,27 @@ def solve_farm_v2(
     hourly_labor_rate      = labor_result["hourly_labor_rate"]       # (52,)
     committed_weekly_wages = labor_result["committed_weekly_wages"]  # (52,) wages owed regardless
 
+    # What an hour BOUGHT beyond the committed crew costs, in full (W12 follow-up).
+    #
+    # These used to carry only the increment above base pay, because every crop hour — bought or
+    # not — was charged at the blend inside `var_cost_coeff`. W12 removed that charge: the crew's
+    # hours are paid through the committed wage bill instead. Bought hours are NOT in that bill,
+    # so charging them the premium alone left the base wage charged nowhere at all. Measured
+    # before the fix: hired labour at the shipped default markup of 0% was literally FREE —
+    # 2,080 hired hours at $0.00, worth +$965,177 of phantom profit on a 200-acre fixture — and
+    # the What-If "Plan optimal labor" tool was handing the optimizer 20,800 free hours a year.
+    # Overtime at 1.5x was charged $7.02/hr against an $18.00 blended wage.
+    #
+    # Defined once and reused at all four money sites (objective, C13, reported cost, cash curve);
+    # the same rate written out three times under three names is how the old version came to be
+    # wrong in four places at once.
+    # A week with no hourly crew has a blended rate of 0, which would price a bought hour at
+    # nothing. Fall back to the farm's own average paid wage in exactly those weeks.
+    _bought_base = np.where(hourly_labor_rate > 0, hourly_labor_rate,
+                            labor_result["fallback_hourly_wage"])
+    overtime_rate_full = _bought_base * overtime_rate_multiplier
+    hire_rate_full     = _bought_base * (1.0 + hire_wage_markup)
+
     labor_rate = compute_labor_rates(successions, crops, N_WEEKS)  # (N_S, 53)
 
     # Demand
@@ -519,9 +540,10 @@ def solve_farm_v2(
     # Now the charge is written once, in named terms, and every consumer is a sum of it. Adding a
     # category is one entry in VC_CATEGORIES and one line here.
     #
-    # The categories carry the PRODUCTS the objective charged, not rates to re-multiply: labour is
-    # priced at each week's own blended wage and water at the RAINFALL-ADJUSTED requirement, so no
-    # client-side multiplication can reproduce them (that was audit 1.3).
+    # The categories carry the PRODUCTS the objective charged, not rates to re-multiply: water is
+    # priced at the RAINFALL-ADJUSTED requirement, so no client-side multiplication can reproduce
+    # them (that was audit 1.3). Labour is NOT among them any more — W12 made wages a committed
+    # weekly cost, so no crop carries a per-acre labour charge at all.
     vc_weekly_split = np.zeros((N_S, N_WEEKS + 1, len(VC_CATEGORIES)), dtype=float)
     _CAT = {name: k for k, name in enumerate(VC_CATEGORIES)}
 
@@ -858,15 +880,11 @@ def solve_farm_v2(
     # here would be incoherent. Minimum-storage is now strictly optimal.
     c_obj[idx_ws_start : idx_ws_start + N_WEEKS] += WATER_LEVEL_TIE_BREAK_PER_L_WEEK
 
-    # Overtime cost (incremental rate above regular pay)
+    # Bought hours cost their FULL rate — see overtime_rate_full / hire_rate_full above.
     if overtime_enabled and idx_ot_start is not None:
-        ot_extra_rate = hourly_labor_rate * (overtime_rate_multiplier - 1.0)
-        c_obj[idx_ot_start : idx_ot_start + N_WEEKS] = ot_extra_rate
-
-    # Hired-labor cost: only the wage markup above base wage (base wage on every used
-    # hour is already in var_cost_coeff). Default markup 0 → hired labor costs base wage.
+        c_obj[idx_ot_start : idx_ot_start + N_WEEKS] = overtime_rate_full
     if hire_enabled and idx_hire_start is not None:
-        c_obj[idx_hire_start : idx_hire_start + N_WEEKS] = hourly_labor_rate * hire_wage_markup
+        c_obj[idx_hire_start : idx_hire_start + N_WEEKS] = hire_rate_full
 
     # -----------------------------------------------------------------------
     # Step 7 — Bounds
@@ -1291,9 +1309,9 @@ def solve_farm_v2(
     #   x[i]                     (coefficient: -cum_var[i,W])
     #   city_water[w] for w ≤ W  (coefficient: -city_water_cost_per_L)
     #   overtime[w]   for w ≤ W  (coefficient: -ot_extra_rate[w-1])
-    ot_extra_rate_arr = (hourly_labor_rate * (overtime_rate_multiplier - 1.0)
+    ot_extra_rate_arr = (overtime_rate_full
                          if overtime_enabled else np.zeros(N_WEEKS))
-    hire_extra_rate_arr = (hourly_labor_rate * hire_wage_markup
+    hire_extra_rate_arr = (hire_rate_full
                            if hire_enabled else np.zeros(N_WEEKS))
     floor = -(opening_cash + credit_line)
 
@@ -1678,10 +1696,10 @@ def solve_farm_v2(
             overtime_hours_weekly[w] = (extra - hired) if overtime_enabled else 0.0
 
     overtime_cost = float(np.dot(overtime_hours_weekly[1:],
-                                 hourly_labor_rate * (overtime_rate_multiplier - 1.0))) \
+                                 overtime_rate_full)) \
                     if overtime_enabled else 0.0
     hire_cost     = float(np.dot(hired_hours_weekly[1:],
-                                 hourly_labor_rate * hire_wage_markup)) \
+                                 hire_rate_full)) \
                     if hire_enabled else 0.0
 
     total_cost = fixed_cost + variable_cost + city_water_cost + overtime_cost + hire_cost
@@ -1713,8 +1731,8 @@ def solve_farm_v2(
     # interest are honest: city water, overtime/hire premiums, overhead (∝ revenue), and fixed
     # selling. Packaging is already inside weekly_rev (net_price). (var costs + fixed are above.)
     cw_weekly = z[idx_cw_start : idx_cw_start + N_WEEKS] if (city_water_enabled and idx_cw_start is not None) else None
-    ot_rate_w = hourly_labor_rate * (overtime_rate_multiplier - 1.0)
-    hr_rate_w = hourly_labor_rate * hire_wage_markup
+    ot_rate_w = overtime_rate_full
+    hr_rate_w = hire_rate_full
     weekly_gross_rev = np.zeros(N_WEEKS + 1)
     for c_idx in range(n_crops):
         for ch_idx in range(n_channels):

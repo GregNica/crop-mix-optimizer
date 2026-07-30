@@ -63,7 +63,7 @@ GOLDEN = {
 # Baseline history — re-pin ONLY with a reason, and record it here.
 #   2026-07-31 (W12 — every listed worker is paid whether the crops need them or not):
 #     revenue 1,621,122 -> 2,134,530 (+31.7%), variable_cost 538,865 -> 398,858 (labour left it),
-#     fixed_cost 213,097 -> 949,497 (wages 855,150 entered it), profit 595,931 -> 426,560.
+#     fixed_cost 213,097 -> 949,497 (wages 855,150 entered it), profit 595,931 -> 428,547 (426,560 before the payroll-profile follow-up below).
 #     NET MARGIN 36.8% -> 20.0%.
 #
 #     The model charged hourly and seasonal staff only for the hours the crops happened to use, so

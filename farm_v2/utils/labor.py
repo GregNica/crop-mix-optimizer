@@ -24,10 +24,11 @@ Derived arrays (all 52-element, 0-indexed for weeks 1..52):
   piece_rate_per_lb[c][ch]   $/lb harvest cost per crop/channel — sourced from crop defs,
                               not computed here, but the module documents the pattern.
 
-Overtime (if enabled):
-  The solver receives labor_capacity_hourly_only[w] as the threshold above which
-  overtime kicks in. The overtime variable covers hours beyond regular hourly capacity
-  (salaried hours are NOT subject to overtime rules).
+Overtime / hired labour (if enabled):
+  Bought beyond TOTAL labor_capacity, not beyond the hourly-only part — measuring against
+  hourly-only was the bug that removed C14, because it let flexibility buy back capacity the
+  farm already had. Bought hours carry their FULL wage: the committed bill pays for the crew's
+  stated hours, and these are extra (W12).
 """
 
 from __future__ import annotations
@@ -68,8 +69,14 @@ def compute_labor_arrays(
         "hourly_labor_rate"         np.ndarray shape (n_weeks,) — blended $/hr
         "labor_capacity_hourly"     np.ndarray shape (n_weeks,) — hourly-only hrs/week
         "committed_weekly_wages"    np.ndarray shape (n_weeks,) — $/week owed to ALL listed staff
-        "salaried_weekly_cost"      float — $/week, constant fixed cost
-        "guaranteed_hourly_cost"    np.ndarray shape (n_weeks,) — $/week for guaranteed mins
+        "committed_weekly_hours"    np.ndarray shape (n_weeks,) — PAID hrs/week (not field-adj)
+        "fallback_hourly_wage"      float — $/hr for bought hours when a week has no blend
+        "salaried_weekly_cost"      float — $/week for salaried staff.
+                                    ⚠️ DEAD, and do NOT add it to fixed cost: this money
+                                    is already inside `committed_weekly_wages` (W12/W14)
+        "guaranteed_hourly_cost"    np.ndarray shape (n_weeks,) — $/week for guaranteed mins.
+                                    ⚠️ DEAD, and can never bind: committed wages already pay
+                                    count x hours >= any guaranteed minimum (W11/W14)
         "piece_rate_workers"        list[dict] — seasonal workers with piece_rate_per_lb set
     """
     labor_capacity        = np.zeros(n_weeks, dtype=float)
@@ -85,6 +92,7 @@ def compute_labor_arrays(
     # seasonal staff too. Charged on FULL hours: `field_time_pct` limits how much of a worker's
     # time is available to crops, not how much of their wage the farm owes.
     committed_weekly_wages = np.zeros(n_weeks, dtype=float)
+    committed_weekly_hours = np.zeros(n_weeks, dtype=float)   # PAID hours, not field-adjusted
     piece_rate_workers    = []
 
     # --- Year-round employees (available every week) ---
@@ -106,17 +114,12 @@ def compute_labor_arrays(
             weekly_cost = count * wage * (1 + bene) / 52
             salaried_weekly_cost += weekly_cost
             committed_weekly_wages += weekly_cost
-            # Capacity that is ALREADY PAID FOR (W9): these hours are available to crops, and
-            # their cost is the salary above rather than an hourly charge. Accumulated here, in
-            # the branch that knows the worker is salaried, rather than derived downstream as
-            # `labor_capacity - labor_capacity_hourly` — that subtraction happens to be correct
-            # only because every seasonal worker is hourly, and it would make a live value depend
-            # on `labor_capacity_hourly`, which no longer has a consumer in farm_v2.
+            committed_weekly_hours += count * hrs
 
         elif emp_type == "hourly":
             effective_rate = wage * (1 + bene)
-            # Full hours, not field-adjusted: the farm owes the whole shift.
             committed_weekly_wages += count * hrs * effective_rate
+            committed_weekly_hours += count * hrs
             labor_capacity_hourly += total_hrs_per_week
             hourly_weighted_wages += total_hrs_per_week * effective_rate
             hourly_weighted_hours += total_hrs_per_week
@@ -151,6 +154,18 @@ def compute_labor_arrays(
                 f"Seasonal employee '{emp.get('position', '?')}': "
                 f"start_week={start_w}, end_week={end_w} must be in [1, {n_weeks}]."
             )
+        # Order, not just range. `range(start-1, end)` is EMPTY when start > end, so a
+        # wrap-around window (a winter crew entered as weeks 45-5) silently contributed no
+        # capacity and — since W12 — no wages either, for a crew the farm is really paying.
+        # validate_params catches this on the app path; this is a public util that tests and any
+        # future caller reach directly, and losing a whole wage bill in silence is worse than the
+        # capacity it used to lose.
+        if start_w > end_w:
+            raise ValueError(
+                f"Seasonal employee '{emp.get('position', '?')}': start_week={start_w} is after "
+                f"end_week={end_w}. A window that wraps the year is not supported — enter it as "
+                f"two employees, one per side of week {n_weeks}."
+            )
 
         if piece_rate is not None:
             piece_rate_workers.append(emp)
@@ -161,6 +176,7 @@ def compute_labor_arrays(
         # Week indices are 0-based internally (week w → index w-1)
         for w_idx in range(start_w - 1, end_w):
             committed_weekly_wages[w_idx] += count * hrs * effective_rate
+            committed_weekly_hours[w_idx] += count * hrs
             labor_capacity[w_idx]        += total_hrs_per_week
             labor_capacity_hourly[w_idx] += total_hrs_per_week
             hourly_weighted_wages[w_idx] += total_hrs_per_week * effective_rate
@@ -180,8 +196,21 @@ def compute_labor_arrays(
             0.0,
         )
 
+    # What one more hour costs when the week has no hourly crew to blend (W12 follow-up).
+    #
+    # `hourly_labor_rate` is the blend of the EXISTING hourly staff, so it is 0 in any week they
+    # are not on — and once W12 stopped charging base wages through the crop coefficients, a zero
+    # blend meant a bought hour was FREE. Measured: 80 hired hours at $0.00 on a fixture whose
+    # only hourly crew is seasonal. The farm's own average paid wage is the honest fallback: it is
+    # what this farm actually pays for an hour of work, inferred from the crew it described.
+    total_paid_hours = float(committed_weekly_hours.sum())
+    fallback_wage = (float(committed_weekly_wages.sum()) / total_paid_hours
+                     if total_paid_hours > 0 else 0.0)
+
     return {
         "committed_weekly_wages": committed_weekly_wages,
+        "committed_weekly_hours": committed_weekly_hours,
+        "fallback_hourly_wage":   fallback_wage,
         "labor_capacity":         labor_capacity,
         "labor_capacity_hourly":  labor_capacity_hourly,
         "hourly_labor_rate":      hourly_labor_rate,

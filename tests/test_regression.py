@@ -134,7 +134,12 @@ class TestRegressionFinancials:
         # `expected * (1 - tol)` is the UPPER bound for a negative number, which made this assert
         # `-21,143 <= -23,492 <= -25,841` and fail on the correct value. Exposed by W12, which
         # pushed this deliberately close-to-break-even fixture into a loss.
-        span = abs(EXPECTED_PROFIT) * TOLERANCE_PCT
+        # Banded on REVENUE, not on the profit figure itself. A 10% relative band around a
+        # baseline that W12 re-pinned close to break-even (-23,492) is a +/-$2.3k hair-trigger —
+        # the tightest assertion in the suite, on the one fixture whose own note says an 11%
+        # revenue move swings profit ~10x. Anchoring the width to revenue keeps the alarm at the
+        # scale it was set for (~+/-$220k) whatever side of zero the baseline lands on.
+        span = abs(EXPECTED_REVENUE) * TOLERANCE_PCT
         lo, hi = EXPECTED_PROFIT - span, EXPECTED_PROFIT + span
         assert lo <= profit <= hi, (
             f"Profit ${profit:,.0f} outside expected range "

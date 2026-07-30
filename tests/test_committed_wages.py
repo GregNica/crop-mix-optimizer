@@ -146,3 +146,95 @@ class TestPayrollIsNotFlat:
             f"${step:,.2f}. A flat spread charges the same every week and would give $0.00 here — "
             f"the cash curve is not seeing payroll in the weeks it is actually owed."
         )
+
+
+class TestBoughtHoursCarryTheirFullWage:
+    """Hours bought beyond the committed crew — overtime and hired labour — cost the WHOLE wage.
+
+    THE DEFECT W12 CREATED AND `/code-review` CAUGHT. Before W12 every crop hour was charged at
+    the blended wage inside `var_cost_coeff`, so overtime and hire only had to add their premium
+    on top: `rate x (multiplier - 1)` and `rate x markup`. W12 moved the crew's pay into the
+    committed wage bill and deleted that per-hour charge — but bought hours are NOT in the
+    committed bill, so the base wage ended up charged nowhere at all.
+
+    Measured before the fix, on a 200-acre fixture: **2,080 hired hours at $0.00**, worth
+    +$965,177 of phantom profit, and overtime at 1.5x charged $7.02/hr against an $18.00 blend.
+    The shipped defaults are `max_hire_hrs_per_week=400` and `hire_wage_markup=0`, so the What-If
+    "Plan optimal labor" tool was handing the optimizer 20,800 free hours a year and reporting the
+    result as a gain. All nine labor-flex tests passed throughout.
+
+    A SECOND HOLE UNDERNEATH IT: `hourly_labor_rate` is the blend of the EXISTING hourly crew, so
+    it is 0 in any week they are not on. Even charging "the full rate" prices a bought hour at
+    zero there. Hence `fallback_hourly_wage` — the farm's own average paid wage.
+    """
+
+    def _needs_help(self, minimal_params):
+        """A farm whose crew cannot cover its own crops, so buying hours is the only way to grow."""
+        return dict(minimal_params, opening_cash=5_000_000.0, credit_line=5_000_000.0,
+                    year_round_employees=[
+                        {"position": "Hand", "count": 1, "type": "hourly", "wage": 20.0,
+                         "hours_per_week": 40.0, "benefits_pct": 0.0}],
+                    seasonal_employees=[])
+
+    def test_hired_hours_at_a_zero_markup_still_cost_the_base_wage(self, minimal_params):
+        p = dict(self._needs_help(minimal_params),
+                 hire_enabled=True, max_hire_hrs_per_week=2_000.0, hire_wage_markup=0.0)
+        r = solve_farm_v2(**p)
+        assert r["status"] == "optimal", r["status"]
+        assert r["total_hired_hours"] > 0, (
+            "nothing was hired, so this test cannot tell a free hour from a paid one — the "
+            "fixture's crew must be too small for its crops"
+        )
+        implied = r["hire_cost"] / r["total_hired_hours"]
+        assert implied == pytest.approx(20.0, rel=1e-6), (
+            f"hired labour costs ${implied:.2f}/hr at a 0% markup against a $20.00 wage. At $0.00 "
+            f"the optimizer is being handed free hours and reporting the result as profit."
+        )
+
+    def test_overtime_costs_the_multiplier_on_the_whole_wage(self, minimal_params):
+        p = dict(self._needs_help(minimal_params),
+                 overtime_enabled=True, max_overtime_hrs_per_week=2_000.0,
+                 overtime_rate_multiplier=1.5)
+        r = solve_farm_v2(**p)
+        assert r["status"] == "optimal"
+        assert r["total_overtime_hours"] > 0, "no overtime bought; fixture cannot discriminate"
+        implied = r["overtime_cost"] / r["total_overtime_hours"]
+        assert implied == pytest.approx(30.0, rel=1e-6), (
+            f"overtime costs ${implied:.2f}/hr against a $20.00 wage at 1.5x. ${20.0 * 0.5:.2f} "
+            f"would mean only the premium is charged and the base wage has gone missing."
+        )
+
+    def test_a_week_with_no_hourly_crew_still_prices_a_bought_hour(self, minimal_params):
+        """The second hole: an all-salaried farm has a blended rate of 0 in every week.
+
+        Without a fallback, `rate x multiplier` is 0 x anything = free, so a farm with no hourly
+        staff could buy unlimited labour for nothing.
+        """
+        p = dict(minimal_params, opening_cash=5_000_000.0, credit_line=5_000_000.0,
+                 year_round_employees=[
+                     {"position": "Mgr", "count": 1, "type": "salary", "wage": 52_000.0,
+                      "hours_per_week": 40.0, "benefits_pct": 0.0}],
+                 seasonal_employees=[],
+                 hire_enabled=True, max_hire_hrs_per_week=2_000.0, hire_wage_markup=0.0)
+        lab = compute_labor_arrays(p["year_round_employees"], [], 52)
+        assert float(lab["hourly_labor_rate"].max()) == 0.0, "fixture has an hourly crew after all"
+        assert lab["fallback_hourly_wage"] == pytest.approx(1_000.0 / 40.0), (
+            "the fallback must be the farm's own average paid wage: $52,000/yr over 40 h/wk"
+        )
+        r = solve_farm_v2(**p)
+        assert r["status"] == "optimal"
+        if r["total_hired_hours"] > 0:
+            implied = r["hire_cost"] / r["total_hired_hours"]
+            assert implied == pytest.approx(25.0, rel=1e-6), (
+                f"bought hours cost ${implied:.2f}/hr on a farm with no hourly crew"
+            )
+
+
+def test_a_wrap_around_seasonal_window_is_refused_not_silently_free():
+    """`range(start-1, end)` is EMPTY when start > end, so a winter crew entered as weeks 45-5
+    used to contribute no capacity — and after W12, no WAGES either, for people the farm really
+    pays. Losing a whole wage bill in silence is worse than the capacity it used to lose."""
+    with pytest.raises(ValueError, match="wraps the year|after end_week"):
+        compute_labor_arrays([], [{"position": "Winter Crew", "count": 2, "type": "FT",
+                                   "wage": 20.0, "hours_per_week": 40.0, "benefits_pct": 0.0,
+                                   "start_week": 45, "end_week": 5}], 52)
