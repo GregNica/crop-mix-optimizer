@@ -669,13 +669,67 @@ class TestWasteIsVisible:
                     entry["lbs"] / entry["sellable_lbs"], rel=1e-9)
 
 
+class TestTruncatedSolveStatusMapping:
+    """The load-bearing half of SPEC_v3 §7.1, with no solver involved.
+
+    This is where "a truncated solve must not have its plan discarded" is actually pinned. It
+    used to live only in the integration test below, which had to pick a wall-clock budget small
+    enough to truncate and large enough to find something — a window that is a property of the
+    machine, not the model, and that had been retuned twice before failing 8 runs out of 8 under
+    load. Escalating the budget was worse: the regression presents as exactly the state that
+    triggers escalation, so the loop climbs past it to `optimal` and the test SKIPS. A test that
+    can launder the defect it guards is not a guard.
+
+    The decision is a mapping from (scipy status, did a plan come back) to a reported status, so
+    it is tested as one: exhaustive, deterministic, and identical on every machine.
+    """
+
+    @pytest.mark.parametrize("highs_status,has_solution,expected", [
+        # The whole point: status 1 WITH a plan is a usable truncated solve, not a failure.
+        (1, True,  "time_limit_feasible"),
+        # Status 1 with nothing found stays a failure — the caller gets profit=None and no plan.
+        (1, False, "iteration_limit"),
+        # A solution object on any other status must NOT be promoted to the truncated path;
+        # `infeasible` in particular can carry an x that satisfies nothing.
+        (0, True,  "optimal"),
+        (0, False, "optimal"),
+        (2, True,  "infeasible"),
+        (2, False, "infeasible"),
+        (3, True,  "unbounded"),
+        (4, True,  "other"),
+    ])
+    def test_the_reported_status(self, highs_status, has_solution, expected):
+        from farm_v2.solver import has_time_limited_incumbent, report_solve_status
+        incumbent = has_time_limited_incumbent(highs_status, has_solution)
+        assert report_solve_status(highs_status, incumbent) == expected
+
+    def test_an_unknown_scipy_status_says_so_rather_than_guessing(self):
+        from farm_v2.solver import has_time_limited_incumbent, report_solve_status
+        assert report_solve_status(99, has_time_limited_incumbent(99, True)) == "unknown(99)"
+
+    def test_only_status_1_carries_a_plan_forward(self):
+        """The predicate that decides whether extraction runs at all, stated on its own.
+
+        If this ever returns True for a status other than 1, the solver extracts numbers from a
+        solution vector that satisfies no constraints and reports them as a plan.
+        """
+        from farm_v2.solver import has_time_limited_incumbent
+        assert has_time_limited_incumbent(1, True)
+        assert not any(has_time_limited_incumbent(s, True) for s in (0, 2, 3, 4, 99))
+        assert not has_time_limited_incumbent(1, False)
+
+
 class TestTimeLimitedSolveKeepsItsPlan:
-    """SPEC_v3 §7.1. HiGHS stopping on the clock is not the same as finding nothing.
+    """SPEC_v3 §7.1, end to end. HiGHS stopping on the clock is not the same as finding nothing.
 
     B.2 made this reachable: the golden farm went from closing at the root in one
     branch-and-bound node to needing 41, so a farm bigger than the demo can plausibly hit the
     75s budget the client sets. The old code returned profit=None and discarded result.x,
     showing "no solution found" while a usable incumbent sat in the object.
+
+    This is now an INTEGRATION smoke test, and it is allowed to skip: the mapping it used to be
+    the only guard on is pinned deterministically in TestTruncatedSolveStatusMapping above. What
+    it adds is that a real truncated solve carries a real plan through real extraction.
     """
 
     def test_a_time_limited_solve_returns_the_incumbent(self, full_params):
@@ -694,17 +748,30 @@ class TestTimeLimitedSolveKeepsItsPlan:
         # Measured after the change: 0.05s -> no incumbent, 0.2s -> $101k, 0.5s -> $290k,
         # 1.0s -> $291k and still not proven. 0.5 sits inside the window that exercises the
         # rescue path.
+        #
+        # 2026-07-30, THIRD RETUNE — and the constant is gone, because the constant was never the
+        # problem. The budget is WALL CLOCK, so the window it has to land in is a property of the
+        # machine and its load: under load the 0.1s constant failed 8 runs out of 8 on an
+        # unmodified tree, which reads exactly like a regression and cost a real diagnosis to rule
+        # out. Escalating the budget was tried and was WORSE — a genuine regression presents as
+        # `iteration_limit` with no plan, which is precisely the state that triggers escalation, so
+        # the loop climbs past it, lands on `optimal`, and skips. It laundered the defect.
+        #
+        # So the mapping moved OUT of this test, to TestTruncatedSolveStatusMapping, where it needs
+        # no solver and cannot race. What is left here is a smoke test over real extraction, and it
+        # is allowed to skip on a machine that lands outside the window — because skipping no
+        # longer costs the guarantee.
         r = solve_farm_v2(**{**full_params, "sell_through_fraction": 0.85},
                           solver_time_limit=0.1)
         if r["status"] == "optimal":
-            pytest.skip("solved to optimality inside the budget; nothing to assert here")
-        # A budget so small that nothing was found makes this test vacuous rather than passing.
-        assert r["status"] != "iteration_limit" or r.get("profit") is not None, (
-            "HiGHS found no incumbent at all inside the budget — this test is exercising "
-            "nothing. Raise solver_time_limit until it does, rather than letting it pass."
-        )
+            pytest.skip("solved to optimality inside the budget — nothing truncated to inspect")
+        if r.get("profit") is None:
+            pytest.skip(f"no incumbent inside the budget (status {r['status']!r}) — this machine "
+                        f"is outside the truncation window; the status mapping is pinned in "
+                        f"TestTruncatedSolveStatusMapping")
         assert r["status"] == "time_limit_feasible", (
-            f"expected a usable incumbent, got {r['status']!r} — the plan was thrown away"
+            f"a truncated solve came back with a plan but reported {r['status']!r} — the "
+            f"incumbent was thrown away"
         )
         assert r["profit"] is not None, "profit is None: the incumbent was discarded"
         assert r["gap_note"], "a non-proven plan must say so"

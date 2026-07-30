@@ -58,6 +58,20 @@ GOLDEN = {
     "operating_profit":   823_994,
 }
 # Baseline history — re-pin ONLY with a reason, and record it here.
+#   2026-07-30 (W4, NOT a re-pin — recorded because the observed number now differs from the pin):
+#     profit reads 550,529.36 against the 550,524 pinned above, and interest 1,085.48 against
+#     1,090.78. Everything else is identical TO THE CENT: revenue, variable_cost, fixed_cost,
+#     operating_profit and peak_borrowing all unchanged, and 38 successions planted before and
+#     after. The difference is a TIE being broken differently. Spinach's plantings moved from
+#     W15/W17/W18/W20/W22 to W15/W17/W19/W21/W22 — same total acreage, same profit — because W4
+#     charges each variable cost once into one array and sums it, so the float addition ORDER of
+#     the cash-flow coefficients changed in the last bits and HiGHS picked a different equally
+#     optimal vertex. A different planting week means a different cash curve, hence average
+#     borrowing, hence interest.
+#     DELIBERATELY NOT RE-PINNED: 550,524 is no more or less correct than 550,529, and re-pinning
+#     to today's tie would suggest the number moved when the plan's economics did not. This is the
+#     case the $50 tolerance was reasoned for. If a future change moves profit and leaves
+#     operating_profit identical, suspect degeneracy before suspecting a defect.
 #   2026-07-29 (days_to_maturity is PLANT TO FIRST HARVEST, not total field occupancy):
 #     revenue 2,163,463 -> 1,621,122 (-25%), profit 747,002 -> 550,524 (-26%).
 #
@@ -588,7 +602,7 @@ class TestOneKernelNoDrift:
         for crop, chans in result["channel_margins"].items():
             for ch, m in chans.items():
                 c = m["cost_per_acre"]
-                parts = (c["labor"] + c["water"] + c["fert"] + c["fuel"] + c["seed"]
+                parts = (c["labor"] + c["water"] + c["fertilizer"] + c["fuel"] + c["seed"]
                          + c["packaging"] + c["overhead"])
                 assert parts == pytest.approx(c["total"], rel=1e-9), f"{crop}/{ch} split != total"
 
@@ -878,4 +892,110 @@ class TestDemandSaturationReachesTheClient(object):
         assert phantom >= 3, (
             f"only {phantom} rows sold zero pounds while the old formula reported a saturation "
             f"(3 when measured)"
+        )
+
+
+class TestCostSplitsReachTheClient(object):
+    """W4 — the P&L's cost breakdowns cross the adapter, and still add up when they get there.
+
+    tests/test_cost_splits.py pins the identities inside the solver. This class exists because
+    forwarding is a SECOND place they break, and it is the break with no symptoms: the P&L simply
+    prints fewer rows, which looks exactly like a P&L. That is how twelve of thirteen detail rows
+    came to be missing for the whole life of the exporter, and how W6's `demand_at_cap_threshold`
+    reached the browser as `undefined` while every test stayed green.
+
+    Both mutations — the adapter dropping either split — survived the solver-side suite. This is
+    what kills them.
+    """
+
+    def test_every_key_the_pl_reads_actually_arrives(self, result):
+        """Structural: no P&L line may read a key the adapter does not send.
+
+        This is the defect's whole mechanism, generalised. The exporter asked for thirteen keys
+        that were never sent and printed nothing, silently — and while fixing exactly that, the
+        new "City Water (metered purchase)" row was written against `res.city_water_cost`, which
+        the adapter ALSO did not forward. That one was worse than a blank row: the solver charges
+        city water into operating_profit, so the missing key would have pushed the difference into
+        the new UNRECONCILED tripwire on every farm buying metered water. Nothing caught it — the
+        golden farm has city water off, and the jsdom fixture supplied the key itself.
+
+        So the guard is not a list of keys, which is what failed twice. It reads the exporter's
+        OWN source for `res.<name>` and requires the payload to carry each one.
+        """
+        src = INDEX.read_text()
+        start = src.index("function exportPLCSV()")
+        body = src[start:src.index("\n}", start)]
+        # Comments out first, or the prose naming the OLD dead keys reads as live code — this
+        # guard's first run flagged `cost_seed` and `cost_harvest_storage` out of the comment
+        # that explains why they are gone.
+        body = re.sub(r"/\*.*?\*/", "", body, flags=re.S)
+        body = re.sub(r"//[^\n]*", "", body)
+        read = sorted(set(re.findall(r"\bres\.([a-z_][a-z0-9_]*)\b", body)))
+        assert read, "found no res.* reads in exportPLCSV — the extractor is broken, not the app"
+        missing = [k for k in read if k not in result]
+        assert missing == [], (
+            f"exportPLCSV reads {missing} and the adapter does not send them. Every one prints as "
+            f"a blank or zero row, and any cost among them also silently unbalances the "
+            f"statement. Forward them, or stop reading them."
+        )
+
+    def test_both_splits_survive_the_adapter(self, result):
+        for key in ("variable_cost_split", "fixed_cost_split"):
+            split = result.get(key)
+            assert split, f"{key} did not cross the adapter — the P&L has no detail to print"
+
+    def test_the_forwarded_splits_still_sum_to_the_forwarded_totals(self, result):
+        """The property the whole fix rests on, checked on the numbers the browser receives.
+
+        Not the same assertion as the solver-side one: the adapter re-floats every value and
+        could round, drop or reorder them on the way through. A breakdown that reconciles in
+        Python and not in the payload is still a P&L whose parts do not sum to its total.
+        """
+        for split_key, total_key in (("variable_cost_split", "variable_cost"),
+                                     ("fixed_cost_split", "fixed_cost")):
+            got = sum(result[split_key].values())
+            assert got == pytest.approx(result[total_key], abs=0.01), (
+                f"{split_key} sums to {got:,.2f} under a {total_key} of "
+                f"{result[total_key]:,.2f} — the P&L would print a breakdown "
+                f"{abs(got - result[total_key]):,.2f} short of its own total"
+            )
+
+    def test_packaging_is_a_fifth_of_variable_cost_on_this_farm(self, result):
+        """The measurement that proved the prescribed one-line fix wrong.
+
+        Exporting the solver's internal `vc_split` — the fix as the backlog described it — would
+        have printed five rows under a total that excludes packaging entirely. Pinned as a
+        share, not a dollar figure, so it survives a re-pin of the baseline but still fails if
+        packaging stops being carried.
+        """
+        pkg = result["variable_cost_split"]["packaging"]
+        share = pkg / result["variable_cost"]
+        assert 0.15 < share < 0.30, (
+            f"packaging is {share:.1%} of variable cost (20.5% when measured); if it has become "
+            f"negligible this farm no longer demonstrates why vc_split alone was not the fix"
+        )
+
+    def test_no_flat_cost_key_comes_back_from_the_dead(self, result):
+        """The thirteen keys the exporter used to ask for are gone, and must stay gone.
+
+        Two of them were real and were REMOVED with this fix, because each was a second
+        derivation of a number the solver already had: `cost_property_mortgage_rent` re-did the
+        solver's annualisation, and `cost_ambient_storage` was emitted with a comment saying the
+        fixed-cost breakdown needed it while nothing read it at all. Deriving one number twice is
+        how the two copies come to disagree (see C6b in W6).
+        """
+        # The thirteen are named, rather than banning the `cost_` prefix: the property wanted is
+        # "no cost is derived twice", and a prefix ban would also reject a legitimate future
+        # `cost_of_capital` for no reason.
+        DEAD = {
+            "cost_seed", "cost_water", "cost_fert", "cost_labor", "cost_fuel",
+            "cost_harvest_storage", "cost_water_storage", "cost_irrigation",
+            "cost_equip_storage", "cost_fuel_storage", "cost_machinery", "cost_salaries",
+            "cost_property_mortgage_rent", "cost_ambient_storage",
+        }
+        revived = sorted(DEAD & set(result))
+        assert revived == [], (
+            f"flat per-component cost keys are back: {revived}. Cost detail belongs in "
+            f"variable_cost_split / fixed_cost_split, where it is summed to its total — a flat "
+            f"key is a second derivation of a number that already has one."
         )

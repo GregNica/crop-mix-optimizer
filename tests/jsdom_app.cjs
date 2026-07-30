@@ -68,4 +68,52 @@ function bootApp({ quiet = true } = {}) {
   });
 }
 
-module.exports = { bootApp, ROOT };
+/** Split one CSV row, honouring quotes and escaped quotes.
+ *
+ * A real quoted-CSV split, not `row.split(',')`. Cells in these exports hold things like
+ * "2,000 lb/wk cap", so splitting on every comma silently shifts every column after it — which
+ * is how one of these tests once "failed" against a correct exporter. It also beats matching
+ * only quoted cells (`/"(...)"/g`), which silently DROPS an unquoted cell instead of
+ * mis-splitting it: absence rather than corruption, the harder failure to see.
+ */
+function splitCSVRow(row) {
+  const out = [];
+  let cur = '', q = false;
+  for (let i = 0; i < row.length; i++) {
+    const c = row[i];
+    if (c === '"') {
+      if (q && row[i + 1] === '"') { cur += '"'; i++; } else { q = !q; }
+    } else if (c === ',' && !q) { out.push(cur); cur = ''; }
+    else cur += c;
+  }
+  out.push(cur);
+  return out;
+}
+
+/** Run `trigger` and return the CSV it downloaded, as rows of cells (null if it produced none).
+ *
+ * The exporters build an `<a href="data:text/csv,...">` and click it, so a test has to intercept
+ * that. Three harnesses had grown their own version of this interception; one of them replaced
+ * `HTMLElement.prototype.click` permanently, which silently no-ops every later click in the
+ * window. This restores `createElement` afterwards, so the patch cannot outlive the call.
+ */
+function captureCSV(W, trigger) {
+  let csv = null;
+  const origCreate = W.document.createElement.bind(W.document);
+  W.document.createElement = function (tag) {
+    const el = origCreate(tag);
+    if (tag === 'a') el.click = () => {
+      csv = decodeURIComponent((el.href || '').replace(/^data:text\/csv;charset=utf-8,/, ''));
+    };
+    return el;
+  };
+  try {
+    trigger();
+  } finally {
+    W.document.createElement = origCreate;
+  }
+  if (csv === null) return null;
+  return csv.replace(/^﻿/, '').split('\n').map(splitCSVRow);
+}
+
+module.exports = { bootApp, ROOT, splitCSVRow, captureCSV };

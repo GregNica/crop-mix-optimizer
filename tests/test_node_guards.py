@@ -45,6 +45,14 @@ GUARDS = [
         "beside a pie showing it selling nothing there",
     ),
     (
+        "cost-splits-client",
+        ["tests/cost_splits_client.cjs"],
+        "the P&L exporter is no longer reading the solver's cost breakdowns (W4). If it goes "
+        "back to naming flat per-component keys, the detail rows silently disappear — which is "
+        "how twelve of thirteen of them came to be missing for the exporter's whole life — or a "
+        "component charged to a total ends up with no row anywhere",
+    ),
+    (
         "golden-payload-staleness",
         ["scripts/capture_golden_payload.cjs", "--check"],
         "tests/golden/default_farm_payload.json pins a farm the app no longer ships. Run "

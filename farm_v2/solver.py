@@ -68,6 +68,52 @@ from farm_v2.validate import validate_params
 NEAR_LIMIT_FRACTION = 0.95      # a resource is "near its limit" (unplanted-crop diagnosis)
 DEMAND_AT_CAP_FRACTION = 0.95   # a week counts as "at cap" in demand_saturation.weeks_at_cap
 
+# The columns of `vc_split`, in order — the ONE place the index-to-name mapping lives.
+# It was written out three times: as a comment on the array, in `cost_split_per_acre`, and again
+# in `variable_cost_split`. The two dicts are both consumer-facing (the contribution tooltip and
+# the P&L) and they had already drifted: the same category was published as "fert" in one and
+# "fertilizer" in the other, so the app labelled one cost two ways. Crop protection is due to
+# become a sixth category (backlog R1); with one tuple that is one edit, not three plus a
+# name-collision to notice.
+VC_CATEGORIES = ("labor", "water", "fertilizer", "fuel", "seed")
+
+
+# ---------------------------------------------------------------------------
+# Solve status reporting
+# ---------------------------------------------------------------------------
+# SPEC_v3 §7.1 — a time-limited solve usually HAS a plan; don't throw it away.
+#
+# scipy reports status 1 when HiGHS hits `time_limit`, and in that case `result.x` is normally a
+# feasible incumbent, often within a fraction of a percent of optimal. Bailing out with
+# profit=None hands the grower "no solution found" while a perfectly usable plan sits in the
+# result object. B.2 made this materially more likely: the golden farm went from closing at the
+# root in 1 branch-and-bound node to needing 41, so a farm larger than the demo can plausibly
+# reach the 75s budget the client sets.
+#
+# WHY THESE ARE PURE FUNCTIONS UP HERE rather than four lines inside the extraction step. The
+# regression they prevent — a truncated solve whose incumbent is discarded — was pinned only by
+# an integration test that had to pick a wall-clock `solver_time_limit` small enough to truncate
+# and large enough to find something. That window is a property of the machine, and the constant
+# had been retuned twice; on a loaded machine it failed 8 runs out of 8. Escalating the budget
+# instead made it worse in a way that took a review to see: a genuine regression presents as
+# exactly the state that triggers escalation, so the loop climbs past it and lands on `optimal`,
+# where the test SKIPS. The assertion that matters does not need a solver at all — it is a
+# mapping from (highs_status, has_incumbent) to a reported status, and it is now tested as one.
+_STATUS_MAP = {0: "optimal", 1: "iteration_limit", 2: "infeasible",
+               3: "unbounded", 4: "other"}
+
+
+def has_time_limited_incumbent(highs_status: int, has_solution: bool) -> bool:
+    """True when a truncated solve carries a usable plan that must NOT be discarded."""
+    return highs_status == 1 and has_solution
+
+
+def report_solve_status(highs_status: int, time_limited_incumbent: bool) -> str:
+    """The status this solver reports, from scipy's status and whether a plan came back."""
+    if time_limited_incumbent:
+        return "time_limit_feasible"
+    return _STATUS_MAP.get(highs_status, f"unknown({highs_status})")
+
 
 # ---------------------------------------------------------------------------
 # Index helpers
@@ -292,6 +338,18 @@ def solve_farm_v2(
                               in `weeks_at_cap`. Published so a reader can LABEL the column it
                               renders instead of assuming; the constraint CSV wrote these counts
                               under a ">=100%" heading while they were measured at >=95%.
+        "variable_cost_split" : dict — variable cost by category (VC_CATEGORIES, plus packaging).
+                              Sums to "variable_cost" exactly, because that total is summed from
+                              it. Packaging is charged per pound SOLD rather than per acre, so it
+                              is not in the internal `vc_split` at all — see the construction
+                              site for what that cost this fix.
+        "fixed_cost_split"  : dict — fixed cost by component (harvest_storage,
+                              ambient_storage, water_storage, irrigation, equipment_storage,
+                              fuel_storage, machinery, property_mortgage_rent,
+                              other_debt_service, salaries, and city_water_fixed_fee when a
+                              metered supply charges one). Sums to "fixed_cost" exactly.
+                              Consumers should ITERATE this rather than name its keys: the
+                              P&L exporter named eight of eleven and silently dropped the rest.
         "successions"       : list[dict]
         "crops"             : list[dict]
         "channels"          : list[dict]
@@ -427,14 +485,28 @@ def solve_farm_v2(
                 fuel_rate[i][week]  = crop.get(_FUEL_KEY[phase], 0.0)
 
     # -----------------------------------------------------------------------
-    # Step 3 — Variable cost: total annual coefficient + weekly breakdown
+    # Step 3 — Variable cost, charged ONCE and then aggregated three ways
     #
-    # var_cost_coeff[i]     = total $/land-fraction  (annual, for objective)
-    # var_cost_weekly[i][w] = $/land-fraction in week w (for cash flow constraints)
-    # -----------------------------------------------------------------------
-    var_cost_coeff  = np.zeros(N_S, dtype=float)
-    var_cost_weekly = np.zeros((N_S, N_WEEKS + 1), dtype=float)
-    vc_split        = np.zeros((N_S, 5), dtype=float)   # labor, water, fert, fuel, seed
+    # vc_weekly_split[i][w][k] = $/land-fraction of category k, in week w, for succession i.
+    #   -> var_cost_weekly[i][w] = sum over categories   (cash-flow rows, C13)
+    #   -> var_cost_coeff[i]     = sum over weeks too    (the OBJECTIVE's coefficient)
+    #   -> vc_split[i][k]        = sum over weeks        (the reported breakdown)
+    #
+    # These three used to be three parallel accumulators, each `+=`'d by hand beside the others,
+    # with literal column indices at the write site. That is the W4 defect one layer down: a cost
+    # added to the objective's coefficient and missed in the split would make the REPORTED total
+    # short of what the optimizer actually charged, silently — the exact failure this fix exists
+    # to remove from the P&L. `VC_CATEGORIES`' own comment schedules that edit (crop protection,
+    # backlog R1), so it would have been three coordinated increments across two sites.
+    #
+    # Now the charge is written once, in named terms, and every consumer is a sum of it. Adding a
+    # category is one entry in VC_CATEGORIES and one line here.
+    #
+    # The categories carry the PRODUCTS the objective charged, not rates to re-multiply: labour is
+    # priced at each week's own blended wage and water at the RAINFALL-ADJUSTED requirement, so no
+    # client-side multiplication can reproduce them (that was audit 1.3).
+    vc_weekly_split = np.zeros((N_S, N_WEEKS + 1, len(VC_CATEGORIES)), dtype=float)
+    _CAT = {name: k for k, name in enumerate(VC_CATEGORIES)}
 
     for i, s in enumerate(successions):
         crop = crops[s["crop"]]
@@ -443,30 +515,19 @@ def solve_farm_v2(
         # Seed cost charged in the first week of the succession
         first_week = s["weeks"][0] if s["weeks"] else None
         if first_week and 1 <= first_week <= N_WEEKS:
-            seed_total = total_land * seed_cost
-            var_cost_weekly[i][first_week] += seed_total
-            var_cost_coeff[i] += seed_total
-            vc_split[i, 4] += seed_total
+            vc_weekly_split[i, first_week, _CAT["seed"]] += total_land * seed_cost
 
         for w in range(1, N_WEEKS + 1):
             if phase_table[i][w] is None:
                 continue
-            water_c = total_land * net_water_rate[i][w] * well_cost_per_L
-            fert_c  = total_land * fert_rate[i][w] * cost_fert_per_lb
-            fuel_c  = total_land * fuel_rate[i][w] * cost_fuel_per_L
-            labor_c = total_land * labor_rate[i][w] * hourly_labor_rate[w - 1]
-            week_c  = water_c + fert_c + fuel_c + labor_c
-            var_cost_weekly[i][w] += week_c
-            var_cost_coeff[i]     += week_c
-            # Keep the split. The UI used to re-multiply hours x a scalar rate to show a cost
-            # breakdown, which could never reproduce these numbers: labour is priced at the
-            # week's own blended wage and water at the RAINFALL-ADJUSTED requirement. Returning
-            # the products the objective actually charged is the only way the displayed
-            # breakdown can agree with the plan.
-            vc_split[i, 0] += labor_c
-            vc_split[i, 1] += water_c
-            vc_split[i, 2] += fert_c
-            vc_split[i, 3] += fuel_c
+            vc_weekly_split[i, w, _CAT["water"]]      += total_land * net_water_rate[i][w] * well_cost_per_L
+            vc_weekly_split[i, w, _CAT["fertilizer"]] += total_land * fert_rate[i][w] * cost_fert_per_lb
+            vc_weekly_split[i, w, _CAT["fuel"]]       += total_land * fuel_rate[i][w] * cost_fuel_per_L
+            vc_weekly_split[i, w, _CAT["labor"]]      += total_land * labor_rate[i][w] * hourly_labor_rate[w - 1]
+
+    var_cost_weekly = vc_weekly_split.sum(axis=2)          # (N_S, N_WEEKS+1)
+    var_cost_coeff  = var_cost_weekly.sum(axis=1)          # (N_S,)
+    vc_split        = vc_weekly_split.sum(axis=1)           # (N_S, len(VC_CATEGORIES))
 
     # Cumulative variable cost per succession up to week W: cum_var[i, W]
     # cum_var[i, W] = Σ_{w=1}^{W} var_cost_weekly[i][w]
@@ -538,12 +599,11 @@ def solve_farm_v2(
         if rows and total_land > 0:
             mean = np.mean(np.vstack(rows), axis=0) / total_land
         else:
-            mean = np.zeros(5, dtype=float)
-        cost_split_per_acre[crop["name"]] = {
-            "labor": float(mean[0]), "water": float(mean[1]), "fert": float(mean[2]),
-            "fuel":  float(mean[3]), "seed":  float(mean[4]),
-            "total": float(mean.sum()),
-        }
+            mean = np.zeros(len(VC_CATEGORIES), dtype=float)
+        cost_split_per_acre[crop["name"]] = dict(
+            zip(VC_CATEGORIES, (float(v) for v in mean)),
+            total=float(mean.sum()),
+        )
 
     channel_margins = {}
     for c_idx, crop in enumerate(crops):
@@ -618,21 +678,28 @@ def solve_farm_v2(
     # consumables are charged per unit of usage, overhead is a share of revenue, and interest
     # comes off the cash curve. `operating_weeks` is therefore accepted for backwards
     # compatibility but no longer multiplies anything (SPEC_v3 N2/N3).
+    # The total is SUMMED FROM the breakdown, not written beside it (W4). The P&L exporter used
+    # to name eight components while this expression charged eleven, so the breakdown it printed
+    # was short of the total directly above it — $750 on the shipped farm from the ambient pool
+    # alone, and unbounded on a farm that enters `other_debt_service_per_week`. Deriving the
+    # total from the parts makes that particular lie unrepresentable: a component added here
+    # lands in both numbers or in neither.
     irrigation_fixed = total_land * rate_irrigation * N_WEEKS
-    fixed_cost = (
-        harvest_storage_cap * rate_harvest_storage * N_WEEKS
-        + ambient_storage_cap * rate_ambient_storage * N_WEEKS
-        + water_storage_capacity * rate_water_storage * N_WEEKS
-        + irrigation_fixed
-        + equip_storage * rate_equip_storage * N_WEEKS
-        + fuel_storage * rate_fuel_storage * N_WEEKS
-        + rate_machinery * N_WEEKS
-        + rate_property_mortgage_rent * N_WEEKS
-        + other_debt_service_per_week * N_WEEKS
-        + salaried_weekly_cost * N_WEEKS
-    )
+    fixed_cost_split = {
+        "harvest_storage":        float(harvest_storage_cap * rate_harvest_storage * N_WEEKS),
+        "ambient_storage":        float(ambient_storage_cap * rate_ambient_storage * N_WEEKS),
+        "water_storage":          float(water_storage_capacity * rate_water_storage * N_WEEKS),
+        "irrigation":             float(irrigation_fixed),
+        "equipment_storage":      float(equip_storage * rate_equip_storage * N_WEEKS),
+        "fuel_storage":           float(fuel_storage * rate_fuel_storage * N_WEEKS),
+        "machinery":              float(rate_machinery * N_WEEKS),
+        "property_mortgage_rent": float(rate_property_mortgage_rent * N_WEEKS),
+        "other_debt_service":     float(other_debt_service_per_week * N_WEEKS),
+        "salaries":               float(salaried_weekly_cost * N_WEEKS),
+    }
     if city_water_enabled and city_water_fixed_fee_per_week > 0:
-        fixed_cost += city_water_fixed_fee_per_week * N_WEEKS
+        fixed_cost_split["city_water_fixed_fee"] = float(city_water_fixed_fee_per_week * N_WEEKS)
+    fixed_cost = float(sum(fixed_cost_split.values()))
 
     fixed_weekly = fixed_cost / N_WEEKS  # fixed cost spread evenly per week
 
@@ -1243,22 +1310,10 @@ def solve_farm_v2(
     # -----------------------------------------------------------------------
     # Step 11 — Extract results
     # -----------------------------------------------------------------------
-    status_map = {0: "optimal", 1: "iteration_limit", 2: "infeasible",
-                  3: "unbounded", 4: "other"}
-    status = status_map.get(result.status, f"unknown({result.status})")
+    time_limited_incumbent = has_time_limited_incumbent(
+        result.status, getattr(result, "x", None) is not None)
+    status = report_solve_status(result.status, time_limited_incumbent)
 
-    # SPEC_v3 §7.1 — a time-limited solve usually HAS a plan; don't throw it away.
-    #
-    # scipy reports status 1 when HiGHS hits `time_limit`, and in that case `result.x` is
-    # normally a feasible incumbent, often within a fraction of a percent of optimal. Bailing
-    # out with profit=None hands the grower "no solution found" while a perfectly usable plan
-    # sits in the result object. B.2 made this materially more likely: the golden farm went
-    # from closing at the root in 1 branch-and-bound node to needing 41, so a farm larger than
-    # the demo can plausibly reach the 75s budget the client sets.
-    #
-    # Fall through to normal extraction and flag it, rather than inventing a second reporting
-    # path that could drift from the first.
-    time_limited_incumbent = (result.status == 1 and getattr(result, "x", None) is not None)
     if result.status != 0 and not time_limited_incumbent:
         return {
             "status": status,
@@ -1275,9 +1330,6 @@ def solve_farm_v2(
             "crops": crops,
             "channels": channels,
         }
-    if time_limited_incumbent:
-        status = "time_limit_feasible"
-
     z = result.x
     x_sol = z[idx_x_start : idx_x_start + N_S]
     # y is REPORTED as a function of x, not read raw from the solution.
@@ -1363,7 +1415,20 @@ def solve_farm_v2(
             revenue       += sold * price
             packaging_cost += sold * pkg
 
-    variable_cost = float(np.dot(x_sol, var_cost_coeff)) + packaging_cost
+    # Same discipline as fixed_cost_split above: the reported total is summed FROM the
+    # breakdown (W4). `vc_split` has carried the five growing categories since B.1 and was
+    # never returned, so the P&L's COGS detail rows were blank while the total showed. The trap
+    # in "just export vc_split" is PACKAGING: it is charged per pound sold, not per acre, so it
+    # lives outside vc_split entirely — 20.5% of variable cost on the shipped farm ($119,633).
+    # A five-row split under this total would have been short by all of it.
+    #
+    # var_cost_coeff is untouched: the objective still uses it, so the PLAN cannot move. Only
+    # the addition order of the reported figure changes (float noise, ~1e-10).
+    variable_cost_split = dict(
+        zip(VC_CATEGORIES, (float(v) for v in x_sol @ vc_split)),
+        packaging=float(packaging_cost),
+    )
+    variable_cost = float(sum(variable_cost_split.values()))
 
     # What each crop actually contributes to THIS plan, in dollars. Every other per-crop figure
     # the app reports is a rate (per lb, per acre, per acre-day); none of them answer "how much
@@ -1723,7 +1788,11 @@ def solve_farm_v2(
         "sell_through_fraction": sell_through_fraction,
         "revenue":          revenue,
         "variable_cost":    variable_cost,
+        # The cost breakdowns the P&L prints under each total (W4). See the docstring for the
+        # contract and the construction sites for why each total is summed from its own split.
+        "variable_cost_split": variable_cost_split,
         "fixed_cost":       fixed_cost,
+        "fixed_cost_split": fixed_cost_split,
         "city_water_cost":  city_water_cost,
         "overtime_cost":    overtime_cost,
         "hire_cost":        hire_cost,
