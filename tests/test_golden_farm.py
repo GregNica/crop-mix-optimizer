@@ -30,6 +30,12 @@ import re
 
 import pytest
 
+from tests.helpers import (
+    SATURATION_KEYS,
+    annual_equivalent_cap,
+    saturation_entries,
+)
+
 REPO = pathlib.Path(__file__).resolve().parent.parent
 INDEX = REPO / "public" / "index.html"
 PAYLOAD = REPO / "tests" / "golden" / "default_farm_payload.json"
@@ -733,4 +739,143 @@ class TestChannelSalesReachTheClient(object):
         assert sold < grown * 0.95, (
             f"sold {sold:,.0f} lb against {grown:,.0f} lb grown — that is too close to gross "
             f"for shrink to be modelled at all, which is the defect this guards"
+        )
+
+
+# The three crop-channel rows on this farm that sell NOTHING, with what the old gross-harvest
+# formula printed for each. Measured 2026-07-30, before W6 was fixed.
+GOLDEN_PHANTOM_DEMAND = {
+    ("Wholesale", "Basil"):       0.29,
+    ("Wholesale", "Spinach"):     0.16,
+    ("Wholesale", "Hot Peppers"): 0.04,
+}
+
+
+class TestDemandSaturationReachesTheClient(object):
+    """W6 — the saturation panel's numbers cross the adapter, and say what is enforced.
+
+    tests/test_demand_saturation.py pins the identities inside the solver on purpose-built
+    fixtures. This class exists because the golden farm is the SHIPPED farm: it is the only
+    place the measured defect can be shown against the numbers a grower actually sees, and the
+    adapter is a second place forwarding can break.
+    """
+
+    def test_it_survives_the_adapter(self, result):
+        ds = result.get("demand_saturation")
+        assert ds, "demand_saturation did not cross the adapter — the panel has nothing to read"
+        for ch, cp, e in saturation_entries(result):
+            assert set(e) == SATURATION_KEYS, f"{ch}/{cp}: {sorted(set(e) ^ SATURATION_KEYS)}"
+
+    def test_the_at_cap_threshold_crosses_too(self, result):
+        """The number `weeks_at_cap` was measured at has to travel with it.
+
+        The CSV heads a column with it. This was missed on the first pass — the field was added
+        to the solver's return and not to the adapter's, so it was `undefined` in the browser
+        while the jsdom fixture supplied it and every test stayed green. Caught by reading the
+        real value out of a real page, which is why that step is not optional.
+        """
+        got = result.get("demand_at_cap_threshold")
+        assert got is not None, "demand_at_cap_threshold did not cross the adapter"
+        assert 0.0 < got <= 1.0, got
+        # And it must be the threshold the data was actually built with.
+        for ch, cp, e in saturation_entries(result):
+            if e["basis"] != "weekly" or e["peak_week_frac"] is None:
+                continue
+            if e["weeks_at_cap"]:
+                assert e["peak_week_frac"] >= got, (
+                    f"{ch}/{cp} flags {len(e['weeks_at_cap'])} weeks at cap but its peak week is "
+                    f"only {e['peak_week_frac']:.2f}, below the published threshold {got}"
+                )
+
+    def test_it_agrees_with_the_channel_pies(self, result):
+        """One `v`, two reports. A pie showing nothing beside a row claiming saturation is the
+        contradiction W6 names, and it is only impossible if these two cannot disagree."""
+        cs = result["channel_sales"]
+        for ch, cp, e in saturation_entries(result):
+            sold = cs.get(ch, {}).get("by_crop", {}).get(cp, {}).get("lbs_sold", 0.0)
+            assert abs(sold - e["sold_lbs"]) < 0.5, (
+                f"{ch}/{cp}: the panel says {e['sold_lbs']:,.1f} lb, the pies say {sold:,.1f}"
+            )
+
+    @pytest.mark.parametrize("ch,cp", sorted(GOLDEN_PHANTOM_DEMAND))
+    def test_a_channel_with_no_sales_reads_zero(self, result, ch, cp):
+        """The defect, on the shipped farm. Each of these sells zero pounds into the channel and
+        printed a saturation anyway, because the numerator was the crop's harvest across ALL
+        channels."""
+        e = result["demand_saturation"][ch][cp]
+        was = GOLDEN_PHANTOM_DEMAND[(ch, cp)]
+        assert e["sold_lbs"] == 0.0, f"{ch}/{cp} now sells {e['sold_lbs']:,.0f} lb — re-measure"
+        assert e["fill"] == 0.0 and e["binding"] == 0.0, (
+            f"{ch}/{cp} sells nothing but reads {e['fill']:.0%}; it read {was:.0%} before W6"
+        )
+
+    def test_garlic_farmers_market_is_binding_despite_a_low_annual_fill(self, result):
+        """The case that makes reporting one figure a defect.
+
+        Garlic/Farmers Market has a 2,000 lb/wk cap across W22-W35, and the garlic is not lifted
+        until W29 — so half the capped weeks are unservable and the annual fill is ~50%, while
+        every week it CAN supply sells the cap out exactly. Reporting only the annual figure
+        calls this slack and drops the farm's tightest demand cap out of the What-If ranking.
+        """
+        e = result["demand_saturation"]["Farmers Market"]["Garlic"]
+        assert e["basis"] == "weekly"
+        assert 0.40 < e["fill"] < 0.60, f"annual fill drifted to {e['fill']:.2f} — re-measure"
+        assert e["peak_week_frac"] == pytest.approx(1.0, abs=1e-6), (
+            "the weekly cap must read as fully binding"
+        )
+        assert e["binding"] == pytest.approx(e["peak_week_frac"]), (
+            "the ranking basis must be the weekly row for a weekly cap"
+        )
+        assert len(e["weeks_at_cap"]) >= 5, f"only {len(e['weeks_at_cap'])} weeks at cap"
+        assert min(e["weeks_at_cap"]) >= 22, "flagged a week before the buyer's window opens"
+        assert max(e["weeks_at_cap"]) <= 35, "flagged a week after the buyer's window closes"
+
+    def test_annual_contracts_report_no_weekly_ceiling(self, result, golden_payload):
+        """`annual/52` is a limit the solver stopped imposing at B4; the panel kept printing it."""
+        annual = {(ch, cp) for cp_ in golden_payload["crops"]
+                  for ch, spec in (cp_.get("channels") or {}).items()
+                  for cp in [cp_["name"]]
+                  if str(spec.get("demand_cap_type", "")).lower() == "annual"}
+        seen = 0
+        for ch, cp, e in saturation_entries(result):
+            if (ch, cp) not in annual:
+                continue
+            seen += 1
+            assert e["basis"] == "annual", f"{ch}/{cp}"
+            assert e["peak_week_frac"] is None, f"{ch}/{cp} invented a weekly ceiling"
+            assert e["peak_week_cap_lbs"] is None, f"{ch}/{cp} invented a weekly cap figure"
+            assert e["weeks_at_cap"] == [], f"{ch}/{cp} flagged weeks against no row"
+        assert seen >= 3, f"only {seen} annual-contract rows found — re-check the payload"
+
+    def test_the_old_formula_really_did_overstate_this_farm(self, result, golden_payload):
+        """The measurement, pinned so it cannot quietly stop being true.
+
+        The old saturation is recomputed here from the payload — planted acreage x yield over
+        each channel's annual cap — entirely independently of anything the solver publishes, so
+        this is a comparison of two bases rather than a restatement of one.
+        """
+        acres = {}
+        for s in result["succession_schedule"]:
+            acres[s["crop"]] = acres.get(s["crop"], 0.0) + s["acres"]
+
+        overstated, phantom = 0, 0
+        for crop in golden_payload["crops"]:
+            gross = acres.get(crop["name"], 0.0) * float(crop["yield_per_acre"])
+            for ch, spec in (crop.get("channels") or {}).items():
+                cap = annual_equivalent_cap(spec)
+                e = result["demand_saturation"].get(ch, {}).get(crop["name"])
+                if cap <= 0 or e is None:
+                    continue
+                old = min(1.0, gross / cap)
+                if old - e["fill"] > 0.10:
+                    overstated += 1
+                if e["sold_lbs"] == 0.0 and old > 0.0:
+                    phantom += 1
+        assert overstated >= 8, (
+            f"only {overstated} rows differ by >10 points between the gross-harvest basis and "
+            f"the sold basis (10 when measured) — this farm no longer demonstrates W6"
+        )
+        assert phantom >= 3, (
+            f"only {phantom} rows sold zero pounds while the old formula reported a saturation "
+            f"(3 when measured)"
         )

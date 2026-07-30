@@ -504,3 +504,19 @@ def full_params(full_crops, full_channels, full_rainfall):
         cost_fert_per_lb=0.82,
         cost_fuel_per_L=1.25,
     )
+
+
+# ---------------------------------------------------------------------------
+# Shared solve cache (fixtures; the helpers live in tests/helpers.py)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def solved_two_crop(two_crop_params):
+    """The two-crop fixture, solved once per session.
+
+    Shared by test_channel_sales and test_demand_saturation. Both had grown their own
+    module-level `_SOLVED` dict guarding the SAME solve of `two_crop_params` — same idiom, same
+    assert, same docstring, twice, and one extra MILP per run.
+    """
+    from tests.helpers import solved_once
+    return solved_once("two_crop", two_crop_params)

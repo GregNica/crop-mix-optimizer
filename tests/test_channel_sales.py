@@ -27,22 +27,15 @@ import pytest
 from farm_v2.solver import solve_farm_v2
 
 
-_SOLVED = {}
-
-
 @pytest.fixture
-def solved(two_crop_params):
-    """Solve the two-crop fixture ONCE and reuse it across this module.
+def solved(solved_two_crop):
+    """The two-crop fixture, solved once and reused across this module.
 
-    `two_crop_params` is function-scoped so it cannot be consumed by a module-scoped fixture,
-    but the params are deterministic and the MILP is the slow part — so the solve is cached
-    here instead. Any test that needs to change the farm must deepcopy first.
+    The cache is in tests/helpers.py because test_demand_saturation wants the same solve; this
+    module used to carry its own copy of it, so the identical MILP ran twice per session. Any
+    test that needs to change the farm must deepcopy first.
     """
-    if not _SOLVED:
-        res = solve_farm_v2(**two_crop_params)
-        assert res["status"] == "optimal", res.get("status")
-        _SOLVED["res"], _SOLVED["params"] = res, two_crop_params
-    return _SOLVED["res"], _SOLVED["params"]
+    return solved_two_crop
 
 
 class TestStructure:

@@ -57,6 +57,14 @@ from farm_v2.utils.demand import build_demand_table, build_annual_caps
 from farm_v2.validate import validate_params
 
 
+# How full a resource or a demand cap has to be before the reports call it "at its limit".
+# One constant because it is one concept: `_diagnose_unplanted_crops` uses it to decide whether
+# a resource was tight enough to name as context, and `demand_saturation` uses it to decide
+# which weeks a channel sold its cap out in. It is published as `demand_at_cap_threshold` so a
+# reader can label the column it draws rather than assume a value.
+AT_CAP_FRACTION = 0.95
+
+
 # ---------------------------------------------------------------------------
 # Index helpers
 # ---------------------------------------------------------------------------
@@ -105,7 +113,6 @@ def _diagnose_unplanted_crops(
     these prices; it does not reject a crop for one reason. `tightest` is therefore reported as
     context, never as the cause, and only when a resource is genuinely near its limit.
     """
-    NEAR_LIMIT = 0.95
     out = []
     # Gate on a POSITIVE cap, not on key presence: a channel of type "annual" with a volume
     # of 0 — which is what a blank demand box sends — still has a key here. Keying on
@@ -157,7 +164,7 @@ def _diagnose_unplanted_crops(
                         ratio = used[w - 1] / cap[w - 1]
                         if ratio > best:
                             best = ratio
-                            if ratio >= NEAR_LIMIT:
+                            if ratio >= AT_CAP_FRACTION:
                                 rec["tightest"] = {"resource": res_name, "week": w,
                                                    "utilization": float(ratio)}
         rec["reason"] = "outcompeted"
@@ -269,6 +276,18 @@ def solve_farm_v2(
                                          "by_crop": {crop: {"lbs_sold", "revenue",
                                                             "weekly_lbs": [52]}}}}
                               Channel revenues sum to "revenue"; weekly_lbs sums to lbs_sold.
+        "demand_saturation" : dict — how full each crop-channel's demand is, measured against
+                              the row the solver enforces (C6 weekly, or C6b annual):
+                              {channel: {crop: {"basis", "cap_lbs", "sold_lbs", "fill",
+                                                "peak_week_frac", "peak_week_cap_lbs",
+                                                "weeks_at_cap", "binding"}}}
+                              `binding` is the utilisation of the enforced row and is the
+                              What-If ranking's basis. See the note where it is built for why
+                              an annual figure alone is not enough.
+        "demand_at_cap_threshold" : float — the utilisation at which a week counts as "at cap"
+                              in `weeks_at_cap`. Published so a reader can LABEL the column it
+                              renders instead of assuming; the constraint CSV wrote these counts
+                              under a ">=100%" heading while they were measured at >=95%.
         "successions"       : list[dict]
         "crops"             : list[dict]
         "channels"          : list[dict]
@@ -1009,12 +1028,23 @@ def solve_farm_v2(
     # C6b — Channel sales ≤ ANNUAL demand cap (one row per crop-channel that has one).
     # A yearly total is a sum across weeks, which no per-week row can express; see
     # expand_channel_demand and build_annual_caps in demand.py for the rest.
+    #
+    # `annual_rows` records WHICH crop-channels this loop actually gave an annual row to, so the
+    # reporting side can look it up instead of re-deriving it (W6). `demand_saturation` used to
+    # ask the same question a few hundred lines below in a different shape — `annual_caps` plus
+    # `not isfinite(weekly_cap).any()` — and the two agreed only because expand_channel_demand
+    # happens to return uniformly +inf per channel and the hurdle happens to zero the slice.
+    # Reporting against "the row the solver actually enforces" is the whole point of W6, so which
+    # row exists should be recorded where the row is created, not inferred twice. This mirrors
+    # cold_room_cols / ambient_room_cols, which are captured at construction and evaluated later.
+    annual_rows = set()
     for (c_idx, ch_idx), annual_lbs in annual_caps.items():
         # A channel dropped by the margin hurdle has its weekly caps zeroed above, which
         # already forces v to 0; the annual row would be slack. Skip it rather than carry a row
         # that can never bind.
         if float(demand_table[c_idx, ch_idx, 1:].max()) == 0.0:
             continue
+        annual_rows.add((c_idx, ch_idx))
         cols = [
             (idx_v_start + _vcw_index(c_idx, ch_idx, w, n_channels, N_WEEKS), 1.0)
             for w in range(1, N_WEEKS + 1)
@@ -1312,6 +1342,11 @@ def solve_farm_v2(
     storage_m3_weekly = [_row_value(cols) for cols in cold_room_cols]
     ambient_m3_weekly = [_row_value(cols) for cols in ambient_room_cols]
 
+    # Pounds sold per crop-channel over the year. Four separate reporting blocks below want this
+    # same slice-sum (revenue, crop_contribution, channel_sales, demand_saturation); computing it
+    # once means they cannot drift, and it is the quantity the whole money path is built on.
+    sold_by_pair = v_sol[:, :, 1:].sum(axis=2)
+
     # Revenue and costs
     revenue = 0.0
     packaging_cost = 0.0
@@ -1320,7 +1355,7 @@ def solve_farm_v2(
             ch_spec = crop.get("channels", {}).get(ch["name"], {})
             price = ch_spec.get("price_per_lb", 0.0)
             pkg   = ch_spec.get("packaging_cost_per_lb", 0.0)
-            sold  = v_sol[c_idx, ch_idx, 1:].sum()
+            sold  = sold_by_pair[c_idx, ch_idx]
             revenue       += sold * price
             packaging_cost += sold * pkg
 
@@ -1338,7 +1373,7 @@ def solve_farm_v2(
                           for i, sc in enumerate(successions) if sc["crop"] == c_idx))
         by_channel, net_rev_total, lbs_total = {}, 0.0, 0.0
         for ch_idx, ch in enumerate(channels):
-            sold = float(v_sol[c_idx, ch_idx, 1:].sum())
+            sold = float(sold_by_pair[c_idx, ch_idx])
             if sold <= 0:
                 continue
             net_rev = sold * float(net_after_price[c_idx, ch_idx])   # net of packaging + overhead
@@ -1378,7 +1413,7 @@ def solve_farm_v2(
         by_crop, ch_lbs, ch_rev = {}, 0.0, 0.0
         for c_idx, crop in enumerate(crops):
             weekly = v_sol[c_idx, ch_idx, 1:]            # index 0 = week 1
-            sold   = float(weekly.sum())
+            sold   = float(sold_by_pair[c_idx, ch_idx])
             if sold <= 0.0:
                 continue
             rev = sold * float(gross_price[c_idx, ch_idx])
@@ -1396,6 +1431,101 @@ def solve_farm_v2(
             "revenue":  ch_rev,
             "by_crop":  by_crop,
         }
+
+    # Demand saturation per crop-channel, measured against the row the solver ACTUALLY
+    # ENFORCES (W6).
+    #
+    # The client used to compute this itself as `gross annual harvest / this channel's cap`,
+    # where the numerator was the crop's ENTIRE harvest across every channel. So a crop selling
+    # nothing at all into Wholesale still printed a Wholesale saturation, beside a channel pie
+    # built from `channel_sales` showing it selling nothing there. Measured on the shipped farm:
+    # 10 of 14 crop-channel rows overstated by more than 10 points, and three rows sold ZERO lb
+    # while reporting 29%, 16% and 4%.
+    #
+    # WHY THE OBVIOUS FIX IS ALSO WRONG — this is what makes the calculation worth owning here
+    # rather than patching the numerator in JS. Simply swapping in pounds sold on the ANNUAL
+    # basis reads Garlic/Farmers Market at 50%, and that row sits at its weekly ceiling in every
+    # week it sells at all: the cap is 2,000 lb/wk across W22-W35, the garlic is not out of the
+    # ground until W29, so seven of the fourteen capped weeks are unservable and the annual
+    # figure halves. The old formula said 100% and was right by accident. "50%" would be a NEW
+    # wrong number, and it would have dropped the farm's tightest demand constraint out of the
+    # What-If ranking altogether.
+    #
+    # So each statement is reported against the row that exists, and never against one that
+    # does not:
+    #   fill            pounds sold / the year's total cap. "How much of this buyer's appetite
+    #                   did I fill." Garlic/FM = 50%, which is true and worth knowing — there
+    #                   are 14,000 lb of market appetite here that this plan cannot serve.
+    #   peak_week_frac  max over weeks of sold / THAT week's cap, for channels with weekly caps
+    #                   (C6). Garlic/FM = 100%. None for annual-cap channels, where no weekly
+    #                   ceiling exists at all — C6b is the only row, and reporting one anyway is
+    #                   the `annual/52` fiction the panel used to print.
+    #   binding         utilisation of whichever row the solver enforces. This is the What-If
+    #                   ranking's basis, and it puts demand on the same footing as every other
+    #                   entry in that list, all of which are peak-weekly.
+    #
+    # Emitted only for crops with acreage in the plan. "0% of Wholesale filled" for a crop that
+    # was never planted is noise, and `unplanted_crops` already explains why it is absent.
+    # Keying by crop name is safe because validate.py refuses duplicate crop names — see the
+    # W1 follow-up, where last-write-wins on this exact pattern silently dropped 75% of a
+    # channel's pounds.
+    # Whether a crop is in the plan is a question about the CROP, so it is answered once per
+    # crop rather than once per crop-channel. Same predicate `_diagnose_unplanted_crops` uses —
+    # these two must agree, because an absent row here is explained by `unplanted_crops` there.
+    planted = {crop["name"] for crop in crops
+               if float((crop_contribution.get(crop["name"]) or {}).get("acres_planted", 0.0)) > 1e-6}
+    demand_saturation = {}
+    for ch_idx, ch in enumerate(channels):
+        per_crop = {}
+        for c_idx, crop in enumerate(crops):
+            name = crop["name"]
+            if name not in planted:
+                continue
+            weekly_cap  = demand_table[c_idx, ch_idx, 1:]
+            sold        = float(sold_by_pair[c_idx, ch_idx])
+            finite      = np.isfinite(weekly_cap)
+
+            if (c_idx, ch_idx) in annual_rows:
+                # C6b is the only row the solver emitted for this pair: a yearly total, and no
+                # weekly ceiling anywhere. Read off `annual_rows` rather than re-deriving it —
+                # see the note at C6b.
+                basis, cap, fracs = "annual", float(annual_caps[(c_idx, ch_idx)]), None
+            else:
+                basis, cap = "weekly", float(np.where(finite, weekly_cap, 0.0).sum())
+                # Weeks with no cap divide by +inf, which is 0.0 — no branch, no warning.
+                fracs = np.minimum(1.0, v_sol[c_idx, ch_idx, 1:]
+                                   / np.where(finite & (weekly_cap > 0), weekly_cap, np.inf))
+            if cap <= 0:
+                continue
+
+            # Only what differs between the two bases is branched on. Writing the shared four
+            # fields twice is how a fifth one comes to disagree with itself.
+            fill = min(1.0, sold / cap)
+            entry = {
+                "basis":    basis,
+                "cap_lbs":  cap,
+                "sold_lbs": sold,
+                "fill":     fill,
+            }
+            if fracs is None:
+                entry["peak_week_frac"]    = None
+                entry["weeks_at_cap"]      = []
+                entry["peak_week_cap_lbs"] = None
+            else:
+                entry["peak_week_frac"] = float(fracs.max())
+                entry["weeks_at_cap"]   = [int(w) + 1 for w in np.flatnonzero(fracs >= AT_CAP_FRACTION)]
+                # The ceiling the plan is actually up against, so a "+10% demand" lever can be
+                # labelled without the client parsing week-range strings out of the form — the
+                # last place it rebuilt a cap for itself. Falls back to the largest weekly cap
+                # when nothing sells, since then no week is the tightest.
+                entry["peak_week_cap_lbs"] = float(
+                    weekly_cap[int(fracs.argmax())] if entry["peak_week_frac"] > 0
+                    else weekly_cap[finite].max()
+                )
+            entry["binding"] = fill if fracs is None else entry["peak_week_frac"]
+            per_crop[name] = entry
+        if per_crop:
+            demand_saturation[ch["name"]] = per_crop
 
     city_water_cost = 0.0
     if city_water_enabled and idx_cw_start is not None:
@@ -1580,6 +1710,8 @@ def solve_farm_v2(
         # than in the adapter so every entry point gets it — the What-If sweep, the sensitivity
         # runs and Monte Carlo never touch the browser's reporting code.
         "channel_sales":     channel_sales,
+        "demand_saturation": demand_saturation,
+        "demand_at_cap_threshold": AT_CAP_FRACTION,
         "profit":           profit,
         "operating_profit": operating_profit,
         "overhead_cost":    overhead_cost,

@@ -37,6 +37,14 @@ GUARDS = [
         "pies, the sales CSV and the P&L channel lines stop reconciling to the headline revenue",
     ),
     (
+        "demand-saturation-client",
+        ["tests/demand_saturation_client.cjs"],
+        "the client is no longer reading the solver's demand saturation (W6). If the constraint "
+        "panel or the What-If ranking starts deriving saturation from gross harvest and the "
+        "form's caps again, a crop that sells nothing into a channel will read as saturated "
+        "beside a pie showing it selling nothing there",
+    ),
+    (
         "golden-payload-staleness",
         ["scripts/capture_golden_payload.cjs", "--check"],
         "tests/golden/default_farm_payload.json pins a farm the app no longer ships. Run "
