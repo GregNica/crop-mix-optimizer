@@ -14,7 +14,7 @@ A team (Group 5) built an Excel spreadsheet with Microsoft Solver to figure this
 |-------|----------|--------|
 | Phase 0 | `Group 5_Baby Model_Final (2).xlsx` — original Excel Solver model | Reference only (see Historical Files) |
 | Phase 1 | `farm_optimization (1).ipynb` — Python notebook replicating the Excel model | Reference only (see Historical Files) |
-| Phase 2 | `farm_optimization_v2.ipynb` — 52-week generalized model with MC | Reference only (see Historical Files) |
+| Phase 2 | 52-week generalized model with MC | Superseded by `farm_v2/` + the web app; the notebook was retired 2026-07-31 (see below) |
 | Phase 3–4 | `index.html` — full web application | **Current deliverable** |
 
 ---
@@ -98,9 +98,9 @@ These files are not tracked in git but exist locally as reference artifacts. The
 |------|-----------|
 | `Group 5_Baby Model_Final (2).xlsx` | Original Excel model with Solver (Group 5 class project) |
 | `farm_optimization (1).ipynb` | Phase 1 Python notebook — reproduces Excel model exactly using scipy.milp |
-| `farm_optimization_v2.ipynb` | Phase 2 notebook — generalized 52-week model with MC and sensitivity sweeps |
-| `build_notebook_v2.py` | Script that generated `farm_optimization_v2.ipynb` from source cells |
-| `test_notebook_v2.py` | Cell-by-cell test runner for the Phase 2 notebook |
+| ~~`farm_optimization_v2.ipynb`~~ | **Retired 2026-07-31.** Recoverable from git history at `48203a8~1`. It carried no saved outputs, so it was only meaningful when RUN — and `build_notebook_v2.py` imported the live solver, so running it produced wrong money as the model moved on: measured $684,000 of wages charted as infrastructure and packaging understated by $71,561. Repair was not one-off (it re-broke on every solver change, with no test or CI), and its March-vintage model predates the inventory core, two storage pools, per-channel sales and committed labour. The web app is the deliverable; `tests/test_golden_farm.py` does the money verification it was standing in for |
+| ~~`build_notebook_v2.py`~~ | Retired with it — the generator |
+| ~~`test_notebook_v2.py`~~ | Retired with the notebook it ran |
 | `tests/` | Phase 2 unit tests for the Python solver modules |
 | `validation/` | Validation runs comparing notebook output to Excel |
 
