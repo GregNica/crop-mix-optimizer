@@ -88,21 +88,27 @@ class TestTheCreditIsBoundedByBothCeilings:
             "fixture no longer has a varying blend, so this test cannot catch a credit applied "
             "at a single average rate"
         )
-        # Bracket the credit by the cheapest and dearest weeks. An exact per-week rebuild would
-        # need the solved hours per week, which is what `absorbed` already is; bracketing keeps
-        # the oracle independent of the thing under test.
+        # Bracket the credit from ABOVE only. The lower bound `credit >= hrs * min_rate` is
+        # arithmetically false as soon as an absorbed hour lands in a zero-rate week:
+        # `salaried_absorbed_hours` counts physical hours in every week, and a week with no hourly
+        # staff earns no credit. The first version asserted it and passed only because this
+        # fixture adds a year-round hourly worker filling every week — an accident, and the exact
+        # property the class below deliberately relies on NOT holding.
         hrs = r["salaried_absorbed_hours"]
         assert hrs > 0, "no hours absorbed, so the rate cannot be checked"
         credit = -r["variable_cost_split"]["salaried_hours_absorbed"]
-        assert credit <= hrs * float(rate.max()) + 1e-6
-        assert credit >= hrs * float(rate[rate > 0].min()) - 1e-6
+        assert credit > 0.0
+        assert credit <= hrs * float(rate.max()) + 1e-6, (
+            f"credit ${credit:,.2f} exceeds {hrs:,.1f} h at the dearest weekly blend "
+            f"(${float(rate.max()):.2f}/h) — it is not crediting the rate it was charged at"
+        )
         # And it is nowhere near the salaried worker's OWN wage, which is the wrong rate to
         # credit at: the defect was an over-charge at the hourly blend, so that is what is undone.
         salaried_hourly_equivalent = 90_000.0 / 52 / 40
-        assert (-r["variable_cost_split"]["salaried_hours_absorbed"]) < hrs * salaried_hourly_equivalent * 0.9, (
-            f"credit ${r['salaried_absorbed_cost']:,.2f} over {hrs:,.1f} h looks like it was "
-            f"computed at the salaried wage (${salaried_hourly_equivalent:.2f}/h), not the "
-            f"hourly blend it was over-charged at"
+        assert credit < hrs * salaried_hourly_equivalent * 0.9, (
+            f"credit ${credit:,.2f} over {hrs:,.1f} h looks like it was computed at the salaried "
+            f"wage (${salaried_hourly_equivalent:.2f}/h), not the hourly blend it was "
+            f"over-charged at"
         )
 
 
@@ -225,18 +231,38 @@ class TestTheCashFloorSeesTheCreditToo:
     """
 
     def test_a_plan_the_farm_can_fund_is_not_refused(self, two_crop_params):
-        p = dict(two_crop_params,
-                 year_round_employees=[_salaried(hrs=40.0), _hourly(wage=22.0, count=2)],
-                 opening_cash=121_000.0, credit_line=0.0, cash_constraint_enabled=True)
-        r = solve_farm_v2(**p)
-        assert r["status"] == "optimal", (
-            f"got {r['status']!r} at $121,000 of opening cash. This farm is fundable once the "
-            f"salaried hours already paid for in Salaries stop being charged again in the cash "
-            f"floor; if C13 has lost that credit, the floor is demanding money nobody spends."
+        """C13 must not demand money the farm never spends — asserted on a SELF-CHECKING boundary.
+
+        The cumulative cash floor charges every crop hour at the hourly blend, and the salaried
+        share of that is already inside `fixed_weekly`. Leaving the credit out of C13 makes the
+        floor stricter than reality, so a farm that can fund its plan is told it cannot.
+
+        A constraint is only observable through feasibility, and measured on this fixture the floor
+        goes from slack to infeasible across a ~$1,000 band — there is no wide range where it merely
+        reshapes the plan. So this pins the boundary, and then pins that it IS a boundary: a farm
+        $6,000 poorer must be refused. That second solve is what stops this from rotting into a
+        test that passes with C13's credit deleted, which a bare "solves at $121,000" would do the
+        moment any change slid the boundary. Same discipline as the storage fixture's 1.5x
+        accumulation check: prove the fixture still discriminates before trusting what it says.
+        """
+        def _farm(cash):
+            return dict(two_crop_params,
+                        year_round_employees=[_salaried(hrs=40.0), _hourly(wage=22.0, count=2)],
+                        opening_cash=cash, credit_line=0.0, cash_constraint_enabled=True)
+
+        fundable = solve_farm_v2(**_farm(121_000.0))
+        assert fundable["status"] == "optimal", (
+            f"got {fundable['status']!r} at $121,000 of opening cash. This farm is fundable once "
+            f"the salaried hours already paid for in Salaries stop being charged AGAIN in the cash "
+            f"floor. If C13 has lost that credit, the floor is demanding money nobody spends."
         )
-        # And the credit must be doing real work here, or the boundary has drifted and this test
-        # is asserting something it no longer discriminates.
-        assert -r["variable_cost_split"]["salaried_hours_absorbed"] > 1_000.0
+        refused = solve_farm_v2(**_farm(115_000.0))
+        assert refused["status"] == "infeasible", (
+            f"a farm $6,000 poorer solved anyway ({refused['status']!r}), so $121,000 is no longer "
+            f"near the funding limit and the assertion above no longer discriminates. Re-measure "
+            f"the boundary rather than deleting this test."
+        )
+        assert -fundable["variable_cost_split"]["salaried_hours_absorbed"] > 1_000.0
 
 
 class TestItInteractsWithTheFlexLevers:

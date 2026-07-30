@@ -85,7 +85,7 @@ VC_CATEGORIES = ("labor", "water", "fertilizer", "fuel", "seed")
 # charged, and pass every reconciliation test — because the total is summed from the same dict.
 # Asserted at import rather than commented about, since the comment above schedules exactly the
 # edit that could trip it (crop protection, backlog R1).
-assert not set(VC_CATEGORIES) & {"packaging", "total", "salaried_hours_absorbed"}, (
+assert not set(VC_CATEGORIES) & {"packaging", "total", "salaried_hours_absorbed", "overhead"}, (
     "a VC_CATEGORIES name collides with a keyword used to extend the split dicts; the zipped "
     "column would be silently overwritten"
 )
@@ -663,8 +663,16 @@ def solve_farm_v2(
                 "revenue_per_acre": float(gross * sold_lbs_per_acre),
                 "sold_lbs_per_acre": float(sold_lbs_per_acre),
                 "var_cost_per_lb": float(var_cost_per_lb[c_idx]),
-                # The breakdown the row tooltip renders — the objective's own products, so the
-                # displayed split always sums to the cost that produced the plan.
+                # The breakdown the row tooltip renders — the objective's own products.
+                # ⚠️ LABOUR IS GROSS (W9): the objective now credits back the hours a salaried
+                # worker already covers, and this split does not, because a per-crop labour cost
+                # that depended on what else is planted that week would fork the one margin
+                # kernel. So this is a STANDALONE cost — what an acre of this crop-channel costs
+                # if it buys all its own labour — and it is deliberately NOT the marginal cost
+                # inside a plan that has salaried capacity to spare. The comment that used to
+                # stand here claimed the split "always sums to the cost that produced the plan";
+                # that stopped being true for labour and is the reason the margin hurdle below
+                # carries its own warning.
                 "cost_per_acre": split,
             }
 
@@ -1902,11 +1910,16 @@ def solve_farm_v2(
         # The cost breakdowns the P&L prints under each total (W4). See the docstring for the
         # contract and the construction sites for why each total is summed from its own split.
         "variable_cost_split": variable_cost_split,
-        # HOURS only. The credit's DOLLARS are published once, as the negative
-        # `salaried_hours_absorbed` entry inside `variable_cost_split` — returning them a second
-        # time under another name and the opposite sign is how "fert" and "fertilizer" came to
-        # label one cost two ways. Hours are a genuinely different quantity, and unlike the
-        # dollars they have no home in a cost split.
+        # PHYSICAL hours of crop work covered by salaried staff — min(hours worked, salaried
+        # capacity) in every week, whether or not that week earned a credit. The credit's DOLLARS
+        # are published once, as the negative `salaried_hours_absorbed` entry inside
+        # `variable_cost_split`; returning them a second time under another name and the opposite
+        # sign is how "fert" and "fertilizer" came to label one cost two ways.
+        # ⚠️ DO NOT RENDER THESE TWO TOGETHER AS A RATE. In a week with no hourly staff the blend
+        # is 0, so those hours are worked and absorbed but earn nothing back. Measured on the
+        # two-crop fixture: 1,185.6 h published, 80.0 of them in zero-rate weeks, against a
+        # $19,900.91 credit — dividing gives $16.79/h for a crew that costs $18.00/h. The hours
+        # are honest and the credit is honest; their quotient is not a wage.
         "salaried_absorbed_hours": float(absorbed_hours_weekly.sum()),
         "fixed_cost":       fixed_cost,
         "fixed_cost_split": fixed_cost_split,
