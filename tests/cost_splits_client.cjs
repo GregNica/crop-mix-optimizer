@@ -34,19 +34,24 @@ const ok = (name, cond) => { if (!cond) fail(name); };
 // produce different numbers than these.
 const RES = {
   revenue: 100000,
-  variable_cost: 41000,
+  variable_cost: 38000,   // = sum(variable_cost_split), credit included
   fixed_cost: 22400,   // = sum(fixed_cost_split)
-  operating_profit: 35600,   // = 100000 - 41000 - 22400 - (300 + 700 + 0)
+  operating_profit: 38600,   // = 100000 - 38000 - 22400 - (300 + 700 + 0)
   overhead_cost: 5000,
   interest_cost: 400,
   fixed_selling_cost: 1200,
-  profit: 29000,             // = 35600 - 5000 - 400 - 1200
+  profit: 32000,             // = 38600 - 5000 - 400 - 1200
   peak_borrowing: 9000,
   city_water_cost: 300,
   overtime_cost: 700,
   hire_cost: 0,
   variable_cost_split: {
     labor: 20000, water: 1500, fertilizer: 2500, fuel: 900, seed: 8100, packaging: 8000,
+    // The one NEGATIVE entry in either split: hours the salaried crew already covers, charged
+    // gross in `labor` above and taken back here (W9). Present so that something asserts the
+    // sign flip — `costRow` negates every amount, so a credit must print as a POSITIVE number
+    // in a column headed "negative = cost", and that is the most user-visible effect of W9.
+    salaried_hours_absorbed: -3000,
   },
   fixed_cost_split: {
     harvest_storage: 4000, ambient_storage: 750, water_storage: 1000, irrigation: 2000,
@@ -77,12 +82,13 @@ const PARAMS = {
 // it would pass for any labels at all, which is the vacuous shape this repo has caught twice
 // (T27, T83). These are user-visible copy, so a change to them SHOULD have to be made twice.
 const EXPECT_VARIABLE_LABELS = {
-  labor:      'Field Labor (hourly, field time only)',
+  labor:      'Field Labor (all crop hours, at the hourly crew rate)',
   water:      'Irrigation Water (on-farm supply — $0 until a pumping cost is entered)',
   fertilizer: 'Fertilizer',
   fuel:       'Fuel',
   seed:       'Seed / Transplants',
   packaging:  'Packaging (per lb sold)',
+  salaried_hours_absorbed: 'less: salaried hours already paid in Salaries (credit)',
 };
 const EXPECT_FIXED_LABELS = {
   harvest_storage:        'Harvest Storage (refrigerated)',
@@ -154,6 +160,14 @@ const BOUGHT = ['City Water (metered purchase)', 'Overtime Premium', 'Hired Labo
       ok(`fixed row "${label}" carries the payload value (got ${got}, want ${-amount})`,
          got === -amount);
     }
+
+    // The credit is the one row that prints POSITIVE in a column headed "negative = cost",
+    // because it is money NOT spent. Stated on its own rather than left to the loop above.
+    const creditRow = amountOf(rows, 'less: salaried hours already paid in Salaries (credit)');
+    ok(`the salaried-hours credit prints as a positive amount (got ${creditRow})`,
+       creditRow === 3000);
+    ok('every other COGS row prints negative',
+       cogs.filter(([, v]) => v > 0).length === 1);
 
     // ...and they add up to the totals printed above them. The point of the whole fix.
     const sum = a => a.reduce((s, [, v]) => s + v, 0);

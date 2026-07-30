@@ -10,10 +10,12 @@ Variable layout (all collected into one flat vector ``z`` for scipy.milp):
   next n_crops*52          inv[c,w]       — lbs held at END of week w (continuous)
   next n_crops*52          waste[c,w]     — lbs discarded in week w (continuous)
   then, when enabled:      city_water[w], overtime[w], hire[w]  — 52 each
+  then always:             wstore[w], absorbed[w]                — 52 each
 
 Constraint order (rows of A):
   C1   land (52)
   C2   labor (52)
+  C2b  salaried credit ≤ hours worked on crops (52)
   C3   water (52)
   C4a  inventory balance — EQUALITY, inv[c,0]=0 (n_crops × 52)
   C4b  storage capacity on room occupancy — cold pool then ambient pool (2 × 52)
@@ -83,7 +85,7 @@ VC_CATEGORIES = ("labor", "water", "fertilizer", "fuel", "seed")
 # charged, and pass every reconciliation test — because the total is summed from the same dict.
 # Asserted at import rather than commented about, since the comment above schedules exactly the
 # edit that could trip it (crop protection, backlog R1).
-assert not set(VC_CATEGORIES) & {"packaging", "total"}, (
+assert not set(VC_CATEGORIES) & {"packaging", "total", "salaried_hours_absorbed"}, (
     "a VC_CATEGORIES name collides with a keyword used to extend the split dicts; the zipped "
     "column would be silently overwritten"
 )
@@ -349,11 +351,16 @@ def solve_farm_v2(
                               in `weeks_at_cap`. Published so a reader can LABEL the column it
                               renders instead of assuming; the constraint CSV wrote these counts
                               under a ">=100%" heading while they were measured at >=95%.
-        "variable_cost_split" : dict — variable cost by category (VC_CATEGORIES, plus packaging).
-                              Sums to "variable_cost" exactly, because that total is summed from
-                              it. Packaging is charged per pound SOLD rather than per acre, so it
-                              is not in the internal `vc_split` at all — see the construction
-                              site for what that cost this fix.
+        "variable_cost_split" : dict — variable cost by category (VC_CATEGORIES, plus packaging,
+                              plus one CREDIT). Sums to "variable_cost" exactly, because that
+                              total is summed from it. Packaging is charged per pound SOLD rather
+                              than per acre, so it is not in the internal `vc_split` at all — see
+                              the construction site for what that cost this fix.
+                              ⚠️ `labor` is GROSS — every crop hour at the hourly crew's blended
+                              wage — and `salaried_hours_absorbed` is a NEGATIVE entry taking back
+                              the hours a salaried worker already covers (W9). The gross figure is
+                              what every per-crop cost is built from, so it stays; the total is
+                              net. Do not read `labor` as what the farm pays for labour.
         "fixed_cost_split"  : dict — fixed cost by component (harvest_storage,
                               ambient_storage, water_storage, irrigation, equipment_storage,
                               fuel_storage, machinery, property_mortgage_rent,
@@ -475,6 +482,7 @@ def solve_farm_v2(
     labor_capacity         = labor_result["labor_capacity"]          # (52,)
     hourly_labor_rate      = labor_result["hourly_labor_rate"]       # (52,)
     salaried_weekly_cost   = labor_result["salaried_weekly_cost"]
+    salaried_capacity      = labor_result["salaried_capacity"]       # (52,) already-paid hours
 
     labor_rate = compute_labor_rates(successions, crops, N_WEEKS)  # (N_S, 53)
 
@@ -749,6 +757,11 @@ def solve_farm_v2(
     # water_storage_capacity is 0 the whole block is bounded to 0 and presolve removes it,
     # which keeps ONE water balance in the code instead of a tank path and a no-tank path.
     idx_ws_start = _next; _next += N_WEEKS
+    # absorbed[w] — crop-labour hours in week w that SALARIED staff cover (W9). Follows wstore's
+    # convention rather than the *_enabled one: its off state is a bound of 0 (a farm with no
+    # salaried staff), so allocating it unconditionally keeps ONE labour cost path instead of a
+    # salaried path and an all-hourly path.
+    idx_abs_start = _next; _next += N_WEEKS
     n_vars = _next
 
     # -----------------------------------------------------------------------
@@ -821,6 +834,39 @@ def solve_farm_v2(
     # here would be incoherent. Minimum-storage is now strictly optimal.
     c_obj[idx_ws_start : idx_ws_start + N_WEEKS] += WATER_LEVEL_TIE_BREAK_PER_L_WEEK
 
+    # Salaried hours absorbed into crop work — a CREDIT, and the only negative cost coefficient
+    # in this objective (W9).
+    #
+    # THE DEFECT: a salaried worker's hours count toward `labor_capacity` (deliberately — see the
+    # note at the end of Step 9, where excluding them let overtime buy back capacity the farm
+    # already had), while their pay is a fixed weekly commitment charged in full to
+    # `fixed_cost_split.salaries`. But every crop labour hour is ALSO charged at
+    # `hourly_labor_rate`, the blend of the HOURLY staff. So the hours a salaried person spends on
+    # crops are paid for twice. Measured on the shipped farm: the Farm Manager supplies 36 h/wk of
+    # field capacity against ~253 h/wk used, and $44,702/yr — 8.1% of net profit — was billed
+    # twice. The two endpoints were already right and only the MIXED crew was wrong: with no
+    # hourly staff `hourly_labor_rate` is 0 so labour is free and paid once via the salary, and
+    # with no salaried staff there is no salary line at all.
+    #
+    # WHY A CREDIT RATHER THAN RE-PRICING THE HOURS. Charging the first `salaried_capacity[w]`
+    # hours at zero is the same optimisation problem, but it makes per-crop labour cost depend on
+    # what else is planted that week — so `channel_margins[crop][ch]["cost_per_acre"]["labor"]`,
+    # which the contribution table renders and the margin hurdle reads, would need a second cost
+    # basis. That forks the ONE margin kernel this file exists to keep single (SPEC_v3 §8). As a
+    # credit, every crop's labour stays priced at the gross blend — one basis, unchanged — and the
+    # correction is a single auditable line that the P&L can show next to the cost it offsets.
+    #
+    # `absorbed[w] ≤ salaried_capacity[w]` is a bound (Step 7) and `absorbed[w] ≤ hours worked on
+    # crops` is C2b. Both ceilings are needed: the bound alone would credit a farm for salaried
+    # hours in a week when nothing is growing, which is the opposite error — an idle manager is a
+    # cost, not a saving. Minimising -rate x absorbed drives it to min(used, capacity) exactly,
+    # so no `min` and no second solve.
+    #
+    # NOT a tie-break: this is real money, and it is negative on purpose. It is the one place the
+    # objective can be improved by doing MORE of something, so if a future change makes `absorbed`
+    # unbounded above, the LP goes unbounded rather than quietly overstating profit.
+    c_obj[idx_abs_start : idx_abs_start + N_WEEKS] = -hourly_labor_rate
+
     # Overtime cost (incremental rate above regular pay)
     if overtime_enabled and idx_ot_start is not None:
         ot_extra_rate = hourly_labor_rate * (overtime_rate_multiplier - 1.0)
@@ -854,6 +900,10 @@ def solve_farm_v2(
         ub[idx_ot_start : idx_ot_start + N_WEEKS] = max_overtime_hrs_per_week
     if hire_enabled and idx_hire_start is not None:
         ub[idx_hire_start : idx_hire_start + N_WEEKS] = max_hire_hrs_per_week
+    # A salaried worker cannot absorb more hours than they have (W9). This is one of the two
+    # ceilings on `absorbed`; the other — that it cannot exceed the hours actually worked on
+    # crops — is C2b, because it depends on x. At zero salaried staff the block pins to 0.
+    ub[idx_abs_start : idx_abs_start + N_WEEKS] = salaried_capacity
 
     # -----------------------------------------------------------------------
     # Step 8 — Integrality
@@ -917,19 +967,41 @@ def solve_farm_v2(
         ]
         add_row(cols, -np.inf, 1.0)
 
+    # Crop labour hours in week w, as constraint coefficients on x. Built ONCE because two rows
+    # need it — C2 caps it at capacity, C2b caps the salaried credit by it — and a second copy is
+    # how the credit comes to be measured against different hours than the charge it corrects.
+    labor_cols_by_week = [
+        [(idx_x_start + i, total_land * labor_rate[i][w])
+         for i in range(N_S)
+         if phase_table[i][w] is not None]
+        for w in range(1, N_WEEKS + 1)
+    ]
+
     # C2 — Labor: Σ x[i]×land×labor_rate ≤ capacity[w] (+ overtime if enabled)
     for w in range(1, N_WEEKS + 1):
-        cols = [
-            (idx_x_start + i, total_land * labor_rate[i][w])
-            for i in range(N_S)
-            if phase_table[i][w] is not None
-        ]
+        cols = list(labor_cols_by_week[w - 1])
         rhs = labor_capacity[w - 1]
         if overtime_enabled and idx_ot_start is not None:
             cols.append((idx_ot_start + w - 1, -1.0))
         if hire_enabled and idx_hire_start is not None:
             cols.append((idx_hire_start + w - 1, -1.0))
         add_row(cols, -np.inf, rhs)
+
+    # C2b — Salaried hours cannot absorb more than the crops actually needed (W9):
+    #
+    #     absorbed[w] ≤ Σ x[i]×land×labor_rate[i][w]
+    #
+    # The companion ceiling to the `absorbed ≤ salaried_capacity` bound in Step 7. Without this
+    # row the objective would collect the credit in a week with nothing planted, turning an idle
+    # salaried worker into a saving. The two together make `absorbed` settle at
+    # min(hours worked, salaried capacity) with no `min` in the model.
+    for w in range(1, N_WEEKS + 1):
+        cols = [(col, -coeff) for col, coeff in labor_cols_by_week[w - 1]]
+        # A week no succession touches leaves `cols` empty; the row is then `absorbed ≤ 0`, which
+        # is what we want, so it is still emitted rather than skipped — skipping would leave the
+        # credit bounded only by capacity.
+        cols.append((idx_abs_start + w - 1, 1.0))
+        add_row(cols, -np.inf, 0.0)
 
     # C3 — Water, with the tank actually storing something (audit B7)
     #
@@ -1288,6 +1360,13 @@ def solve_farm_v2(
         if hire_enabled and idx_hire_start is not None:
             for w in range(W):
                 cols.append((idx_hire_start + w, -hire_extra_rate_arr[w]))
+        # Salaried hours absorbed into crop work, up to W — a cash INFLOW to this row, because
+        # `cum_var` above charges every crop hour at the hourly blend while the salaried share of
+        # it is already inside `fixed_weekly` (W9). Omitting it would leave the cash floor
+        # demanding money the farm never spends, which is the same double-charge one constraint
+        # over: it would understate borrowing capacity and could refuse a feasible plan.
+        for w in range(W):
+            cols.append((idx_abs_start + w, hourly_labor_rate[w]))
 
         # Fixed selling (stall fees/retainers) is a steady weekly cash outflow → in the floor.
         rhs_lo = floor + W * (fixed_weekly + fixed_selling_per_week)
@@ -1435,9 +1514,38 @@ def solve_farm_v2(
     #
     # var_cost_coeff is untouched: the objective still uses it, so the PLAN cannot move. Only
     # the addition order of the reported figure changes (float noise, ~1e-10).
+    # Salaried hours absorbed into crop work (W9) — a NEGATIVE entry, and the only one in either
+    # split. It belongs here rather than as a credit against `fixed_cost_split.salaries` for two
+    # reasons: it sits beside the `labor` line it corrects, and W4's invariant is that each split
+    # sums to its own total, which a credit parked under the fixed breakdown would break. So
+    # `variable_cost` becomes what the farm actually pays for labour at the margin, while the
+    # `labor` line above it stays the gross hours x blended-rate figure every per-crop cost is
+    # built from — one basis, with the correction stated once.
+    # Crop labour hours actually worked, by week. Needed here for the W9 credit and again below
+    # for the hire/overtime split; both want the same quantity, so it is built once.
+    labor_used_weekly = np.zeros(N_WEEKS + 1)
+    for i in range(N_S):
+        if x_sol[i] <= 1e-9:
+            continue
+        for w in range(1, N_WEEKS + 1):
+            labor_used_weekly[w] += total_land * labor_rate[i][w] * x_sol[i]
+
+    # The absorbed hours are RECOMPUTED from the plan, not read out of `absorbed_sol` — the same
+    # reasoning as the hire/overtime split below, and as the two tie-breaks this file already
+    # carries. `absorbed[w]`'s objective coefficient is -hourly_labor_rate[w], so in a week with
+    # NO hourly staff available that coefficient is ZERO: the LP is indifferent anywhere in
+    # [0, min(used, capacity)] and HiGHS picks arbitrarily. The cost is unaffected (a zero rate
+    # times anything is zero), but the published HOURS would not be a function of the inputs —
+    # measured on a fixture whose only hourly crew is seasonal, the solved vector reported
+    # 1,246.1 h against a true 1,366.1 h, and on an all-salaried farm 0.0 h against 1,391.1 h.
+    # Deriving it costs nothing and is right in every week; the bounds and C2b are what make the
+    # PLAN right, which is the job the variable is actually there for.
+    absorbed_hours_weekly = np.minimum(labor_used_weekly[1:], salaried_capacity)
+    salaried_absorbed_cost = float(np.dot(absorbed_hours_weekly, hourly_labor_rate))
     variable_cost_split = dict(
         zip(VC_CATEGORIES, (float(v) for v in x_sol @ vc_split)),
         packaging=float(packaging_cost),
+        salaried_hours_absorbed=-salaried_absorbed_cost,
     )
     variable_cost = float(sum(variable_cost_split.values()))
 
@@ -1612,19 +1720,6 @@ def solve_farm_v2(
         cw_sol = z[idx_cw_start : idx_cw_start + N_WEEKS]
         city_water_cost = cw_sol.sum() * city_water_cost_per_L
 
-    # Labor-flex reporting (hired + overtime). The hire/overtime split is recomputed
-    # deterministically from the labor actually used, rather than read from the raw
-    # decision variables, because when hire is cheaper than overtime the LP split is
-    # degenerate (many equal-cost splits). The cost-optimal split is: fill hired labor
-    # up to its cap first, then overtime — which is exactly what we reconstruct here, so
-    # the recomputed costs equal the objective's labor-flex cost.
-    labor_used_weekly = np.zeros(N_WEEKS + 1)
-    for i in range(N_S):
-        if x_sol[i] <= 1e-9:
-            continue
-        for w in range(1, N_WEEKS + 1):
-            labor_used_weekly[w] += total_land * labor_rate[i][w] * x_sol[i]
-
     hired_hours_weekly    = np.zeros(N_WEEKS + 1)
     overtime_hours_weekly = np.zeros(N_WEEKS + 1)
     if overtime_enabled or hire_enabled:
@@ -1691,6 +1786,11 @@ def solve_farm_v2(
             + hired_hours_weekly[w]    * hr_rate_w[w - 1]
             + overhead_pct_of_revenue  * weekly_gross_rev[w]
             + fixed_selling_per_week
+            # Negative: `weekly_vcost` charges every crop hour at the hourly blend, and the
+            # salaried share of those hours is already inside `fixed_weekly` (W9). It has to come
+            # off the REPORTED curve as well as C13's, or peak borrowing and the interest line
+            # would be computed against money the farm never spends.
+            - absorbed_hours_weekly[w - 1] * hourly_labor_rate[w - 1]
         )
 
     weekly_cash_flow = np.zeros(N_WEEKS + 1)
@@ -1802,6 +1902,12 @@ def solve_farm_v2(
         # The cost breakdowns the P&L prints under each total (W4). See the docstring for the
         # contract and the construction sites for why each total is summed from its own split.
         "variable_cost_split": variable_cost_split,
+        # HOURS only. The credit's DOLLARS are published once, as the negative
+        # `salaried_hours_absorbed` entry inside `variable_cost_split` — returning them a second
+        # time under another name and the opposite sign is how "fert" and "fertilizer" came to
+        # label one cost two ways. Hours are a genuinely different quantity, and unlike the
+        # dollars they have no home in a cost split.
+        "salaried_absorbed_hours": float(absorbed_hours_weekly.sum()),
         "fixed_cost":       fixed_cost,
         "fixed_cost_split": fixed_cost_split,
         "city_water_cost":  city_water_cost,

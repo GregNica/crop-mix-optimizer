@@ -16,6 +16,7 @@ Two employee categories (per SPEC_v2.md §5D):
 Derived arrays (all 52-element, 0-indexed for weeks 1..52):
 
   labor_capacity[w]          total available hours in week w (salaried + hourly)
+  salaried_capacity[w]       of that, the hours already paid for by salary (W9)
   hourly_labor_rate[w]       blended $/hour across all hourly employees available in w
                               (including benefits; weighted by count × hours_per_week)
   salaried_weekly_fixed_cost total $/week for salaried staff (constant, added to fixed cost)
@@ -65,6 +66,7 @@ def compute_labor_arrays(
         "labor_capacity"            np.ndarray shape (n_weeks,) — total hrs/week (1-indexed)
         "hourly_labor_rate"         np.ndarray shape (n_weeks,) — blended $/hr
         "labor_capacity_hourly"     np.ndarray shape (n_weeks,) — hourly-only hrs/week
+        "salaried_capacity"         np.ndarray shape (n_weeks,) — hrs/week already paid by salary
         "salaried_weekly_cost"      float — $/week, constant fixed cost
         "guaranteed_hourly_cost"    np.ndarray shape (n_weeks,) — $/week for guaranteed mins
         "piece_rate_workers"        list[dict] — seasonal workers with piece_rate_per_lb set
@@ -76,6 +78,7 @@ def compute_labor_arrays(
     guaranteed_cost       = np.zeros(n_weeks, dtype=float)
 
     salaried_weekly_cost  = 0.0
+    salaried_capacity     = np.zeros(n_weeks, dtype=float)   # hours already paid for (W9)
     piece_rate_workers    = []
 
     # --- Year-round employees (available every week) ---
@@ -96,6 +99,13 @@ def compute_labor_arrays(
             # Annual wage → weekly cost
             weekly_cost = count * wage * (1 + bene) / 52
             salaried_weekly_cost += weekly_cost
+            # Capacity that is ALREADY PAID FOR (W9): these hours are available to crops, and
+            # their cost is the salary above rather than an hourly charge. Accumulated here, in
+            # the branch that knows the worker is salaried, rather than derived downstream as
+            # `labor_capacity - labor_capacity_hourly` — that subtraction happens to be correct
+            # only because every seasonal worker is hourly, and it would make a live value depend
+            # on `labor_capacity_hourly`, which no longer has a consumer in farm_v2.
+            salaried_capacity += total_hrs_per_week
 
         elif emp_type == "hourly":
             effective_rate = wage * (1 + bene)
@@ -164,6 +174,7 @@ def compute_labor_arrays(
     return {
         "labor_capacity":         labor_capacity,
         "labor_capacity_hourly":  labor_capacity_hourly,
+        "salaried_capacity":      salaried_capacity,
         "hourly_labor_rate":      hourly_labor_rate,
         "salaried_weekly_cost":   salaried_weekly_cost,
         "guaranteed_hourly_cost": guaranteed_cost,

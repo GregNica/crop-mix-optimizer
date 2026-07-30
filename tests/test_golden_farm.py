@@ -52,14 +52,37 @@ pytestmark = pytest.mark.skipif(not PAYLOAD.exists(), reason="golden payload mis
 # (see CASH_TIMED_LINES below for why the other two cannot be).
 GOLDEN = {
     "revenue":          1_621_121.85,
-    "variable_cost":      584_030.30,
+    "variable_cost":      538_864.69,
     "fixed_cost":         213_097.22,
     "overhead_cost":      259_379.50,
-    "interest_cost":        1_085.48,
-    "profit":             550_529.36,
-    "operating_profit":   823_994.33,
+    "interest_cost":          849.19,
+    "profit":             595_931.24,
+    "operating_profit":   869_159.94,
 }
 # Baseline history — re-pin ONLY with a reason, and record it here.
+#   2026-07-30 (W9 — salaried crop hours were billed twice): variable_cost 584,030.30 ->
+#     538,864.69 (-45,165.61), profit 550,529.36 -> 595,931.24 (+45,401.88), interest 1,085.48 ->
+#     849.19. Revenue, fixed_cost and overhead are UNCHANGED — this is a pure cost correction.
+#
+#     A salaried worker's hours count toward labor_capacity (deliberately: excluding them let
+#     overtime buy back capacity the farm already had) while their salary is charged in full to
+#     fixed_cost_split.salaries. But every crop labour hour was ALSO charged at
+#     hourly_labor_rate, the blend of the HOURLY crew — so the hours the Farm Manager spends on
+#     crops were paid for twice. Measured before the fix: 36 h/wk of salaried field capacity
+#     against ~253 h/wk used, $44,702/yr = 8.1% of net profit, billed twice. Only the MIXED crew
+#     was ever wrong; an all-salaried farm has hourly_labor_rate = 0 and an all-hourly farm has
+#     no salary line.
+#
+#     Fixed as a CREDIT (an `absorbed[w]` variable earning -rate, bounded by salaried capacity
+#     and by C2b at the hours actually worked) rather than by re-pricing the hours, because
+#     making the first N hours free per week would make per-crop labour depend on what else is
+#     planted that week and fork the one margin kernel. The credit lands in
+#     variable_cost_split as `salaried_hours_absorbed`, so both W4 invariants still hold.
+#
+#     ⚠️ NET MARGIN 34.0% -> 36.8%, i.e. this makes M1 WORSE, and it is the fourth honest fix in
+#     a row to do so. The credit is $45,357 against $44,702 measured beforehand: the difference
+#     is the plan itself moving, because 10 of 52 weeks sat BELOW the salaried pool where the
+#     marginal hour is genuinely free, so winter labour got cheaper and the plan shifted.
 #   2026-07-30 (W4): re-captured to the CENT, and profit 550,524 -> 550,529.36 / interest
 #     1,090.78 -> 1,085.48. NOT an economic change: revenue, variable_cost, fixed_cost,
 #     operating_profit and peak_borrowing are identical to the cent, and 38 successions are planted
@@ -532,7 +555,17 @@ class TestCropContribution:
         double-counted, dropped, or allocated to the wrong bucket, this is what catches it."""
         r = result
         total = sum(d["contribution"] for d in r["crop_contribution"].values())
-        rebuilt = total - r["fixed_cost"] - r["fixed_selling_cost"] - r["interest_cost"]
+        # `salaried_absorbed_cost` is ADDED BACK because every per-crop `growing_cost` charges its
+        # labour at the gross hourly blend, while the farm only pays that blend for the hours the
+        # salaried crew does not already cover (W9). Keeping the per-crop figures gross is what
+        # keeps ONE labour cost basis across the margin kernel; the consequence is that this
+        # identity carries the credit as its own term, exactly as it already carries fixed cost,
+        # channel fixed selling and interest. On the shipped farm the term is $45,357 — so if it
+        # is ever dropped, this assertion is what says so. Read off the split rather than a second
+        # key holding the same number with the opposite sign.
+        credit = -r["variable_cost_split"]["salaried_hours_absorbed"]   # published negative
+        rebuilt = (total - r["fixed_cost"] - r["fixed_selling_cost"] - r["interest_cost"]
+                   + credit)
         assert rebuilt == pytest.approx(r["profit"], abs=1.0), (
             f"per-crop contributions do not rebuild net profit: {rebuilt:,.2f} vs {r['profit']:,.2f}. "
             "A cost line is missing, doubled, or in the wrong bucket."

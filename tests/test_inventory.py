@@ -344,9 +344,18 @@ class TestStorageBindsOnRoomOccupancy:
         other asserted the cap was respected on a plan using 0.44% of it, and passed with the
         storage row deleted outright. Both were caught by mutation; keep this one honest.
         """
-        # Measured on this fixture: 528 m3 held against a 330 m3 peak weekly inflow (1.6x).
+        # The buyer's weekly ceiling is what forces accumulation, so it is the fixture's real
+        # tuning knob. Re-tuned 30,000 -> 15,000 lb/wk on 2026-07-30, when W9 made marginal labour
+        # cheaper in low-activity weeks, the plan shifted, and the ratio fell to 1.47x — just under
+        # the 1.5x this test needs to tell a held-stock cap from an inflow cap. Measured across the
+        # range at that point: 30,000 -> 1.47x, 22,000 -> 2.15x, 15,000 -> 2.46x, 10,000 -> 1.64x,
+        # 6,000 -> 1.56x. 15,000 sits at the top of that curve rather than at the edge of the
+        # threshold, so the next plan shift moves the ratio without invalidating the fixture.
+        # LOWERING THE 1.5x THRESHOLD WOULD HAVE BEEN THE WRONG FIX: the gap between held and
+        # inflow IS the discriminating power, so shrinking it to accommodate a plan change trades
+        # away the only thing the test proves.
         p = _one_crop_farm(full_params, harvest_season=("03-01", "05-24"),
-                           demand_season="W01-W52", shelf_life=8, weekly_lbs=30_000)
+                           demand_season="W01-W52", shelf_life=8, weekly_lbs=15_000)
         loose = _solve(p, harvest_storage_cap=1e9)
         crop = loose["crops"][0]
         inflow = _weekly_sellable_inflow(loose, p["total_land"], 1.0)[0]

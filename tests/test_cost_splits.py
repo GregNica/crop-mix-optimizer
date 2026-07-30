@@ -38,7 +38,10 @@ FIXED_COMPONENTS = {
     "harvest_storage", "ambient_storage", "water_storage", "irrigation", "equipment_storage",
     "fuel_storage", "machinery", "property_mortgage_rent", "other_debt_service", "salaries",
 }
-VARIABLE_COMPONENTS = {"labor", "water", "fertilizer", "fuel", "seed", "packaging"}
+VARIABLE_COMPONENTS = {"labor", "water", "fertilizer", "fuel", "seed", "packaging",
+                       # A CREDIT, not a cost: the hours the salaried crew already covers,
+                       # charged gross in `labor` above and taken back here (W9).
+                       "salaried_hours_absorbed"}
 
 
 class TestTheTotalsAreSummedFromTheirParts:
