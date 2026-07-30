@@ -133,7 +133,11 @@ def minimal_params(spinach_crop_high_demand, rainfall_flat):
 
     Designed for a 50-acre farm with:
       - Modest infrastructure (small cooler, fuel tank, equip shed)
-      - Generous opening cash + credit to survive early-season cash burn
+      - Generous opening cash + credit to survive early-season cash burn. Raised 500k -> 1.5M on
+        2026-07-31 with W12: wages became a COMMITTED weekly cost, so payroll now has to clear the
+        C13 cash floor like any other bill. Several variants of this fixture went `infeasible` at
+        the old level — which is the model telling the truth (a farm must be able to make payroll),
+        not a regression.
       - High demand cap so revenue can scale with planted area
     Fixed cost breakdown (~$738k):
       irrigation (50ac×$175/wk×52)=$455k, machinery=$135k, salaried=$60k,
@@ -143,8 +147,8 @@ def minimal_params(spinach_crop_high_demand, rainfall_flat):
     return dict(
         total_land=50.0,
         harvest_storage_cap=500.0,           # m³ — small on-farm cooler
-        opening_cash=500_000.0,
-        credit_line=500_000.0,
+        opening_cash=1_500_000.0,
+        credit_line=1_500_000.0,
         operating_weeks=48,
         crops=[spinach_crop_high_demand],
         channels=[{"name": "Direct"}],

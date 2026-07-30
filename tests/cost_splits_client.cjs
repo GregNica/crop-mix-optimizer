@@ -34,29 +34,24 @@ const ok = (name, cond) => { if (!cond) fail(name); };
 // produce different numbers than these.
 const RES = {
   revenue: 100000,
-  variable_cost: 38000,   // = sum(variable_cost_split), credit included
+  variable_cost: 21000,   // = sum(variable_cost_split)
   fixed_cost: 22400,   // = sum(fixed_cost_split)
-  operating_profit: 38600,   // = 100000 - 38000 - 22400 - (300 + 700 + 0)
+  operating_profit: 55600,   // = 100000 - 21000 - 22400 - (300 + 700 + 0)
   overhead_cost: 5000,
   interest_cost: 400,
   fixed_selling_cost: 1200,
-  profit: 32000,             // = 38600 - 5000 - 400 - 1200
+  profit: 49000,             // = 55600 - 5000 - 400 - 1200
   peak_borrowing: 9000,
   city_water_cost: 300,
   overtime_cost: 700,
   hire_cost: 0,
   variable_cost_split: {
-    labor: 20000, water: 1500, fertilizer: 2500, fuel: 900, seed: 8100, packaging: 8000,
-    // The one NEGATIVE entry in either split: hours the salaried crew already covers, charged
-    // gross in `labor` above and taken back here (W9). Present so that something asserts the
-    // sign flip — `costRow` negates every amount, so a credit must print as a POSITIVE number
-    // in a column headed "negative = cost", and that is the most user-visible effect of W9.
-    salaried_hours_absorbed: -3000,
+    water: 1500, fertilizer: 2500, fuel: 900, seed: 8100, packaging: 8000,
   },
   fixed_cost_split: {
     harvest_storage: 4000, ambient_storage: 750, water_storage: 1000, irrigation: 2000,
     equipment_storage: 1500, fuel_storage: 250, machinery: 6000,
-    property_mortgage_rent: 0, other_debt_service: 1500, salaries: 5000,
+    property_mortgage_rent: 0, other_debt_service: 1500, wages: 5000,
     // The one component that appears CONDITIONALLY (only when a metered supply charges a standing
     // fee), so the one whose label a hand-written row list would have been most likely to miss.
     city_water_fixed_fee: 400,
@@ -82,13 +77,11 @@ const PARAMS = {
 // it would pass for any labels at all, which is the vacuous shape this repo has caught twice
 // (T27, T83). These are user-visible copy, so a change to them SHOULD have to be made twice.
 const EXPECT_VARIABLE_LABELS = {
-  labor:      'Field Labor (all crop hours, at the hourly crew rate)',
   water:      'Irrigation Water (on-farm supply — $0 until a pumping cost is entered)',
   fertilizer: 'Fertilizer',
   fuel:       'Fuel',
   seed:       'Seed / Transplants',
   packaging:  'Packaging (per lb sold)',
-  salaried_hours_absorbed: 'less: salaried hours already paid in Salaries (credit)',
 };
 const EXPECT_FIXED_LABELS = {
   harvest_storage:        'Harvest Storage (refrigerated)',
@@ -100,7 +93,7 @@ const EXPECT_FIXED_LABELS = {
   machinery:              'Machinery',
   property_mortgage_rent: 'Property Mortgage/Rent',
   other_debt_service:     'Other Debt Service',
-  salaries:               'Salaries (salaried labor)',
+  wages:                  'Wages — all listed staff at their stated hours',
   city_water_fixed_fee:   'City Water Standing Charge',
 };
 // Note "Fertilizer", not "Fertilizer & Pesticide", which is what this row said until W4: the model
@@ -142,7 +135,7 @@ const BOUGHT = ['City Water (metered purchase)', 'Overtime Premium', 'Hired Labo
     ok(`COGS prints one row per variable component (got ${cogs && cogs.length})`,
        cogs && cogs.length === Object.keys(RES.variable_cost_split).length);
 
-    const fixed = detailUnder(rows, 'Fixed Infrastructure Cost',
+    const fixed = detailUnder(rows, 'Fixed & Committed Costs',
                               ['Total Operating Expenses', ...BOUGHT]);
     ok(`fixed cost prints one row per component (got ${fixed && fixed.length})`,
        fixed && fixed.length === Object.keys(RES.fixed_cost_split).length);
@@ -161,13 +154,11 @@ const BOUGHT = ['City Water (metered purchase)', 'Overtime Premium', 'Hired Labo
          got === -amount);
     }
 
-    // The credit is the one row that prints POSITIVE in a column headed "negative = cost",
-    // because it is money NOT spent. Stated on its own rather than left to the loop above.
-    const creditRow = amountOf(rows, 'less: salaried hours already paid in Salaries (credit)');
-    ok(`the salaried-hours credit prints as a positive amount (got ${creditRow})`,
-       creditRow === 3000);
-    ok('every other COGS row prints negative',
-       cogs.filter(([, v]) => v > 0).length === 1);
+    // Every cost row prints negative in a column headed "negative = cost". W9's credit was the
+    // one exception and it is gone: W12 made every listed worker a committed cost, so there is no
+    // double charge left to credit back.
+    ok('every COGS row prints as a cost, not a credit',
+       cogs.filter(([, v]) => v > 0).length === 0);
 
     // ...and they add up to the totals printed above them. The point of the whole fix.
     const sum = a => a.reduce((s, [, v]) => s + v, 0);
@@ -190,7 +181,7 @@ const BOUGHT = ['City Water (metered purchase)', 'Overtime Premium', 'Hired Labo
     const cogs = detailUnder(rows, 'Variable Production Cost', []);
     ok(`no COGS detail is invented from rates or shares (got ${JSON.stringify(cogs)})`,
        cogs && cogs.length === 0);
-    const fixed = detailUnder(rows, 'Fixed Infrastructure Cost',
+    const fixed = detailUnder(rows, 'Fixed & Committed Costs',
                               ['Total Operating Expenses', ...BOUGHT]);
     ok(`no fixed detail is invented (got ${JSON.stringify(fixed)})`,
        fixed && fixed.length === 0);

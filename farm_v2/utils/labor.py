@@ -15,11 +15,12 @@ Two employee categories (per SPEC_v2.md §5D):
 
 Derived arrays (all 52-element, 0-indexed for weeks 1..52):
 
+  committed_weekly_wages[w]  $/week owed to EVERY listed worker (W12) — the wage bill, charged
+                              on full hours regardless of how much the crops use
   labor_capacity[w]          total available hours in week w (salaried + hourly)
-  salaried_capacity[w]       of that, the hours already paid for by salary (W9)
   hourly_labor_rate[w]       blended $/hour across all hourly employees available in w
-                              (including benefits; weighted by count × hours_per_week)
-  salaried_weekly_fixed_cost total $/week for salaried staff (constant, added to fixed cost)
+                              (including benefits; weighted by count × hours_per_week). Prices
+                              the OVERTIME and HIRE premiums only — regular hours are committed.
   piece_rate_per_lb[c][ch]   $/lb harvest cost per crop/channel — sourced from crop defs,
                               not computed here, but the module documents the pattern.
 
@@ -66,7 +67,7 @@ def compute_labor_arrays(
         "labor_capacity"            np.ndarray shape (n_weeks,) — total hrs/week (1-indexed)
         "hourly_labor_rate"         np.ndarray shape (n_weeks,) — blended $/hr
         "labor_capacity_hourly"     np.ndarray shape (n_weeks,) — hourly-only hrs/week
-        "salaried_capacity"         np.ndarray shape (n_weeks,) — hrs/week already paid by salary
+        "committed_weekly_wages"    np.ndarray shape (n_weeks,) — $/week owed to ALL listed staff
         "salaried_weekly_cost"      float — $/week, constant fixed cost
         "guaranteed_hourly_cost"    np.ndarray shape (n_weeks,) — $/week for guaranteed mins
         "piece_rate_workers"        list[dict] — seasonal workers with piece_rate_per_lb set
@@ -78,7 +79,12 @@ def compute_labor_arrays(
     guaranteed_cost       = np.zeros(n_weeks, dtype=float)
 
     salaried_weekly_cost  = 0.0
-    salaried_capacity     = np.zeros(n_weeks, dtype=float)   # hours already paid for (W9)
+    # Wages the farm has COMMITTED to, per week, across every listed worker (W12). A worker on
+    # the payroll is paid for their stated hours over their stated weeks whether or not the crops
+    # need them — the same basis the salaried line has always used, now applied to hourly and
+    # seasonal staff too. Charged on FULL hours: `field_time_pct` limits how much of a worker's
+    # time is available to crops, not how much of their wage the farm owes.
+    committed_weekly_wages = np.zeros(n_weeks, dtype=float)
     piece_rate_workers    = []
 
     # --- Year-round employees (available every week) ---
@@ -99,16 +105,18 @@ def compute_labor_arrays(
             # Annual wage → weekly cost
             weekly_cost = count * wage * (1 + bene) / 52
             salaried_weekly_cost += weekly_cost
+            committed_weekly_wages += weekly_cost
             # Capacity that is ALREADY PAID FOR (W9): these hours are available to crops, and
             # their cost is the salary above rather than an hourly charge. Accumulated here, in
             # the branch that knows the worker is salaried, rather than derived downstream as
             # `labor_capacity - labor_capacity_hourly` — that subtraction happens to be correct
             # only because every seasonal worker is hourly, and it would make a live value depend
             # on `labor_capacity_hourly`, which no longer has a consumer in farm_v2.
-            salaried_capacity += total_hrs_per_week
 
         elif emp_type == "hourly":
             effective_rate = wage * (1 + bene)
+            # Full hours, not field-adjusted: the farm owes the whole shift.
+            committed_weekly_wages += count * hrs * effective_rate
             labor_capacity_hourly += total_hrs_per_week
             hourly_weighted_wages += total_hrs_per_week * effective_rate
             hourly_weighted_hours += total_hrs_per_week
@@ -152,6 +160,7 @@ def compute_labor_arrays(
 
         # Week indices are 0-based internally (week w → index w-1)
         for w_idx in range(start_w - 1, end_w):
+            committed_weekly_wages[w_idx] += count * hrs * effective_rate
             labor_capacity[w_idx]        += total_hrs_per_week
             labor_capacity_hourly[w_idx] += total_hrs_per_week
             hourly_weighted_wages[w_idx] += total_hrs_per_week * effective_rate
@@ -172,9 +181,9 @@ def compute_labor_arrays(
         )
 
     return {
+        "committed_weekly_wages": committed_weekly_wages,
         "labor_capacity":         labor_capacity,
         "labor_capacity_hourly":  labor_capacity_hourly,
-        "salaried_capacity":      salaried_capacity,
         "hourly_labor_rate":      hourly_labor_rate,
         "salaried_weekly_cost":   salaried_weekly_cost,
         "guaranteed_hourly_cost": guaranteed_cost,

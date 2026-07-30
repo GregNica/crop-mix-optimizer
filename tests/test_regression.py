@@ -66,7 +66,7 @@ from farm_v2.solver import solve_farm_v2
 #     honest per-crop values; expect most of this back. Do not treat 87,933 as a target.
 # ---------------------------------------------------------------------------
 
-EXPECTED_PROFIT  = 588_948      # ± 10%  (rebaselined 2026-07-29, DTM semantics)
+EXPECTED_PROFIT  = -23_492      # ± 10%  (rebaselined 2026-07-31, W12 committed wages)
 EXPECTED_REVENUE = 2_202_901    # ± 10%  (rebaselined 2026-07-29, DTM semantics)
 # 2026-07-29 — days_to_maturity is PLANT TO FIRST HARVEST, not total field occupancy. The
 # model derived grow = total - plant - harvest, so harvest_weeks ate the growing season and
@@ -87,7 +87,17 @@ EXPECTED_REVENUE = 2_202_901    # ± 10%  (rebaselined 2026-07-29, DTM semantics
 # by ~10x. Checked before re-pinning — no succession reuses a week, nothing wraps the year
 # (no crop here sets `overwinters`), so the extra successions are the containment fix working
 # rather than double-counting. Year-wrap is opt-in and does not touch this fixture.
-EXPECTED_FIXED   = 1_184_316    # ± 5%   (rebaselined 2026-07-27: annual, not 48-week)
+EXPECTED_FIXED   = 1_868_316    # ± 5%   (rebaselined 2026-07-31: W12 put wages in fixed cost)
+# 2026-07-31 — W12: every listed worker is paid for their stated hours whether the crops need them
+# or not, so the wage bill moved into fixed cost. On this 29-crop fixture that is +$684,000 of
+# fixed cost, and profit goes 588,948 -> -23,492.
+#
+# ⚠️ A LOSS IS THE HONEST ANSWER HERE, not a regression. This fixture staffs a farm generously and
+# was previously charged only for the hours its crops happened to use; paying that crew properly
+# is more than its margin can carry. It sits close to break-even by construction (see the note
+# below on how an 11% revenue change swung profit ~10x), so it is the sharpest alarm in the suite
+# and it is now alarming about a real thing. The GOLDEN farm, which is the one a user sees, stays
+# comfortably profitable at 20.0% net margin.
 TOLERANCE_PCT    = 0.10         # 10% relative tolerance
 
 
@@ -120,8 +130,12 @@ class TestRegressionStatus:
 class TestRegressionFinancials:
     def test_profit_in_expected_range(self, full_result):
         profit = full_result["profit"]
-        lo = EXPECTED_PROFIT * (1 - TOLERANCE_PCT)
-        hi = EXPECTED_PROFIT * (1 + TOLERANCE_PCT)
+        # Tolerance on the MAGNITUDE, so the band does not invert when the baseline is negative:
+        # `expected * (1 - tol)` is the UPPER bound for a negative number, which made this assert
+        # `-21,143 <= -23,492 <= -25,841` and fail on the correct value. Exposed by W12, which
+        # pushed this deliberately close-to-break-even fixture into a loss.
+        span = abs(EXPECTED_PROFIT) * TOLERANCE_PCT
+        lo, hi = EXPECTED_PROFIT - span, EXPECTED_PROFIT + span
         assert lo <= profit <= hi, (
             f"Profit ${profit:,.0f} outside expected range "
             f"[${lo:,.0f}, ${hi:,.0f}]. "

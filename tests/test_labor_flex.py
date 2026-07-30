@@ -141,13 +141,19 @@ def test_field_time_cap_reduces_capacity(two_crop_params):
     assert rh["operating_profit"] <= rf["operating_profit"] + 1.0
 
 
-def test_overhead_internalized_after_overhead_profit_is_monotonic(two_crop_params):
-    # Overhead is now IN the objective, which maximizes (operating - overhead). Relaxing labor
-    # (more crew) enlarges the feasible set, so that quantity can never fall. (Net profit also
-    # subtracts interest, which is the one cost still outside the objective, so net itself is
-    # not guaranteed monotonic — documented limitation.)
-    # Cash off (huge headroom) isolates the objective from cash-feasibility, so this purely
-    # tests that more labor capacity never lowers the maximized quantity.
+def test_hiring_more_crew_than_the_plan_needs_costs_money(two_crop_params):
+    """W12 INVERTED this test, and the inversion is the point.
+
+    It used to assert that adding crew can never lower the maximized quantity, because more
+    labour enlarged the feasible set and cost nothing unless the crops used it. Under W12 a
+    listed worker is paid for their stated hours whether the crops need them or not, so adding
+    crew buys capacity AND a wage bill. Hiring is now a real trade-off, and over-hiring is
+    strictly worse — which is the behaviour a grower needs the tool to show.
+
+    The bound is what makes this more than a sign check: the loss cannot exceed the extra wages,
+    because the extra crew is free to sit idle and change nothing else. If it ever did, the
+    committed bill would be charging more than the farm agreed to pay.
+    """
     def cfg(crew):
         p = _labor_bound(two_crop_params, crew=crew)
         p.update(overhead_pct_of_revenue=0.16, sell_through_fraction=0.85,
@@ -157,4 +163,14 @@ def test_overhead_internalized_after_overhead_profit_is_monotonic(two_crop_param
     r_many = solve_farm_v2(**cfg(16))
     assert r_few["status"] == "optimal" and r_many["status"] == "optimal"
     after_oh = lambda r: r["operating_profit"] - r["overhead_cost"]
-    assert after_oh(r_many) >= after_oh(r_few) - 1.0
+    extra_wages = r_many["fixed_cost_split"]["wages"] - r_few["fixed_cost_split"]["wages"]
+    assert extra_wages > 0, "the fixture did not actually add any committed crew"
+    drop = after_oh(r_few) - after_oh(r_many)
+    assert drop > 0, (
+        f"adding {12} crew changed the maximized quantity by {-drop:+,.0f} — under W12 idle crew "
+        f"is paid for, so over-hiring must cost something"
+    )
+    assert drop <= extra_wages + 1.0, (
+        f"over-hiring cost ${drop:,.0f} against ${extra_wages:,.0f} of extra wages. The extra "
+        f"crew can always sit idle, so the loss cannot exceed what they are paid."
+    )

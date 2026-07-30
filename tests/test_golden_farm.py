@@ -30,6 +30,7 @@ import re
 
 import pytest
 
+from farm_v2.solver import VC_CATEGORIES
 from tests.helpers import (
     SATURATION_KEYS,
     annual_equivalent_cap,
@@ -51,15 +52,45 @@ pytestmark = pytest.mark.skipif(not PAYLOAD.exists(), reason="golden payload mis
 # re-captured to the CENT on 2026-07-30 so the five plan-determined lines can be pinned tightly
 # (see CASH_TIMED_LINES below for why the other two cannot be).
 GOLDEN = {
-    "revenue":          1_621_121.85,
-    "variable_cost":      538_864.69,
-    "fixed_cost":         213_097.22,
-    "overhead_cost":      259_379.50,
-    "interest_cost":          849.19,
-    "profit":             595_931.24,
-    "operating_profit":   869_159.94,
+    "revenue":          2_134_530.43,
+    "variable_cost":      398_858.03,
+    "fixed_cost":         949_497.22,
+    "overhead_cost":      341_524.87,
+    "interest_cost":        3_103.67,
+    "profit":             428_546.64,
+    "operating_profit":   786_175.17,
 }
 # Baseline history — re-pin ONLY with a reason, and record it here.
+#   2026-07-31 (W12 — every listed worker is paid whether the crops need them or not):
+#     revenue 1,621,122 -> 2,134,530 (+31.7%), variable_cost 538,865 -> 398,858 (labour left it),
+#     fixed_cost 213,097 -> 949,497 (wages 855,150 entered it), profit 595,931 -> 426,560.
+#     NET MARGIN 36.8% -> 20.0%.
+#
+#     The model charged hourly and seasonal staff only for the hours the crops happened to use, so
+#     the demo farm's own stated crew — 2 operators year-round, 12 field crew for 33 weeks, 8
+#     harvest crew for 27 — was costed at $293,356 against a $736,400 wage bill. 60.2% of the
+#     payroll was invisible. Salaried staff were already treated as committed; hourly and seasonal
+#     now are too, which removes the inconsistency rather than adding a rule.
+#
+#     Revenue RISES because the marginal hour is now free: labour is a sunk commitment rationed by
+#     C2's capacity rather than priced per hour, so the optimizer plants what the crew it is
+#     already paying for can actually work — acre-plantings 100.7 -> 220.9, and crew utilisation
+#     goes from a plan that left them idle to 90% overall, at 100% in weeks 35-40.
+#
+#     ⚠️ THE DEMO FARM IS NOT OVER-STAFFED, which is what the pre-change numbers suggested. The
+#     "under 50% utilised for 39 weeks" figure was measured on the OLD plan, where the solver had
+#     no reason to use labour it got for free. Same crew, honest cost basis, 90% utilisation.
+#
+#     Payroll carries its own WEEKLY profile (a follow-up in the same change): wages are the first
+#     fixed line that is not flat, so `fixed_cost / 52` stopped being exact. The shipped farm owes
+#     $4,884/wk in winter and $24,484/wk once the seasonal crews start, against a $16,445 flat
+#     average — so flattening over-charged the cash curve early, when there is no revenue, and
+#     under-charged it at the seasonal peak. Fixing it moved interest 5,090.15 -> 3,103.67 and
+#     profit 426,560.16 -> 428,546.64. Revenue and operating_profit are unchanged TO THE CENT,
+#     which is the signature of a cash-timing change rather than an economic one.
+#
+#     This is the first honest fix to move net margin TOWARD the real diversified-veg band of
+#     5-15% rather than away from it. W1, W6, W4 and W9 all pushed it up; see BACKLOG M1.
 #   2026-07-30 (W9 — salaried crop hours were billed twice): variable_cost 584,030.30 ->
 #     538,864.69 (-45,165.61), profit 550,529.36 -> 595,931.24 (+45,401.88), interest 1,085.48 ->
 #     849.19. Revenue, fixed_cost and overhead are UNCHANGED — this is a pure cost correction.
@@ -513,13 +544,26 @@ class TestMarginKernel:
                     m["margin_per_lb"] / m["gross_price_per_lb"] * 100.0, rel=1e-9), \
                     f"{crop}/{ch}: margin_pct disagrees with margin_per_lb"
 
-    def test_wholesale_loss_makers_are_reported_negative(self, result):
-        """The exec summary used to show Cucumbers/Wholesale at +$13,541/acre/yr. On the
-        solver's own basis it is negative, and the kernel must say so."""
+    def test_wholesale_is_the_weak_channel_and_the_kernel_says_so(self, result):
+        """The exec summary used to show Cucumbers/Wholesale at +$13,541/acre/yr while the
+        solver's own basis called it a loss-maker, and the kernel had to say so.
+
+        ⚠️ REWRITTEN 2026-07-31 for W12, and the change is worth understanding rather than
+        re-pinning past. Labour is now a committed weekly cost, so it is NOT in `cost_per_acre`
+        and no crop-channel on this farm is contribution-NEGATIVE any more — the weakest is
+        Basil/Wholesale at ~22%. That is the correct reading: once the crew is paid for, selling
+        another pound into a weak channel still adds cash. What the kernel must still get right
+        is the RANKING and the gap, so that is what this pins: Wholesale is systematically the
+        weaker channel, and the strong ones stay clearly ahead.
+        """
         cm = result["channel_margins"]
-        assert cm["Cucumbers"]["Wholesale"]["margin_pct"] < 0
-        assert cm["Spinach"]["Wholesale"]["margin_pct"] < 0
+        for crop in ("Cucumbers", "Spinach", "Basil"):
+            assert cm[crop]["Wholesale"]["margin_pct"] < cm[crop]["Farmers Market"]["margin_pct"], (
+                f"{crop}: Wholesale must rank below Farmers Market"
+            )
         assert cm["Garlic"]["Farmers Market"]["margin_pct"] > 40, "strong channels must stay clearly positive"
+        weakest = min((m["margin_pct"], c, ch) for c, d in cm.items() for ch, m in d.items())
+        assert weakest[2] == "Wholesale", f"the weakest crop-channel is {weakest[1]}/{weakest[2]}"
 
     def test_hurdle_is_off_by_default_and_excludes_nothing(self, result):
         assert result.get("excluded_channels") == [], (
@@ -529,12 +573,17 @@ class TestMarginKernel:
 
     def test_hurdle_excludes_only_below_floor_when_enabled(self, run_from_js):
         params = json.loads(PAYLOAD.read_text())
-        params["min_viable_margin_pct"] = 8.0
+        # Floor raised 8% -> 30% on 2026-07-31: W12 took labour out of `cost_per_acre`, so every
+        # margin on this farm rose and the weakest is now ~22%. An 8% floor excluded nothing and
+        # the test was asserting against an empty set. The floor has to bite for this to test
+        # anything, which is the same "prove the fixture still discriminates" discipline the
+        # storage and cash-floor fixtures carry.
+        params["min_viable_margin_pct"] = 30.0
         r = json.loads(run_from_js(json.dumps(params)))
         excluded = {(e["crop"], e["channel"]) for e in r["excluded_channels"]}
-        assert excluded, "an 8% floor must exclude the sub-8% channels"
+        assert excluded, "a 30% floor must exclude the sub-30% channels"
         for crop, ch in excluded:
-            assert r["channel_margins"][crop][ch]["margin_pct"] < 8.0
+            assert r["channel_margins"][crop][ch]["margin_pct"] < 30.0
         # and it must cost profit — the measured price of applying a floor calibrated against
         # the OLD inflated margins to honest ones
         assert r["profit"] < GOLDEN["profit"]
@@ -555,17 +604,10 @@ class TestCropContribution:
         double-counted, dropped, or allocated to the wrong bucket, this is what catches it."""
         r = result
         total = sum(d["contribution"] for d in r["crop_contribution"].values())
-        # `salaried_absorbed_cost` is ADDED BACK because every per-crop `growing_cost` charges its
-        # labour at the gross hourly blend, while the farm only pays that blend for the hours the
-        # salaried crew does not already cover (W9). Keeping the per-crop figures gross is what
-        # keeps ONE labour cost basis across the margin kernel; the consequence is that this
-        # identity carries the credit as its own term, exactly as it already carries fixed cost,
-        # channel fixed selling and interest. On the shipped farm the term is $45,357 — so if it
-        # is ever dropped, this assertion is what says so. Read off the split rather than a second
-        # key holding the same number with the opposite sign.
-        credit = -r["variable_cost_split"]["salaried_hours_absorbed"]   # published negative
-        rebuilt = (total - r["fixed_cost"] - r["fixed_selling_cost"] - r["interest_cost"]
-                   + credit)
+        # No labour term of any kind (W12): wages are a committed weekly cost inside `fixed_cost`,
+        # and no per-crop `growing_cost` carries labour at all, so the identity is back to the
+        # plain form it had before W9 introduced a credit to undo a double charge.
+        rebuilt = total - r["fixed_cost"] - r["fixed_selling_cost"] - r["interest_cost"]
         assert rebuilt == pytest.approx(r["profit"], abs=1.0), (
             f"per-crop contributions do not rebuild net profit: {rebuilt:,.2f} vs {r['profit']:,.2f}. "
             "A cost line is missing, doubled, or in the wrong bucket."
@@ -660,9 +702,17 @@ class TestOneKernelNoDrift:
         for crop, chans in result["channel_margins"].items():
             for ch, m in chans.items():
                 c = m["cost_per_acre"]
-                parts = (c["labor"] + c["water"] + c["fertilizer"] + c["fuel"] + c["seed"]
-                         + c["packaging"] + c["overhead"])
+                # Summed over every entry except `total` itself, rather than a hand-written list:
+                # the list lost `labor` to W12 and would otherwise have to be edited in step with
+                # VC_CATEGORIES, which is the drift this file exists to catch elsewhere.
+                parts = sum(v for k, v in c.items() if k != "total")
                 assert parts == pytest.approx(c["total"], rel=1e-9), f"{crop}/{ch} split != total"
+                # The sum alone cannot notice a category DISAPPEARING — it just sums whatever is
+                # there on both sides — and disappearing is exactly what W12 did to `labor`.
+                # Derived from VC_CATEGORIES so it cannot drift, but still fails on a missing key.
+                assert set(c) == set(VC_CATEGORIES) | {"packaging", "overhead", "total"}, (
+                    f"{crop}/{ch}: cost_per_acre keys are {sorted(c)}"
+                )
 
     def test_margin_reconciles_with_revenue_minus_cost(self, result):
         """Revenue - Cost must EQUAL the margin, exactly. The table shows Rev/acre, VC/acre and
@@ -743,7 +793,7 @@ class TestValidationRunsOnTheSolverPath:
 # own `v`. These are the numbers under the Revenue line in the exported P&L.
 GOLDEN_CHANNEL_REVENUE = {
     "Farmers Market": 1_278_660,
-    "Wholesale":        342_462,
+    "Wholesale":        855_870,
 }
 
 
@@ -816,9 +866,16 @@ class TestChannelSalesReachTheClient(object):
 
 # The three crop-channel rows on this farm that sell NOTHING, with what the old gross-harvest
 # formula printed for each. Measured 2026-07-30, before W6 was fixed.
+# Crop-channels that sell ZERO pounds on the shipped farm and printed a saturation anyway before
+# W6, with the figure each used to print.
+#
+# Trimmed from three to one on 2026-07-31: W12 made the marginal labour hour free, the plan grew
+# from 100.7 to 220.9 acre-plantings, and Basil and Spinach now genuinely sell into Wholesale
+# (84,537 lb and 357,320 lb). They can no longer demonstrate a defect about channels that sell
+# nothing, because on this farm they no longer sell nothing. The W6 identities themselves are
+# pinned on purpose-built fixtures in tests/test_demand_saturation.py (22 tests) and are
+# unaffected; what is lost here is only the demonstration against the shipped numbers.
 GOLDEN_PHANTOM_DEMAND = {
-    ("Wholesale", "Basil"):       0.29,
-    ("Wholesale", "Spinach"):     0.16,
     ("Wholesale", "Hot Peppers"): 0.04,
 }
 
@@ -947,9 +1004,13 @@ class TestDemandSaturationReachesTheClient(object):
             f"only {overstated} rows differ by >10 points between the gross-harvest basis and "
             f"the sold basis (10 when measured) — this farm no longer demonstrates W6"
         )
-        assert phantom >= 3, (
-            f"only {phantom} rows sold zero pounds while the old formula reported a saturation "
-            f"(3 when measured)"
+        # Was 3 when W6 was measured; 1 after W12 grew the plan from 100.7 to 220.9 acre-plantings
+        # and Basil and Spinach started genuinely selling into Wholesale. The defect is unchanged
+        # and its identities are pinned on purpose-built fixtures in test_demand_saturation.py —
+        # this farm just demonstrates less of it than it used to.
+        assert phantom >= 1, (
+            f"no row sold zero pounds while the old formula reported a saturation, so this farm "
+            f"no longer demonstrates W6 at all — re-measure or retire the demonstration"
         )
 
 
@@ -1043,7 +1104,9 @@ class TestCostSplitsReachTheClient(object):
         """
         pkg = result["variable_cost_split"]["packaging"]
         share = pkg / result["variable_cost"]
-        assert 0.15 < share < 0.30, (
+        # Band raised from 0.15-0.30 on 2026-07-31: W12 moved labour out of variable cost
+        # entirely, so packaging is a much larger slice of what remains (43% measured).
+        assert 0.30 < share < 0.60, (
             f"packaging is {share:.1%} of variable cost (20.5% when measured); if it has become "
             f"negligible this farm no longer demonstrates why vc_split alone was not the fix"
         )

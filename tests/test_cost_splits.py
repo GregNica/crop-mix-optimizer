@@ -36,12 +36,11 @@ from farm_v2.solver import solve_farm_v2  # noqa: E402
 # stop was a hand-listed expectation drifting from the code SILENTLY. Here it drifts loudly.
 FIXED_COMPONENTS = {
     "harvest_storage", "ambient_storage", "water_storage", "irrigation", "equipment_storage",
-    "fuel_storage", "machinery", "property_mortgage_rent", "other_debt_service", "salaries",
+    "fuel_storage", "machinery", "property_mortgage_rent", "other_debt_service", "wages",
 }
-VARIABLE_COMPONENTS = {"labor", "water", "fertilizer", "fuel", "seed", "packaging",
-                       # A CREDIT, not a cost: the hours the salaried crew already covers,
-                       # charged gross in `labor` above and taken back here (W9).
-                       "salaried_hours_absorbed"}
+# No `labor` (W12): every listed worker is paid for their stated hours whether the crops need them
+# or not, so wages are a committed weekly cost and live in fixed_cost_split["wages"].
+VARIABLE_COMPONENTS = {"water", "fertilizer", "fuel", "seed", "packaging"}
 
 
 class TestTheTotalsAreSummedFromTheirParts:
@@ -81,10 +80,10 @@ class TestTheTotalsAreSummedFromTheirParts:
     def test_seed_carries_seed_and_not_some_other_category(self, solved_two_crop):
         """A category must hold ITS OWN money, not just contribute to a correct total.
 
-        Found by mutation: reversing vc_split's columns after aggregation puts labor's dollars
-        under "Seed / Transplants" and seed's under "Field Labor", and every reconciliation test
-        still passed — the sum is unchanged, so nothing noticed. A grower would notice immediately
-        ("$338k of seed on 12 acres"), which is the definition of a number worth pinning.
+        Found by mutation: reversing vc_split's columns after aggregation puts one category's
+        dollars under another's label, and every reconciliation test still passed — the sum is
+        unchanged, so nothing noticed. A grower would notice immediately ("$300k of seed on 12
+        acres"), which is the definition of a number worth pinning.
 
         Seed is the category that can be rebuilt without reimplementing the solver: it is charged
         once per succession at planting, at total_land x the crop's per-acre seed cost, so it is
@@ -100,12 +99,16 @@ class TestTheTotalsAreSummedFromTheirParts:
         assert expected > 0, "the two-crop fixture prices seed, so this must be positive"
         assert r["variable_cost_split"]["seed"] == pytest.approx(expected, abs=1e-6)
         # And the categories are distinct enough that a swap would be visible: if seed happened to
-        # equal labor, the assertion above would pass under the very mutation it exists to catch.
-        assert r["variable_cost_split"]["seed"] != pytest.approx(
-            r["variable_cost_split"]["labor"], abs=1.0), (
-            "seed and labor are near-equal on this fixture, so a column swap would be invisible "
-            "here — change the fixture rather than trusting this test"
-        )
+        # equal a neighbour, the assertion above would pass under the very mutation it exists to
+        # catch. Compared against every other category rather than one named one, so this keeps
+        # working as VC_CATEGORIES changes — it lost `labor` to W12 already.
+        for other, value in r["variable_cost_split"].items():
+            if other == "seed":
+                continue
+            assert r["variable_cost_split"]["seed"] != pytest.approx(value, abs=1.0), (
+                f"seed and {other} are near-equal on this fixture, so a column swap would be "
+                f"invisible here — change the fixture rather than trusting this test"
+            )
 
 
 class TestAComponentCannotGoMissing:
