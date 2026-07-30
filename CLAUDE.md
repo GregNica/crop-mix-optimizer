@@ -17,6 +17,27 @@ Run the review skills before finalizing work — this is the project default, no
 
 Trivial/mechanical edits (a one-line copy fix, a comment) may skip `/simplify`. Everything touching the solver, payload builder, cost/accounting math, or the unit system should get it. If the user is committing themselves, remind them to run these first.
 
+### Order: working code → `/simplify` → the deep guards
+
+When a change earns **mutation-tested guards** (the money path, a new payload field, anything with three-layer coverage like W1's `channel_sales` or W6's `demand_saturation`), run `/simplify` on the *working* implementation **before** writing those guards, not after.
+
+**Why, measured on W6 (2026-07-30):** the guards were written and all 16 mutations verified, then `/simplify` refactored the code they were written against — the two-branch entry literal collapsed, the basis lookup moved to `annual_rows`, `atCapWks` became `weeksAtCap.length`. Every mutation pattern had to be re-derived and both suites re-run, and that second pass surfaced **four more inert guards**. A whole cycle, avoidable purely by ordering.
+
+Sequence that works:
+
+1. Reproduce and **measure** the defect (see the Verify-first rule below).
+2. Make it work. Enough tests to know it works — not the full guard set.
+3. **`/simplify`** — let it move the code while moving it is still cheap.
+4. *Then* write the deep guards and mutation-test them, against code that has settled.
+5. Browser QA **last**, after all edits. Re-verifying after each refactor is the same waste in a slower loop.
+6. `/code-review` before landing.
+
+Not a reason to defer guards indefinitely: step 2 still needs enough coverage that step 3 cannot break the thing silently. The rule is about *when the expensive, mutation-verified layer* gets built, not about writing tests late.
+
+### Verify first, and verify twice when the fix looks like one line
+
+A backlog entry that names the fix is a hypothesis, not a spec. W6's entry said "swap the numerator, the honest one now exists" — true, and shipping only that would have replaced one wrong number with another (Garlic/Farmers Market reads 50% on the annual basis while its weekly cap binds in every week it sells). The first measurement confirmed the defect; the **second** measurement, on a different axis, is what showed the prescribed fix was also wrong. Measure the axis the fix does *not* mention.
+
 ---
 
 ## Files
