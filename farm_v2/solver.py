@@ -57,12 +57,16 @@ from farm_v2.utils.demand import build_demand_table, build_annual_caps
 from farm_v2.validate import validate_params
 
 
-# How full a resource or a demand cap has to be before the reports call it "at its limit".
-# One constant because it is one concept: `_diagnose_unplanted_crops` uses it to decide whether
-# a resource was tight enough to name as context, and `demand_saturation` uses it to decide
-# which weeks a channel sold its cap out in. It is published as `demand_at_cap_threshold` so a
-# reader can label the column it draws rather than assume a value.
-AT_CAP_FRACTION = 0.95
+# Two thresholds that happen to share a value today and must not share a name.
+#
+# They answer different questions and are tuned for different reasons: one decides whether a
+# resource was tight enough to be worth NAMING as context beside an unplanted crop, the other
+# decides which weeks a channel actually sold its cap out. Collapsing them meant tuning the
+# unplanted-crop diagnosis silently moved every `weeks_at_cap` count and relabelled a CSV column
+# — and only the second is published, as `demand_at_cap_threshold`, so the exported name would
+# have been describing whichever concept was edited last.
+NEAR_LIMIT_FRACTION = 0.95      # a resource is "near its limit" (unplanted-crop diagnosis)
+DEMAND_AT_CAP_FRACTION = 0.95   # a week counts as "at cap" in demand_saturation.weeks_at_cap
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +168,7 @@ def _diagnose_unplanted_crops(
                         ratio = used[w - 1] / cap[w - 1]
                         if ratio > best:
                             best = ratio
-                            if ratio >= AT_CAP_FRACTION:
+                            if ratio >= NEAR_LIMIT_FRACTION:
                                 rec["tightest"] = {"resource": res_name, "week": w,
                                                    "utilization": float(ratio)}
         rec["reason"] = "outcompeted"
@@ -1513,7 +1517,7 @@ def solve_farm_v2(
                 entry["peak_week_cap_lbs"] = None
             else:
                 entry["peak_week_frac"] = float(fracs.max())
-                entry["weeks_at_cap"]   = [int(w) + 1 for w in np.flatnonzero(fracs >= AT_CAP_FRACTION)]
+                entry["weeks_at_cap"]   = [int(w) + 1 for w in np.flatnonzero(fracs >= DEMAND_AT_CAP_FRACTION)]
                 # The ceiling the plan is actually up against, so a "+10% demand" lever can be
                 # labelled without the client parsing week-range strings out of the form — the
                 # last place it rebuilt a cap for itself. Falls back to the largest weekly cap
@@ -1711,7 +1715,7 @@ def solve_farm_v2(
         # runs and Monte Carlo never touch the browser's reporting code.
         "channel_sales":     channel_sales,
         "demand_saturation": demand_saturation,
-        "demand_at_cap_threshold": AT_CAP_FRACTION,
+        "demand_at_cap_threshold": DEMAND_AT_CAP_FRACTION,
         "profit":           profit,
         "operating_profit": operating_profit,
         "overhead_cost":    overhead_cost,

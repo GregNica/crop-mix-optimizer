@@ -184,6 +184,22 @@ function demandRowsOf(window, res, params) {
        rows2.findIndex(r => r.label.startsWith('Garlic')) > 0);
   }
 
+  // ── 2c. Both surfaces label the at-cap threshold from the SOLVER ──────────
+  {
+    // The panel header hardcoded 95 while the CSV read res.demand_at_cap_threshold, so moving
+    // the solver's threshold would have made the table lie while the export stayed honest.
+    // Driven at a non-default value, which is the only way to tell reading it from restating it.
+    const shifted = { ...RES, demand_at_cap_threshold: 0.80 };
+    const el = W.document.getElementById('constraint-summary-content');
+    W.renderConstraintSummary(shifted, PARAMS);
+    ok(`panel header states the solver's threshold, not a literal (got "${
+        (el.textContent.match(/Weeks ≥\d+%/) || ['none'])[0]}")`,
+       /Weeks ≥80%/.test(el.textContent));
+    // ...and the default still renders as before.
+    W.renderConstraintSummary(RES, PARAMS);
+    ok('and the default reads 95%', /Weeks ≥95%/.test(el.textContent));
+  }
+
   // ── 3. THE RECONSTRUCTION GUARD ───────────────────────────────────────────
   {
     // Everything the old code needed to invent a saturation — planted acreage, yields, and
@@ -263,6 +279,48 @@ function demandRowsOf(window, res, params) {
       ok(`and never per week (annual/52 would be ${Math.round(150000 / 52)}) — got "${label}"`,
          !/\/wk/.test(label));
     }
+  }
+
+  // ── 4c. The pill TOOLTIP names the basis it actually shows ────────────────
+  {
+    // The pill is the one user-visible surface W6 changed, and its tooltip kept naming the basis
+    // the commit deleted: "total crop harvest ÷ channel annual cap". The percentage beside it is
+    // `binding`, so the sentence described a formula giving a different number — on the shipped
+    // farm Spinach/Farmers Market reads 100% where harvest ÷ cap is 87%, and Garlic/Wholesale
+    // reads 100% against a fill of 8%. Driven here because the in-page suite does not run.
+    const card = W.document.getElementById('bottleneck-content');
+    ok('#bottleneck-content exists', !!card);
+    W.renderWhatIfCard(RES, PARAMS);
+    const tips = Array.from(card.querySelectorAll('button.cn-btn'))
+      .map(b => ({ text: b.textContent.trim(), title: b.getAttribute('title') || '' }));
+    ok(`pills rendered (got ${tips.length})`, tips.length > 0);
+
+    const demandTips = tips.filter(t => /→|\//.test(t.text) && /Demand/.test(t.title));
+    ok(`demand pills carry a tooltip (got ${demandTips.length})`, demandTips.length > 0);
+    for (const t of tips) {
+      ok(`no tooltip claims the deleted basis — "${t.title.slice(0, 70)}"`,
+         !/harvest\s*÷|total crop harvest|total harvest/i.test(t.title));
+    }
+    // A weekly cap's tooltip must say which week, an annual contract's must say the year.
+    const weeklyTip = demandTips.find(t => /Spinach|Garlic/.test(t.text));
+    if (weeklyTip) {
+      ok(`weekly pill names the tightest week — "${weeklyTip.title.slice(0, 80)}"`,
+         /tightest week/.test(weeklyTip.title));
+    }
+    // Tomatoes, not Basil: Basil's binding is 0, so it never becomes a pill at all. Tomatoes
+    // fills 1.6% of its contract and reaches the pill row through the informational fallback —
+    // so this covers the OTHER tooltip branch, which carried the same false sentence.
+    const annualOnly = {
+      ...RES,
+      demand_saturation: { Wholesale: { Tomatoes: RES.demand_saturation.Wholesale.Tomatoes } },
+    };
+    W.renderWhatIfCard(annualOnly, PARAMS);
+    const annualTip = String(Array.from(card.querySelectorAll('button.cn-btn'))
+      .map(b => b.getAttribute('title') || '').find(t => /Demand/.test(t)));
+    ok(`an annual contract's tooltip says yearly contract — "${annualTip.slice(0, 90)}"`,
+       /yearly contract/.test(annualTip));
+    ok(`and the informational variant drops the deleted basis too — "${annualTip.slice(0, 90)}"`,
+       !/harvest\s*÷|total harvest/i.test(annualTip));
   }
 
   // ── 5. The constraint CSV reports weeks for a WEEKLY cap ──────────────────
