@@ -71,7 +71,7 @@ class TestWagesAreChargedOnFullHours:
         salary_wk, hourly_wk, seasonal_wk = 1_000.0, 400.0, 3 * 40 * 20.0
         assert weekly[0] == pytest.approx(salary_wk + hourly_wk), "week 1: no seasonal crew yet"
         assert weekly[9] == pytest.approx(salary_wk + hourly_wk + seasonal_wk), "week 10: crew on"
-        assert weekly[19] == pytest.approx(salary_wk + hourly_wk), "week 21: crew gone"
+        assert weekly[19] == pytest.approx(salary_wk + hourly_wk), "week 20: crew gone"
         assert float(weekly.sum()) == pytest.approx(
             (salary_wk + hourly_wk) * 52 + seasonal_wk * 10)
 
@@ -120,7 +120,7 @@ class TestPayrollIsNotFlat:
         spread then reports the same number every week; the true profile reports the salary alone
         until the crew arrives and a step up afterwards.
         """
-        p = dict(minimal_params, opening_cash=5_000_000.0, credit_line=0.0)
+        p = dict(minimal_params)
         crop = dict(p["crops"][0])
         ch = p["channels"][0]["name"]
         crop["channels"] = {ch: dict(crop["channels"][ch], price_per_lb=0.0)}
@@ -218,23 +218,71 @@ class TestBoughtHoursCarryTheirFullWage:
                  hire_enabled=True, max_hire_hrs_per_week=2_000.0, hire_wage_markup=0.0)
         lab = compute_labor_arrays(p["year_round_employees"], [], 52)
         assert float(lab["hourly_labor_rate"].max()) == 0.0, "fixture has an hourly crew after all"
-        assert lab["fallback_hourly_wage"] == pytest.approx(1_000.0 / 40.0), (
-            "the fallback must be the farm's own average paid wage: $52,000/yr over 40 h/wk"
+        assert float(lab["bought_hour_wage"][0]) == pytest.approx(1_000.0 / 40.0), (
+            "a bought hour must be priced from the farm's own average paid wage when no hourly "
+            "crew exists to blend: $52,000/yr over 40 h/wk"
         )
         r = solve_farm_v2(**p)
         assert r["status"] == "optimal"
-        if r["total_hired_hours"] > 0:
-            implied = r["hire_cost"] / r["total_hired_hours"]
-            assert implied == pytest.approx(25.0, rel=1e-6), (
-                f"bought hours cost ${implied:.2f}/hr on a farm with no hourly crew"
-            )
+        assert r["total_hired_hours"] > 0, (
+            "nothing was hired, so this cannot tell a $25 hour from a free one — the fixture's "
+            "crew must be too small for its crops"
+        )
+        implied = r["hire_cost"] / r["total_hired_hours"]
+        assert implied == pytest.approx(25.0, rel=1e-6), (
+            f"bought hours cost ${implied:.2f}/hr on a farm with no hourly crew"
+        )
 
 
 def test_a_wrap_around_seasonal_window_is_refused_not_silently_free():
     """`range(start-1, end)` is EMPTY when start > end, so a winter crew entered as weeks 45-5
     used to contribute no capacity — and after W12, no WAGES either, for people the farm really
     pays. Losing a whole wage bill in silence is worse than the capacity it used to lose."""
-    with pytest.raises(ValueError, match="wraps the year|after end_week"):
+    with pytest.raises(ValueError, match="wraps the year"):
         compute_labor_arrays([], [{"position": "Winter Crew", "count": 2, "type": "FT",
                                    "wage": 20.0, "hours_per_week": 40.0, "benefits_pct": 0.0,
                                    "start_week": 45, "end_week": 5}], 52)
+
+
+def test_overtime_does_not_double_charge_the_base_wage(minimal_params):
+    """The arithmetic behind "charge bought hours their FULL rate", made executable.
+
+    This is the step that looks wrong and is not, so it earns a test rather than a comment. The
+    invariant is that `labor_capacity` IS the crew's stated hours — exactly what the committed
+    bill already paid for — and C2 measures bought hours against it. So an overtime hour is
+    genuinely a 41st hour, and charging `wage x multiplier` on it adds no second base.
+
+    One worker, 40 h/wk at $20, no benefits, 100% field time, asked for more than 40 hours:
+
+        committed  40 x $20                 =   $800
+        overtime   N x $20 x 1.5            =   $30 per extra hour
+        total                                  $800 + $30N
+
+    Pinning the TOTAL, not just the rate. A rate check alone passes if the base is charged twice
+    somewhere else; this is the assertion that would catch a regression in either direction —
+    back to "increment only" (the defect W12 created) or forward into double-counting.
+    """
+    p = dict(minimal_params, opening_cash=5_000_000.0, credit_line=5_000_000.0,
+             year_round_employees=[{"position": "Hand", "count": 1, "type": "hourly",
+                                    "wage": 20.0, "hours_per_week": 40.0,
+                                    "benefits_pct": 0.0, "field_time_pct": 100}],
+             seasonal_employees=[],
+             overtime_enabled=True, max_overtime_hrs_per_week=100.0,
+             overtime_rate_multiplier=1.5)
+    r = solve_farm_v2(**p)
+    assert r["status"] == "optimal", r["status"]
+    ot_hours = r["total_overtime_hours"]
+    assert ot_hours > 0, "no overtime bought, so the double-charge question is not exercised"
+
+    committed = r["fixed_cost_split"]["wages"]
+    assert committed == pytest.approx(40.0 * 20.0 * 52), (
+        f"the committed bill is ${committed:,.2f}; it must be the stated 40 h/wk at $20 for 52 "
+        f"weeks and nothing else, or the baseline for this arithmetic is wrong"
+    )
+    assert r["overtime_cost"] == pytest.approx(ot_hours * 30.0, rel=1e-6), (
+        f"overtime cost ${r['overtime_cost']:,.2f} for {ot_hours:,.1f} h. At $10/hr the base has "
+        f"gone missing again; at $50/hr it is being charged twice."
+    )
+    # And the two together are the whole labour bill — nothing else charges an hour anywhere.
+    assert committed + r["overtime_cost"] == pytest.approx(
+        40.0 * 20.0 * 52 + ot_hours * 30.0, rel=1e-9)

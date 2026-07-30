@@ -169,7 +169,7 @@ SEASONAL_EMPLOYEES = [
         "wage":                  float,  # $/hour
         "hours_per_week":        int,    # standard weekly hours
         "benefits_pct":          float,
-        "min_guaranteed_hours":  int,    # optional; weekly minimum they must be paid for
+        "min_guaranteed_hours":  int,    # ⚠️ ACCEPTED AND IGNORED since W12 (2026-07-31): committed wages already pay count x hours_per_week, which is >= count x min(min_guaranteed, hours) for every input, so it can never bind
         "piece_rate_per_lb":     float,  # optional; $/lb harvested (treated as packaging cost)
     },
     ...

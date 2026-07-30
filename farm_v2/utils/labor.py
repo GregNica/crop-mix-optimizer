@@ -18,9 +18,8 @@ Derived arrays (all 52-element, 0-indexed for weeks 1..52):
   committed_weekly_wages[w]  $/week owed to EVERY listed worker (W12) — the wage bill, charged
                               on full hours regardless of how much the crops use
   labor_capacity[w]          total available hours in week w (salaried + hourly)
-  hourly_labor_rate[w]       blended $/hour across all hourly employees available in w
-                              (including benefits; weighted by count × hours_per_week). Prices
-                              the OVERTIME and HIRE premiums only — regular hours are committed.
+  bought_hour_wage[w]        $/hour for an hour bought beyond the committed crew (overtime or
+                              hire), in FULL — regular hours are already paid by the wage bill
   piece_rate_per_lb[c][ch]   $/lb harvest cost per crop/channel — sourced from crop defs,
                               not computed here, but the module documents the pattern.
 
@@ -71,8 +70,8 @@ def compute_labor_arrays(
         "labor_capacity"            np.ndarray shape (n_weeks,) — total hrs/week (1-indexed)
         "hourly_labor_rate"         np.ndarray shape (n_weeks,) — blended $/hr
         "committed_weekly_wages"    np.ndarray shape (n_weeks,) — $/week owed to ALL listed staff
-        "committed_weekly_hours"    np.ndarray shape (n_weeks,) — PAID hrs/week (not field-adj)
-        "fallback_hourly_wage"      float — $/hr for bought hours when a week has no blend
+        "bought_hour_wage"          np.ndarray shape (n_weeks,) — $/hr for an hour bought
+                                    beyond the committed crew; never zero while anyone is paid
         "piece_rate_workers"        list[dict] — seasonal workers with piece_rate_per_lb set
     """
     labor_capacity        = np.zeros(n_weeks, dtype=float)
@@ -181,21 +180,31 @@ def compute_labor_arrays(
             0.0,
         )
 
-    # What one more hour costs when the week has no hourly crew to blend (W12 follow-up).
+    # THE PRICE OF AN HOUR BOUGHT BEYOND THE COMMITTED CREW — published as one array, so no
+    # caller has to reason about wage semantics to get it right.
     #
     # `hourly_labor_rate` is the blend of the EXISTING hourly staff, so it is 0 in any week they
-    # are not on — and once W12 stopped charging base wages through the crop coefficients, a zero
-    # blend meant a bought hour was FREE. Measured: 80 hired hours at $0.00 on a fixture whose
-    # only hourly crew is seasonal. The farm's own average paid wage is the honest fallback: it is
-    # what this farm actually pays for an hour of work, inferred from the crew it described.
+    # are not on. Once W12 stopped charging base wages through the crop coefficients, a zero blend
+    # meant a bought hour was FREE — measured at 80 hired hours for $0.00 on a farm whose only
+    # hourly crew is seasonal. That trap belongs here, next to the code that CREATES the zero,
+    # rather than in the solver: a future caller reading `hourly_labor_rate` directly would
+    # re-create the defect with nothing to warn them.
+    #
+    # The fallback is the farm's own average paid wage — what it actually pays for an hour of
+    # work, inferred from the crew it described. ⚠️ It is an AVERAGE standing in for a MARGINAL
+    # price, and it is shared by overtime (existing crew, where the blend is genuinely right) and
+    # hire (a new person from the local market, where it is only a proxy). On a farm whose only
+    # worker is a $95k manager it prices a hired field hand at $40.60/hr. The error direction is
+    # SAFE — it over-prices bought labour, and the defect it replaced was free labour — but the
+    # honest fix is an explicit "what does a hand cost around here" input. See backlog W15.
     total_paid_hours = float(committed_weekly_hours.sum())
     fallback_wage = (float(committed_weekly_wages.sum()) / total_paid_hours
                      if total_paid_hours > 0 else 0.0)
+    bought_hour_wage = np.where(hourly_labor_rate > 0, hourly_labor_rate, fallback_wage)
 
     return {
         "committed_weekly_wages": committed_weekly_wages,
-        "committed_weekly_hours": committed_weekly_hours,
-        "fallback_hourly_wage":   fallback_wage,
+        "bought_hour_wage":       bought_hour_wage,
         "labor_capacity":         labor_capacity,
         "hourly_labor_rate":      hourly_labor_rate,
         "piece_rate_workers":     piece_rate_workers,

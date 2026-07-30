@@ -102,7 +102,7 @@ const EXPECT_FIXED_LABELS = {
 
 // The three rows for capacity the optimizer BUYS, which sit outside both cost totals. Used as
 // stop-labels when slicing the fixed-cost detail block, in more than one check below.
-const BOUGHT = ['City Water (metered purchase)', 'Overtime Premium', 'Hired Labor Markup'];
+const BOUGHT = ['City Water (metered purchase)', 'Overtime (full rate)', 'Hired Labor (wage + markup)'];
 
 (async () => {
   const W = await bootApp();
@@ -215,7 +215,7 @@ const BOUGHT = ['City Water (metered purchase)', 'Overtime Premium', 'Hired Labo
     W._lastRes = RES;
     let rows = runExport();
     ok('overtime and city water print as named rows',
-       amountOf(rows, 'Overtime Premium') === -RES.overtime_cost &&
+       amountOf(rows, 'Overtime (full rate)') === -RES.overtime_cost &&
        amountOf(rows, 'City Water (metered purchase)') === -RES.city_water_cost);
     ok('no UNRECONCILED line when every cost has a row',
        !rows.some(r => (r[0] || '').includes('UNRECONCILED')));
