@@ -77,6 +77,17 @@ DEMAND_AT_CAP_FRACTION = 0.95   # a week counts as "at cap" in demand_saturation
 # name-collision to notice.
 VC_CATEGORIES = ("labor", "water", "fertilizer", "fuel", "seed")
 
+# Both consumers build their dict as `dict(zip(VC_CATEGORIES, ...), extra=...)`, and a keyword
+# argument SILENTLY WINS over a zipped key of the same name. So a sixth category called "packaging"
+# or "total" would discard its own column, leave `variable_cost` short of what the objective
+# charged, and pass every reconciliation test — because the total is summed from the same dict.
+# Asserted at import rather than commented about, since the comment above schedules exactly the
+# edit that could trip it (crop protection, backlog R1).
+assert not set(VC_CATEGORIES) & {"packaging", "total"}, (
+    "a VC_CATEGORIES name collides with a keyword used to extend the split dicts; the zipped "
+    "column would be silently overwritten"
+)
+
 
 # ---------------------------------------------------------------------------
 # Solve status reporting

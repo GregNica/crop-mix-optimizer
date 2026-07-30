@@ -78,7 +78,7 @@ const PARAMS = {
 // (T27, T83). These are user-visible copy, so a change to them SHOULD have to be made twice.
 const EXPECT_VARIABLE_LABELS = {
   labor:      'Field Labor (hourly, field time only)',
-  water:      'Irrigation Water (metered)',
+  water:      'Irrigation Water (on-farm supply — $0 until a pumping cost is entered)',
   fertilizer: 'Fertilizer',
   fuel:       'Fuel',
   seed:       'Seed / Transplants',
@@ -219,9 +219,20 @@ const BOUGHT = ['City Water (metered purchase)', 'Overtime Premium', 'Hired Labo
     // accounts for it, no row does.
     W._lastRes = { ...RES, operating_profit: RES.operating_profit - 2500 };
     rows = runExport();
-    ok('an unaccounted cost fires the UNRECONCILED line',
+    ok('an unaccounted operating cost fires the UNRECONCILED line',
        rows.some(r => (r[0] || '').includes('UNRECONCILED')));
+
+    // And the same BELOW the line: a deduction inside `profit` that no row explains. This section
+    // reconciles only because the adapter deducts exactly overhead, interest and fixed selling; a
+    // fourth deduction would otherwise leave NET PROFIT not summing to its own rows, silently.
+    W._lastRes = { ...RES, profit: RES.profit - 3000 };
+    rows = runExport();
+    ok('an unaccounted below-the-line deduction fires the UNRECONCILED line',
+       rows.some(r => (r[0] || '').includes('no line above')));
     W._lastRes = RES;
+    rows = runExport();
+    ok('neither tripwire fires on a consistent statement',
+       !rows.some(r => (r[0] || '').includes('UNRECONCILED')));
   }
 
   if (failures) {

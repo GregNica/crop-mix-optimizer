@@ -47,31 +47,39 @@ pytest.importorskip("scipy")
 # payload. A class-level skip left the other four to ERROR instead of skip when it is absent.
 pytestmark = pytest.mark.skipif(not PAYLOAD.exists(), reason="golden payload missing")
 
-# The P&L of the shipped default farm. Captured 2026-07-27 from the app's own default payload.
+# The P&L of the shipped default farm. Captured 2026-07-27 from the app's own default payload,
+# re-captured to the CENT on 2026-07-30 so the five plan-determined lines can be pinned tightly
+# (see CASH_TIMED_LINES below for why the other two cannot be).
 GOLDEN = {
-    "revenue":          1_621_122,
-    "variable_cost":      584_030,
-    "fixed_cost":         213_097,
-    "overhead_cost":      259_379,
-    "interest_cost":        1_091,
-    "profit":             550_524,
-    "operating_profit":   823_994,
+    "revenue":          1_621_121.85,
+    "variable_cost":      584_030.30,
+    "fixed_cost":         213_097.22,
+    "overhead_cost":      259_379.50,
+    "interest_cost":        1_085.48,
+    "profit":             550_529.36,
+    "operating_profit":   823_994.33,
 }
 # Baseline history — re-pin ONLY with a reason, and record it here.
-#   2026-07-30 (W4, NOT a re-pin — recorded because the observed number now differs from the pin):
-#     profit reads 550,529.36 against the 550,524 pinned above, and interest 1,085.48 against
-#     1,090.78. Everything else is identical TO THE CENT: revenue, variable_cost, fixed_cost,
-#     operating_profit and peak_borrowing all unchanged, and 38 successions planted before and
-#     after. The difference is a TIE being broken differently. Spinach's plantings moved from
-#     W15/W17/W18/W20/W22 to W15/W17/W19/W21/W22 — same total acreage, same profit — because W4
-#     charges each variable cost once into one array and sums it, so the float addition ORDER of
-#     the cash-flow coefficients changed in the last bits and HiGHS picked a different equally
-#     optimal vertex. A different planting week means a different cash curve, hence average
-#     borrowing, hence interest.
-#     DELIBERATELY NOT RE-PINNED: 550,524 is no more or less correct than 550,529, and re-pinning
-#     to today's tie would suggest the number moved when the plan's economics did not. This is the
-#     case the $50 tolerance was reasoned for. If a future change moves profit and leaves
-#     operating_profit identical, suspect degeneracy before suspecting a defect.
+#   2026-07-30 (W4): re-captured to the CENT, and profit 550,524 -> 550,529.36 / interest
+#     1,090.78 -> 1,085.48. NOT an economic change: revenue, variable_cost, fixed_cost,
+#     operating_profit and peak_borrowing are identical to the cent, and 38 successions are planted
+#     before and after. A TIE broke differently — Spinach's plantings moved from W15/W17/W18/W20/W22
+#     to W15/W17/W19/W21/W22, same total acreage, same profit — because W4 charges each variable
+#     cost once into one array and sums it, so the float addition ORDER of the cash-flow
+#     coefficients changed in the last bits and HiGHS picked a different equally optimal vertex.
+#     A different planting week means a different cash curve, hence average borrowing, hence
+#     interest.
+#
+#     WHY THIS WAS RE-PINNED RATHER THAN LEFT INSIDE THE $50 TOLERANCE, which was the first
+#     instinct: leaving it meant the pin was knowingly stale, so ~11% of the tolerance was spent
+#     in one direction and a future genuine regression of ~$44 in the same direction would pass
+#     silently. Review's point, and it is right — a guard that is allowed to drift is a guard that
+#     drifts. The tolerance is now SPLIT instead (see CASH_TIMED_LINES): the five plan-determined
+#     lines are pinned to the cent, and only profit and interest_cost keep the $50 they genuinely
+#     need. Strictly stronger than before in five of seven lines.
+#
+#     If a future change moves profit and leaves operating_profit identical, suspect degeneracy
+#     before suspecting a defect.
 #   2026-07-29 (days_to_maturity is PLANT TO FIRST HARVEST, not total field occupancy):
 #     revenue 2,163,463 -> 1,621,122 (-25%), profit 747,002 -> 550,524 (-26%).
 #
@@ -328,6 +336,22 @@ GOLDEN = {
 # $10k-$171k, so nothing that matters can hide under it.
 DOLLAR = 50.0
 
+# ...but only TWO of the pinned lines actually need that much room, and giving it to the other five
+# is what let a real $5.30 movement sit inside the guard while the pin stayed stale.
+#
+# Measured 2026-07-30 across the W4 refactor, which broke an LP tie differently: revenue,
+# variable_cost, fixed_cost and operating_profit came out IDENTICAL TO THE CENT, while `profit` and
+# `interest_cost` moved $5.30 — because interest is charged on the *cash curve*, so it depends on
+# WHICH of several equally-optimal planting weeks HiGHS picks, not just on the plan's economics.
+#
+# So the two cash-timed lines keep the $50, and the rest are pinned to the cent. That is strictly
+# stronger than one loose tolerance everywhere: a $44 regression in fixed_cost can no longer hide,
+# and the two lines that legitimately drift no longer force everyone else to tolerate drift too.
+# It also makes the failure diagnostic — a break in the tight set means the PLAN moved, a break in
+# the loose set alone means its cash timing did.
+CASH_TIMED_LINES = {"profit", "interest_cost"}
+CENT = 0.01
+
 
 def _extract_python_code() -> str:
     """Pull the PYTHON_CODE template literal out of index.html.
@@ -418,10 +442,11 @@ class TestGoldenFarm:
     @pytest.mark.parametrize("line", sorted(GOLDEN))
     def test_pnl_line_to_the_dollar(self, result, line):
         got, want = result[line], GOLDEN[line]
-        assert got == pytest.approx(want, abs=DOLLAR), (
-            f"{line} moved: ${got:,.0f} vs the pinned ${want:,.0f} "
-            f"(delta ${got - want:+,.0f}). Money changed — identify the cause and, if the new "
-            f"number is the more honest one, re-pin it here with a note."
+        tol = DOLLAR if line in CASH_TIMED_LINES else CENT
+        assert got == pytest.approx(want, abs=tol), (
+            f"{line} moved: ${got:,.2f} vs the pinned ${want:,.2f} "
+            f"(delta ${got - want:+,.2f}, tolerance ${tol}). Money changed — identify the cause "
+            f"and, if the new number is the more honest one, re-pin it here with a note."
         )
 
     def test_identities_hold_on_the_golden_farm(self, result):
@@ -928,10 +953,25 @@ class TestCostSplitsReachTheClient(object):
         # Comments out first, or the prose naming the OLD dead keys reads as live code — this
         # guard's first run flagged `cost_seed` and `cost_harvest_storage` out of the comment
         # that explains why they are gone.
+        #
+        # STRINGS out BEFORE line comments, and that order is the point: stripping `//` to
+        # end-of-line first would eat the rest of any line containing a `//` inside a string
+        # literal — a single `'https://...'` in this function would silently stop every later
+        # `res.<name>` on that line from being checked. This guard exists because a key read and
+        # never sent produced no symptom; it must not acquire a way to go quiet itself.
         body = re.sub(r"/\*.*?\*/", "", body, flags=re.S)
+        body = re.sub(r"'(?:\\.|[^'\\\n])*'|\"(?:\\.|[^\"\\\n])*\"|`(?:\\.|[^`\\])*`", "''", body)
         body = re.sub(r"//[^\n]*", "", body)
         read = sorted(set(re.findall(r"\bres\.([a-z_][a-z0-9_]*)\b", body)))
         assert read, "found no res.* reads in exportPLCSV — the extractor is broken, not the app"
+        # The extractor must be finding the whole function, not a prefix of it: `revenue` is read
+        # in the first few lines and `peak_borrowing` in the last few, so requiring both means a
+        # truncated `body` fails here rather than quietly checking less than it claims to.
+        for anchor in ("revenue", "peak_borrowing"):
+            assert anchor in read, (
+                f"the extractor did not reach `res.{anchor}` — it is scanning only part of "
+                f"exportPLCSV, so this guard is checking fewer keys than it appears to"
+            )
         missing = [k for k in read if k not in result]
         assert missing == [], (
             f"exportPLCSV reads {missing} and the adapter does not send them. Every one prints as "
