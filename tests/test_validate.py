@@ -308,3 +308,16 @@ class TestEmployeeValidation:
         emp[key] = val
         with pytest.raises(ValueError, match=key):
             _call(minimal_params, year_round_employees=[emp])
+
+
+class TestHiredWageBlankPolicy:
+    def test_empty_string_is_refused_not_treated_as_blank(self, minimal_params):
+        # Blank is None and ONLY None. Treating '' as blank here while labor.py refuses it
+        # let a direct caller pass validation and then hit a raw ValueError in Step 2,
+        # OUTSIDE solve's try — the exact one-contract asymmetry this check exists to remove.
+        # (The app's adapter maps '' to None before the solve, so only direct callers see it.)
+        with pytest.raises(ValueError, match="[Hh]ired wage"):
+            _call(minimal_params, hired_wage_per_hr="")
+
+    def test_none_still_means_infer(self, minimal_params):
+        _call(minimal_params, hired_wage_per_hr=None)

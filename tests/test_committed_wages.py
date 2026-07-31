@@ -14,6 +14,7 @@ Two rules carry the whole change, and neither had a test until this file:
   2. PAYROLL IS NOT FLAT. It is the first fixed line with a weekly profile, so it must reach the
      cash floor as the profile rather than as an annual total divided by 52.
 """
+import functools
 import pathlib
 
 import numpy as np
@@ -435,19 +436,27 @@ class TestHireIsPricedForTheMarketNotTheCrew:
         )
 
 
+@functools.lru_cache(maxsize=1)
+def _adapter_code():
+    """Read index.html and compile PYTHON_CODE once per session — the read+regex+compile is
+    repeated by every _run_from_js() caller otherwise. Only the compile is cached; each call
+    still gets a FRESH namespace, which the gap-note test relies on to substitute the solver."""
+    import re
+    src = (pathlib.Path(__file__).resolve().parent.parent / "public" / "index.html").read_text()
+    code = re.search(r"const PYTHON_CODE = `(.*?)`;", src, re.S).group(1)
+    code = re.sub(r"^(import matplotlib.*|matplotlib\.use\(.*|from matplotlib.*)$", "", code,
+                  flags=re.M)
+    return compile(code, "index.html:PYTHON_CODE", "exec")
+
+
 def _run_from_js(return_ns=False):
     """The app's real Python adapter, extracted from index.html the way test_golden_farm does.
 
     With return_ns=True also returns the exec namespace, so a test can substitute
     `solve_farm_v2` and pin what the adapter FORWARDS separately from what the solver computes.
     """
-    import re
-    src = (pathlib.Path(__file__).resolve().parent.parent / "public" / "index.html").read_text()
-    code = re.search(r"const PYTHON_CODE = `(.*?)`;", src, re.S).group(1)
-    code = re.sub(r"^(import matplotlib.*|matplotlib\.use\(.*|from matplotlib.*)$", "", code,
-                  flags=re.M)
     ns: dict = {}
-    exec(compile(code, "index.html:PYTHON_CODE", "exec"), ns)   # noqa: S102
+    exec(_adapter_code(), ns)   # noqa: S102
     ns["make_waterfall_chart"] = ns["make_heatmap_chart"] = lambda *a, **k: ""
     return (ns["run_from_js"], ns) if return_ns else ns["run_from_js"]
 
@@ -487,10 +496,12 @@ def test_the_typed_wage_is_loaded_not_taken_raw():
              "hours_per_week": 40.0, "benefits_pct": 0.25}]
     inferred = float(compute_labor_arrays(crew, [], 52)["hire_hour_wage"][0])
     assert inferred == pytest.approx(19.0 * 1.25), "blank should infer the loaded crew rate"
-    # The adapter multiplies the typed base by the load before it reaches the solver, so the two
-    # paths agree. Asserted on the adapter's own arithmetic rather than a second copy of it.
-    typed_after_adapter = 19.0 * (1.0 + 0.25)
-    assert typed_after_adapter == pytest.approx(inferred), (
+    # The load on the TYPED wage is applied in labor.py itself (hired_wage_load_pct), next to
+    # where every other wage gets its load — it used to live in the app's adapter, which made
+    # the solver parameter secretly mean "all-in wage" for any direct/server caller.
+    typed = float(compute_labor_arrays(
+        crew, [], 52, hired_wage_per_hr=19.0, hired_wage_load_pct=0.25)["hire_hour_wage"][0])
+    assert typed == pytest.approx(inferred), (
         "typing the crew's own base wage must price a hire the same as inferring it"
     )
 

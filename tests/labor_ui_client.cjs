@@ -37,33 +37,30 @@ bootApp().then(({ window: w }) => {
     }
   });
 
-  // 2 — a blank wage box is refused by validateParams, naming the position...
+  // 2 — one blank round, one typed-0 round, one restore. While the box is BLANK:
+  // validateParams must refuse it naming the position, and the serializer must still read 0
+  // (the validator is the guard; getLaborFromForm stays total so imports/saved plans work).
   const firstWage = doc.querySelector('#labor-list .labor-row [data-lf="wage"]');
   const firstPos  = doc.querySelector('#labor-list .labor-row [data-lf="position"]').value;
   const saved = firstWage.value;
+  const validateWith = () => w.validateParams({ total_land: 80,
+    employees: w.eval('getLaborFromForm()'), channels: [{ name: 'X' }], crops: [] });
   firstWage.value = '';
-  const params = { total_land: 80, employees: w.eval('getLaborFromForm()'),
-                   channels: [{ name: 'X' }], crops: [] };
-  const errs = w.validateParams(params);
+  const errs = validateWith();
   if (!errs.some(e => e.includes(firstPos) && /wage/i.test(e))) {
     fail(`blanking "${firstPos}"'s wage produced no validation error — the role would be `
        + `silently paid $0 (got: ${JSON.stringify(errs)})`);
   }
+  const emp = w.eval('getLaborFromForm()')[0];
+  if (emp.wage !== 0) fail(`getLaborFromForm turned a blank wage into ${emp.wage}, expected 0`);
 
   // ...while a typed 0 is a decision, not an omission, and passes the wage check.
   firstWage.value = '0';
-  const errs0 = w.validateParams({ ...params, employees: w.eval('getLaborFromForm()') });
+  const errs0 = validateWith();
   if (errs0.some(e => e.includes(firstPos) && /wage/i.test(e))) {
     fail(`a typed $0 wage for "${firstPos}" was refused — 0 is a legal wage (unpaid family); `
        + `only BLANK must be refused`);
   }
-  firstWage.value = saved;
-
-  // 3 — and the payload the coercion produces still reads 0 for a blank box (the validator is
-  // the guard; the serializer stays total, so imports/saved plans keep working).
-  firstWage.value = '';
-  const emp = w.eval('getLaborFromForm()')[0];
-  if (emp.wage !== 0) fail(`getLaborFromForm turned a blank wage into ${emp.wage}, expected 0`);
   firstWage.value = saved;
 
   // 4 — the What-If labor lever must CHANGE the payload for small crews. Math.round made

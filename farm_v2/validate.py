@@ -18,6 +18,8 @@ Checks performed:
 
 from __future__ import annotations
 
+from farm_v2.utils.labor import SEASONAL_TYPES
+
 import math
 from farm_v2.utils.calendar import generate_successions, week_of_year
 
@@ -237,8 +239,11 @@ def validate_params(
     # it would hand a caller a traceback where `crops=None` returns a status dict, which is
     # precisely the asymmetry the ONE-CONTRACT rule exists to remove. It arrives through
     # **_kwargs today, so without this it was silently swallowed here and only caught downstream.
+    # Blank is None and ONLY None: the app's adapter maps '' to None before the solve, and
+    # labor.py refuses ''. Treating '' as blank here let a direct caller pass validation and
+    # then hit labor.py's raise in Step 2, outside the try — the exact asymmetry above.
     _hw = _kwargs.get("hired_wage_per_hr", None)
-    if _hw not in (None, ""):
+    if _hw is not None:
         try:
             _hw_v = float(_hw)
         except (TypeError, ValueError):
@@ -274,6 +279,24 @@ def _require_employee_numbers(emp: dict, keys: tuple, kind: str, i: int) -> None
             )
 
 
+def _require_employee_bounds(emp: dict, kind: str, i: int) -> None:
+    """The checks both employee kinds share: count ≥ 1, wage ≥ 0, hours ≥ 1.
+
+    ONE implementation on purpose. These lived as per-kind copies, and the seasonal copy
+    shipped without the wage/hours lines — a wage of -18 then booked payroll as INCOME
+    (fixed_cost_split['wages'] = -$220,800, a $561,600 phantom profit swing) and turned the
+    inferred hire price negative, so the optimizer was PAID per hired hour. Zero warnings.
+    A rule spelled once cannot be forgotten in one of its copies.
+    """
+    who = f"{kind} employee '{emp.get('position', i)}'"
+    if emp["count"] < 1:
+        raise ValueError(f"{who} count must be ≥ 1.")
+    if emp["wage"] < 0:
+        raise ValueError(f"{who} wage must be ≥ 0.")
+    if emp["hours_per_week"] < 1:
+        raise ValueError(f"{who} hours_per_week must be ≥ 1.")
+
+
 def _validate_year_round_employees(employees: list) -> None:
     required = {"position", "count", "type", "wage", "hours_per_week"}
     for i, emp in enumerate(employees):
@@ -288,18 +311,7 @@ def _validate_year_round_employees(employees: list) -> None:
                 f"'salary' or 'hourly', got '{emp['type']}'."
             )
         _require_employee_numbers(emp, ("count", "wage", "hours_per_week"), "Year-round", i)
-        if emp["count"] < 1:
-            raise ValueError(
-                f"Year-round employee '{emp.get('position', i)}' count must be ≥ 1."
-            )
-        if emp["wage"] < 0:
-            raise ValueError(
-                f"Year-round employee '{emp.get('position', i)}' wage must be ≥ 0."
-            )
-        if emp["hours_per_week"] < 1:
-            raise ValueError(
-                f"Year-round employee '{emp.get('position', i)}' hours_per_week must be ≥ 1."
-            )
+        _require_employee_bounds(emp, "Year-round", i)
 
 
 def _validate_seasonal_employees(employees: list) -> None:
@@ -311,7 +323,7 @@ def _validate_seasonal_employees(employees: list) -> None:
             raise ValueError(
                 f"Seasonal employee #{i} missing required keys: {missing}."
             )
-        if emp["type"].upper() not in ("FT", "PT"):
+        if emp["type"].upper() not in SEASONAL_TYPES:
             raise ValueError(
                 f"Seasonal employee '{emp.get('position', i)}' type must be "
                 f"'FT' or 'PT', got '{emp['type']}'."
@@ -319,6 +331,7 @@ def _validate_seasonal_employees(employees: list) -> None:
         _require_employee_numbers(
             emp, ("count", "wage", "hours_per_week", "start_week", "end_week"), "Seasonal", i,
         )
+        _require_employee_bounds(emp, "Seasonal", i)
         if not (1 <= emp["start_week"] <= 52 and 1 <= emp["end_week"] <= 52):
             raise ValueError(
                 f"Seasonal employee '{emp.get('position', i)}' "
@@ -328,22 +341,6 @@ def _validate_seasonal_employees(employees: list) -> None:
             raise ValueError(
                 f"Seasonal employee '{emp.get('position', i)}' "
                 f"start_week ({emp['start_week']}) > end_week ({emp['end_week']})."
-            )
-        if emp["count"] < 1:
-            raise ValueError(
-                f"Seasonal employee '{emp.get('position', i)}' count must be ≥ 1."
-            )
-        # Symmetric with the year-round path — the asymmetry let a seasonal wage of -18 book
-        # payroll as INCOME (fixed_cost_split['wages'] = -$220,800, a $561,600 phantom profit
-        # swing) and turn the inferred hire price negative, so the optimizer was PAID per
-        # hired hour and drove hiring to its cap. All with zero warnings.
-        if emp["wage"] < 0:
-            raise ValueError(
-                f"Seasonal employee '{emp.get('position', i)}' wage must be ≥ 0."
-            )
-        if emp["hours_per_week"] < 1:
-            raise ValueError(
-                f"Seasonal employee '{emp.get('position', i)}' hours_per_week must be ≥ 1."
             )
 
 

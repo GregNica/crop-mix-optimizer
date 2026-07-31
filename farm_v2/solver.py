@@ -276,10 +276,13 @@ def solve_farm_v2(
     hire_enabled: bool = False,
     max_hire_hrs_per_week: float = 0.0,
     hire_wage_markup: float = 0.0,
-    # What a HIRED hand costs per hour on the local market (W15). Left None, the model
+    # What a HIRED hand costs per hour on the local market (W15) — a BASE wage, the same basis
+    # as every employee wage box; the employer payroll load is applied via hired_wage_load_pct
+    # below, in labor.py, next to where every other wage gets its load. Left None, the model
     # infers an hours-weighted mean of the wages the farm already pays its hourly roles — a proxy
     # that is wrong whenever the listed crew is unrepresentative of who you would bring in.
     hired_wage_per_hr: float | None = None,
+    hired_wage_load_pct: float = 0.0,
     # --- Equipment proxy ---
     max_plant_acres_per_week: float = 1e9,
     max_harvest_acres_per_week: float = 1e9,
@@ -400,6 +403,21 @@ def solve_farm_v2(
     # not an error message. A crash in the guard itself fails OPEN but LOUD — it costs the
     # check, not the plan, and says so in the warnings.
     validation_warnings: list[str] = []
+
+    # The one shape every refusal returns. Four hand-built copies of this literal had already
+    # drifted in one detail (one returned warnings=[] where the others returned
+    # validation_warnings) — growing the contract by a key meant four edits.
+    def _invalid(errors, successions=()):
+        return {
+            "status": "invalid_input",
+            "profit": None,
+            "errors": list(errors),
+            "warnings": validation_warnings,
+            "crops": crops,
+            "channels": channels,
+            "successions": list(successions),
+        }
+
     try:
         validation_warnings = validate_params(
             total_land=total_land,
@@ -421,15 +439,7 @@ def solve_farm_v2(
             hired_wage_per_hr=hired_wage_per_hr,
         ) or []
     except ValueError as ve:
-        return {
-            "status": "invalid_input",
-            "profit": None,
-            "errors": [str(ve)],
-            "warnings": [],
-            "crops": crops,
-            "channels": channels,
-            "successions": [],
-        }
+        return _invalid([str(ve)])
     except Exception as ge:
         # A guard that crashes must not cost a computable plan — but it must not go quiet
         # either. Silently continuing is how this branch has shipped inert guards before, and
@@ -448,19 +458,11 @@ def solve_farm_v2(
         # Normally unreachable — validate_params raises first and Step 0 turns it into
         # `invalid_input`. It is reached only when the guard itself crashed and Step 0 failed
         # open, so RETURN rather than raise: failing open must not cost a caller its contract.
-        return {
-            "status": "invalid_input",
-            "profit": None,
-            "errors": [
-                "No successions generated for ANY crop. Season windows are PLANTING windows, "
-                "so each needs at least one start week whose cycle finishes by week 52 — or the "
-                "crop must be marked as overwintering."
-            ],
-            "warnings": validation_warnings,
-            "crops": crops,
-            "channels": channels,
-            "successions": [],
-        }
+        return _invalid([
+            "No successions generated for ANY crop. Season windows are PLANTING windows, "
+            "so each needs at least one start week whose cycle finishes by week 52 — or the "
+            "crop must be marked as overwintering."
+        ])
 
     phase_table = build_phase_table(successions, N_WEEKS)  # [i][w] = 0/1/2/None
 
@@ -483,6 +485,7 @@ def solve_farm_v2(
     labor_result = compute_labor_arrays(
         year_round_employees, seasonal_employees, N_WEEKS,
         hired_wage_per_hr=hired_wage_per_hr,
+        hired_wage_load_pct=hired_wage_load_pct,
     )
     labor_capacity         = labor_result["labor_capacity"]          # (52,)
     overtime_hour_wage     = labor_result["overtime_hour_wage"]      # (52,) your crew, late
@@ -541,15 +544,7 @@ def solve_farm_v2(
             "would cost nothing. Set a wage on your crew, or disable overtime for this solve."
         )
     if _flex_rate_errors:
-        return {
-            "status": "invalid_input",
-            "profit": None,
-            "errors": _flex_rate_errors,
-            "warnings": validation_warnings,
-            "crops": crops,
-            "channels": channels,
-            "successions": [],
-        }
+        return _invalid(_flex_rate_errors)
 
     labor_rate = compute_labor_rates(successions, crops, N_WEEKS)  # (N_S, 53)
 
@@ -1304,20 +1299,12 @@ def solve_farm_v2(
             # Nothing this crop can grow is in the ground in week 1, so the commitment cannot
             # be honoured by any plan. Silently dropping it is the failure mode this whole
             # sweep exists to remove.
-            return {
-                "status": "invalid_input",
-                "profit": None,
-                "errors": [
-                    f"Crop '{crop.get('name', c_idx)}' has {committed:g} acres recorded as "
-                    f"already planted, but none of its plantings are in the ground at the start "
-                    f"of the planning year. Mark it as overwintering, or set its committed "
-                    f"acres to 0."
-                ],
-                "warnings": validation_warnings,
-                "crops": crops,
-                "channels": channels,
-                "successions": successions,
-            }
+            return _invalid([
+                f"Crop '{crop.get('name', c_idx)}' has {committed:g} acres recorded as "
+                f"already planted, but none of its plantings are in the ground at the start "
+                f"of the planning year. Mark it as overwintering, or set its committed "
+                f"acres to 0."
+            ], successions=successions)
         add_row(cols, -np.inf, -committed)
 
     # C10 — Min acreage lower: x[i] ≥ y[i] × min_frac
