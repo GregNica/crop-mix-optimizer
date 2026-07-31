@@ -58,6 +58,14 @@ GUARDS = [
         "tests/golden/default_farm_payload.json pins a farm the app no longer ships. Run "
         "`node scripts/capture_golden_payload.cjs` and re-pin the P&L in the same commit",
     ),
+    (
+        "labor-ui-client",
+        ["tests/labor_ui_client.cjs"],
+        "the labor roster's money inputs regressed: either Count went back to hidden-but-billed "
+        "(a field that multiplies the committed wage bill must be on screen for every row type) "
+        "or a blank wage box is once again silently coerced to $0, erasing that role's payroll "
+        "with nothing on screen",
+    ),
 ]
 
 

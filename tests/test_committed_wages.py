@@ -435,8 +435,12 @@ class TestHireIsPricedForTheMarketNotTheCrew:
         )
 
 
-def _run_from_js():
-    """The app's real Python adapter, extracted from index.html the way test_golden_farm does."""
+def _run_from_js(return_ns=False):
+    """The app's real Python adapter, extracted from index.html the way test_golden_farm does.
+
+    With return_ns=True also returns the exec namespace, so a test can substitute
+    `solve_farm_v2` and pin what the adapter FORWARDS separately from what the solver computes.
+    """
     import re
     src = (pathlib.Path(__file__).resolve().parent.parent / "public" / "index.html").read_text()
     code = re.search(r"const PYTHON_CODE = `(.*?)`;", src, re.S).group(1)
@@ -445,7 +449,7 @@ def _run_from_js():
     ns: dict = {}
     exec(compile(code, "index.html:PYTHON_CODE", "exec"), ns)   # noqa: S102
     ns["make_waterfall_chart"] = ns["make_heatmap_chart"] = lambda *a, **k: ""
-    return ns["run_from_js"]
+    return (ns["run_from_js"], ns) if return_ns else ns["run_from_js"]
 
 
 def test_a_typed_hired_wage_actually_solves_and_carries_the_payroll_load():

@@ -259,10 +259,13 @@
   /* Labor rows */
   .labor-row {
     display: grid;
-    /* Non-seasonal: Position, Type, Wage, Hrs/Wk, Field%, ✕ (Count/Start/End are display:none).
-       5 data columns + auto for ✕. minmax(0,…) lets tracks shrink below min-content so long
-       labels can't force horizontal overflow. */
-    grid-template-columns: minmax(0,1.6fr) minmax(0,0.9fr) minmax(0,0.6fr) minmax(0,0.8fr) minmax(0,0.6fr) auto;
+    /* Non-seasonal: Position, Type, Count, Wage, Hrs/Wk, Field%, ✕ (Start/End are display:none).
+       6 data columns + auto for ✕. minmax(0,…) lets tracks shrink below min-content so long
+       labels can't force horizontal overflow.
+       Count is NEVER hidden: it multiplies the committed wage bill (W12) for every row type,
+       and hiding it for salary/hourly rows put $67,600/yr of the default farm's payroll on a
+       field the grower could not see or edit. A money input must be on screen. */
+    grid-template-columns: minmax(0,1.4fr) minmax(0,0.9fr) minmax(0,0.55fr) minmax(0,0.7fr) minmax(0,0.6fr) minmax(0,0.6fr) auto;
     gap: 0.4rem;
     align-items: end;
     margin-bottom: 0.5rem;
@@ -2088,7 +2091,7 @@ function renderLaborRow(e, idx) {
         <option value="hourly"   ${e.type==='hourly'  ?'selected':''}>Hourly</option>
         <option value="seasonal" ${e.type==='seasonal'?'selected':''}>Seasonal</option>
       </select></div>
-    <div class="seasonal-only"><label>Count</label><input type="number" class="lf" data-lf="count" value="${e.count}" min="1" step="1"></div>
+    <div><label>Count</label><input type="number" class="lf" data-lf="count" value="${e.count}" min="1" step="1"></div>
     <div><label>${e.type==='salary'?'Annual $':'$/hr'}</label><input type="number" class="lf wage-input" data-lf="wage" value="${e.wage}" min="0" step="${e.type==='salary'?1000:0.5}"></div>
     <div><label>Hrs/Wk</label><input type="number" class="lf" data-lf="hours_per_week" value="${e.hours_per_week}" min="1" max="80" step="1"></div>
     <div><label title="Max share of this worker's hours available for crop field work (a cap, not an average). E.g. a manager ~80% in slow weeks; field crew 100%. The optimizer uses up to this much when it helps.">Field %</label><input type="number" class="lf" data-lf="field_time_pct" value="${e.field_time_pct ?? 100}" min="1" max="100" step="5"></div>
@@ -7200,6 +7203,10 @@ def run_from_js(params_json):
         catchment_surface_area_m2 = float(p.get('catchment_surface_area_m2', 5000))
         city_water_enabled       = bool(p.get('city_water_enabled', False))
         city_water_cost_per_L    = float(p.get('city_water_cost_per_L', 0.003))
+        # No form input exists for the standing charge yet, but the solver models it, the P&L
+        # labels it, and imported/server payloads may carry it — without this line the feature
+        # was silently $0 on every browser solve while its label and test made it look live.
+        city_water_fixed_fee     = float(p.get('city_water_fixed_fee_per_week', 0.0) or 0.0)
 
         # --- Variable costs ---
         cost_fert_per_lb         = float(p.get('cost_fert_per_lb', 0.0))
@@ -7366,6 +7373,7 @@ def run_from_js(params_json):
             catchment_surface_area_m2=catchment_surface_area_m2,
             city_water_enabled=city_water_enabled,
             city_water_cost_per_L=city_water_cost_per_L,
+            city_water_fixed_fee_per_week=city_water_fixed_fee,
             cost_fert_per_lb=cost_fert_per_lb,
             cost_fuel_per_L=cost_fuel_per_L,
             year_round_employees=year_round_employees,
@@ -7595,6 +7603,12 @@ def run_from_js(params_json):
             # including the What-If / sensitivity / Monte Carlo paths, because they all come
             # through here and none of them passes the browser's validateParams().
             'warnings': result.get('warnings', []),
+            # "Stopped at the time limit — best plan found, not a proven optimum." The browser
+            # has read this key since the time limit shipped; the adapter never sent it, so the
+            # one warning that matters most on a truncated solve could never display and a
+            # 75-second farm rendered exactly like a proven-optimal one. Fourth instance of the
+            # solver-adds-field-adapter-doesn't class (W6, city_water_cost, gap_note).
+            'gap_note': result.get('gap_note'),
             # Why each requested crop is absent from the plan (S2).
             'unplanted_crops': result.get('unplanted_crops', []),
         })
@@ -7706,6 +7720,19 @@ function validateParams(params) {
   if (_hwTxt !== '' && !(parseFloat(_hwTxt) > 0)) {
     errors.push('Hired wage must be greater than $0/hr — or leave it blank to infer a rate from your crew.');
   }
+  // A blank wage box is NOT $0. getLaborFromForm coerces blank to 0 for the payload, which
+  // under W12 silently erases that role's entire payroll from the committed bill while its
+  // capacity keeps counting — clearing the Harvest Crew wage dropped $205,200/yr (24% of the
+  // wage line) with nothing on screen. "My Farm Data" mode blanks every wage by design, so
+  // this is a normal app state, not a mid-edit accident. Typed 0 stays legal: unpaid family
+  // is a real crew; a box nobody filled in is not a decision.
+  document.querySelectorAll('#labor-list .labor-row').forEach(row => {
+    const wageEl = row.querySelector('[data-lf="wage"]');
+    const pos = row.querySelector('[data-lf="position"]')?.value || 'a labor position';
+    if (wageEl && wageEl.value.trim() === '') {
+      errors.push(`Enter a wage for "${pos}" — 0 is allowed for unpaid roles, but a blank box would silently pay them nothing.`);
+    }
+  });
   // A crop routed to a barn that does not exist cannot be harvested at all: the ambient row
   // becomes Σ m3·(inv + harvest) ≤ 0, every term is non-negative, so the optimizer drops the
   // crop to zero acres and still reports "optimal". Measured on the shipped defaults: unticking

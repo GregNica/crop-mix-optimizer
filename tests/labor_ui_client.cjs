@@ -1,0 +1,72 @@
+/**
+ * The labor roster's money inputs stay on screen and blank never silently means $0.
+ *
+ * Two defects from the 2026-07-31 review, both of the silent-money class:
+ *
+ *   1. Count had class `seasonal-only`, so for Salary/Hourly rows it was display:none while
+ *      getLaborFromForm still read it and W12 billed it — the default farm carried $67,600/yr
+ *      of payroll on a field the grower could not see or edit, and switching a 12-person
+ *      seasonal row to hourly kept its stale count billing invisibly.
+ *
+ *   2. A blank wage box was coerced to $0 by getLaborFromForm with no validator objecting —
+ *      clearing one wage erased that role's entire payroll from the committed bill while its
+ *      capacity kept counting. "My Farm Data" mode blanks every wage BY DESIGN, so this is a
+ *      normal app state. Typed 0 stays legal (unpaid family is a real crew).
+ */
+'use strict';
+const { bootApp } = require('./jsdom_app.cjs');
+
+let failures = 0;
+const fail = m => { failures++; console.error('  x ' + m); };
+
+bootApp().then(({ window: w }) => {
+  const doc = w.document;
+
+  // 1 — Count is visible for EVERY row type. The default roster has salary, hourly and
+  // seasonal rows, so if any type hides it this fails without needing computed style:
+  // visibility is class-driven (`.seasonal-only { display:none }` outside seasonal rows).
+  const rows = [...doc.querySelectorAll('#labor-list .labor-row')];
+  if (rows.length < 3) fail(`expected the default roster's rows, got ${rows.length}`);
+  rows.forEach(row => {
+    const type = row.querySelector('[data-lf="type"]')?.value;
+    const countDiv = row.querySelector('[data-lf="count"]')?.closest('div');
+    if (!countDiv) { fail(`row (${type}) has no Count input at all`); return; }
+    if (countDiv.classList.contains('seasonal-only')) {
+      fail(`Count is hidden for a ${type} row but still multiplies the committed wage bill — `
+         + `a money input must be on screen`);
+    }
+  });
+
+  // 2 — a blank wage box is refused by validateParams, naming the position...
+  const firstWage = doc.querySelector('#labor-list .labor-row [data-lf="wage"]');
+  const firstPos  = doc.querySelector('#labor-list .labor-row [data-lf="position"]').value;
+  const saved = firstWage.value;
+  firstWage.value = '';
+  const params = { total_land: 80, employees: w.eval('getLaborFromForm()'),
+                   channels: [{ name: 'X' }], crops: [] };
+  const errs = w.validateParams(params);
+  if (!errs.some(e => e.includes(firstPos) && /wage/i.test(e))) {
+    fail(`blanking "${firstPos}"'s wage produced no validation error — the role would be `
+       + `silently paid $0 (got: ${JSON.stringify(errs)})`);
+  }
+
+  // ...while a typed 0 is a decision, not an omission, and passes the wage check.
+  firstWage.value = '0';
+  const errs0 = w.validateParams({ ...params, employees: w.eval('getLaborFromForm()') });
+  if (errs0.some(e => e.includes(firstPos) && /wage/i.test(e))) {
+    fail(`a typed $0 wage for "${firstPos}" was refused — 0 is a legal wage (unpaid family); `
+       + `only BLANK must be refused`);
+  }
+  firstWage.value = saved;
+
+  // 3 — and the payload the coercion produces still reads 0 for a blank box (the validator is
+  // the guard; the serializer stays total, so imports/saved plans keep working).
+  firstWage.value = '';
+  const emp = w.eval('getLaborFromForm()')[0];
+  if (emp.wage !== 0) fail(`getLaborFromForm turned a blank wage into ${emp.wage}, expected 0`);
+  firstWage.value = saved;
+
+  if (failures) { console.error(`labor_ui_client: ${failures} FAILURE(S)`); process.exit(1); }
+  console.log('labor UI (client): all checks passed (count visible on every row type, blank wage refused, typed 0 legal)');
+  process.exit(0);
+}).catch(e => { console.error('labor_ui_client crashed:', e); process.exit(1); });
