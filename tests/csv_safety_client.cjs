@@ -31,7 +31,7 @@
  * Run: node tests/csv_safety_client.cjs   (or via pytest: test_node_guards.py)
  */
 'use strict';
-const { bootApp, captureCSV } = require('./jsdom_app.cjs');
+const { bootApp, captureCSV, mkWeeks } = require('./jsdom_app.cjs');
 
 let failures = 0;
 const fail = m => { failures++; console.error('  x ' + m); };
@@ -50,7 +50,6 @@ const HOSTILE_CROP    = '=Spinach';
 const HOSTILE_CHANNEL = '+Market';
 const HOSTILE_CROP2   = '@Garlic';
 
-const mkWeeks = m => Array.from({ length: 52 }, (_, i) => m[i + 1] || 0);
 
 // Numbers borrowed from cost_splits_client.cjs's fixture (which owns them, and guards their
 // arithmetic with its own tripwire) with the crop and channel names swapped for hostile ones.

@@ -53,6 +53,16 @@ GUARDS = [
         "component charged to a total ends up with no row anywhere",
     ),
     (
+        "escaping-client",
+        ["tests/escaping_client.cjs"],
+        "a user-typed crop, channel or labor name renders as LIVE MARKUP (E7). The app builds "
+        "HTML by string interpolation, so an unescaped name becomes a DOM element — the class "
+        "found in the CSV-error sink during /code-review. This drives every render surface with "
+        "TWO payloads (text and attribute-breaking) because the text one alone reports clean on "
+        "the form inputs, and also pins the mirror defect: escaping must not become visible to a "
+        "grower whose crop is honestly called \"Tom's Beets & Co\"",
+    ),
+    (
         "csv-safety-client",
         ["tests/csv_safety_client.cjs"],
         "a CSV the app writes can be read as a FORMULA when it opens (X1). Excel and Sheets "

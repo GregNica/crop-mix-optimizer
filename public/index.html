@@ -2085,19 +2085,19 @@ function renderLaborRow(e, idx) {
   const isSeasonal = e.type === 'seasonal';
   return `
   <div class="labor-row ${isSeasonal ? 'seasonal' : ''}" id="labor-row-${idx}">
-    <div><label>Position</label><input type="text" class="lf" data-lf="position" value="${e.position}" placeholder="Title"></div>
+    <div><label>Position</label><input type="text" class="lf" data-lf="position" value="${escHtml(e.position)}" placeholder="Title"></div>
     <div><label>Type</label>
       <select class="lf" data-lf="type" onchange="onLaborTypeChange(${idx},this)">
         <option value="salary"   ${e.type==='salary'  ?'selected':''}>Salary</option>
         <option value="hourly"   ${e.type==='hourly'  ?'selected':''}>Hourly</option>
         <option value="seasonal" ${e.type==='seasonal'?'selected':''}>Seasonal</option>
       </select></div>
-    <div><label>Count</label><input type="number" class="lf" data-lf="count" value="${e.count}" min="1" step="1"></div>
-    <div><label>${e.type==='salary'?'Annual $':'$/hr'}</label><input type="number" class="lf wage-input" data-lf="wage" value="${e.wage}" min="0" step="${e.type==='salary'?1000:0.5}"></div>
-    <div><label>Hrs/Wk</label><input type="number" class="lf" data-lf="hours_per_week" value="${e.hours_per_week}" min="1" max="80" step="1"></div>
-    <div><label title="Max share of this worker's hours available for crop field work (a cap, not an average). E.g. a manager ~80% in slow weeks; field crew 100%. The optimizer uses up to this much when it helps.">Field %</label><input type="number" class="lf" data-lf="field_time_pct" value="${e.field_time_pct ?? 100}" min="1" max="100" step="5"></div>
-    <div class="seasonal-only"><label>Start Wk</label><input type="number" class="lf" data-lf="start_week" value="${e.start_week}" min="1" max="52" step="1"></div>
-    <div class="seasonal-only"><label>End Wk</label><input type="number" class="lf" data-lf="end_week" value="${e.end_week}" min="1" max="52" step="1"></div>
+    <div><label>Count</label><input type="number" class="lf" data-lf="count" value="${escHtml(e.count)}" min="1" step="1"></div>
+    <div><label>${e.type==='salary'?'Annual $':'$/hr'}</label><input type="number" class="lf wage-input" data-lf="wage" value="${escHtml(e.wage)}" min="0" step="${e.type==='salary'?1000:0.5}"></div>
+    <div><label>Hrs/Wk</label><input type="number" class="lf" data-lf="hours_per_week" value="${escHtml(e.hours_per_week)}" min="1" max="80" step="1"></div>
+    <div><label title="Max share of this worker's hours available for crop field work (a cap, not an average). E.g. a manager ~80% in slow weeks; field crew 100%. The optimizer uses up to this much when it helps.">Field %</label><input type="number" class="lf" data-lf="field_time_pct" value="${escHtml(e.field_time_pct ?? 100)}" min="1" max="100" step="5"></div>
+    <div class="seasonal-only"><label>Start Wk</label><input type="number" class="lf" data-lf="start_week" value="${escHtml(e.start_week)}" min="1" max="52" step="1"></div>
+    <div class="seasonal-only"><label>End Wk</label><input type="number" class="lf" data-lf="end_week" value="${escHtml(e.end_week)}" min="1" max="52" step="1"></div>
     <button type="button" class="delete-labor-btn" onclick="deleteLaborPosition(${idx})">✕</button>
   </div>`;
 }
@@ -2202,7 +2202,7 @@ function renderChannelRow(ch, idx) {
   return `
   <div class="channel-row" id="ch-row-${idx}">
     <div><label>Channel Name</label>
-      <input type="text" class="channel-name-input" value="${ch.name}"
+      <input type="text" class="channel-name-input" value="${escHtml(ch.name)}"
              placeholder="e.g. Wholesale" onchange="updateAllCropChannels()"></div>
     <div><label>Default Pkg ($/lb) <span class="tip" data-tip="Default packaging cost per lb for this channel. Can be overridden per crop.">?</span></label>
       <input type="number" class="channel-pkg-input" data-f="ch_default_pkg" value="${ch.default_pkg||0}"
@@ -2332,8 +2332,8 @@ function updateCropChannels(card, chDefs, cropDefaults, forceOverride) {
     const seVal  = mx ? mx[2] : '';
     const showSeason = dtype === 'weekly_varying' ? '' : 'display:none';
     return `
-    <div class="crop-channel-section" data-ch="${ch.name}">
-      <div class="crop-section-label">${ch.name} Channel <span class="tip" data-tip="Price: what this channel pays per lb. Packaging: cost to pack for this channel. Demand cap: max this channel can absorb.">?</span></div>
+    <div class="crop-channel-section" data-ch="${escHtml(ch.name)}">
+      <div class="crop-section-label">${escHtml(ch.name)} Channel <span class="tip" data-tip="Price: what this channel pays per lb. Packaging: cost to pack for this channel. Demand cap: max this channel can absorb.">?</span></div>
       <div class="form-group"><label>Price ($/lb) ${uploadPill('Upload historical price data')}</label>
         <input type="number" class="cf" data-f="ch_price" value="${price}" min="0" step="0.01" placeholder="0.00"></div>
       <div class="form-group"><label>Packaging ($/lb) <span class="tip" data-tip="Default from channel definition: $${ch.default_pkg}/lb. Override per crop here.">?</span></label>
@@ -2959,7 +2959,7 @@ function renderCrop(c, idx) {
   return `
   <details class="crop-detail" id="crop-${idx}">
     <summary class="crop-summary">
-      <input class="crop-name-inline" type="text" value="${v('name','Crop')}"
+      <input class="crop-name-inline" type="text" value="${escHtml(v('name','Crop'))}"
              onclick="event.stopPropagation()" onfocus="event.stopPropagation()">
       <button type="button" class="delete-crop-btn"
               onclick="event.stopPropagation();deleteCrop(${idx})">✕ Remove</button>
@@ -3943,6 +3943,14 @@ function offerLocalDraft() {
   bar.append(msg, restore, discard);
 }
 
+// Escapes & < > " ' — sufficient for TEXT content and for QUOTED attributes, which is every
+// sink in this file. NOT sufficient for three contexts, so do not reach for it there:
+//   * a JS-string inside an attribute (`onclick="f('${x}')"`) — the entity decodes back to a
+//     quote before the JS parser sees it. Four such sites exist (showSection, selectSensVar);
+//     all interpolate developer constants, and that is what makes them safe, not this function.
+//     E6's addressable-field work is where a dynamic id could arrive — check them then.
+//   * a URL (`href`/`src`) — none in this file today.
+//   * an UNQUOTED attribute — none in this file today.
 function escHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 }
@@ -5385,12 +5393,12 @@ function handleXLSXUpload(input) {
           const summary = APP_STATE.mcUploadSummary || [];
           let summaryHTML = `<span class="csv-success-msg">✓ ${matchedCount} crop(s) recognised — base values (yield/price/sales/sell-through) and risk spread applied.</span>`;
           if (unmatched.length > 0) {
-            summaryHTML += `<div style="color:#d97706;font-size:0.74rem;margin-top:2px">⚠ ${unmatched.length} name(s) not matched to current crops (check spelling): ${unmatched.join(', ')}</div>`;
+            summaryHTML += `<div style="color:#d97706;font-size:0.74rem;margin-top:2px">⚠ ${unmatched.length} name(s) not matched to current crops (check spelling): ${escHtml(unmatched.join(', '))}</div>`;
           }
           if (summary.length > 0) {
             summaryHTML += `<div style="margin-top:4px;font-size:0.73rem;color:#374151">`;
             summary.forEach(s => {
-              summaryHTML += `<div>• <strong>${s.cropName}</strong>: yield spread ${s.yieldCV}%, price spread ${s.priceCV}%, demand spread ${s.demandCV}%${s.nYears ? ` (${s.nYears} years)` : ''}</div>`;
+              summaryHTML += `<div>• <strong>${escHtml(s.cropName)}</strong>: yield spread ${s.yieldCV}%, price spread ${s.priceCV}%, demand spread ${s.demandCV}%${s.nYears ? ` (${s.nYears} years)` : ''}</div>`;
             });
             summaryHTML += `</div>`;
           }
@@ -6361,14 +6369,14 @@ function renderMCUploadStatus() {
     let html = '<div style="display:flex;flex-wrap:wrap;gap:0.4rem;margin-top:0.35rem">';
     if (mcFile) {
       html += `<span style="display:inline-flex;align-items:center;gap:4px;background:#d1fae5;border:1px solid #a7f3d0;border-radius:12px;padding:2px 8px;font-size:0.72rem;color:#065f46">
-        ✓ Uncertainty: <strong>${mcFile}</strong>
+        ✓ Uncertainty: <strong>${escHtml(mcFile)}</strong>
         <button onclick="deleteMCUncertainty()" title="Remove this file" style="background:none;border:none;cursor:pointer;padding:0 1px;font-size:0.8rem;color:#dc2626;line-height:1">×</button>
       </span>`;
     }
     if (rnFile) {
       const rnCV = APP_STATE.rainfallComputedCV !== null ? ` · ${APP_STATE.rainfallComputedCV}% CV` : '';
       html += `<span style="display:inline-flex;align-items:center;gap:4px;background:#d1fae5;border:1px solid #a7f3d0;border-radius:12px;padding:2px 8px;font-size:0.72rem;color:#065f46">
-        ✓ Rainfall: <strong>${rnFile}</strong><span style="color:#059669;font-weight:400">${rnCV}</span>
+        ✓ Rainfall: <strong>${escHtml(rnFile)}</strong><span style="color:#059669;font-weight:400">${rnCV}</span>
         <button onclick="deleteRainfallHistory()" title="Remove this file" style="background:none;border:none;cursor:pointer;padding:0 1px;font-size:0.8rem;color:#dc2626;line-height:1">×</button>
       </span>`;
     }
@@ -6881,7 +6889,8 @@ function renderExecutiveSummary(res, params) {
     let best = null, worst = null;
     for (const [cropName, chans] of Object.entries(res.channel_margins || {})) {
       for (const [chName, m] of Object.entries(chans)) {
-        const e = { label: `${cropName} (${chName})`, rate: m.margin_per_acre_day, pct: m.margin_pct };
+        const e = { label: `${escHtml(cropName)} (${escHtml(chName)})`,
+                    rate: m.margin_per_acre_day, pct: m.margin_pct };
         if (!best  || e.rate > best.rate)  best  = e;
         if (!worst || e.rate < worst.rate) worst = e;
       }
@@ -6902,7 +6911,8 @@ function renderExecutiveSummary(res, params) {
     const cc = Object.entries(res.crop_contribution || {});
     if (cc.length) {
       const [name, d] = cc.reduce((a, b) => (b[1].contribution > a[1].contribution ? b : a));
-      topContrib = `${name} — ${fmtD(d.contribution)} of this plan's contribution (${fmtUnit(d.acres_planted, U_ACRE, 1)})`;
+      topContrib = `${escHtml(name)} — ${fmtD(d.contribution)} of this plan's contribution `
+                 + `(${fmtUnit(d.acres_planted, U_ACRE, 1)})`;
     }
   } catch(e) { /* optional line */ }
 
@@ -8655,15 +8665,17 @@ function renderContributionMargins(params) {
     const wpStyle = marginPerAcWeek >= 0 ? 'color:#1b4332;font-weight:700' : 'color:#dc2626;font-weight:700';
 
     const cellBase = 'overflow:hidden;white-space:nowrap;text-overflow:ellipsis;';
+    // Escaped once per row: each name is interpolated twice below (cell text and title=).
+    const cropNameE = escHtml(crop.name), chNameE = escHtml(chName);
     // Crop cell: show name+stats on first channel of each crop group, blank otherwise
     const cropCellContent = isNewCrop
-      ? `<span style="font-weight:700">${crop.name}</span><br><span style="font-size:0.67rem;color:#9ca3af">${fmtUnit(ypa, U_LB_PER_ACRE)} · ${Math.round(occDays)}d</span>`
+      ? `<span style="font-weight:700">${cropNameE}</span><br><span style="font-size:0.67rem;color:#9ca3af">${fmtUnit(ypa, U_LB_PER_ACRE)} · ${Math.round(occDays)}d</span>`
       : `<span style="color:#d1d5db;font-size:0.7rem">↳</span>`;
 
     tableRows += `<tr style="${isNewCrop ? 'border-top:2px solid #e5e7eb' : 'border-top:1px solid #f3f4f6'}">
-      <td style="${cellBase}padding:${isNewCrop?'5px':'3px'} 8px;font-size:0.79rem;border-right:1px solid #e5e7eb;vertical-align:${isNewCrop?'middle':'top'};white-space:normal" title="${crop.name}">${cropCellContent}</td>
-      <td style="${cellBase}padding:4px 8px;font-size:0.76rem;border-right:1px solid #f3f4f6" title="${chName}">
-        <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${chColor};margin-right:3px;flex-shrink:0"></span>${chName}
+      <td style="${cellBase}padding:${isNewCrop?'5px':'3px'} 8px;font-size:0.79rem;border-right:1px solid #e5e7eb;vertical-align:${isNewCrop?'middle':'top'};white-space:normal" title="${cropNameE}">${cropCellContent}</td>
+      <td style="${cellBase}padding:4px 8px;font-size:0.76rem;border-right:1px solid #f3f4f6" title="${chNameE}">
+        <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${chColor};margin-right:3px;flex-shrink:0"></span>${chNameE}
       </td>
       <td style="${cellBase}padding:4px 8px;font-size:0.76rem;text-align:right" title="The price the model uses: your list price minus this channel's variable selling cost (commission/delivery), which is deducted before the solve.">$${dispVal(row.modelPrice, U_PER_LB).toFixed(2)}</td>
       <td style="${cellBase}padding:4px 8px;font-size:0.76rem;text-align:right" title="${fmtUnit(soldLbs, U_LB_PER_ACRE)} sold after sell-through&#10;× $${dispVal(row.modelPrice, U_PER_LB).toFixed(2)}/${uMass} = $${pa(grossRev)}/${uArea}&#10;&#10;Sell-through = share of harvest that converts to cash (shrink / grade-out / unsold). You grow the full yield but are paid only on the sold share.">$${pa(grossRev)} <span style="font-size:0.65rem;color:#9ca3af">ⓘ</span></td>
@@ -8687,7 +8699,7 @@ function renderContributionMargins(params) {
 
   const _hx = APP_STATE.hurdleExclusions || [];
   const hurdleBanner = _hx.length ? `<div style="margin-bottom:0.6rem;padding:0.5rem 0.7rem;background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;font-size:0.78rem;color:#92400e">
-      <span style="font-size:1rem">&#9432;</span> <strong>${_hx.length} crop-channel${_hx.length>1?'s':''} dropped</strong> by your Min. Viable Margin floor — net margin (contribution − overhead) is below it, so the optimizer treats them as "not worth it": ${_hx.map(e => `${e.crop} / ${e.channel} (~${Math.round(e.margin_pct)}% net)`).join(', ')}. Adjust the floor in <a onclick="jumpToSetup('farm-basics','min_viable_margin_pct')" style="color:#b45309;text-decoration:underline;cursor:pointer">Overhead, Financing &amp; Risk</a>.
+      <span style="font-size:1rem">&#9432;</span> <strong>${_hx.length} crop-channel${_hx.length>1?'s':''} dropped</strong> by your Min. Viable Margin floor — net margin (contribution − overhead) is below it, so the optimizer treats them as "not worth it": ${_hx.map(e => `${escHtml(e.crop)} / ${escHtml(e.channel)} (~${Math.round(e.margin_pct)}% net)`).join(', ')}. Adjust the floor in <a onclick="jumpToSetup('farm-basics','min_viable_margin_pct')" style="color:#b45309;text-decoration:underline;cursor:pointer">Overhead, Financing &amp; Risk</a>.
     </div>` : '';
   el.innerHTML = hurdleBanner + `<div style="width:100%;overflow-x:auto"><table style="border-collapse:collapse;width:100%;min-width:560px;table-layout:fixed;font-size:0.79rem">
     ${colGroup}
@@ -8927,7 +8939,11 @@ function toggleOptional(rowId, btnId) {
 function renderSummaryPane(params) {
   const el = document.getElementById('summary-content');
   if (!el) return;
-  const kv = (k, v) => `<div class="summary-kv"><span>${k}</span><strong>${v}</strong></div>`;
+  // Escape HERE, in the one primitive every row goes through, rather than at ~20 call sites:
+  // the crop, channel and position rows below are user-typed names. Both slots take plain
+  // text — no caller passes markup — so escaping inside kv cannot double-escape.
+  const kv = (k, v) =>
+    `<div class="summary-kv"><span>${escHtml(k)}</span><strong>${escHtml(v)}</strong></div>`;
   const fmtN = n => (n == null || isNaN(n)) ? '—' : Number(n).toLocaleString();
   // This pane echoes the input form, so take each value's unit from the SAME registry the form
   // uses (keyed by param name = field id) rather than hand-picking a U_* const per line.
@@ -9021,7 +9037,10 @@ function renderGanttCalendar(res) {
   function succLabel(s) {
     // name might be "Spinach W4" or "W4" — return just the number
     const m = s.name.match(/W?(\d+)$/);
-    return m ? m[1] : s.name;
+    // The fallback is the RAW succession name, which carries the user's crop name; escaped here
+    // rather than at the two call sites below, which render it in different branches. Display
+    // only — the gantt CSV has its own copy of this regex, so no entities reach the file.
+    return m ? m[1] : escHtml(s.name);
   }
 
   // Month labels for week header
@@ -9075,7 +9094,7 @@ function renderGanttCalendar(res) {
       html += '<tr>';
       if (isFirst) {
         // First succession in this crop group: show crop name above the succession label
-        html += `<td class="gantt-succ-label" style="font-size:0.62rem;padding:1px 7px 2px 8px;color:#374151;border-left:3px solid ${col};${topBorderStyle}"><span style="display:block;font-size:0.66rem;font-weight:800;color:${col};line-height:1.3">${cropName}</span>Wk&nbsp;${label}&nbsp;<span style="color:#9ca3af;font-weight:400">(${roundForDisplay(dispVal(s.acres, U_ACRE))} ${unitStr(U_ACRE)})</span></td>`;
+        html += `<td class="gantt-succ-label" style="font-size:0.62rem;padding:1px 7px 2px 8px;color:#374151;border-left:3px solid ${col};${topBorderStyle}"><span style="display:block;font-size:0.66rem;font-weight:800;color:${col};line-height:1.3">${escHtml(cropName)}</span>Wk&nbsp;${label}&nbsp;<span style="color:#9ca3af;font-weight:400">(${roundForDisplay(dispVal(s.acres, U_ACRE))} ${unitStr(U_ACRE)})</span></td>`;
       } else {
         html += `<td class="gantt-succ-label" style="font-size:0.62rem;padding:2px 7px 2px 18px;color:#374151;border-left:3px solid ${col}40">Wk&nbsp;${label}&nbsp;<span style="color:#9ca3af;font-weight:400">(${roundForDisplay(dispVal(s.acres, U_ACRE))} ${unitStr(U_ACRE)})</span></td>`;
       }
@@ -9276,7 +9295,7 @@ function updatePieChart(week) {
       .sort((a, b) => b.lbs - a.lbs);
     return `<div style="margin-bottom:0.9rem">
       <div style="font-size:0.8rem;font-weight:600;color:#374151;margin-bottom:0.25rem">
-        🛒 ${ch} — ${fmtUnit(total, U_LB)} sold
+        🛒 ${escHtml(ch)} — ${fmtUnit(total, U_LB)} sold
       </div>
       <div id="ch-pie-wrap-${channelSlug(ch)}" style="display:flex;gap:1rem;align-items:flex-start;flex-wrap:wrap">
         <div id="ch-pie-svg-${channelSlug(ch)}"></div>
@@ -9346,7 +9365,7 @@ function drawPie(slices, svgId, legendId, valueFn, valueKey) {
     }
     legendHtml += `<div style="display:flex;align-items:center;gap:6px;font-size:0.74rem;margin-bottom:4px">
       <div style="width:11px;height:11px;border-radius:2px;background:${s.color};flex-shrink:0"></div>
-      <span style="flex:1">${s.name}</span>
+      <span style="flex:1">${escHtml(s.name)}</span>
       <span style="color:#6b7280;white-space:nowrap">${valueFn ? valueFn(val) : val.toFixed(1)}&nbsp;(${(frac*100).toFixed(1)}%)</span>
     </div>`;
   });
@@ -9749,7 +9768,10 @@ function getTopCropsSummary(res, n) {
   return Object.entries(acres)
     .sort((a, b) => b[1] - a[1])
     .slice(0, n || 3)
-    .map(([name, ac]) => `${name} ${fmtUnit(ac, U_ACRE, 0)}`)
+    // Escaped HERE, not at the three table cells that print it: the crop name is user-typed
+    // and every consumer of this summary is HTML. One of those cells was escaped and the
+    // other two were not, which is the drift a choke point prevents.
+    .map(([name, ac]) => `${escHtml(name)} ${fmtUnit(ac, U_ACRE, 0)}`)
     .join(' · ') || '—';
 }
 
@@ -9827,7 +9849,7 @@ function renderWhatIfCard(res, params) {
       : (c.type === 'demand_single'
         ? ` title="Demand saturation: ${demandBasis} = ${pct}%. Click to relax this channel's demand cap."`
         : '');
-    return `<button class="cn-btn ${sev}" id="cn-btn-${i}" onclick="toggleConstraint(${i})"${dim}${infoTitle}>${c.name} ${pct}%</button>`;
+    return `<button class="cn-btn ${sev}" id="cn-btn-${i}" onclick="toggleConstraint(${i})"${dim}${infoTitle}>${escHtml(c.name)} ${pct}%</button>`;
   }).join('');
 
   const infoMsg = visible.every(c => c.peak < 0.50)
@@ -9904,14 +9926,14 @@ function updateWhatIfSelectionUI(visible) {
   if (selected.length === 1) {
     const c = selected[0];
     const severity = c.peak >= 0.90 ? 'fully utilized' : c.peak >= 0.70 ? 'highly utilized' : c.peak >= 0.50 ? 'moderately utilized' : 'slack';
-    if (lbl) lbl.innerHTML = `Selected: <strong>${c.name}</strong> — ${severity} at ${Math.round(c.peak*100)}% ` +
+    if (lbl) lbl.innerHTML = `Selected: <strong>${escHtml(c.name)}</strong> — ${severity} at ${Math.round(c.peak*100)}% ` +
       `<span style="font-size:0.74rem;color:#9ca3af">(baseline: ${c.displayFn(window._lastParams||{}, 1.0)})</span><br>` +
       `<span style="font-size:0.74rem;color:#6b7280">Note: full utilization ≠ the profit-limiting factor — the +10%/+20%/+40% scenarios below show whether relaxing it actually raises profit.</span>`;
     if (combBtn) combBtn.style.display = 'none';
   } else {
-    const names = selected.map(c => c.name).join(' + ');
+    const names = selected.map(c => escHtml(c.name)).join(' + ');
     if (lbl) lbl.innerHTML = `Combined: <strong>${names}</strong> — <em>Run Combined</em> applies all. ` +
-      `<span style="font-size:0.74rem;color:#9ca3af">Run Custom applies <strong>${selected[0].name}</strong> only.</span>`;
+      `<span style="font-size:0.74rem;color:#9ca3af">Run Custom applies <strong>${escHtml(selected[0].name)}</strong> only.</span>`;
     if (combBtn) {
       const input = document.getElementById('custom-pct-input');
       const pct   = parseFloat(input ? input.value : 20) || 20;
@@ -10353,8 +10375,8 @@ function renderScenarioHistory(res, params) {
             </td></tr>`
           : '';
         rows += `<tr>
-          <td style="font-size:0.75rem">${r.label}</td>
-          <td style="font-size:0.75rem;color:#6b7280">${r.resourceDisplay}</td>
+          <td style="font-size:0.75rem">${escHtml(r.label)}</td>
+          <td style="font-size:0.75rem;color:#6b7280">${escHtml(r.resourceDisplay)}</td>
           <td>${fmtM(r.profit)}</td>
           <td>${fmtD(r.delta)}</td>
           <td>${r.peakUtil != null ? r.peakUtil + '% ' + (UTIL_LABEL[r.constraintType] || r.constraintType || '') : '—'}</td>
@@ -10364,8 +10386,8 @@ function renderScenarioHistory(res, params) {
       } else {
         const msg = r.status === 'error' ? 'Solver error' : 'No optimal solution';
         rows += `<tr>
-          <td style="font-size:0.75rem">${r.label}</td>
-          <td style="font-size:0.75rem;color:#6b7280">${r.resourceDisplay}</td>
+          <td style="font-size:0.75rem">${escHtml(r.label)}</td>
+          <td style="font-size:0.75rem;color:#6b7280">${escHtml(r.resourceDisplay)}</td>
           <td colspan="5" style="color:#9ca3af;font-size:0.79rem">${msg}</td>
         </tr>`;
       }
@@ -14145,7 +14167,7 @@ function renderMCSetup(params) {
           ? `<span style="color:#059669;font-size:0.71rem">✓ uploaded</span>`
           : `<span style="color:#9ca3af;font-size:0.71rem">default</span>`;
         return `<tr>
-          <td style="padding:4px 10px">${c.name}</td>
+          <td style="padding:4px 10px">${escHtml(c.name)}</td>
           <td style="padding:4px 8px;text-align:center"><input type="number" class="mc-cv" data-cidx="${i}" data-t="yield"  value="${yDef}" min="0" max="100" style="width:52px;padding:3px;border:1.5px solid ${uploaded?'#a7f3d0':'#d1d5db'};border-radius:4px;font-size:0.78rem;text-align:right">%</td>
           <td style="padding:4px 8px;text-align:center"><input type="number" class="mc-cv" data-cidx="${i}" data-t="price"  value="${pDef}" min="0" max="100" style="width:52px;padding:3px;border:1.5px solid ${uploaded?'#a7f3d0':'#d1d5db'};border-radius:4px;font-size:0.78rem;text-align:right">%</td>
           <td style="padding:4px 8px;text-align:center"><input type="number" class="mc-cv" data-cidx="${i}" data-t="demand" value="${dDef}" min="0" max="100" style="width:52px;padding:3px;border:1.5px solid ${uploaded?'#a7f3d0':'#d1d5db'};border-radius:4px;font-size:0.78rem;text-align:right">%</td>
@@ -14157,7 +14179,7 @@ function renderMCSetup(params) {
     <details style="margin-top:0.5rem">
       <summary style="font-size:0.74rem;color:#374151;cursor:pointer">Show upload summary (${summary.length} crop${summary.length>1?'s':''})</summary>
       <div style="margin-top:0.4rem;padding:0.4rem 0.6rem;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:5px;font-size:0.74rem">
-        ${summary.map(s => `<div style="margin-bottom:2px"><strong>${s.cropName}:</strong>
+        ${summary.map(s => `<div style="margin-bottom:2px"><strong>${escHtml(s.cropName)}:</strong>
           yield spread ${s.yieldCV}%${s.yieldMean>0?' (avg '+dispVal(s.yieldMean, U_LB_PER_ACRE).toFixed(0)+' '+unitStr(U_LB_PER_ACRE)+')':''};
           price spread ${s.priceCV}%;
           demand spread ${s.demandCV}%${s.nYears?' — '+s.nYears+' years of data':''}</div>`).join('')}

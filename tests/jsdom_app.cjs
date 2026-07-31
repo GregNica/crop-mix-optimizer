@@ -118,4 +118,11 @@ function captureCSV(W, trigger) {
   return csv.replace(/^\uFEFF/, '').split('\n').map(splitCSVRow);
 }
 
-module.exports = { bootApp, ROOT, splitCSVRow, captureCSV };
+/** A 52-week array from a {week: value} map — `mkWeeks({12: 400})` is week 12 = 400, rest 0.
+ *  Pure array shaping with no expectation baked in, so it is machinery and belongs here; the
+ *  FIXTURES that use it stay in their own harnesses, because each one's numbers are its oracle. */
+function mkWeeks(byWeek) {
+  return Array.from({ length: 52 }, (_, i) => byWeek[i + 1] || 0);
+}
+
+module.exports = { bootApp, ROOT, splitCSVRow, captureCSV, mkWeeks };

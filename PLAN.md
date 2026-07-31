@@ -89,11 +89,28 @@ using it: the gantt's `--- ${cropName} ---` row; P&L labels built from user-type
 `tests/cost_splits_client.cjs` at all five exports. DONE = five call sites, one implementation,
 harness covers all five.
 
-**0.2 · E7 — `escHtml` at every render boundary that interpolates user strings.**
-The CSV-error sink was fixed; ~19 other interpolation sites were counted unescaped at last audit.
-Sweep `innerHTML` assignments fed by user-typed values (crop/channel/position names above all).
-Guard: extend the jsdom harness with one hostile-name fixture (`<img onerror>` crop name) driven
-through the biggest surfaces. DONE = hostile-name fixture renders inert everywhere it appears.
+**0.2 · E7 — `escHtml` at every render boundary that interpolates user strings. ✅ DONE 2026-08-01.**
+Measured rather than counted: a jsdom probe pushed a hostile name through the real render
+functions and asked whether an ELEMENT appeared. **10 surfaces, 36 elements**; `escHtml` 15 → 35.
+Two things worth carrying forward:
+- **ONE HOSTILE FIXTURE IS NOT ENOUGH — this row's attack plan would have missed the worst of
+  it.** A text payload (`<img …>`) finds text sinks; it sails through `value="…"` untouched. The
+  attribute-breaking payload (`" data-xss="1`) found two more surfaces the first structurally
+  could not see, and they are `applyCrops`/`applyChannels` — the **input form**, where a hostile
+  name typed once persists into every saved plan. Any future injection sweep uses both.
+- **The deepest fix was a render primitive, not a sink.** The summary pane's `kv(k, v)` is what
+  every row goes through; escaping inside it replaced ~20 call-site edits. Look for that shape
+  first.
+- **"Five mutations, all die" was the wrong measurement, and saying so is the point.** That was
+  true of the five run and overstated the guard badly. Unwrapping EVERY `escHtml` in the file —
+  60 sites, one at a time — found ~34 surviving. Chasing the reachable ones found two more real
+  defects: `renderCSVErrors` RETURNS markup instead of writing it, so driving it and scanning the
+  document proved nothing (an inert entry that read as coverage), and `renderLaborRow` puts
+  `count`/`wage`/`hours` into `value="…"` unescaped — reachable because a saved plan is
+  user-supplied JSON. **Mutation-test the guard's COVERAGE, not a sample of it.**
+The mirror defect (over-escaping, invisible to a markup-hunting test) is pinned in the same
+harness. `tests/escaping_client.cjs`, registered in both runners; the ~30 escapes that remain
+unpinned are mapped by cause in BACKLOG **S22** rather than left as a vague caveat.
 
 **0.3 · E8 — stop rendering the matplotlib waterfall on sweep solves. ✅ DONE 2026-07-31.**
 `skip_charts` payload flag, ABSENT = draw (a caller that does not know the flag keeps its image);
