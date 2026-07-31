@@ -6736,8 +6736,13 @@ function renderExecutiveSummary(res, params) {
   const fmtD = n => '$' + Number(n).toLocaleString('en-US', {maximumFractionDigits: 0});
 
   // ── 1. Profit headline ──────────────────────────────────────
+  // Net margin belongs beside the headline: it is the figure that says whether the plan is
+  // plausible at all (real diversified veg runs 5-15%), and it was not displayed anywhere.
+  const _netMargin = (res.profit != null && res.revenue > 0)
+    ? (res.profit / res.revenue) * 100 : null;
   const profitStr = (res.profit != null && !isNaN(res.profit))
     ? fmtD(res.profit) + ' projected annual profit'
+      + (_netMargin != null ? ` · ${_netMargin.toFixed(1)}% net margin` : '')
     : 'Profit data unavailable';
 
   // ── 2. Highest / Lowest margin crop-CHANNEL (per acre-week) ────────────
@@ -7227,8 +7232,9 @@ def run_from_js(params_json):
         # the farm-wide payroll load like they do. Without this, typing the crew's own rate priced
         # a hire 25% cheaper than leaving the box blank — and the payroll-load tooltip promises
         # 'any extra hiring or overtime carries it too'.
-        # Blank means infer. Anything unusable (0, negative, junk) is REFUSED by the solver rather
-        # than reinterpreted here: 0 would be free hired labour.
+        # Blank means infer. A typed 0/negative is refused — by the form validator before the
+        # solve, and by validate_params for any non-browser caller. Neither silently rewrites it
+        # to "infer", which is what this path used to do.
         _hw_raw                  = p.get('hired_wage_per_hr', None)
         hired_wage_per_hr        = (None if _hw_raw in (None, '')
                                     else float(_hw_raw) * (1.0 + payroll_load))
@@ -7692,6 +7698,14 @@ function validateParams(params) {
   if (!params.employees || params.employees.length === 0) errors.push('Add at least one labor position.');
   if (!params.channels || params.channels.length === 0) errors.push('Add at least one sales channel.');
   if (!params.crops || params.crops.length === 0) errors.push('Add at least one crop.');
+  // A typed hired wage must be a real wage. Blank is fine and means "infer from your crew"; 0 is
+  // not blank, and silently treating it as blank would price hired help at nothing while telling
+  // the grower nothing.
+  const _hwEl = document.getElementById('hired_wage_per_hr');
+  const _hwTxt = (_hwEl?.value ?? '').trim();
+  if (_hwTxt !== '' && !(parseFloat(_hwTxt) > 0)) {
+    errors.push('Hired wage must be greater than $0/hr — or leave it blank to infer a rate from your crew.');
+  }
   // A crop routed to a barn that does not exist cannot be harvested at all: the ambient row
   // becomes Σ m3·(inv + harvest) ≤ 0, every term is non-negative, so the optimizer drops the
   // crop to zero acres and still reports "optimal". Measured on the shipped defaults: unticking
@@ -8073,7 +8087,7 @@ function exportPLCSV() {
   // and chose to sell nothing there.
   const chRevRows = channels.map(ch => {
     const chSales = (res.channel_sales || {})[ch.name];
-    return ['    ' + ch.name + ' Revenue', (chSales ? chSales.revenue : 0).toFixed(2)];
+    return [ch.name + ' Revenue', (chSales ? chSales.revenue : 0).toFixed(2)];
   });
 
   // COGS and fixed-cost breakdowns, from the solver's own splits (W4).
@@ -8096,7 +8110,7 @@ function exportPLCSV() {
   // deriving the total from the rounded rows breaks its agreement with Gross Profit and the
   // waterfall, and absorbing the cent into the largest row prints a number the model never
   // charged. Do not "fix" this by distorting a line.
-  const costRow = (label, amount) => ['    ' + label, (-amount).toFixed(2)];
+  const costRow = (label, amount) => [label, (-amount).toFixed(2)];
   const plRows  = split => Object.entries(split || {}).map(([key, amount]) => costRow(
     PL_COST_LABELS[key] || key.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase()),
     amount));
@@ -8110,44 +8124,52 @@ function exportPLCSV() {
     .filter(([, amt]) => amt > 0)
     .map(([name, amt]) => costRow(name + ' Fixed Overhead ($/wk × wks)', amt));
 
-  const SEP = ['────────────────────────────', '──────────'];   // visual rule before each subtotal
+  // FOUR COLUMNS, not two, and no leading "=" on any label.
+  //
+  // Browser QA found both problems. A label like "= GROSS PROFIT" is parsed by Excel and Sheets
+  // as a FORMULA the moment the file opens, so every subtotal row broke. And the hierarchy was
+  // carried by four leading spaces, which spreadsheet importers strip — leaving a flat list where
+  // nothing showed what summed to what.
+  //
+  // Section and Role carry the structure explicitly instead: Role is TOTAL / subtotal / detail,
+  // so a reader (or a pivot table) can tell a component from the line it rolls up into without
+  // relying on whitespace surviving a CSV round-trip.
+  const HEAD = ['Section', 'Line item', 'Amount ($) — negative = cost', 'Role'];
+  const detail   = ([label, amount]) => [label, amount, 'detail'];
   const rows = [
-    ['Farm P&L Statement', ''],
-    ['Line Item  (indented = detail; CAPS = subtotal)', 'Amount ($) — negative = cost'],
-    [''],
-    ['REVENUE', ''],
-    ['    Gross Revenue', grossRevenue.toFixed(2)],
-    ...chRevRows,
-    [''],
-    ['COST OF GOODS SOLD (COGS)', ''],
-    ['    Variable Production Cost', (-cogs).toFixed(2)],
-    ...cogsBreakdown,
-    SEP,
-    ['= GROSS PROFIT', grossProfit.toFixed(2)],
-    [''],
-    ['OPERATING EXPENSES', ''],
-    ['    Fixed & Committed Costs', (-fixedOpex).toFixed(2)],
-    ...fixedBreakdown,
-    ...boughtCapacity.map(([label, amt]) => costRow(label, amt)),
-    ['    Total Operating Expenses', (-totalOpex).toFixed(2)],
-    ...(Math.abs(opReconcile) > 0.5 ? [['    UNRECONCILED — a cost in the optimizer has no line above. Please report this.', opReconcile.toFixed(2)]] : []),
-    SEP,
-    ['= OPERATING INCOME', operatingIncome.toFixed(2)],
-    [''],
-    ['OVERHEAD, SELLING & FINANCING', ''],
-    ['    Overhead (insurance, tax, admin, utilities, R&M, vehicles)', (-overheadCost).toFixed(2)],
-    ['    Channel fixed selling (market fees, retainers)', (-sellingCost).toFixed(2)],
-    ...chOpexRows,
-    ['    Interest on operating borrowing', (-interestCost).toFixed(2)],
-    ...(Math.abs(netReconcile) > 0.5 ? [['    UNRECONCILED — a deduction below operating income has no line above. Please report this.', netReconcile.toFixed(2)]] : []),
-    SEP,
-    ['= NET PROFIT', netProfit.toFixed(2)],
-    [''],
-    ['CASH FLOW NOTE', ''],
-    ['    Peak Borrowing / Working Capital', (-res.peak_borrowing).toFixed(2)],
-    ['    Opening Cash', (params.opening_cash || 0).toFixed(2)],
-    ['  Credit Line', (params.credit_line || 0).toFixed(2)],
+    ['Farm P&L Statement', '', '', ''],
+    HEAD,
+
+    ...[['Gross Revenue', grossRevenue.toFixed(2), 'subtotal'],
+        ...chRevRows.map(detail)].map(r => ['REVENUE', ...r]),
+
+    ...[['Variable Production Cost', (-cogs).toFixed(2), 'subtotal'],
+        ...cogsBreakdown.map(detail),
+        ['GROSS PROFIT', grossProfit.toFixed(2), 'TOTAL']].map(r => ['COST OF GOODS SOLD', ...r]),
+
+    ...[['Fixed & Committed Costs', (-fixedOpex).toFixed(2), 'subtotal'],
+        ...fixedBreakdown.map(detail),
+        ...boughtCapacity.map(([label, amt]) => detail(costRow(label, amt))),
+        ['Total Operating Expenses', (-totalOpex).toFixed(2), 'subtotal'],
+        ...(Math.abs(opReconcile) > 0.5
+            ? [['UNRECONCILED — a cost in the optimizer has no line above. Please report this.',
+                opReconcile.toFixed(2), 'CHECK']] : []),
+        ['OPERATING INCOME', operatingIncome.toFixed(2), 'TOTAL']].map(r => ['OPERATING EXPENSES', ...r]),
+
+    ...[['Overhead (insurance, tax, admin, utilities, R&M, vehicles)', (-overheadCost).toFixed(2), 'detail'],
+        ['Channel fixed selling (market fees, retainers)', (-sellingCost).toFixed(2), 'subtotal'],
+        ...chOpexRows.map(detail),
+        ['Interest on operating borrowing', (-interestCost).toFixed(2), 'detail'],
+        ...(Math.abs(netReconcile) > 0.5
+            ? [['UNRECONCILED — a deduction below operating income has no line above. Please report this.',
+                netReconcile.toFixed(2), 'CHECK']] : []),
+        ['NET PROFIT', netProfit.toFixed(2), 'TOTAL']].map(r => ['OVERHEAD, SELLING & FINANCING', ...r]),
+
+    ...[['Peak Borrowing / Working Capital', (-res.peak_borrowing).toFixed(2), 'detail'],
+        ['Opening Cash', (params.opening_cash || 0).toFixed(2), 'detail'],
+        ['Credit Line', (params.credit_line || 0).toFixed(2), 'detail']].map(r => ['CASH FLOW NOTE', ...r]),
   ];
+
 
   const csv = rows.map(r => r.map(x => '"' + String(x).replace(/"/g,'""') + '"').join(',')).join('\n');
   const a = document.createElement('a');
@@ -9910,8 +9932,12 @@ function buildLaborFlexParams(base) {
   sp.max_hire_hrs_per_week    = parseFloat(g('max_hire_hrs_per_week')?.value) || 0;
   sp.hire_wage_markup         = Math.max(0, (parseFloat(g('hire_wage_markup_pct')?.value) || 0) / 100);
   // Blank means "infer it" — send null rather than 0, or a hired hand would cost nothing (W15).
-  const _hw = parseFloat(g('hired_wage_per_hr')?.value);
-  sp.hired_wage_per_hr        = Number.isFinite(_hw) && _hw > 0 ? _hw : null;
+  // Blank -> null means INFER. A typed 0 or negative is NOT blank: silently turning it into
+  // "infer" is the say-do gap (G6) — the grower entered something and the app ignored it. The
+  // form validator refuses those before we get here, so this only has to distinguish blank.
+  const _hwRaw = (g('hired_wage_per_hr')?.value ?? '').trim();
+  const _hw = parseFloat(_hwRaw);
+  sp.hired_wage_per_hr        = _hwRaw === '' || !Number.isFinite(_hw) ? null : _hw;
   sp.overtime_enabled         = on('labor_flex_overtime');
   sp.overtime_rate_multiplier = Math.max(1, parseFloat(g('overtime_rate_multiplier')?.value) || 1.5);
   const otCap = g('max_overtime_hrs_per_week')?.value ?? '';

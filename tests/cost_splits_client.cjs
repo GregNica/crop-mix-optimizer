@@ -110,19 +110,22 @@ const BOUGHT = ['City Water (metered purchase)', 'Overtime (full rate)', 'Hired 
   // document.createElement afterwards rather than leaving a patched click on the prototype.
   const runExport = () => captureCSV(W, () => W.exportPLCSV()) || [];
 
+  // The CSV is [Section, Line item, Amount, Role]. Structure comes from the Role column, not
+  // from leading whitespace — browser QA found that spreadsheet importers strip the indentation
+  // that used to carry it, and that a leading "=" made every subtotal parse as a formula.
   const amountOf = (rows, label) => {
-    const r = rows.find(x => (x[0] || '').trim() === label);
-    return r ? parseFloat(r[1]) : null;
+    const r = rows.find(x => (x[1] || '').trim() === label);
+    return r ? parseFloat(r[2]) : null;
   };
-  // Detail rows are the indented ones between a subtotal and the next non-indented line.
+  // Detail rows are the `detail`-role rows following a subtotal, within the same section.
   const detailUnder = (rows, headerLabel, stopAt) => {
-    const i = rows.findIndex(x => (x[0] || '').trim() === headerLabel);
+    const i = rows.findIndex(x => (x[1] || '').trim() === headerLabel);
     if (i < 0) return null;
     const out = [];
     for (let j = i + 1; j < rows.length; j++) {
-      const label = (rows[j][0] || '').trim();
-      if (!(rows[j][0] || '').startsWith('    ') || stopAt.includes(label)) break;
-      out.push([label, parseFloat(rows[j][1])]);
+      const label = (rows[j][1] || '').trim();
+      if ((rows[j][3] || '') !== 'detail' || stopAt.includes(label)) break;
+      out.push([label, parseFloat(rows[j][2])]);
     }
     return out;
   };
@@ -218,14 +221,14 @@ const BOUGHT = ['City Water (metered purchase)', 'Overtime (full rate)', 'Hired 
        amountOf(rows, 'Overtime (full rate)') === -RES.overtime_cost &&
        amountOf(rows, 'City Water (metered purchase)') === -RES.city_water_cost);
     ok('no UNRECONCILED line when every cost has a row',
-       !rows.some(r => (r[0] || '').includes('UNRECONCILED')));
+       !rows.some(r => (r[1] || '').includes('UNRECONCILED')));
 
     // Now hide a cost from the statement the way a future solver line would: operating_profit
     // accounts for it, no row does.
     W._lastRes = { ...RES, operating_profit: RES.operating_profit - 2500 };
     rows = runExport();
     ok('an unaccounted operating cost fires the UNRECONCILED line',
-       rows.some(r => (r[0] || '').includes('UNRECONCILED')));
+       rows.some(r => (r[1] || '').includes('UNRECONCILED')));
 
     // And the same BELOW the line: a deduction inside `profit` that no row explains. This section
     // reconciles only because the adapter deducts exactly overhead, interest and fixed selling; a
@@ -233,11 +236,36 @@ const BOUGHT = ['City Water (metered purchase)', 'Overtime (full rate)', 'Hired 
     W._lastRes = { ...RES, profit: RES.profit - 3000 };
     rows = runExport();
     ok('an unaccounted below-the-line deduction fires the UNRECONCILED line',
-       rows.some(r => (r[0] || '').includes('no line above')));
+       rows.some(r => (r[1] || '').includes('no line above')));
     W._lastRes = RES;
     rows = runExport();
     ok('neither tripwire fires on a consistent statement',
-       !rows.some(r => (r[0] || '').includes('UNRECONCILED')));
+       !rows.some(r => (r[1] || '').includes('UNRECONCILED')));
+  }
+
+  // ── 5. The file survives a spreadsheet ──────────────────────────────────
+  // Browser QA: subtotal labels led with "=", so Excel and Sheets parsed every one as a FORMULA
+  // and the total rows broke on open. Hierarchy was carried by four leading spaces, which
+  // importers strip. Both are properties of the FILE, so they are asserted on the file.
+  {
+    W._lastRes = RES; W._lastParams = PARAMS;
+    const rows = runExport();
+    for (const r of rows) {
+      for (const cell of r) {
+        ok(`no cell starts with = + or @ (a spreadsheet would treat it as a formula): "${String(cell).slice(0, 50)}"`,
+           !/^\s*[=+@]/.test(String(cell)));
+      }
+    }
+    const roles = new Set(rows.map(r => r[3]).filter(Boolean));
+    for (const want of ['detail', 'subtotal', 'TOTAL']) {
+      ok(`the hierarchy is expressed: a row carries Role="${want}"`, roles.has(want));
+    }
+    const totals = rows.filter(r => r[3] === 'TOTAL').map(r => r[1]);
+    for (const want of ['GROSS PROFIT', 'OPERATING INCOME', 'NET PROFIT']) {
+      ok(`"${want}" is marked as a TOTAL row`, totals.includes(want));
+    }
+    ok('no line item relies on leading-space indentation (importers strip it)',
+       !rows.some(r => /^ /.test(r[1] || '')));
   }
 
   if (failures) {
