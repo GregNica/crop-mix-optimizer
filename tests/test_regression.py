@@ -66,7 +66,8 @@ from farm_v2.solver import solve_farm_v2
 #     honest per-crop values; expect most of this back. Do not treat 87,933 as a target.
 # ---------------------------------------------------------------------------
 
-EXPECTED_PROFIT  = -23_492      # ± 10%  (rebaselined 2026-07-31, W12 committed wages)
+EXPECTED_PROFIT  = -23_492      # reference only — see test_the_fixture_is_still_near_break_even
+EXPECTED_TOTAL_COST = 2_226_393 # ± 10%  (2026-07-31; carries the relative band profit cannot)
 EXPECTED_REVENUE = 2_202_901    # ± 10%  (rebaselined 2026-07-29, DTM semantics)
 # 2026-07-29 — days_to_maturity is PLANT TO FIRST HARVEST, not total field occupancy. The
 # model derived grow = total - plant - harvest, so harvest_weeks ate the growing season and
@@ -128,23 +129,43 @@ class TestRegressionStatus:
 @pytest.mark.regression
 @pytest.mark.slow
 class TestRegressionFinancials:
-    def test_profit_in_expected_range(self, full_result):
+    def test_total_cost_in_expected_range(self, full_result):
+        """The relative band lives HERE, on a large positive number where 10% means what it says.
+
+        It used to live on `profit`, and W12 re-pinned this fixture to -$23,492 — deliberately
+        near break-even, as the note above records. A relative band then means +/-$2.3k, the
+        tightest assertion in the suite on the fixture most prone to swinging; re-anchoring its
+        WIDTH to revenue overcorrected to +/-$220k, i.e. +/-950% of the pinned value, so profit
+        could change by an order of magnitude AND flip sign without firing. Both are wrong for
+        the same reason: profit near zero cannot carry a proportional tolerance at all.
+
+        Cost and revenue can. Between them they bound profit (profit = revenue - total_cost)
+        without either band having to be nonsense.
+        """
+        r = full_result
+        total_cost = (r["fixed_cost"] + r["variable_cost"] + r.get("city_water_cost", 0.0)
+                      + r.get("overtime_cost", 0.0) + r.get("hire_cost", 0.0))
+        lo = EXPECTED_TOTAL_COST * (1 - TOLERANCE_PCT)
+        hi = EXPECTED_TOTAL_COST * (1 + TOLERANCE_PCT)
+        assert lo <= total_cost <= hi, (
+            f"Total cost ${total_cost:,.0f} outside expected range [{lo:,.0f}, {hi:,.0f}]. "
+            "Intentional? Update EXPECTED_TOTAL_COST in test_regression.py."
+        )
+
+    def test_the_fixture_is_still_near_break_even(self, full_result):
+        """What this fixture is actually FOR, said plainly instead of dressed as a tolerance.
+
+        It is a deliberately marginal 29-crop farm — the note above records an 11% revenue move
+        swinging profit ~10x — which is what makes it the sharpest alarm in the suite. The thing
+        worth asserting is not "profit is within N% of a number near zero", which is either a
+        hair-trigger or meaningless depending on how N is scaled. It is "this farm has not blown
+        up in either direction", with the real proportional guards on revenue and total cost.
+        """
         profit = full_result["profit"]
-        # Tolerance on the MAGNITUDE, so the band does not invert when the baseline is negative:
-        # `expected * (1 - tol)` is the UPPER bound for a negative number, which made this assert
-        # `-21,143 <= -23,492 <= -25,841` and fail on the correct value. Exposed by W12, which
-        # pushed this deliberately close-to-break-even fixture into a loss.
-        # Banded on REVENUE, not on the profit figure itself. A 10% relative band around a
-        # baseline that W12 re-pinned close to break-even (-23,492) is a +/-$2.3k hair-trigger —
-        # the tightest assertion in the suite, on the one fixture whose own note says an 11%
-        # revenue move swings profit ~10x. Anchoring the width to revenue keeps the alarm at the
-        # scale it was set for (~+/-$220k) whatever side of zero the baseline lands on.
-        span = abs(EXPECTED_REVENUE) * TOLERANCE_PCT
-        lo, hi = EXPECTED_PROFIT - span, EXPECTED_PROFIT + span
-        assert lo <= profit <= hi, (
-            f"Profit ${profit:,.0f} outside expected range "
-            f"[${lo:,.0f}, ${hi:,.0f}]. "
-            "Intentional? Update EXPECTED_PROFIT in test_regression.py."
+        assert -250_000 < profit < 150_000, (
+            f"Profit ${profit:,.0f} left the near-break-even band this fixture exists to sit in "
+            f"(it was ${EXPECTED_PROFIT:,.0f} when last pinned). That is a real change of "
+            f"character, not drift — find out which line moved before re-pinning."
         )
 
     def test_revenue_in_expected_range(self, full_result):

@@ -14,6 +14,8 @@ Two rules carry the whole change, and neither had a test until this file:
   2. PAYROLL IS NOT FLAT. It is the first fixed line with a weekly profile, so it must reach the
      cash floor as the profile rather than as an annual total divided by 52.
 """
+import pathlib
+
 import numpy as np
 import pytest
 
@@ -218,9 +220,12 @@ class TestBoughtHoursCarryTheirFullWage:
                  hire_enabled=True, max_hire_hrs_per_week=2_000.0, hire_wage_markup=0.0)
         lab = compute_labor_arrays(p["year_round_employees"], [], 52)
         assert float(lab["hourly_labor_rate"].max()) == 0.0, "fixture has an hourly crew after all"
-        assert float(lab["bought_hour_wage"][0]) == pytest.approx(1_000.0 / 40.0), (
-            "a bought hour must be priced from the farm's own average paid wage when no hourly "
-            "crew exists to blend: $52,000/yr over 40 h/wk"
+        # No hourly role exists at all, so there is no cheapest wage to infer a hire from and no
+        # blend to price overtime with — both fall back to the farm's own average paid wage.
+        assert float(lab["hire_hour_wage"][0]) == pytest.approx(1_000.0 / 40.0)
+        assert float(lab["overtime_hour_wage"][0]) == pytest.approx(1_000.0 / 40.0), (
+            "with no hourly crew, both bases must fall back to the average paid wage: "
+            "$52,000/yr over 40 h/wk"
         )
         r = solve_farm_v2(**p)
         assert r["status"] == "optimal"
@@ -286,3 +291,102 @@ def test_overtime_does_not_double_charge_the_base_wage(minimal_params):
     # And the two together are the whole labour bill — nothing else charges an hour anywhere.
     assert committed + r["overtime_cost"] == pytest.approx(
         40.0 * 20.0 * 52 + ot_hours * 30.0, rel=1e-9)
+
+
+class TestHireIsPricedForTheMarketNotTheCrew:
+    """A hired hand is bought from the local labour market; overtime is your own crew staying late.
+
+    W15: sharing one price between them meant the existing crew's blend stood in for a market
+    wage, and it is a poor proxy whenever the crew is unrepresentative — measured, a farm whose
+    only worker is a $95,000 manager valued a hired field hand at $40.60/hr, and the demo crew
+    priced one at $22.08 against a real harvest wage of $19, so the optimizer refused hires it
+    should have taken. The error direction was safe (over-pricing, where the defect it replaced
+    was FREE labour), which is why this was a decision rather than a bug.
+    """
+
+    def _crew(self):
+        return [{"position": "Mgr", "count": 1, "type": "salary", "wage": 104_000.0,
+                 "hours_per_week": 40.0, "benefits_pct": 0.0},
+                {"position": "Operator", "count": 1, "type": "hourly", "wage": 40.0,
+                 "hours_per_week": 40.0, "benefits_pct": 0.0}]
+
+    def test_an_explicit_hired_wage_is_used_verbatim(self):
+        lab = compute_labor_arrays(self._crew(), [], 52, hired_wage_per_hr=17.5)
+        assert float(lab["hire_hour_wage"][0]) == pytest.approx(17.5), (
+            "the grower said what a hand costs; nothing should be inferred over the top of it"
+        )
+        # ...and it must NOT bleed into overtime, which is the existing crew's own rate.
+        assert float(lab["overtime_hour_wage"][0]) == pytest.approx(40.0)
+
+    def test_without_one_the_cheapest_hourly_role_is_the_proxy_not_the_average(self):
+        """The crew here averages far above its cheapest hourly role, which is the case that
+        exposed the defect: a $104k manager drags an average-based price way past what a field
+        hand would actually cost."""
+        crew = self._crew() + [{"position": "Hand", "count": 2, "type": "hourly", "wage": 18.0,
+                                "hours_per_week": 40.0, "benefits_pct": 0.0}]
+        lab = compute_labor_arrays(crew, [], 52)
+        assert float(lab["hire_hour_wage"][0]) == pytest.approx(18.0), (
+            "a hire must be priced from the CHEAPEST hourly role the farm lists, not an average "
+            "that a salaried manager inflates"
+        )
+        paid_hours = 40.0 + 40.0 + 2 * 40.0
+        average = (104_000.0 / 52 + 40.0 * 40.0 + 2 * 40.0 * 18.0) / paid_hours
+        assert average > 25.0, "fixture no longer distinguishes the cheapest wage from the average"
+
+    def test_seasonal_wages_count_as_hourly_for_the_proxy(self):
+        lab = compute_labor_arrays(
+            [{"position": "Mgr", "count": 1, "type": "salary", "wage": 104_000.0,
+              "hours_per_week": 40.0, "benefits_pct": 0.0}],
+            [{"position": "Crew", "count": 6, "type": "FT", "wage": 15.0, "hours_per_week": 40.0,
+              "benefits_pct": 0.0, "start_week": 10, "end_week": 30}], 52)
+        assert float(lab["hire_hour_wage"][0]) == pytest.approx(15.0), (
+            "seasonal staff are hourly by construction, so their wage is a market signal too"
+        )
+
+    def test_the_explicit_wage_reaches_the_solver(self, minimal_params):
+        p = dict(minimal_params, opening_cash=5_000_000.0, credit_line=5_000_000.0,
+                 year_round_employees=[{"position": "Hand", "count": 1, "type": "hourly",
+                                        "wage": 40.0, "hours_per_week": 40.0,
+                                        "benefits_pct": 0.0}],
+                 seasonal_employees=[],
+                 hire_enabled=True, max_hire_hrs_per_week=2_000.0, hire_wage_markup=0.0,
+                 hired_wage_per_hr=12.0)
+        r = solve_farm_v2(**p)
+        assert r["status"] == "optimal"
+        assert r["total_hired_hours"] > 0, "nothing hired, so the price cannot be checked"
+        implied = r["hire_cost"] / r["total_hired_hours"]
+        assert implied == pytest.approx(12.0, rel=1e-6), (
+            f"hired hours cost ${implied:.2f}/hr against an explicit $12.00 input. At $40.00 the "
+            f"solver is still pricing hires from the existing crew's wage."
+        )
+
+
+def test_the_hired_wage_input_crosses_the_adapter(tmp_path):
+    """End to end: the form's value must reach the solver, and BLANK must not mean free.
+
+    An input nobody can supply is the W11 shape; a solver parameter with no form field is the
+    same defect facing the other way. And the blank case is the trap — `parseFloat("")` is NaN
+    and `|| 0` would turn it into $0.00/hr, i.e. free hired labour, which is precisely the bug
+    W12b closed. Blank has to travel as null and mean "infer".
+    """
+    import json, re
+    src = (pathlib.Path(__file__).resolve().parent.parent / "public" / "index.html").read_text()
+    assert 'id="hired_wage_per_hr"' in src, "no form field — the parameter is unreachable"
+    body = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+    assert "sp.hired_wage_per_hr" in body, "the payload builder never sends it"
+    assert "hired_wage_per_hr=hired_wage_per_hr" in body, "run_from_js never forwards it"
+    # Blank must not become zero anywhere on the path.
+    assert "|| 0 : null" not in body and "?.value) || 0;\n  sp.hired_wage_per_hr" not in body
+
+
+def test_blank_means_infer_not_free():
+    """The whole path in one place: absent, empty string and 0 all mean 'infer'."""
+    crew = [{"position": "Hand", "count": 1, "type": "hourly", "wage": 21.0,
+             "hours_per_week": 40.0, "benefits_pct": 0.0}]
+    inferred = compute_labor_arrays(crew, [], 52)
+    assert float(inferred["hire_hour_wage"][0]) == pytest.approx(21.0)
+    for blank in (None,):
+        got = compute_labor_arrays(crew, [], 52, hired_wage_per_hr=blank)
+        assert float(got["hire_hour_wage"][0]) == pytest.approx(21.0), (
+            f"hired_wage_per_hr={blank!r} must mean INFER, never $0.00/hr"
+        )

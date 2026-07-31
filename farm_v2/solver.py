@@ -276,6 +276,10 @@ def solve_farm_v2(
     hire_enabled: bool = False,
     max_hire_hrs_per_week: float = 0.0,
     hire_wage_markup: float = 0.0,
+    # What a HIRED hand costs per hour on the local market (W15). Left None, the model
+    # infers the cheapest wage the farm already pays an hourly role — a proxy that is wrong
+    # whenever the listed crew is unrepresentative of who you would bring in.
+    hired_wage_per_hr: float | None = None,
     # --- Equipment proxy ---
     max_plant_acres_per_week: float = 1e9,
     max_harvest_acres_per_week: float = 1e9,
@@ -477,10 +481,12 @@ def solve_farm_v2(
     # Labor
     labor_result = compute_labor_arrays(
         year_round_employees, seasonal_employees, N_WEEKS,
+        hired_wage_per_hr=hired_wage_per_hr,
     )
     labor_capacity         = labor_result["labor_capacity"]          # (52,)
     hourly_labor_rate      = labor_result["hourly_labor_rate"]       # (52,)
-    bought_hour_wage       = labor_result["bought_hour_wage"]        # (52,) never free
+    overtime_hour_wage     = labor_result["overtime_hour_wage"]      # (52,) your crew, late
+    hire_hour_wage         = labor_result["hire_hour_wage"]          # (52,) a new person
     committed_weekly_wages = labor_result["committed_weekly_wages"]  # (52,) wages owed regardless
 
     # What an hour BOUGHT beyond the committed crew costs, in full (W12 follow-up).
@@ -502,8 +508,8 @@ def solve_farm_v2(
     # the price is the hourly blend, so a salaried worker's overflow is priced at the hourly rate.
     # That is the defensible direction — you send overtime to the hourly crew, and salaried staff
     # generally cannot be paid overtime at all.
-    overtime_rate_full = bought_hour_wage * overtime_rate_multiplier
-    hire_rate_full     = bought_hour_wage * (1.0 + hire_wage_markup)
+    overtime_rate_full = overtime_hour_wage * overtime_rate_multiplier
+    hire_rate_full     = hire_hour_wage * (1.0 + hire_wage_markup)
 
     labor_rate = compute_labor_rates(successions, crops, N_WEEKS)  # (N_S, 53)
 

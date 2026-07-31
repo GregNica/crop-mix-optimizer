@@ -18,8 +18,9 @@ Derived arrays (all 52-element, 0-indexed for weeks 1..52):
   committed_weekly_wages[w]  $/week owed to EVERY listed worker (W12) — the wage bill, charged
                               on full hours regardless of how much the crops use
   labor_capacity[w]          total available hours in week w (salaried + hourly)
-  bought_hour_wage[w]        $/hour for an hour bought beyond the committed crew (overtime or
-                              hire), in FULL — regular hours are already paid by the wage bill
+  overtime_hour_wage[w]      $/hour base for your own crew staying late
+  hire_hour_wage[w]          $/hour base for a NEW hire (W15) — regular hours are already
+                              paid by the committed wage bill, so both are charged in FULL
   piece_rate_per_lb[c][ch]   $/lb harvest cost per crop/channel — sourced from crop defs,
                               not computed here, but the module documents the pattern.
 
@@ -43,6 +44,7 @@ def compute_labor_arrays(
     year_round_employees: list[dict],
     seasonal_employees: list[dict],
     n_weeks: int = 52,
+    hired_wage_per_hr: float | None = None,
 ) -> dict:
     """
     Compute all derived labor arrays from employee configuration.
@@ -70,8 +72,10 @@ def compute_labor_arrays(
         "labor_capacity"            np.ndarray shape (n_weeks,) — total hrs/week (1-indexed)
         "hourly_labor_rate"         np.ndarray shape (n_weeks,) — blended $/hr
         "committed_weekly_wages"    np.ndarray shape (n_weeks,) — $/week owed to ALL listed staff
-        "bought_hour_wage"          np.ndarray shape (n_weeks,) — $/hr for an hour bought
-                                    beyond the committed crew; never zero while anyone is paid
+        "overtime_hour_wage"        np.ndarray shape (n_weeks,) — $/hr base for YOUR crew
+                                    staying late; never zero while anyone is paid
+        "hire_hour_wage"            np.ndarray shape (n_weeks,) — $/hr base for a NEW hire,
+                                    from `hired_wage_per_hr` or the cheapest listed wage
         "piece_rate_workers"        list[dict] — seasonal workers with piece_rate_per_lb set
     """
     labor_capacity        = np.zeros(n_weeks, dtype=float)
@@ -85,6 +89,7 @@ def compute_labor_arrays(
     # time is available to crops, not how much of their wage the farm owes.
     committed_weekly_wages = np.zeros(n_weeks, dtype=float)
     committed_weekly_hours = np.zeros(n_weeks, dtype=float)   # PAID hours, not field-adjusted
+    hourly_wages          = []          # effective $/hr of every hourly role (W15)
     piece_rate_workers    = []
 
     # --- Year-round employees (available every week) ---
@@ -109,6 +114,7 @@ def compute_labor_arrays(
 
         elif emp_type == "hourly":
             effective_rate = wage * (1 + bene)
+            hourly_wages.append(effective_rate)
             committed_weekly_wages += count * hrs * effective_rate
             committed_weekly_hours += count * hrs
             hourly_weighted_wages += total_hrs_per_week * effective_rate
@@ -160,6 +166,7 @@ def compute_labor_arrays(
             piece_rate_workers.append(emp)
 
         effective_rate = wage * (1 + bene)
+        hourly_wages.append(effective_rate)
         total_hrs_per_week = count * hrs * field
 
         # Week indices are 0-based internally (week w → index w-1)
@@ -198,13 +205,37 @@ def compute_labor_arrays(
     # SAFE — it over-prices bought labour, and the defect it replaced was free labour — but the
     # honest fix is an explicit "what does a hand cost around here" input. See backlog W15.
     total_paid_hours = float(committed_weekly_hours.sum())
-    fallback_wage = (float(committed_weekly_wages.sum()) / total_paid_hours
-                     if total_paid_hours > 0 else 0.0)
-    bought_hour_wage = np.where(hourly_labor_rate > 0, hourly_labor_rate, fallback_wage)
+    average_paid_wage = (float(committed_weekly_wages.sum()) / total_paid_hours
+                         if total_paid_hours > 0 else 0.0)
+
+    # TWO prices, because overtime and hire are different transactions (W15).
+    #
+    #   overtime — your OWN crew, staying late. The blend of the hourly staff actually present
+    #              that week is exactly right.
+    #   hire     — a NEW person from the local labour market. The existing crew's blend is only a
+    #              proxy for that, and a poor one when the crew is unrepresentative: sharing one
+    #              price meant a farm whose only worker is a $95k manager valued a hired field
+    #              hand at $40.60/hr, and the demo crew priced one at $22.08 against a real
+    #              harvest wage of $19 — so the optimizer refused hires it should have taken.
+    #
+    # `hired_wage_per_hr` is the honest answer and the caller supplies it. Without it, infer the
+    # CHEAPEST wage the farm actually pays an hourly worker, not the average: a hired hand is
+    # bought at the market's rate for that work, and the cheapest listed hourly role is the
+    # closest thing this model knows to it. The all-salaried average is the last resort.
+    cheapest = min(hourly_wages) if hourly_wages else None
+    hire_base = (float(hired_wage_per_hr) if hired_wage_per_hr is not None
+                 else cheapest if cheapest is not None
+                 else average_paid_wage)
+
+    # Never zero while anyone is paid: a zero blend means "no hourly crew this week", not "labour
+    # is free". Getting that wrong is what let 2,080 hired hours cost $0.00.
+    overtime_hour_wage = np.where(hourly_labor_rate > 0, hourly_labor_rate, average_paid_wage)
+    hire_hour_wage     = np.full(n_weeks, float(hire_base), dtype=float)
 
     return {
         "committed_weekly_wages": committed_weekly_wages,
-        "bought_hour_wage":       bought_hour_wage,
+        "overtime_hour_wage":     overtime_hour_wage,
+        "hire_hour_wage":         hire_hour_wage,
         "labor_capacity":         labor_capacity,
         "hourly_labor_rate":      hourly_labor_rate,
         "piece_rate_workers":     piece_rate_workers,
