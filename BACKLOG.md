@@ -215,6 +215,12 @@ views, and a solver that explains itself (S2, C4).
 Summary prints white-on-white with Chrome defaults) — and D1–D5 are all artifacts a grower prints.
 Mobile has confirmed horizontal overflow at 375px. Both ❓, from the audit's browser pass.
 
+### Live items added 2026-07-31 — NOT part of the superseded audit above
+
+**X1, U1, U1a, U2 below came out of the grower's own browser pass and the reviews that followed.
+The "do not build" list above does not apply to them.** U1/U2 need a decision made WITH the grower
+and are the reason the labour work stopped where it did; X1 is code-only and can be done any time.
+
 **X1 — the two spreadsheet-safety rules are enforced by ONE test on ONE exporter, and the P&L is
 green only because the fixture's channels have benign names.** From `/simplify` on the P&L
 restructure (2026-07-31). Five exporters (`index.html:4826, 8214, 8324, 9140, 9418`) each inline
@@ -239,9 +245,16 @@ and in the adapter but **not in the main payload builder**, so a normal Optimize
 fixed staff no matter how the toggle is set (deliberate, documented at `index.html:7822` and in the
 copy at `:1868`). Two obvious shapes — send it from the main payload, or drop it from setup and let
 the What-If own hiring — but the ask was for a better way, not a coin flip, so **do this WITH the
-grower.** Carries **U2**: relabel "Optimize labor" / "Labor Availability" as hiring decisions, which
-the grower has already agreed to. Under it sits the real question the label is standing in for: what
-does the base plan *assume* about hiring? See W17 for the wage that would be paid.
+grower.** Under it sits the real question the label is standing in for: what does the base plan
+*assume* about hiring? See W17 for the wage that would be paid.
+
+**U2 — relabel "Optimize labor" / "Labor Availability" as hiring decisions.** The grower has already
+agreed to this one, so it needs wording rather than a decision. The mechanism is right and the
+framing is wrong: **"Optimize labor" buys hours that pay for themselves** (the solver declines any
+that do not, so it can only help — measured +$110K), while **"Labor availability" scales the CREW
+COUNT, a commitment you owe whether it is used or not** (+40% of a ~$736K bill = ~+$295K of payroll
+against ~$127K of extra margin — measured −$167K). Those two sentences are the relabel. Do it with
+U1, since the same panel is being redesigned.
 
 ---
 
