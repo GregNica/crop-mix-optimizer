@@ -484,7 +484,6 @@ def solve_farm_v2(
         hired_wage_per_hr=hired_wage_per_hr,
     )
     labor_capacity         = labor_result["labor_capacity"]          # (52,)
-    hourly_labor_rate      = labor_result["hourly_labor_rate"]       # (52,)
     overtime_hour_wage     = labor_result["overtime_hour_wage"]      # (52,) your crew, late
     hire_hour_wage         = labor_result["hire_hour_wage"]          # (52,) a new person
     committed_weekly_wages = labor_result["committed_weekly_wages"]  # (52,) wages owed regardless
@@ -499,10 +498,17 @@ def solve_farm_v2(
     # 2,080 hired hours at $0.00, worth +$965,177 of phantom profit on a 200-acre fixture.
     #
     # NOT A DOUBLE-CHARGE, and the arithmetic is worth stating because it is the step that looks
-    # wrong: C2 measures bought hours against `labor_capacity`, which IS the crew's stated hours,
-    # exactly what the committed bill already paid for. So an overtime hour is genuinely a 41st
-    # hour. One worker, 40 h/wk at $20, asked for 50 h: $800 committed + 10 x $20 x 1.5 = $1,100,
-    # which is 40 straight plus 10 at time-and-a-half. Pinned in test_committed_wages.py.
+    # wrong: C2 measures bought hours against `labor_capacity`, so an overtime hour is genuinely
+    # an hour beyond what the crew can give. One worker, 40 h/wk at $20 at 100% field time, asked
+    # for 50 h: $800 committed + 10 x $20 x 1.5 = $1,100, which is 40 straight plus 10 at
+    # time-and-a-half. Pinned in test_committed_wages.py.
+    #
+    # ⚠️ EXACT ONLY AT field_time_pct = 100, and the shipped farm is not: its manager is 80% and
+    # both operators 90%, so 17 h/wk are paid by the committed bill and invisible to C2. Overtime
+    # can therefore be bought while those paid hours are unspent. That is the DELIBERATE reading
+    # of `field_time_pct` — it is a cap on crop-available time, not an average (see labor.py) —
+    # so the unspent hours are admin and maintenance rather than idle capacity. But it means the
+    # clean identity above is the 100% case, not the general one. Do not quote it as general.
     #
     # ⚠️ Rate/quantity asymmetry, deliberate: capacity is TOTAL (salaried + hourly + seasonal) but
     # the price is the hourly blend, so a salaried worker's overflow is priced at the hourly rate.
@@ -1690,13 +1696,28 @@ def solve_farm_v2(
     hired_hours_weekly    = np.zeros(N_WEEKS + 1)
     overtime_hours_weekly = np.zeros(N_WEEKS + 1)
     if overtime_enabled or hire_enabled:
-        # Hours beyond TOTAL labor capacity (salaried + hourly + seasonal) must be bought —
-        # filled by cheaper hired labor up to its cap, then overtime. Matches C2.
+        # Read the SOLVED split, do not reconstruct it.
+        #
+        # This used to fill hired labour to its cap first and give the remainder to overtime, on
+        # the reasoning that hire is the cheaper of the two. W15 decoupled the two prices — a
+        # hired hand is bought at a market wage, overtime at your own crew's rate x a multiplier —
+        # so "hire is cheaper" became an assumption rather than a fact, and it is false whenever
+        # the hired wage exceeds the overtime rate. Measured with a $20/hr crew, 1.5x overtime and
+        # a $60/hr hired wage: the same 105.52 bought hours were reported as hire, so ENABLING an
+        # extra, more expensive option made reported profit $3,165.71 WORSE than not having it —
+        # which no correct model can do. `hire_cost`, `overtime_cost`, `total_cost`,
+        # `operating_profit`, the cash curve and the P&L rows all inherited it, and the P&L's
+        # UNRECONCILED tripwire could not catch it because both sides came from the same guess.
+        #
+        # The objective already chose the split on the real prices. `capacity_series` 120 lines
+        # below has always read these same variables; this now agrees with it.
+        ot_sol   = (z[idx_ot_start   : idx_ot_start   + N_WEEKS]
+                    if (overtime_enabled and idx_ot_start is not None) else np.zeros(N_WEEKS))
+        hire_sol = (z[idx_hire_start : idx_hire_start + N_WEEKS]
+                    if (hire_enabled and idx_hire_start is not None) else np.zeros(N_WEEKS))
         for w in range(1, N_WEEKS + 1):
-            extra = max(0.0, labor_used_weekly[w] - labor_capacity[w - 1])
-            hired = min(extra, max_hire_hrs_per_week) if hire_enabled else 0.0
-            hired_hours_weekly[w]    = hired
-            overtime_hours_weekly[w] = (extra - hired) if overtime_enabled else 0.0
+            hired_hours_weekly[w]    = float(hire_sol[w - 1])
+            overtime_hours_weekly[w] = float(ot_sol[w - 1])
 
     overtime_cost = float(np.dot(overtime_hours_weekly[1:],
                                  overtime_rate_full)) \

@@ -143,8 +143,10 @@ class TestRegressionFinancials:
         without either band having to be nonsense.
         """
         r = full_result
-        total_cost = (r["fixed_cost"] + r["variable_cost"] + r.get("city_water_cost", 0.0)
-                      + r.get("overtime_cost", 0.0) + r.get("hire_cost", 0.0))
+        # Summed from the solver's own reported identity rather than a fifth hand-written list of
+        # cost keys (BACKLOG W8(a) flags the same enumeration in exportPLCSV). If a new cost line
+        # is added, `operating_profit` moves with it and this stays correct.
+        total_cost = r["revenue"] - r["operating_profit"]
         lo = EXPECTED_TOTAL_COST * (1 - TOLERANCE_PCT)
         hi = EXPECTED_TOTAL_COST * (1 + TOLERANCE_PCT)
         assert lo <= total_cost <= hi, (
@@ -162,6 +164,15 @@ class TestRegressionFinancials:
         up in either direction", with the real proportional guards on revenue and total cost.
         """
         profit = full_result["profit"]
+        # ⚠️ THIRD attempt at this band, and the first two were wrong in opposite directions:
+        # ±10% of a near-zero profit is ±$2.3k (a hair-trigger), and ±10% of revenue is ±$220k
+        # (±950%, meaningless). Review then showed THIS band is 91% of the width of the one it
+        # replaced — so on its own it is barely an improvement, and it is not carrying the load.
+        # The real coverage is EXPECTED_TOTAL_COST and EXPECTED_REVENUE above, both large
+        # positives where a relative band means what it says. This assertion's only job is to
+        # catch a change of CHARACTER — a fixture built to sit near break-even ending up wildly
+        # profitable or catastrophically loss-making — so it is deliberately loose and says so
+        # rather than pretending to be a tolerance.
         assert -250_000 < profit < 150_000, (
             f"Profit ${profit:,.0f} left the near-break-even band this fixture exists to sit in "
             f"(it was ${EXPECTED_PROFIT:,.0f} when last pinned). That is a real change of "
