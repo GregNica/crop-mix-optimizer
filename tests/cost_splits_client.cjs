@@ -306,16 +306,19 @@ const EXPECT_FIXED_LABELS = {
   // Sheets parsed every one as a FORMULA and the total rows broke on open, and the indentation was
   // ASCII (see the header comment above). Both are properties of the FILE, so the file is where
   // they are asserted — a check against the source layout would not have caught either.
+  //
+  // THE FORMULA CHECK MOVED OUT at X1, to tests/csv_safety_client.cjs, which drives all five
+  // exporters instead of this one. Two reasons, and the second is the important one: four of the
+  // five were never checked at all, and the version that lived here was written as `^\s*[=+@]`,
+  // which in JS also matches U+00A0 — the very character this statement indents with. It called
+  // an indented, perfectly safe "+Market Revenue" dangerous. A rule that both misses four files
+  // and cries wolf on the fifth belongs in one place, stated once, driven everywhere.
+  // What stays here is the shape of THIS statement: two columns, and the indentation.
   {
     W._lastRes = RES; W._lastParams = PARAMS;
     const rows = runExport();
-    for (const r of rows) {
-      for (const cell of r) {
-        ok(`no cell starts with = + or @ (a spreadsheet would treat it as a formula): "${String(cell).slice(0, 50)}"`,
-           !/^\s*[=+@]/.test(String(cell)));
-      }
-      ok(`every row has exactly two columns: ${JSON.stringify(r).slice(0, 60)}`, r.length === 2);
-    }
+    const badWidth = rows.find(r => r.length !== 2);
+    ok(`every row has exactly two columns: ${JSON.stringify(badWidth)}`, !badWidth);
 
     // The hierarchy is the indentation, so the indentation is what gets pinned: it must exist, it
     // must be U+00A0, and it must never be ASCII space. Checking only "not ASCII space" would pass

@@ -53,6 +53,15 @@ GUARDS = [
         "component charged to a total ends up with no row anywhere",
     ),
     (
+        "csv-safety-client",
+        ["tests/csv_safety_client.cjs"],
+        "a CSV the app writes can be read as a FORMULA when it opens (X1). Excel and Sheets "
+        "parse a cell starting with = + - or @; the P&L's subtotals once led with '=' and every "
+        "total row broke. All five exporters go through downloadCSV(), which neutralises the "
+        "lead with U+00A0 — but ONLY on non-numeric cells, because the amount column is full of "
+        "legitimate negatives. This drives all five with hostile crop and channel names",
+    ),
+    (
         "golden-payload-staleness",
         ["scripts/capture_golden_payload.cjs", "--check"],
         "tests/golden/default_farm_payload.json pins a farm the app no longer ships. Run "

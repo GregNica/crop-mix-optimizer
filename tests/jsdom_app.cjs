@@ -113,7 +113,9 @@ function captureCSV(W, trigger) {
     W.document.createElement = origCreate;
   }
   if (csv === null) return null;
-  return csv.replace(/^﻿/, '').split('\n').map(splitCSVRow);
+  // \uFEFF as an escape, not a literal: the BOM is invisible in the source, and the exporter
+  // that writes it uses the escape for the same reason.
+  return csv.replace(/^\uFEFF/, '').split('\n').map(splitCSVRow);
 }
 
 module.exports = { bootApp, ROOT, splitCSVRow, captureCSV };

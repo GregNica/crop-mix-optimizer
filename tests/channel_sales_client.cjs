@@ -22,7 +22,7 @@
  * Run: node tests/channel_sales_client.cjs   (or via pytest: test_node_guards.py)
  */
 'use strict';
-const { bootApp } = require('./jsdom_app.cjs');
+const { bootApp, captureCSV } = require('./jsdom_app.cjs');
 
 let failures = 0;
 const fail = m => { failures++; console.error('  x ' + m); };
@@ -130,42 +130,32 @@ const PARAMS = {
 
   // ── 4. The sales CSV is built from it ────────────────────────────────────
   {
-    let csv = null;
-    const origCreate = W.document.createElement.bind(W.document);
-    W.document.createElement = function (tag) {
-      const el = origCreate(tag);
-      if (tag === 'a') el.click = () => {
-        csv = decodeURIComponent((el.href || '').replace(/^data:text\/csv;charset=utf-8,/, ''));
-      };
-      return el;
-    };
+    // captureCSV lives in jsdom_app.cjs. This block had the last hand-rolled copy of the
+    // interception — no try/finally, so a throwing exporter left document.createElement patched
+    // for the rest of the run — and it split cells with a global quote-strip, which shifts every
+    // column after a crop or channel name containing a comma. Both are what the shared helper
+    // and splitCSVRow exist to prevent.
     W._lastRes = RES; W._lastParams = PARAMS;
-    W.exportWeeklySalesCSV();
-    W.document.createElement = origCreate;
-
-    ok('CSV captured', csv !== null);
-    const lines = (csv || '').split('\n');
+    const rows = captureCSV(W, () => W.exportWeeklySalesCSV());
+    ok('CSV captured', !!rows && rows.length > 0);
     // The exporter names its columns with the ACTIVE mass unit ("lb" / "kg"), and the file
     // opens with a BOM for Excel. Take the unit from the harvest column rather than hardcoding
     // it — two in-page tests hardcoded "lbs_" and had been failing silently against "lb_".
     // (U_LB is a `const` in the app's inline script, so it is not reachable as W.U_LB.)
-    const header = (lines[0] || '').replace(/^\uFEFF/, '').replace(/"/g, '');
-    const MASS = (header.split(',')[2] || '').replace(/_harvested$/, '');
+    const cols = rows[0] || [];
+    const MASS = String(cols[2] || '').replace(/_harvested$/, '');
     ok(`mass unit parsed from the header (got "${MASS}")`, /^(lb|kg)$/.test(MASS));
-    ok(`CSV header carries both channels (got "${header}")`,
-       header.includes(`${MASS}_sold_wholesale`) && header.includes(`${MASS}_sold_farmers_market`));
+    ok(`CSV header carries both channels (got "${cols.join(',')}")`,
+       cols.includes(`${MASS}_sold_wholesale`) && cols.includes(`${MASS}_sold_farmers_market`));
     // Wholesale sorts before Farmers Market by the exporter's explicit PRIORITY list.
     ok('CSV channel column order is wholesale then farmers_market',
-       header.indexOf('wholesale') < header.indexOf('farmers_market'));
+       cols.indexOf(`${MASS}_sold_wholesale`) < cols.indexOf(`${MASS}_sold_farmers_market`));
 
     // The week-12 Spinach row must carry the SOLVER's split (400 / 700), not a price- or
     // demand-weighted one. At price 1.0 vs 4.0 a price split would put ~80% in FM.
-    const cols = header.split(',');
     const iWS = cols.indexOf(`${MASS}_sold_wholesale`);
     const iFM = cols.indexOf(`${MASS}_sold_farmers_market`);
-    const row = lines.slice(1)
-      .map(r => r.replace(/"/g, '').split(','))
-      .find(r => r[0] === '12' && r[1] === 'Spinach');
+    const row = rows.slice(1).find(r => r[0] === '12' && r[1] === 'Spinach');
     ok('week-12 Spinach row exists', !!row);
     if (row) {
       eq('CSV wk12 Spinach wholesale', row[iWS], '400');

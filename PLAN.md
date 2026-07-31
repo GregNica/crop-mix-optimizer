@@ -67,7 +67,19 @@ These are the compressed lessons of the last two weeks. Each one is paid for.
 
 Small, independent, safe to do in any order. Clears the decks.
 
-**0.1 · X1 — one `downloadCSV(rows, filename)` for all five exporters.**
+**0.1 · X1 — one `downloadCSV(rows, filename)` for all five exporters. ✅ DONE 2026-07-31.**
+Five call sites, one implementation, new `tests/csv_safety_client.cjs` covering all five with
+hostile names, registered in both runners. **The attack plan below was wrong on both live
+instances** — measuring the real exports is what showed it, and the fix differs accordingly:
+the gantt wrote 3 risky cells (the `--- Crop ---` separator fires for BENIGN names, every export)
+while the P&L wrote ZERO, because U+00A0 indentation already shields it — the *guard* was the
+thing at fault there, `^\s*[=+@]` matching U+00A0 and calling a correct file broken. Two
+mutations that should have died didn't: an over-strict `\s` survived the first pass, and
+`/simplify` silently deleted the negative-amounts guard along with a genuinely subsumed block.
+New rows: **S21** (delete the gantt separator — the only everyday neutralisation). Detail in
+`BACKLOG.md`'s X1 entry.
+
+Original attack plan, for history:
 Five sites (`index.html` ~4826/8214/8324/9140/9418 at last verification — re-grep) inline
 byte-identical quote-escaping + BOM + anchor, and only the P&L knows the formula-prefix rule.
 Attack: one helper owning escaping, BOM, anchor, and neutralising a leading `=`/`+`/`@` on

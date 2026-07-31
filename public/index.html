@@ -3946,6 +3946,68 @@ function offerLocalDraft() {
 function escHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 }
+
+// Non-breaking space. Written as an ESCAPE, never a literal: a literal U+00A0 is indistinguishable
+// from a space in the source, so a reformat that "tidied" it would silently change what the app
+// writes. It does two jobs that are the same trick — indenting the P&L so importers keep the
+// hierarchy, and neutralising a formula lead in `csvCell` below.
+const NBSP = '\u00a0';
+
+// ── CSV export: one implementation of the file format ────────────────────────
+//
+// Five exporters each inlined the same quote-escaping, the same BOM and the same anchor click,
+// and only ONE was ever tested against the rule below — so the rule was a property of a test,
+// not of the app.
+//
+// THE RULE. Excel and Sheets read a cell as a FORMULA when its first character is `=`, `+`, `-`
+// or `@` — the P&L's subtotals once led with "=" and every total row broke on open. Two
+// decisions separate a right guard from a merely plausible one:
+//
+//   * A leading `-` is a formula only when the cell is NOT A NUMBER. The amount column is full
+//     of legitimate negatives; neutralising those turns every cost line into text a spreadsheet
+//     cannot sum. `Number()` and not `numOr`/`parseFloat`: prefix parsing would call `-5 acres`
+//     a number and leave a real formula lead live.
+//   * Leading ASCII blanks are looked through (an importer that trims " =SUM()" hands Excel a
+//     formula) but U+00A0 is NOT. Be precise about who preserves it, because the sloppy version
+//     of this sentence is false: SPREADSHEETS keep it when they open the file, which is what
+//     stops the formula and what makes the P&L's indentation survive. This app's OWN CSV reader
+//     strips it — `parseCSVLine` calls `.trim()`, and JS trim removes U+00A0 (the P&L indent
+//     comment says so too). That asymmetry is convenient rather than awkward: a neutralised cell
+//     re-imports as the name the grower typed. Writing this rule with `\s`, which in JS also
+//     includes U+00A0, makes it flag the already-safe indented labels instead.
+//   * THE COST OF U+00A0, accepted knowingly: unlike Excel's apostrophe label-prefix, the pad
+//     becomes part of the cell VALUE, so a neutralised Crop or Channel cell no longer string-
+//     equals the same name typed by hand — it will not match a VLOOKUP or sort beside its
+//     twin. In practice only the gantt's `--- Crop ---` separator is neutralised on a normal
+//     farm (BACKLOG S21 proposes deleting that row, which would take the everyday case to zero).
+//   * AMOUNT COLUMNS MUST EMIT RAW NUMBERS. "Is this a number" is decided by `Number()`, so a
+//     FORMATTED negative ("-5.2%", "-1,234.56", "-$5") is not one, and would be padded into
+//     text a spreadsheet cannot sum. The P&L emits raw `toFixed(2)` and the harness pins it.
+//
+// Both decisions were measured on the real exports. The measurements, and the `\s` trap — which
+// stays green against every other assertion — live in `tests/csv_safety_client.cjs`.
+const CSV_BOM = '\ufeff';
+// One regex, one exec. The captured lead tells `-` apart from the rest, and `Number()` stays
+// behind that test so the coercion runs only on cells that actually start with a dash.
+const CSV_FORMULA_LEAD = /^[ \t\r\n]*([-=+@])/;
+
+function csvCell(v) {
+  const s = v == null ? '' : String(v);
+  const lead = CSV_FORMULA_LEAD.exec(s);
+  const isFormula = !!lead && (lead[1] !== '-' || !Number.isFinite(Number(s)));
+  return '"' + (isFormula ? NBSP + s : s).replace(/"/g, '""') + '"';
+}
+
+/** Write `rows` (an array of arrays of cells) to the user's downloads as `filename`.
+ *  Owns the whole file format: cell escaping, the UTF-8 BOM Excel needs to read accents, and
+ *  the anchor click. Every CSV the app produces goes through here. */
+function downloadCSV(rows, filename) {
+  const a = document.createElement('a');
+  a.href = 'data:text/csv;charset=utf-8,'
+         + encodeURIComponent(CSV_BOM + rows.map(r => r.map(csvCell).join(',')).join('\n'));
+  a.download = filename;
+  a.click();
+}
 function setSaveStatus(msg) {
   const el = document.getElementById('save-status');
   if (el) el.textContent = msg || '';
@@ -4833,13 +4895,9 @@ function downloadCropTemplate() {
   const EX2 = ['Spinach','3-1','9-1','','','42','1','2','8000','20','2','0.4','15','4','25','10400','12700','9200','0.46','0.35','0.23','3.5','2.0','4.0','280','2','TRUE','FALSE','','Farmers Market','2.10','0.18','weekly_varying','','6000','18','42'];
   // Example: Garlic (annual, one channel)
   const EX3 = ['Garlic','11-15','12-01','','','240','3','1','2000','40','5','0.6','5','1','10','8000','6000','5000','0.40','0.20','0.15','4.0','1.5','3.0','150','16','FALSE','TRUE','90','Wholesale','3.00','0.20','annual','200000','','',''];
-  const esc = v => '"' + String(v).replace(/"/g,'""') + '"';
-  const csv = [CSV_TEMPLATE_HEADERS, UNIT_ROW, toTemplateDisplay(EX1), toTemplateDisplay(EX2), toTemplateDisplay(EX3)]
-    .map(row => row.map(esc).join(',')).join('\n');
-  const a = document.createElement('a');
-  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(String.fromCharCode(0xFEFF) + csv);
-  a.download = 'crop_import_template.csv';
-  a.click();
+  downloadCSV([CSV_TEMPLATE_HEADERS, UNIT_ROW,
+               toTemplateDisplay(EX1), toTemplateDisplay(EX2), toTemplateDisplay(EX3)],
+              'crop_import_template.csv');
 }
 
 function handleCSVUpload(input) {
@@ -8275,12 +8333,12 @@ function exportPLCSV() {
   // replaces a [Section | Line item | Amount | Role] table that carried the hierarchy in data
   // columns: correct, machine-readable, and not how anyone reads a P&L.
   //
-  // TWO PROPERTIES OF THE FILE MAKE THE INDENTATION SAFE, and both are pinned in
-  // tests/cost_splits_client.cjs — neither is a style preference:
+  // THE INDENTATION IS A PROPERTY OF THE FILE, pinned in tests/cost_splits_client.cjs — not a
+  // style preference. (The other rule that used to be listed here — no cell may start with `=`,
+  // `+` or `@`, found when "= GROSS PROFIT" parsed as a FORMULA on open — is no longer this
+  // exporter's business: downloadCSV owns it for all five, and csv_safety_client.cjs pins it.)
   //
-  //   1. NO CELL MAY START WITH `=`, `+` or `@`. Browser QA found "= GROSS PROFIT" parsed as a
-  //      FORMULA the moment Excel or Sheets opened the file, so every subtotal row broke.
-  //   2. INDENTATION IS NON-BREAKING SPACE (U+00A0), NOT ASCII SPACE. Importers trim leading
+  //      INDENTATION IS NON-BREAKING SPACE (U+00A0), NOT ASCII SPACE. Importers trim leading
   //      ASCII spaces, which is what flattened the first indented version into an undifferentiated
   //      list. U+00A0 is an ordinary character to an importer, so it survives the round-trip, and
   //      it renders as a space. (JS `.trim()` DOES strip it, so test helpers can still match
@@ -8377,11 +8435,7 @@ function exportPLCSV() {
   ];
 
 
-  const csv = rows.map(r => r.map(x => '"' + String(x).replace(/"/g,'""') + '"').join(',')).join('\n');
-  const a = document.createElement('a');
-  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(String.fromCharCode(0xFEFF) + csv);
-  a.download = 'farm_pl.csv';
-  a.click();
+  downloadCSV(rows, 'farm_pl.csv');
 }
 
 // ============================================================
@@ -8500,11 +8554,7 @@ function exportConstraintCSV() {
   });
   demandRows.forEach(r => rows.push(r.cells));
 
-  const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
-  const a   = document.createElement('a');
-  a.href     = 'data:text/csv;charset=utf-8,' + encodeURIComponent(String.fromCharCode(0xFEFF) + csv);
-  a.download = 'constraint_utilization.csv';
-  a.click();
+  downloadCSV(rows, 'constraint_utilization.csv');
 }
 
 // ============================================================
@@ -9091,12 +9141,7 @@ function exportGanttCSV() {
     });
   });
 
-  const allRows = [header, landPctRow, ...dataRows];
-  const csv = allRows.map(r => r.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(',')).join('\n');
-  const a = document.createElement('a');
-  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(String.fromCharCode(0xFEFF) + csv);
-  a.download = 'planting_calendar.csv';
-  a.click();
+  downloadCSV([header, landPctRow, ...dataRows], 'planting_calendar.csv');
 }
 
 // ============================================================
@@ -9370,11 +9415,7 @@ function exportWeeklySalesCSV() {
     });
   }
 
-  const csv = rows.map(r => r.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(',')).join('\n');
-  const a = document.createElement('a');
-  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(String.fromCharCode(0xFEFF) + csv);
-  a.download = 'weekly_sales_by_channel.csv';
-  a.click();
+  downloadCSV(rows, 'weekly_sales_by_channel.csv');
 }
 
 // ============================================================
