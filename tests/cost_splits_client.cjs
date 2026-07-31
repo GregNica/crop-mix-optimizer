@@ -100,32 +100,36 @@ const EXPECT_FIXED_LABELS = {
 // has no crop-protection cost of any kind (backlog R1), so the old label named a cost the farm was
 // never charged. The loop below is what pins it — comparing this literal to itself would not.
 
-// The three rows for capacity the optimizer BUYS, which sit outside both cost totals. Used as
-// stop-labels when slicing the fixed-cost detail block, in more than one check below.
-const BOUGHT = ['City Water (metered purchase)', 'Overtime (full rate)', 'Hired Labor (wage + markup)'];
-
 (async () => {
   const W = await bootApp();
   // captureCSV lives in jsdom_app.cjs: the interception is shared, and it restores
   // document.createElement afterwards rather than leaving a patched click on the prototype.
   const runExport = () => captureCSV(W, () => W.exportPLCSV()) || [];
 
-  // The CSV is [Section, Line item, Amount, Role]. Structure comes from the Role column, not
-  // from leading whitespace — browser QA found that spreadsheet importers strip the indentation
-  // that used to carry it, and that a leading "=" made every subtotal parse as a formula.
+  // The CSV is [Line item, Amount] and the hierarchy is INDENTATION, one level = four U+00A0.
+  // Non-breaking space, not ASCII space: importers trim leading ASCII spaces, which is what
+  // flattened the first indented version into a list with nothing showing what summed to what.
+  // Detail rows sit at depth 2 under a group name or section header, and each group closes with a
+  // "Total …" line at depth 1.
+  const IND   = '\u00a0'.repeat(4);
+  const text  = cell => String(cell || '').replace(/^\u00a0+/, '');
+  const depth = cell => (String(cell || '').length - text(cell).length) / IND.length;
   const amountOf = (rows, label) => {
-    const r = rows.find(x => (x[1] || '').trim() === label);
-    return r ? parseFloat(r[2]) : null;
+    const r = rows.find(x => text(x[0]) === label);
+    return r ? parseFloat(r[1]) : null;
   };
-  // Detail rows are the `detail`-role rows following a subtotal, within the same section.
-  const detailUnder = (rows, headerLabel, stopAt) => {
-    const i = rows.findIndex(x => (x[1] || '').trim() === headerLabel);
+  // The components of a group: the depth-2 rows immediately following its header. The run ends at
+  // the group's own "Total …" line, which sits one level out — so the boundary is the indentation
+  // itself and not a list of labels that would rot as lines are added. (It took a stop-label list
+  // until /simplify measured that the depth check always broke first: the list was dead, and worse,
+  // naming a label that IS at depth 2 would have silently truncated a block.)
+  const detailUnder = (rows, headerLabel) => {
+    const i = rows.findIndex(x => text(x[0]) === headerLabel);
     if (i < 0) return null;
     const out = [];
     for (let j = i + 1; j < rows.length; j++) {
-      const label = (rows[j][1] || '').trim();
-      if ((rows[j][3] || '') !== 'detail' || stopAt.includes(label)) break;
-      out.push([label, parseFloat(rows[j][2])]);
+      if (depth(rows[j][0]) !== 2) break;
+      out.push([text(rows[j][0]), parseFloat(rows[j][1])]);
     }
     return out;
   };
@@ -134,12 +138,11 @@ const BOUGHT = ['City Water (metered purchase)', 'Overtime (full rate)', 'Hired 
   {
     W._lastRes = RES; W._lastParams = PARAMS;
     const rows = runExport();
-    const cogs = detailUnder(rows, 'Variable Production Cost', []);
+    const cogs = detailUnder(rows, 'COST OF GOODS SOLD');
     ok(`COGS prints one row per variable component (got ${cogs && cogs.length})`,
        cogs && cogs.length === Object.keys(RES.variable_cost_split).length);
 
-    const fixed = detailUnder(rows, 'Fixed & Committed Costs',
-                              ['Total Operating Expenses', ...BOUGHT]);
+    const fixed = detailUnder(rows, 'Fixed & Committed Costs');
     ok(`fixed cost prints one row per component (got ${fixed && fixed.length})`,
        fixed && fixed.length === Object.keys(RES.fixed_cost_split).length);
 
@@ -180,12 +183,11 @@ const BOUGHT = ['City Water (metered purchase)', 'Overtime (full rate)', 'Hired 
     const rows = runExport();
     // The totals still print — they are separate keys and still arrive.
     ok('the totals still print without the splits',
-       amountOf(rows, 'Variable Production Cost') === -RES.variable_cost);
-    const cogs = detailUnder(rows, 'Variable Production Cost', []);
+       amountOf(rows, 'Total Cost of Goods Sold') === -RES.variable_cost);
+    const cogs = detailUnder(rows, 'COST OF GOODS SOLD');
     ok(`no COGS detail is invented from rates or shares (got ${JSON.stringify(cogs)})`,
        cogs && cogs.length === 0);
-    const fixed = detailUnder(rows, 'Fixed & Committed Costs',
-                              ['Total Operating Expenses', ...BOUGHT]);
+    const fixed = detailUnder(rows, 'Fixed & Committed Costs');
     ok(`no fixed detail is invented (got ${JSON.stringify(fixed)})`,
        fixed && fixed.length === 0);
     W._lastRes = RES;
@@ -221,14 +223,35 @@ const BOUGHT = ['City Water (metered purchase)', 'Overtime (full rate)', 'Hired 
        amountOf(rows, 'Overtime (full rate)') === -RES.overtime_cost &&
        amountOf(rows, 'City Water (metered purchase)') === -RES.city_water_cost);
     ok('no UNRECONCILED line when every cost has a row',
-       !rows.some(r => (r[1] || '').includes('UNRECONCILED')));
+       !rows.some(r => text(r[0]).includes('UNRECONCILED')));
+
+    // A component charged exactly nothing does not print. The fixture buys no hired labour, so
+    // that row must be absent rather than a 0.00 — and the total below it must still be the sum
+    // of what WAS bought, which is what stops the filter from quietly losing money.
+    ok('a zero-cost bought component prints no row at all',
+       amountOf(rows, 'Hired Labor (wage + markup)') === null);
+    ok('Total Bought Capacity is still the full sum',
+       amountOf(rows, 'Total Bought Capacity') ===
+       -(RES.city_water_cost + RES.overtime_cost + RES.hire_cost));
+
+    // ...and a farm that buys NO capacity at all — the shipped default, which enables neither city
+    // water nor hiring — gets one line, not a group name over three 0.00 rows and a 0.00 total.
+    W._lastRes = { ...RES, city_water_cost: 0, overtime_cost: 0, hire_cost: 0,
+                   operating_profit: RES.operating_profit
+                                   + RES.city_water_cost + RES.overtime_cost + RES.hire_cost };
+    const noBuyRows = runExport();
+    ok('a farm that buys no capacity prints one collapsed line, no 0.00 detail',
+       amountOf(noBuyRows, 'Bought Capacity') === 0 &&
+       detailUnder(noBuyRows, 'Bought Capacity').length === 0 &&
+       !noBuyRows.some(r => text(r[0]) === 'Total Bought Capacity'));
+    W._lastRes = RES;
 
     // Now hide a cost from the statement the way a future solver line would: operating_profit
     // accounts for it, no row does.
     W._lastRes = { ...RES, operating_profit: RES.operating_profit - 2500 };
     rows = runExport();
     ok('an unaccounted operating cost fires the UNRECONCILED line',
-       rows.some(r => (r[1] || '').includes('UNRECONCILED')));
+       rows.some(r => text(r[0]).includes('UNRECONCILED')));
 
     // And the same BELOW the line: a deduction inside `profit` that no row explains. This section
     // reconciles only because the adapter deducts exactly overhead, interest and fixed selling; a
@@ -236,17 +259,18 @@ const BOUGHT = ['City Water (metered purchase)', 'Overtime (full rate)', 'Hired 
     W._lastRes = { ...RES, profit: RES.profit - 3000 };
     rows = runExport();
     ok('an unaccounted below-the-line deduction fires the UNRECONCILED line',
-       rows.some(r => (r[1] || '').includes('no line above')));
+       rows.some(r => text(r[0]).includes('no line above')));
     W._lastRes = RES;
     rows = runExport();
     ok('neither tripwire fires on a consistent statement',
-       !rows.some(r => (r[1] || '').includes('UNRECONCILED')));
+       !rows.some(r => text(r[0]).includes('UNRECONCILED')));
   }
 
   // ── 5. The file survives a spreadsheet ──────────────────────────────────
-  // Browser QA: subtotal labels led with "=", so Excel and Sheets parsed every one as a FORMULA
-  // and the total rows broke on open. Hierarchy was carried by four leading spaces, which
-  // importers strip. Both are properties of the FILE, so they are asserted on the file.
+  // Browser QA found both of these on the real file: subtotal labels led with "=", so Excel and
+  // Sheets parsed every one as a FORMULA and the total rows broke on open, and the indentation was
+  // ASCII (see the header comment above). Both are properties of the FILE, so the file is where
+  // they are asserted — a check against the source layout would not have caught either.
   {
     W._lastRes = RES; W._lastParams = PARAMS;
     const rows = runExport();
@@ -255,17 +279,56 @@ const BOUGHT = ['City Water (metered purchase)', 'Overtime (full rate)', 'Hired 
         ok(`no cell starts with = + or @ (a spreadsheet would treat it as a formula): "${String(cell).slice(0, 50)}"`,
            !/^\s*[=+@]/.test(String(cell)));
       }
+      ok(`every row has exactly two columns: ${JSON.stringify(r).slice(0, 60)}`, r.length === 2);
     }
-    const roles = new Set(rows.map(r => r[3]).filter(Boolean));
-    for (const want of ['detail', 'subtotal', 'TOTAL']) {
-      ok(`the hierarchy is expressed: a row carries Role="${want}"`, roles.has(want));
-    }
-    const totals = rows.filter(r => r[3] === 'TOTAL').map(r => r[1]);
+
+    // The hierarchy is the indentation, so the indentation is what gets pinned: it must exist, it
+    // must be U+00A0, and it must never be ASCII space. Checking only "not ASCII space" would pass
+    // a statement with no indentation at all — which is the state the grower rejected.
+    ok('no line item relies on leading ASCII spaces (importers strip them)',
+       !rows.some(r => /^ /.test(r[0] || '')));
+    // Together with the line above, this is what pins the indentation: `depth` counts U+00A0
+    // blocks specifically, so a statement indented with ASCII spaces or not indented at all fails
+    // here. A bare count of indented rows does NOT pin it — it passed on the fixed and bought
+    // blocks alone while every COGS indent was deleted, so it is gone.
+    ok('components are indented deeper than the total that closes their group',
+       depth(rows.find(r => text(r[0]) === EXPECT_VARIABLE_LABELS.seed)[0]) >
+       depth(rows.find(r => text(r[0]) === 'Total Cost of Goods Sold')[0]));
+
+    // The three profit lines run flush left, which is what makes them findable in a long statement.
     for (const want of ['GROSS PROFIT', 'OPERATING INCOME', 'NET PROFIT']) {
-      ok(`"${want}" is marked as a TOTAL row`, totals.includes(want));
+      const r = rows.find(x => text(x[0]) === want);
+      // `r[0] === want`, not `text(r[0]) === want`: the label must carry no indentation at all,
+      // which is strictly stronger than depth 0 and makes a depth assertion here redundant.
+      ok(`"${want}" prints, flush left, carrying a figure`,
+         r && r[0] === want && r[1] !== '');
     }
-    ok('no line item relies on leading-space indentation (importers strip it)',
-       !rows.some(r => /^ /.test(r[1] || '')));
+    // A group NAME carries no figure of its own — the "Total …" line below it does. Printing a
+    // number on both is how a reader ends up double-counting a section.
+    for (const want of ['Fixed & Committed Costs', 'Bought Capacity']) {
+      const r = rows.find(x => text(x[0]) === want);
+      ok(`group name "${want}" carries no amount (its total does)`, r && r[1] === '');
+    }
+    // ...and a group with nothing under it does not print as a name with no lines. This fixture's
+    // one channel charges no stall fee, which is the common case, so the check is on the shipped
+    // path rather than a contrived one.
+    ok('a group with no components collapses to a single line carrying its total',
+       amountOf(rows, 'Channel Fixed Selling (market fees, retainers)') === -RES.fixed_selling_cost &&
+       !rows.some(r => text(r[0]) === 'Total Channel Fixed Selling'));
+
+    // The OTHER branch: a channel that does charge a stall fee prints as a group — name, indented
+    // component, then the total. Testing only the empty case would leave the populated one, which
+    // is the one with the indentation in it, unexercised.
+    W._lastParams = { ...PARAMS,
+      channels: [{ name: 'Wholesale', fixed_selling_cost_per_wk: 0 },
+                 { name: 'Farmers Market', fixed_selling_cost_per_wk: 25 }] };
+    const feeRows = runExport();
+    const feeDetail = detailUnder(feeRows, 'Channel Fixed Selling (market fees, retainers)');
+    ok(`a channel stall fee prints as an indented component (got ${JSON.stringify(feeDetail)})`,
+       feeDetail && feeDetail.length === 1 && feeDetail[0][1] === -25 * 52);
+    ok('the group closes with its own total when it has components',
+       amountOf(feeRows, 'Total Channel Fixed Selling') === -RES.fixed_selling_cost);
+    W._lastParams = PARAMS;
   }
 
   if (failures) {

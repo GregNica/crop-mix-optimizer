@@ -8064,7 +8064,8 @@ function exportPLCSV() {
     ['Overtime (full rate)',          res.overtime_cost],
     ['Hired Labor (wage + markup)',   res.hire_cost],
   ];
-  const totalOpex = fixedOpex + boughtCapacity.reduce((s, [, amt]) => s + amt, 0);
+  const boughtTotal = boughtCapacity.reduce((s, [, amt]) => s + amt, 0);
+  const totalOpex   = fixedOpex + boughtTotal;
   // Now a TRIPWIRE rather than a bridge. Every cost inside the solver's operating_profit has a
   // row above, so this is identically zero; it prints only if a future cost line is added to the
   // optimizer's total and not to this statement — the failure it exists to make visible. It has
@@ -8087,7 +8088,7 @@ function exportPLCSV() {
   // and chose to sell nothing there.
   const chRevRows = channels.map(ch => {
     const chSales = (res.channel_sales || {})[ch.name];
-    return [ch.name + ' Revenue', (chSales ? chSales.revenue : 0).toFixed(2)];
+    return [ch.name + ' Revenue', chSales ? chSales.revenue : 0];
   });
 
   // COGS and fixed-cost breakdowns, from the solver's own splits (W4).
@@ -8110,10 +8111,11 @@ function exportPLCSV() {
   // deriving the total from the rounded rows breaks its agreement with Gross Profit and the
   // waterfall, and absorbing the cent into the largest row prints a number the model never
   // charged. Do not "fix" this by distorting a line.
-  const costRow = (label, amount) => [label, (-amount).toFixed(2)];
-  const plRows  = split => Object.entries(split || {}).map(([key, amount]) => costRow(
+  // Every breakdown below is a list of raw [label, amount] pairs — see the row helpers further down
+  // for where sign and formatting get applied.
+  const plRows = split => Object.entries(split || {}).map(([key, amount]) => [
     PL_COST_LABELS[key] || key.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase()),
-    amount));
+    amount]);
 
   const cogsBreakdown  = plRows(res.variable_cost_split);
   const fixedBreakdown = plRows(res.fixed_cost_split);
@@ -8122,52 +8124,97 @@ function exportPLCSV() {
   const chOpexRows = channels
     .map(ch => [ch.name, (ch.fixed_selling_cost_per_wk || 0) * opWeeks])
     .filter(([, amt]) => amt > 0)
-    .map(([name, amt]) => costRow(name + ' Fixed Overhead ($/wk × wks)', amt));
+    .map(([name, amt]) => [name + ' Fixed Overhead ($/wk × wks)', amt]);
 
-  // FOUR COLUMNS, not two, and no leading "=" on any label.
+  // INDENTED LINE ITEMS — the shape an accountant would write, and the shape the grower asked for.
   //
-  // Browser QA found both problems. A label like "= GROSS PROFIT" is parsed by Excel and Sheets
-  // as a FORMULA the moment the file opens, so every subtotal row broke. And the hierarchy was
-  // carried by four leading spaces, which spreadsheet importers strip — leaving a flat list where
-  // nothing showed what summed to what.
+  // Two columns. Components sit indented under the line they roll up into, every group closes with
+  // its own "Total …", and the three profit lines run flush left so the eye finds them. This
+  // replaces a [Section | Line item | Amount | Role] table that carried the hierarchy in data
+  // columns: correct, machine-readable, and not how anyone reads a P&L.
   //
-  // Section and Role carry the structure explicitly instead: Role is TOTAL / subtotal / detail,
-  // so a reader (or a pivot table) can tell a component from the line it rolls up into without
-  // relying on whitespace surviving a CSV round-trip.
-  const HEAD = ['Section', 'Line item', 'Amount ($) — negative = cost', 'Role'];
-  const detail   = ([label, amount]) => [label, amount, 'detail'];
+  // TWO PROPERTIES OF THE FILE MAKE THE INDENTATION SAFE, and both are pinned in
+  // tests/cost_splits_client.cjs — neither is a style preference:
+  //
+  //   1. NO CELL MAY START WITH `=`, `+` or `@`. Browser QA found "= GROSS PROFIT" parsed as a
+  //      FORMULA the moment Excel or Sheets opened the file, so every subtotal row broke.
+  //   2. INDENTATION IS NON-BREAKING SPACE (U+00A0), NOT ASCII SPACE. Importers trim leading
+  //      ASCII spaces, which is what flattened the first indented version into an undifferentiated
+  //      list. U+00A0 is an ordinary character to an importer, so it survives the round-trip, and
+  //      it renders as a space. (JS `.trim()` DOES strip it, so test helpers can still match
+  //      labels by name.)
+  // Written as an escape on purpose: four literal U+00A0 in the source look exactly like four
+  // spaces, and a well-meaning reformat that "tidied" them would silently return this export
+  // to the flat list browser QA rejected.
+  const IND   = '\u00a0'.repeat(4);
+  const BLANK = ['', ''];
+  // `null` means a group NAME, which carries no figure of its own — its total is the line that
+  // closes the group. Costs are negated here, once, rather than by each list that feeds in.
+  const at   = (depth, label, amount) =>
+    [IND.repeat(depth) + label, amount == null ? '' : amount.toFixed(2)];
+  const head = (depth, label)         => at(depth, label, null);
+  const cost = (depth, label, amount) => at(depth, label, -amount);
+
+  // A cost group: its name, its components indented beneath, and its own "Total …" line — UNLESS
+  // it has no components worth showing, in which case it collapses to one line carrying the total.
+  // Both shapes are needed on the shipped farm: most farms pay no per-channel stall fee, and a farm
+  // that buys no overtime, no hired hours and no metered water would otherwise print a group name,
+  // three 0.00 rows and a 0.00 total — five rows of noise in a statement restructured precisely
+  // because the grower found it confusing. `note` is a parenthetical that belongs on the name and
+  // not on the total.
+  const group = (name, note, components, total) => components.length
+    ? [head(1, name + note),
+       ...components.map(([label, amt]) => cost(2, label, amt)),
+       cost(1, 'Total ' + name, total)]
+    : [cost(1, name + note, total)];
+
+  // A component charged exactly nothing is not evidence of anything: the grower did not buy it.
+  // The channel rows are filtered the same way where they are built.
+  const boughtRows = boughtCapacity.filter(([, amt]) => amt !== 0);
+
+  const HEAD = ['Line item', 'Amount ($) — negative = cost'];
   const rows = [
-    ['Farm P&L Statement', '', '', ''],
+    ['Farm P&L Statement', ''],
     HEAD,
+    BLANK,
 
-    ...[['Gross Revenue', grossRevenue.toFixed(2), 'subtotal'],
-        ...chRevRows.map(detail)].map(r => ['REVENUE', ...r]),
+    head(0, 'REVENUE'),
+    ...chRevRows.map(([label, amt]) => at(2, label, amt)),
+    at(1, 'Total Revenue', grossRevenue),
+    BLANK,
 
-    ...[['Variable Production Cost', (-cogs).toFixed(2), 'subtotal'],
-        ...cogsBreakdown.map(detail),
-        ['GROSS PROFIT', grossProfit.toFixed(2), 'TOTAL']].map(r => ['COST OF GOODS SOLD', ...r]),
+    head(0, 'COST OF GOODS SOLD'),
+    ...cogsBreakdown.map(([label, amt]) => cost(2, label, amt)),
+    cost(1, 'Total Cost of Goods Sold', cogs),
+    at(0, 'GROSS PROFIT', grossProfit),
+    BLANK,
 
-    ...[['Fixed & Committed Costs', (-fixedOpex).toFixed(2), 'subtotal'],
-        ...fixedBreakdown.map(detail),
-        ...boughtCapacity.map(([label, amt]) => detail(costRow(label, amt))),
-        ['Total Operating Expenses', (-totalOpex).toFixed(2), 'subtotal'],
-        ...(Math.abs(opReconcile) > 0.5
-            ? [['UNRECONCILED — a cost in the optimizer has no line above. Please report this.',
-                opReconcile.toFixed(2), 'CHECK']] : []),
-        ['OPERATING INCOME', operatingIncome.toFixed(2), 'TOTAL']].map(r => ['OPERATING EXPENSES', ...r]),
+    head(0, 'OPERATING EXPENSES'),
+    ...group('Fixed & Committed Costs', '', fixedBreakdown, fixedOpex),
+    ...group('Bought Capacity', '', boughtRows, boughtTotal),
+    cost(1, 'Total Operating Expenses', totalOpex),
+    // Flush left with the profit lines when it fires. It is the one row in the statement that
+    // means "this file is wrong", so it must not read as an ordinary indented cost line.
+    ...(Math.abs(opReconcile) > 0.5
+        ? [at(0, 'UNRECONCILED — a cost in the optimizer has no line above. Please report this.',
+              opReconcile)] : []),
+    at(0, 'OPERATING INCOME', operatingIncome),
+    BLANK,
 
-    ...[['Overhead (insurance, tax, admin, utilities, R&M, vehicles)', (-overheadCost).toFixed(2), 'detail'],
-        ['Channel fixed selling (market fees, retainers)', (-sellingCost).toFixed(2), 'subtotal'],
-        ...chOpexRows.map(detail),
-        ['Interest on operating borrowing', (-interestCost).toFixed(2), 'detail'],
-        ...(Math.abs(netReconcile) > 0.5
-            ? [['UNRECONCILED — a deduction below operating income has no line above. Please report this.',
-                netReconcile.toFixed(2), 'CHECK']] : []),
-        ['NET PROFIT', netProfit.toFixed(2), 'TOTAL']].map(r => ['OVERHEAD, SELLING & FINANCING', ...r]),
+    head(0, 'OVERHEAD, SELLING & FINANCING'),
+    cost(1, 'Overhead (insurance, tax, admin, utilities, R&M, vehicles)', overheadCost),
+    ...group('Channel Fixed Selling', ' (market fees, retainers)', chOpexRows, sellingCost),
+    cost(1, 'Interest on Operating Borrowing', interestCost),
+    ...(Math.abs(netReconcile) > 0.5
+        ? [at(0, 'UNRECONCILED — a deduction below operating income has no line above. ' +
+                 'Please report this.', netReconcile)] : []),
+    at(0, 'NET PROFIT', netProfit),
+    BLANK,
 
-    ...[['Peak Borrowing / Working Capital', (-res.peak_borrowing).toFixed(2), 'detail'],
-        ['Opening Cash', (params.opening_cash || 0).toFixed(2), 'detail'],
-        ['Credit Line', (params.credit_line || 0).toFixed(2), 'detail']].map(r => ['CASH FLOW NOTE', ...r]),
+    head(0, 'CASH FLOW NOTE'),
+    cost(1, 'Peak Borrowing / Working Capital', res.peak_borrowing),
+    at(1, 'Opening Cash', params.opening_cash || 0),
+    at(1, 'Credit Line', params.credit_line || 0),
   ];
 
 

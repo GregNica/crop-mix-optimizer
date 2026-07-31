@@ -215,6 +215,32 @@ views, and a solver that explains itself (S2, C4).
 Summary prints white-on-white with Chrome defaults) — and D1–D5 are all artifacts a grower prints.
 Mobile has confirmed horizontal overflow at 375px. Both ❓, from the audit's browser pass.
 
+**X1 — the two spreadsheet-safety rules are enforced by ONE test on ONE exporter, and the P&L is
+green only because the fixture's channels have benign names.** From `/simplify` on the P&L
+restructure (2026-07-31). Five exporters (`index.html:4826, 8214, 8324, 9140, 9418`) each inline
+their own byte-identical `'"' + x.replace(/"/g,'""') + '"'` + BOM + anchor, and none knows about the
+formula rule that browser QA found the hard way. Two live instances: `:9121` emits
+`` `--- ${cropName} ---` `` on every gantt export — a leading `-`, the same formula-prefix class as
+the `=` that broke the P&L — and the P&L's own `:8090` / `:8127` build labels from USER-TYPED
+channel names, so a channel called `+Market` reintroduces the exact defect with the guard passing.
+**Right depth: one `downloadCSV(rows, filename)` owning quote-escaping, the BOM, the anchor, and
+neutralising a leading `=`/`+`/`@` on non-numeric cells** — it must NOT ban a leading `-`, since the
+amount column legitimately starts with one. Then the per-cell assertion in
+`tests/cost_splits_client.cjs` covers all five exports instead of one. Pre-existing duplication, not
+caused by the P&L change; deliberately left out of that diff as too wide for it.
+
+**U1 — the labour-flexibility controls need a design, not a rename.** From the 2026-07-31 grower
+browser pass, in their words: a toggle in the parameters that only activates once selected in a
+What-If is **"confusing and redundant"** — *"we need a better way to communicate this and select it
+in the UI."* Today `labor_flex_enabled` / `hire_enabled` / `overtime_enabled` are in the setup form
+and in the adapter but **not in the main payload builder**, so a normal Optimize always solves with
+fixed staff no matter how the toggle is set (deliberate, documented at `index.html:7822` and in the
+copy at `:1868`). Two obvious shapes — send it from the main payload, or drop it from setup and let
+the What-If own hiring — but the ask was for a better way, not a coin flip, so **do this WITH the
+grower.** Carries **U2**: relabel "Optimize labor" / "Labor Availability" as hiring decisions, which
+the grower has already agreed to. Under it sits the real question the label is standing in for: what
+does the base plan *assume* about hiring? See W17 for the wage that would be paid.
+
 ---
 
 ## Tier 7 — Pilot hardening (audit Phase G) — gated on a real user
