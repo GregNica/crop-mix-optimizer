@@ -4964,6 +4964,7 @@ function parseCropCSV(text) {
 
   // Parse and validate data rows
   const rawRows = [];
+  const seenCropRows = new Set();
   for (let i = dataStart; i < lines.length; i++) {
     const rowNum = i + 1;
     const vals   = parseCSVLine(lines[i]);
@@ -4971,6 +4972,27 @@ function parseCropCSV(text) {
 
     const cropName = get('crop_name');
     if (!cropName) { errors.push({ row:rowNum, field:'crop_name', msg:'crop_name is required.' }); continue; }
+
+    // Crop-level numerics come from the FIRST row per crop ("first row wins" below), so
+    // validate them there. A STATED nonsense value (0 planting weeks, 0 days to maturity) is
+    // refused loudly — the old `parseFloat(x) || default` silently rewrote it to the form
+    // default, which is the same silent-coercion class as a blank wage becoming $0. Blank or
+    // absent stays legal and takes the default, so old files import unchanged.
+    if (!seenCropRows.has(cropName)) {
+      seenCropRows.add(cropName);
+      let badCropField = false;
+      for (const [colName, minVal] of [['days_to_maturity', 1], ['planting_weeks', 1],
+                                       ['harvest_weeks', 1], ['sellable_weeks', 1],
+                                       ['lbs_per_tote', 0.001]]) {
+        const raw = get(colName);
+        if (raw !== '' && !(parseFloat(raw) >= minVal)) {
+          errors.push({ row: rowNum, field: colName,
+                        msg: `${colName} must be ≥ ${minVal} (or blank for the default), got "${raw}".` });
+          badCropField = true;
+        }
+      }
+      if (badCropField) continue;
+    }
 
     const channelName = get('channel_name');
     if (!channelName) { errors.push({ row:rowNum, field:'channel_name', msg:'channel_name is required.' }); continue; }
@@ -5006,6 +5028,14 @@ function parseCropCSV(text) {
 
   // Group rows by crop_name (first row wins for crop-level fields)
   const cropMap = {};
+  // A stated 0 is a statement, not a missing column. `parseFloat(x) || d` rewrote explicit
+  // zeros to form defaults — a file's min_acreage 0 became a 1-acre C10 floor (pre-conversion,
+  // so 2.47 acres from a metric file) and yield 0 became a phantom 2000 lb/acre the farm then
+  // solved on — which contradicts the import contract: uploads trust the FILE. Default only
+  // when the cell is blank, absent, or unparseable; let a bad stated value reach validation
+  // and be refused with its own message instead of silently replaced.
+  const numOrDflt = (raw, d) => { const n = parseFloat(raw); return Number.isFinite(n) ? n : d; };
+  const intOrDflt = (raw, d) => { const n = parseInt(raw, 10); return Number.isFinite(n) ? n : d; };
   rawRows.forEach(({ get, cropName, channelName, price, dtype }) => {
     if (!cropMap[cropName]) {
       cropMap[cropName] = {
@@ -5014,17 +5044,17 @@ function parseCropCSV(text) {
         s1_end:   get('season1_end_mm_dd')   || '9-1',
         s2_start: get('season2_start_mm_dd') || '',
         s2_end:   get('season2_end_mm_dd')   || '',
-        days_to_maturity:              parseInt(get('days_to_maturity'))       || 42,
-        planting_weeks:                parseInt(get('planting_weeks'))         || 1,
-        harvest_weeks:                 parseInt(get('harvest_weeks'))          || 2,
-        yield_per_acre:                impC(parseFloat(get('yield_per_acre_lbs'))   || 2000, 'yield_per_acre'),
-        lbs_per_tote:                  impC(parseFloat(get('lbs_per_tote'))         || 30, 'lbs_per_tote'),
-        min_acreage_if_planted:        impC(parseFloat(get('min_acreage_if_planted')) || 1, 'min_acreage_if_planted'),
-        crop_diversity_max:            parseFloat(get('diversity_max_fraction')) || 0.5,
+        days_to_maturity:              intOrDflt(get('days_to_maturity'), 42),
+        planting_weeks:                intOrDflt(get('planting_weeks'), 1),
+        harvest_weeks:                 intOrDflt(get('harvest_weeks'), 2),
+        yield_per_acre:                impC(numOrDflt(get('yield_per_acre_lbs'), 2000), 'yield_per_acre'),
+        lbs_per_tote:                  impC(numOrDflt(get('lbs_per_tote'), 30), 'lbs_per_tote'),
+        min_acreage_if_planted:        impC(numOrDflt(get('min_acreage_if_planted'), 1), 'min_acreage_if_planted'),
+        crop_diversity_max:            numOrDflt(get('diversity_max_fraction'), 0.5),
         seed_transplant_cost_per_acre: impC(parseFloat(get('seed_cost_per_ac'))     || 0, 'seed_transplant_cost_per_acre'),
         // Unitless, so no impC(). Absent column → the same defaults the form uses, which keeps
         // a pre-B.3 CSV importing exactly as it did before these columns existed.
-        sales_spread_weeks:            parseInt(get('sellable_weeks')) || 1,
+        sales_spread_weeks:            intOrDflt(get('sellable_weeks'), 1),
         cold_storage:                  /^(false|no|0|ambient)$/i.test(String(get('needs_cold_storage') || '').trim())
                                          ? false : true,
         ...(get('sell_through_pct') ? { sell_through_pct: parseFloat(get('sell_through_pct')) } : {}),
@@ -7167,28 +7197,38 @@ def run_from_js(params_json):
     try:
         p = json.loads(params_json)
 
+        # A blanked numeric field arrives PRESENT with value None: parseFloat('') is NaN and
+        # JSON.stringify(NaN) is 'null', so p.get(key, default) returns None — the default
+        # never applies — and float(None) hands the grower a raw TypeError traceback instead
+        # of a plan. Documented once at the sell-through fields and then reintroduced by every
+        # other float(p.get(...)) line; this helper is the single place the rule lives now.
+        # (No backticks in these comments: PYTHON_CODE is a JS template literal.)
+        def _num(key, default):
+            v = p.get(key, default)
+            return float(default if v is None else v)
+
         # --- Farm infrastructure ---
-        total_land               = float(p.get('total_land', 150))
+        total_land               = _num('total_land', 150)
         # Cash floor (C13) is only enforced when the UI cash toggle is on, which
         # is the only time opening_cash/credit_line are present in the payload.
         cash_constraint_enabled  = ('opening_cash' in p) or ('credit_line' in p)
-        opening_cash             = float(p.get('opening_cash', 0))
-        credit_line              = float(p.get('credit_line', 0))
-        harvest_storage_cap      = float(p.get('harvest_storage_cap', 1e9))  # huge default = no constraint when toggle off
-        equip_storage            = float(p.get('equip_storage', 0))
-        fuel_storage             = float(p.get('fuel_storage', 0))
-        water_storage_capacity   = float(p.get('water_storage_capacity', 500000))
-        operating_weeks          = int(p.get('operating_weeks', 52))   # deprecated: solver ignores it
+        opening_cash             = _num('opening_cash', 0)
+        credit_line              = _num('credit_line', 0)
+        harvest_storage_cap      = _num('harvest_storage_cap', 1e9)  # huge default = no constraint when toggle off
+        equip_storage            = _num('equip_storage', 0)
+        fuel_storage             = _num('fuel_storage', 0)
+        water_storage_capacity   = _num('water_storage_capacity', 500000)
+        operating_weeks          = int(_num('operating_weeks', 52))   # deprecated: solver ignores it
 
         # --- Fixed cost rates ---
-        rate_harvest_storage     = float(p.get('rate_harvest_storage', 0.0))  # 0 = no storage cost
-        rate_irrigation          = float(p.get('rate_irrigation', 0.0))       # 0 = no irrigation cost
-        rate_equip_storage       = float(p.get('rate_equip_storage', 0.0))
-        rate_fuel_storage        = float(p.get('rate_fuel_storage', 0.0))
-        rate_water_storage       = float(p.get('rate_water_storage', 0.00360))
-        rate_machinery           = float(p.get('rate_machinery', 0.0))
-        rate_property_mortgage_rent = float(p.get('rate_property_mortgage_rent', 0.0))
-        other_debt_service_per_week = float(p.get('other_debt_service_per_week', 0.0))
+        rate_harvest_storage     = _num('rate_harvest_storage', 0.0)  # 0 = no storage cost
+        rate_irrigation          = _num('rate_irrigation', 0.0)       # 0 = no irrigation cost
+        rate_equip_storage       = _num('rate_equip_storage', 0.0)
+        rate_fuel_storage        = _num('rate_fuel_storage', 0.0)
+        rate_water_storage       = _num('rate_water_storage', 0.00360)
+        rate_machinery           = _num('rate_machinery', 0.0)
+        rate_property_mortgage_rent = _num('rate_property_mortgage_rent', 0.0)
+        other_debt_service_per_week = _num('other_debt_service_per_week', 0.0)
 
         # --- Water ---
         climate_zone             = str(p.get('climate_zone', 'california_central_valley'))
@@ -7200,32 +7240,32 @@ def run_from_js(params_json):
             raise ValueError("no well_weekly_cap_L in payload: irrigation capacity would be invented")
         well_weekly_cap_L        = float(p['well_weekly_cap_L'])
         catchment_enabled        = bool(p.get('catchment_enabled', False))
-        catchment_surface_area_m2 = float(p.get('catchment_surface_area_m2', 5000))
+        catchment_surface_area_m2 = _num('catchment_surface_area_m2', 5000)
         city_water_enabled       = bool(p.get('city_water_enabled', False))
-        city_water_cost_per_L    = float(p.get('city_water_cost_per_L', 0.003))
+        city_water_cost_per_L    = _num('city_water_cost_per_L', 0.003)
         # No form input exists for the standing charge yet, but the solver models it, the P&L
         # labels it, and imported/server payloads may carry it — without this line the feature
         # was silently $0 on every browser solve while its label and test made it look live.
         city_water_fixed_fee     = float(p.get('city_water_fixed_fee_per_week', 0.0) or 0.0)
 
         # --- Variable costs ---
-        cost_fert_per_lb         = float(p.get('cost_fert_per_lb', 0.0))
-        cost_fuel_per_L          = float(p.get('cost_fuel_per_L', 0.0))
+        cost_fert_per_lb         = _num('cost_fert_per_lb', 0.0)
+        cost_fuel_per_L          = _num('cost_fuel_per_L', 0.0)
 
         # --- Realism factors (sell-through in-objective; overhead & interest below the line) ---
-        sell_through_fraction    = float(p.get('sell_through_fraction', 1.0))
-        min_viable_margin_pct    = float(p.get('min_viable_margin_pct', 0.0))   # 0 = hurdle off
-        overhead_pct_of_revenue  = float(p.get('overhead_pct_of_revenue', 0.0))
-        interest_rate_apr        = float(p.get('interest_rate_apr', 0.0))
+        sell_through_fraction    = _num('sell_through_fraction', 1.0)
+        min_viable_margin_pct    = _num('min_viable_margin_pct', 0.0)   # 0 = hurdle off
+        overhead_pct_of_revenue  = _num('overhead_pct_of_revenue', 0.0)
+        interest_rate_apr        = _num('interest_rate_apr', 0.0)
 
         # --- Labor flexibility (Phase 5, Advanced; off by default = labor is fixed) ---
         labor_flex_enabled       = bool(p.get('labor_flex_enabled', False))
         hire_enabled             = labor_flex_enabled and bool(p.get('hire_enabled', True))
-        max_hire_hrs_per_week    = float(p.get('max_hire_hrs_per_week', 0.0))
-        hire_wage_markup         = float(p.get('hire_wage_markup', 0.0))
+        max_hire_hrs_per_week    = _num('max_hire_hrs_per_week', 0.0)
+        hire_wage_markup         = _num('hire_wage_markup', 0.0)
         # None means infer from the listed crew; 0 would mean free help (W15).
         overtime_flex_enabled    = labor_flex_enabled and bool(p.get('overtime_enabled', True))
-        overtime_rate_multiplier = float(p.get('overtime_rate_multiplier', 1.5))
+        overtime_rate_multiplier = _num('overtime_rate_multiplier', 1.5)
         _max_ot                  = p.get('max_overtime_hrs_per_week', None)
         max_overtime_hrs_per_week = float(_max_ot) if _max_ot not in (None, '') else None
 
@@ -7233,7 +7273,7 @@ def run_from_js(params_json):
         # benefits, unemployment). Applied to every employee below as benefits_pct, so it
         # lifts both salaried fixed cost and the blended hourly rate — which means hired
         # and overtime hours inherit it automatically.
-        payroll_load = max(0.0, float(p.get('payroll_load_pct', 0.0)))
+        payroll_load = max(0.0, _num('payroll_load_pct', 0.0))
 
         # The grower types a BASE wage, the same basis every other wage box uses, so it carries
         # the farm-wide payroll load like they do. Without this, typing the crew's own rate priced
@@ -7717,6 +7757,9 @@ function validateParams(params) {
   const errors = [];
   if (!(params.total_land > 0)) errors.push('Total land must be > 0 acres.');
   if ('opening_cash' in params && !(params.opening_cash >= 0)) errors.push('Opening cash must be ≥ 0.');
+  // Symmetric with opening_cash — credit_line was unchecked, so a blanked box with the cash
+  // toggle on sent NaN→null and the solve died in a raw float(None) traceback.
+  if ('credit_line' in params && !(params.credit_line >= 0)) errors.push('Credit line must be ≥ 0 (0 = no credit line).');
   if (!params.employees || params.employees.length === 0) errors.push('Add at least one labor position.');
   if (!params.channels || params.channels.length === 0) errors.push('Add at least one sales channel.');
   if (!params.crops || params.crops.length === 0) errors.push('Add at least one crop.');

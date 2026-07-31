@@ -380,6 +380,40 @@ if (!csvUS || !csvME) {
     near('crop CSV US is identity (yield)', a.yield_per_acre, 8000, 1e-12);
   }
 
+  // ===== 4b. A stated 0 is a statement, not a missing column ==============================
+  // `parseFloat(x) || default` rewrote explicit zeros to form defaults: a file's
+  // min_acreage 0 (a legitimate "no floor") became a 1-acre C10 floor and yield 0 became a
+  // phantom 2000 lb/acre the farm then solved on — against the import contract (uploads
+  // trust the FILE). Blank still defaults; stated nonsense (0 planting weeks) errors loudly.
+  const mkCsv = rows => [
+    'crop_name,channel_name,price_per_lb,demand_cap_type,demand_weekly_lbs,yield_per_acre_lbs,min_acreage_if_planted,planting_weeks',
+    ...rows,
+  ].join('\n');
+  const zeroKept = withSystem('us', () =>
+    T.parseCropCSV(mkCsv(['Kale,Direct,2.00,weekly_flat,500,0,0,2'])));
+  if (zeroKept.errors.length) {
+    fail(`crop CSV stated-zero: unexpected errors ${JSON.stringify(zeroKept.errors.map(e => e.msg))}`);
+  } else {
+    const c = zeroKept.crops[0];
+    if (c.min_acreage_if_planted !== 0) fail(`crop CSV: stated min_acreage 0 became ${c.min_acreage_if_planted} — the silent 1-acre floor is back`);
+    if (c.yield_per_acre !== 0) fail(`crop CSV: stated yield 0 became ${c.yield_per_acre} — a phantom default yield (validation refuses 0 later, with a message)`);
+  }
+  const blankDefaults = withSystem('us', () =>
+    T.parseCropCSV(mkCsv(['Kale,Direct,2.00,weekly_flat,500,,,'])));
+  if (blankDefaults.errors.length) {
+    fail(`crop CSV blank-defaults: unexpected errors ${JSON.stringify(blankDefaults.errors.map(e => e.msg))}`);
+  } else {
+    const c = blankDefaults.crops[0];
+    if (c.yield_per_acre !== 2000) fail(`crop CSV: blank yield gave ${c.yield_per_acre}, expected the 2000 default`);
+    if (c.min_acreage_if_planted !== 1) fail(`crop CSV: blank min_acreage gave ${c.min_acreage_if_planted}, expected the 1 default`);
+  }
+  const statedNonsense = withSystem('us', () =>
+    T.parseCropCSV(mkCsv(['Kale,Direct,2.00,weekly_flat,500,8000,2,0'])));
+  if (!statedNonsense.errors.some(e => e.field === 'planting_weeks')) {
+    fail('crop CSV: a STATED planting_weeks of 0 imported without an error — silently defaulting '
+       + 'it is the coercion class, and forwarding it is garbage; it must be refused loudly');
+  }
+
   // Cross-system: the units row is what decides, so a CSV downloaded in one system and
   // uploaded in the other must still land on the same canonical crop. Without this, a
   // colleague's US export opened in Metric reads 8000 lb/acre as 8000 kg/ha (2.2x).

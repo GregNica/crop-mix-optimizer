@@ -89,6 +89,22 @@ def test_fractional_headcount_survives_the_adapter():
     )
 
 
+@pytest.mark.parametrize("key", ["credit_line", "harvest_storage_cap", "cost_fert_per_lb",
+                                 "overhead_pct_of_revenue"])
+def test_a_blanked_numeric_field_is_a_status_not_a_traceback(key):
+    """parseFloat('') is NaN, JSON.stringify(NaN) is 'null', so a blanked box arrives as a
+    PRESENT None — p.get's default never applies — and float(None) used to hand the grower a
+    raw TypeError traceback instead of a plan. The adapter now treats present-None as absent
+    (the field's documented default). Whatever the solve concludes, it must be a status dict,
+    never the blanket-except 'error' path."""
+    p = _payload()
+    p[key] = None
+    out = json.loads(_run_from_js()(json.dumps(p)))
+    assert out.get("status") != "error", (
+        f"a null {key} still crashes the adapter: {out.get('error', '')[:200]}"
+    )
+
+
 def test_city_water_fixed_fee_reaches_the_solver_through_the_adapter():
     """The standing charge was a solver feature + P&L label + green pytest with NO path in.
 
