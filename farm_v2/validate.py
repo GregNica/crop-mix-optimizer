@@ -230,6 +230,25 @@ def validate_params(
             "The solver will produce zero revenue (no harvest scheduled)."
         )
 
+    # `hired_wage_per_hr` is a FORM FIELD, so a bad value has to come back as `invalid_input`
+    # like every other bad input. `compute_labor_arrays` also refuses it — deliberately, the same
+    # belt-and-braces as the wrap-around window check, since it is a public util reachable
+    # directly — but that raise happens in Step 2, OUTSIDE solve_farm_v2's Step 0 try. On its own
+    # it would hand a caller a traceback where `crops=None` returns a status dict, which is
+    # precisely the asymmetry the ONE-CONTRACT rule exists to remove. It arrives through
+    # **_kwargs today, so without this it was silently swallowed here and only caught downstream.
+    _hw = _kwargs.get("hired_wage_per_hr", None)
+    if _hw not in (None, ""):
+        try:
+            _hw_v = float(_hw)
+        except (TypeError, ValueError):
+            raise ValueError(f"Hired wage must be a number or blank, got {_hw!r}.")
+        if not _hw_v > 0:
+            raise ValueError(
+                f"Hired wage must be greater than 0, got {_hw_v}. Leave it blank to infer a rate "
+                f"from your crew — 0 would price hired labour at nothing."
+            )
+
     return warnings
 
 

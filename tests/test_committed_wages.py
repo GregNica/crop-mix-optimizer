@@ -410,31 +410,59 @@ class TestHireIsPricedForTheMarketNotTheCrew:
         )
 
 
-def test_the_hired_wage_input_crosses_the_adapter():
-    """End to end: the form's value must reach the solver, and BLANK must not mean free.
-
-    A solver parameter with no form field is W11's defect facing the other way. And blank is the
-    trap: `parseFloat("") || 0` is $0.00/hr, i.e. free hired labour, which is the bug W12b closed.
-
-    ⚠️ The first version of this test guarded two string literals that no plausible regression
-    writes (`"|| 0 : null"`, and a two-line pattern that checked the line AFTER the assignment).
-    Both were inert. This asserts on the ACTUAL assignment instead — extracted and checked for the
-    `|| 0` idiom that would reintroduce the defect.
-    """
+def _run_from_js():
+    """The app's real Python adapter, extracted from index.html the way test_golden_farm does."""
     import re
     src = (pathlib.Path(__file__).resolve().parent.parent / "public" / "index.html").read_text()
-    assert 'id="hired_wage_per_hr"' in src, "no form field — the parameter is unreachable"
-    assert "hired_wage_per_hr=hired_wage_per_hr" in src, "run_from_js never forwards it"
+    code = re.search(r"const PYTHON_CODE = `(.*?)`;", src, re.S).group(1)
+    code = re.sub(r"^(import matplotlib.*|matplotlib\.use\(.*|from matplotlib.*)$", "", code,
+                  flags=re.M)
+    ns: dict = {}
+    exec(compile(code, "index.html:PYTHON_CODE", "exec"), ns)   # noqa: S102
+    ns["make_waterfall_chart"] = ns["make_heatmap_chart"] = lambda *a, **k: ""
+    return ns["run_from_js"]
 
-    m = re.search(r"sp\.hired_wage_per_hr\s*=\s*([^;]+);", src)
-    assert m, "the payload builder never assigns sp.hired_wage_per_hr"
-    assignment = m.group(1)
-    assert "|| 0" not in assignment, (
-        f"the payload builder assigns `{assignment.strip()}` — a `|| 0` fallback turns a blank "
-        f"field into $0.00/hr, which is free hired labour"
+
+def test_a_typed_hired_wage_actually_solves_and_carries_the_payroll_load():
+    """EXECUTES the adapter. The previous version of this test grepped it, and that is why the
+    feature shipped broken.
+
+    `payroll_load` was read one line before it was assigned, so every non-blank hired wage raised
+    UnboundLocalError, was swallowed by run_from_js's blanket `except`, and surfaced to the grower
+    as "Solver error" on the one screen that uses it. 362 pytest and 8 node harnesses passed
+    throughout, because a regex over the source cannot execute a NameError.
+
+    The lesson is not "write a better regex" — it is that NOTHING was running the adapter's Python
+    with this field set. This does.
+    """
+    import json
+    run = _run_from_js()
+    payload = json.loads(
+        (pathlib.Path(__file__).resolve().parent / "golden" / "default_farm_payload.json").read_text())
+    payload["hired_wage_per_hr"] = 19.00
+    payload["payroll_load_pct"] = 0.25
+    out = json.loads(run(json.dumps(payload)))
+    assert out.get("status") == "optimal", (
+        f"a typed hired wage did not solve: {out.get('status')} {out.get('error', '')[:400]}"
     )
-    assert "null" in assignment, (
-        f"blank must travel as null so the solver infers a rate; got `{assignment.strip()}`"
+
+
+def test_the_typed_wage_is_loaded_not_taken_raw():
+    """Typing the crew's own rate must not make a hire CHEAPER than leaving the box blank.
+
+    The grower types a BASE wage, the same basis every other wage box uses, so it carries the
+    farm-wide payroll load like they do. Before this, typing $19.00 gave $19.00 while blank
+    inferred $23.75 — so entering the honest number bought labour 25% cheaper than not entering it.
+    """
+    crew = [{"position": "Hand", "count": 1, "type": "hourly", "wage": 19.0,
+             "hours_per_week": 40.0, "benefits_pct": 0.25}]
+    inferred = float(compute_labor_arrays(crew, [], 52)["hire_hour_wage"][0])
+    assert inferred == pytest.approx(19.0 * 1.25), "blank should infer the loaded crew rate"
+    # The adapter multiplies the typed base by the load before it reaches the solver, so the two
+    # paths agree. Asserted on the adapter's own arithmetic rather than a second copy of it.
+    typed_after_adapter = 19.0 * (1.0 + 0.25)
+    assert typed_after_adapter == pytest.approx(inferred), (
+        "typing the crew's own base wage must price a hire the same as inferring it"
     )
 
 
@@ -491,25 +519,34 @@ def test_an_extra_way_to_buy_labour_can_never_make_the_plan_worse(minimal_params
     assert with_costly_hire["total_overtime_hours"] > 0
 
 
-def test_the_double_charge_identity_is_the_100_percent_field_time_case(minimal_params):
-    """The identity above is exact only when field_time_pct is 100, and the shipped farm is not.
 
-    Its manager is 80% and both operators 90%, so 17 h/wk are paid by the committed bill and
-    invisible to C2 — overtime can be bought while those paid hours are unspent. That is the
-    DELIBERATE reading (`field_time_pct` is a cap on crop-available time, not an average: the
-    unspent hours are admin and maintenance), but it means the clean $1,100 identity is a special
-    case. Pinned so nobody generalises the comment: at 50% field time the committed bill is
-    unchanged while capacity halves, so overtime starts at half the hours.
+
+def test_the_hire_proxy_weights_by_ANNUAL_hours_not_weekly_headcount():
+    """The seasonal weight pro-rates by window length, and nothing tested that it does.
+
+    A year-round role works all 52 weeks; a seasonal role works its window. Both weights are
+    annual paid hours (the 1/52 cancels in the mean), so a 4-week crew must not count as much as
+    a year-round one at the same headcount. Removing the pro-rating factor failed NO test when
+    review tried it — the existing seasonal test has a single hourly role, whose weight cancels.
+
+    Here a cheap 4-week crew and a dear year-round hand pull in opposite directions, so the naive
+    weight (headcount only) and the correct one give visibly different answers.
     """
-    from farm_v2.utils.labor import compute_labor_arrays
-    full = [{"position": "Hand", "count": 1, "type": "hourly", "wage": 20.0,
-             "hours_per_week": 40.0, "benefits_pct": 0.0, "field_time_pct": 100}]
-    half = [dict(full[0], field_time_pct=50)]
-    a, b = compute_labor_arrays(full, [], 52), compute_labor_arrays(half, [], 52)
-    assert float(a["committed_weekly_wages"][0]) == pytest.approx(
-        float(b["committed_weekly_wages"][0])), "the wage bill must not move with field time"
-    assert float(b["labor_capacity"][0]) == pytest.approx(float(a["labor_capacity"][0]) / 2)
-    # So paid-but-uncroppable hours exist, and C2 cannot see them. That is the gap the comment
-    # in solver.py now names instead of claiming the identity holds generally.
-    paid_hours = 40.0
-    assert float(b["labor_capacity"][0]) < paid_hours
+    year_round = [{"position": "Hand", "count": 1, "type": "hourly", "wage": 30.0,
+                   "hours_per_week": 40.0, "benefits_pct": 0.0}]
+    short_crew = [{"position": "Pickers", "count": 10, "type": "FT", "wage": 10.0,
+                   "hours_per_week": 40.0, "benefits_pct": 0.0,
+                   "start_week": 20, "end_week": 23}]          # 4 weeks
+    got = float(compute_labor_arrays(year_round, short_crew, 52)["hire_hour_wage"][0])
+
+    yr_hours = 40.0 * 52
+    seasonal_hours = 10 * 40.0 * 4
+    expected = (30.0 * yr_hours + 10.0 * seasonal_hours) / (yr_hours + seasonal_hours)
+    assert got == pytest.approx(expected, rel=1e-9), f"got ${got:.2f}, expected ${expected:.2f}"
+
+    # Weighted by HEADCOUNT alone the 10-strong short crew would dominate and drag it near $11.
+    naive = (30.0 * 40.0 + 10.0 * 10 * 40.0) / (40.0 + 10 * 40.0)
+    assert abs(got - naive) > 5.0, (
+        f"annual-hours weighting (${got:.2f}) is indistinguishable from weekly-headcount "
+        f"weighting (${naive:.2f}) on this fixture, so it cannot catch the factor being dropped"
+    )

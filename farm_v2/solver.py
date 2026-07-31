@@ -277,8 +277,8 @@ def solve_farm_v2(
     max_hire_hrs_per_week: float = 0.0,
     hire_wage_markup: float = 0.0,
     # What a HIRED hand costs per hour on the local market (W15). Left None, the model
-    # infers the cheapest wage the farm already pays an hourly role — a proxy that is wrong
-    # whenever the listed crew is unrepresentative of who you would bring in.
+    # infers an hours-weighted mean of the wages the farm already pays its hourly roles — a proxy
+    # that is wrong whenever the listed crew is unrepresentative of who you would bring in.
     hired_wage_per_hr: float | None = None,
     # --- Equipment proxy ---
     max_plant_acres_per_week: float = 1e9,
@@ -418,6 +418,7 @@ def solve_farm_v2(
             catchment_surface_area_m2=catchment_surface_area_m2,
             well_weekly_cap_L=well_weekly_cap_L,
             year=year,
+            hired_wage_per_hr=hired_wage_per_hr,
         ) or []
     except ValueError as ve:
         return {
@@ -1693,6 +1694,14 @@ def solve_farm_v2(
         for w in range(1, N_WEEKS + 1):
             labor_used_weekly[w] += total_land * labor_rate[i][w] * x_sol[i]
 
+    # The solved bought-hours, sliced ONCE. Two consumers — the reported hire/overtime split here
+    # and `capacity_series` below — and the defect this replaced was exactly two sites disagreeing
+    # about the same quantity, so a second copy of the slice would be the wrong way to fix it.
+    ot_weekly   = (z[idx_ot_start   : idx_ot_start   + N_WEEKS]
+                   if (overtime_enabled and idx_ot_start is not None) else np.zeros(N_WEEKS))
+    hire_weekly = (z[idx_hire_start : idx_hire_start + N_WEEKS]
+                   if (hire_enabled and idx_hire_start is not None) else np.zeros(N_WEEKS))
+
     hired_hours_weekly    = np.zeros(N_WEEKS + 1)
     overtime_hours_weekly = np.zeros(N_WEEKS + 1)
     if overtime_enabled or hire_enabled:
@@ -1711,13 +1720,8 @@ def solve_farm_v2(
         #
         # The objective already chose the split on the real prices. `capacity_series` 120 lines
         # below has always read these same variables; this now agrees with it.
-        ot_sol   = (z[idx_ot_start   : idx_ot_start   + N_WEEKS]
-                    if (overtime_enabled and idx_ot_start is not None) else np.zeros(N_WEEKS))
-        hire_sol = (z[idx_hire_start : idx_hire_start + N_WEEKS]
-                    if (hire_enabled and idx_hire_start is not None) else np.zeros(N_WEEKS))
-        for w in range(1, N_WEEKS + 1):
-            hired_hours_weekly[w]    = float(hire_sol[w - 1])
-            overtime_hours_weekly[w] = float(ot_sol[w - 1])
+        hired_hours_weekly[1:]    = hire_weekly
+        overtime_hours_weekly[1:] = ot_weekly
 
     overtime_cost = float(np.dot(overtime_hours_weekly[1:],
                                  overtime_rate_full)) \
@@ -1831,10 +1835,6 @@ def solve_farm_v2(
     # peakRatio goes past 100%, which makes rankBottlenecks call water #1 wrongly. The labor
     # equivalent fires in the What-If "Plan optimal labor" scenario, which reports labor
     # over-subscribed in exactly the run where the grower just bought the extra hours.
-    ot_weekly   = (z[idx_ot_start   : idx_ot_start   + N_WEEKS]
-                   if (overtime_enabled and idx_ot_start is not None) else np.zeros(N_WEEKS))
-    hire_weekly = (z[idx_hire_start : idx_hire_start + N_WEEKS]
-                   if (hire_enabled and idx_hire_start is not None) else np.zeros(N_WEEKS))
     city_weekly = (z[idx_cw_start   : idx_cw_start   + N_WEEKS]
                    if (city_water_enabled and idx_cw_start is not None) else np.zeros(N_WEEKS))
 

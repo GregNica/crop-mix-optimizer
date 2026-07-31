@@ -75,7 +75,7 @@ def compute_labor_arrays(
         "overtime_hour_wage"        np.ndarray shape (n_weeks,) — $/hr base for YOUR crew
                                     staying late; never zero while anyone is paid
         "hire_hour_wage"            np.ndarray shape (n_weeks,) — $/hr base for a NEW hire,
-                                    from `hired_wage_per_hr` or the cheapest listed wage
+                                    from `hired_wage_per_hr`, else hours-weighted over paid roles
         "piece_rate_workers"        list[dict] — seasonal workers with piece_rate_per_lb set
     """
     labor_capacity        = np.zeros(n_weeks, dtype=float)
@@ -218,10 +218,10 @@ def compute_labor_arrays(
     #              hand at $40.60/hr, and the demo crew priced one at $22.08 against a real
     #              harvest wage of $19 — so the optimizer refused hires it should have taken.
     #
-    # `hired_wage_per_hr` is the honest answer and the caller supplies it. Without it, infer the
-    # CHEAPEST wage the farm actually pays an hourly worker, not the average: a hired hand is
-    # bought at the market's rate for that work, and the cheapest listed hourly role is the
-    # closest thing this model knows to it. The all-salaried average is the last resort.
+    # `hired_wage_per_hr` is the honest answer and the caller supplies it. Without it the model
+    # infers one from the hourly roles the farm lists — see the `else` branch below for what that
+    # statistic is, why it has been wrong twice, and why no statistic over internal payroll is
+    # really a market price.
     # An explicit wage must be a real wage. 0 is not "infer" — it is free labour, the defect
     # W12b closed — and a negative rate is a coefficient the optimizer drives to the hiring cap
     # for phantom profit. Blank reaches here as None, from the adapter; anything else is refused
@@ -242,17 +242,25 @@ def compute_labor_arrays(
     else:
         # Inferred from the roles the farm PAYS BY THE HOUR, weighted by their hours.
         #
-        # ⚠️ Two wrong answers preceded this one, in opposite directions. The average over ALL
-        # paid hours dragged the price up toward salaried staff who would never do the work
-        # ($40.60/hr for a field hand on a manager-only farm). An unweighted `min` over roles then
-        # dragged it down to the least representative one — a single 2 h/wk helper at $12 would
-        # price all 20,800 potential hired hours — and that direction is the UNSAFE one, because
-        # under-pricing makes the optimizer buy help the grower cannot actually get.
+        # ⚠️ THREE answers have stood here, and the first two were wrong in opposite
+        # directions. The average over ALL paid hours dragged the price up toward salaried staff
+        # who would never do the work ($40.60/hr for a field hand on a manager-only farm). An
+        # unweighted `min` then dragged it down to the least representative role — a single
+        # 2 h/wk helper at $12 priced all 20,800 potential hired hours — and that direction is the
+        # UNSAFE one, because under-pricing makes the optimizer buy help the grower cannot get.
         #
-        # Weighting by hours is robust to both tails: a tiny cheap role barely moves it, and
-        # salaried staff are not in this list at all. Roles paid $0/hr are EXCLUDED — piece-rate
-        # pickers, unpaid family, and a blank wage box all land here, and one of them set the
-        # price to zero for every week, which is W12b reopened.
+        # This one is hours-weighted over PAID hourly roles: robust to both tails, with salaried
+        # staff absent from the list entirely. Roles at $0/hr are EXCLUDED — piece-rate pickers,
+        # unpaid family and a blank wage box all land there, and one of them set the price to zero
+        # for every week, which was W12b reopened.
+        #
+        # ⚠️ It is still a statistic over INTERNAL PAYROLL standing in for a MARKET price, and no
+        # reduction of internal payroll is a market price. A crew of two mechanics and one picker
+        # prices its hires as mechanics. The honest answer is the explicit input above; this is
+        # what the model can infer when the grower leaves it blank, not what a hire costs. See
+        # backlog W17.
+        # The weight is ANNUAL paid hours: a year-round role works all 52 weeks (factor 1) and a
+        # seasonal role its window, so the 1/n_weeks cancels in the mean.
         paid = [(w, h) for w, h in hourly_wages if w > 0 and h > 0]
         if paid:
             hire_base = sum(w * h for w, h in paid) / sum(h for _w, h in paid)
@@ -261,17 +269,17 @@ def compute_labor_arrays(
 
     # Never zero while anyone is paid: a zero blend means "no hourly crew this week", not "labour
     # is free". Getting that wrong is what let 2,080 hired hours cost $0.00.
+    # Both are positive by construction, which is what makes a bought hour never free:
+    #   overtime — the weekly blend, or the average paid wage in weeks with no hourly crew
+    #   hire     — validated (> 0) if explicit, else a weighted mean of POSITIVE rates
+    # A separate "floor" block used to sit here re-applying np.where to its own output. It was
+    # inert on every reachable path — deleting it failed no behavioural test — and where it could
+    # have fired (a farm paying salary for zero hours, so average_paid_wage is 0) it floored with
+    # zero and its promise of "never free" was false anyway. The real defences are the w > 0
+    # filter above and the validation, both of which have tests that fail when removed.
     overtime_hour_wage = np.where(hourly_labor_rate > 0, hourly_labor_rate, average_paid_wage)
     hire_hour_wage     = np.full(n_weeks, float(hire_base), dtype=float)
 
-    # THE FLOOR, applied to BOTH. It was on overtime only, and that omission is how a $0/hr listed
-    # role reopened W12b: `min` over an unfiltered wage list returned 0, and 0 x (1 + markup) is
-    # still 0, so the markup could not rescue it. A bought hour is never free while the farm pays
-    # anyone at all.
-    if float(committed_weekly_wages.sum()) > 0:
-        floor = average_paid_wage
-        overtime_hour_wage = np.where(overtime_hour_wage > 0, overtime_hour_wage, floor)
-        hire_hour_wage     = np.where(hire_hour_wage > 0, hire_hour_wage, floor)
 
     return {
         "committed_weekly_wages": committed_weekly_wages,
