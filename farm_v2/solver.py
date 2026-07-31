@@ -1927,6 +1927,13 @@ def solve_farm_v2(
         "total_overtime_hours": float(overtime_hours_weekly.sum()),
         "hired_hours_weekly":    hired_hours_weekly,
         "overtime_hours_weekly": overtime_hours_weekly,
+        # The all-in $/hr a bought hour actually costs, by week (markup / multiplier applied) —
+        # 52 entries, 0-indexed, unlike the two 1-indexed hour series above. Published so the
+        # UI can PRINT the price instead of describing the statistic that produced it: with the
+        # hired-wage box blank, no surface could show what an hour would be bought for, so the
+        # grower had no number to check against their local labour market.
+        "hire_rate_full_weekly":     hire_rate_full,
+        "overtime_rate_full_weekly": overtime_rate_full,
         "weekly_cash_flow": weekly_cash_flow,
         "peak_borrowing":   peak_borrowing,
         "opening_cash":     opening_cash,

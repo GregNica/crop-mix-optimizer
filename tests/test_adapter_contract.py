@@ -60,6 +60,35 @@ def test_an_untruncated_solve_carries_no_gap_note():
     assert not out.get("gap_note"), "an optimal solve must not warn about a time limit"
 
 
+def test_bought_hour_rate_arrays_survive_the_adapter():
+    """52 entries each, so renderLaborPlan can print the price a bought hour carries."""
+    run = _run_from_js()
+    out = json.loads(run(json.dumps(_payload())))
+    assert out.get("status") == "optimal"
+    assert len(out.get("hire_rate_full_weekly", [])) == 52
+    assert len(out.get("overtime_rate_full_weekly", [])) == 52
+    assert min(out["hire_rate_full_weekly"]) > 0, (
+        "a published hire rate of $0 is the free-labour defect showing through the display"
+    )
+
+
+def test_fractional_headcount_survives_the_adapter():
+    """The What-If labor lever scales counts fractionally (+10% of 2 workers = 2.2).
+
+    The adapter used int(), which truncated 2.2 back to 2 — reintroducing the rounding no-op
+    one layer below the fix. A fractional count must change the wage bill it produces."""
+    base = json.loads(_run_from_js()(json.dumps(_payload())))
+    p = _payload()
+    emp = next(e for e in p["employees"] if e["type"] != "salary")
+    emp["count"] = emp["count"] * 1.2
+    out = json.loads(_run_from_js()(json.dumps(p)))
+    assert out.get("status") == "optimal", out.get("error", "")[:300]
+    assert out["fixed_cost_split"]["wages"] > base["fixed_cost_split"]["wages"] + 1.0, (
+        "scaling one row's count by 1.2 did not move the committed wage bill — the adapter "
+        "is truncating fractional headcounts again"
+    )
+
+
 def test_city_water_fixed_fee_reaches_the_solver_through_the_adapter():
     """The standing charge was a solver feature + P&L label + green pytest with NO path in.
 

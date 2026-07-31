@@ -142,6 +142,36 @@ def test_an_explicit_hired_wage_rescues_an_unpaid_crew(two_crop_params):
     assert r["hire_cost"] == pytest.approx(r["total_hired_hours"] * 18.0, rel=1e-6)
 
 
+def test_bought_hour_prices_are_published(two_crop_params):
+    """The all-in $/hr for a bought hour is a RETURNED number, not a described statistic.
+
+    With the hired-wage box blank no UI surface could print what an hour would be bought for,
+    so the grower had nothing to check against their local market. These keys also pin the
+    markup arithmetic itself: $20 typed × (1+0.25) must be $25.00 in the published rate."""
+    p = _labor_bound(two_crop_params)
+    r = solve_farm_v2(
+        **p,
+        hire_enabled=True, max_hire_hrs_per_week=2000.0, hire_wage_markup=0.25,
+        hired_wage_per_hr=20.0,
+        overtime_enabled=True, overtime_rate_multiplier=1.5, max_overtime_hrs_per_week=1000.0,
+    )
+    assert r["status"] == "optimal"
+    assert len(r["hire_rate_full_weekly"]) == 52
+    assert len(r["overtime_rate_full_weekly"]) == 52
+    assert float(r["hire_rate_full_weekly"][0]) == pytest.approx(20.0 * 1.25), (
+        "hire_wage_markup is not in the published hire rate — either the markup fell out of "
+        "the pricing (the mutation every test used to miss, because every test set it to 0) "
+        "or the published rate is not the rate the objective charges"
+    )
+    # Overtime prices off the crew's blend × multiplier: the fixture's crew is $18/hr seasonal
+    # (weeks 8–46), so an in-season week must read 18 × 1.5.
+    assert float(r["overtime_rate_full_weekly"][10]) == pytest.approx(18.0 * 1.5)
+    # And the published price is the price actually paid, wherever hours were bought.
+    if r["total_hired_hours"] > 0:
+        implied = r["hire_cost"] / r["total_hired_hours"]
+        assert implied == pytest.approx(25.0, rel=1e-6)
+
+
 # ── Payroll load (employer burden on wages) ───────────────────────────────────
 
 def _with_payroll_load(params, load):

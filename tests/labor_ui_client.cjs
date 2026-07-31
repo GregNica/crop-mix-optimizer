@@ -66,6 +66,23 @@ bootApp().then(({ window: w }) => {
   if (emp.wage !== 0) fail(`getLaborFromForm turned a blank wage into ${emp.wage}, expected 0`);
   firstWage.value = saved;
 
+  // 4 — the What-If labor lever must CHANGE the payload for small crews. Math.round made
+  // +10/+20/+40% all no-ops on count-1 rows (and +10/+20 on count-2), so a 3-person farm
+  // clicked "+20% Labor", solved an identical payload, and read "+$0.00 — labor isn't your
+  // bottleneck". Scaling is fractional now, and salary rows stay untouched.
+  const scaled = w.eval(`scaleParamsForScenario(
+    { employees: [ { type:'hourly', count:1 }, { type:'seasonal', count:2 },
+                   { type:'salary', count:1 } ], crops: [], channels: [] },
+    { scaleType: 'labor' }, 1.2)`);
+  const [h, s, sal] = scaled.employees;
+  if (!(h.count > 1.19 && h.count < 1.21)) {
+    fail(`+20% on a count-1 hourly row gave count=${h.count} — the small-crew no-op is back`);
+  }
+  if (!(s.count > 2.39 && s.count < 2.41)) {
+    fail(`+20% on a count-2 seasonal row gave count=${s.count}, expected 2.4`);
+  }
+  if (sal.count !== 1) fail(`+20% labor scaled a SALARY row to count=${sal.count}`);
+
   if (failures) { console.error(`labor_ui_client: ${failures} FAILURE(S)`); process.exit(1); }
   console.log('labor UI (client): all checks passed (count visible on every row type, blank wage refused, typed 0 legal)');
   process.exit(0);
