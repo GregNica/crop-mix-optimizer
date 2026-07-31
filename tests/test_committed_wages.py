@@ -442,7 +442,8 @@ def _adapter_code():
     repeated by every _run_from_js() caller otherwise. Only the compile is cached; each call
     still gets a FRESH namespace, which the gap-note test relies on to substitute the solver."""
     import re
-    src = (pathlib.Path(__file__).resolve().parent.parent / "public" / "index.html").read_text()
+    from tests.helpers import index_src
+    src = index_src()
     code = re.search(r"const PYTHON_CODE = `(.*?)`;", src, re.S).group(1)
     code = re.sub(r"^(import matplotlib.*|matplotlib\.use\(.*|from matplotlib.*)$", "", code,
                   flags=re.M)
@@ -457,7 +458,7 @@ def _run_from_js(return_ns=False):
     """
     ns: dict = {}
     exec(_adapter_code(), ns)   # noqa: S102
-    ns["make_waterfall_chart"] = ns["make_heatmap_chart"] = lambda *a, **k: ""
+    ns["make_waterfall_chart"] = lambda *a, **k: ""
     return (ns["run_from_js"], ns) if return_ns else ns["run_from_js"]
 
 

@@ -6,6 +6,22 @@ of them comes to lag the thing it is meant to pin.
 """
 from __future__ import annotations
 
+import pathlib
+
+# ---------------------------------------------------------------------------
+# Where the app lives
+# ---------------------------------------------------------------------------
+# Six modules had each re-derived this with their own `parent.parent` walk. They are all correct
+# today and all break one at a time the day `public/` or `tests/` moves, which is the same reason
+# this module exists at all.
+REPO = pathlib.Path(__file__).resolve().parent.parent
+INDEX = REPO / "public" / "index.html"
+
+
+def index_src() -> str:
+    """The app's single HTML file, as text."""
+    return INDEX.read_text()
+
 
 # ---------------------------------------------------------------------------
 # Shared solve cache

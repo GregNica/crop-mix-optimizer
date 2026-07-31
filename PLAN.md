@@ -83,11 +83,28 @@ Sweep `innerHTML` assignments fed by user-typed values (crop/channel/position na
 Guard: extend the jsdom harness with one hostile-name fixture (`<img onerror>` crop name) driven
 through the biggest surfaces. DONE = hostile-name fixture renders inert everywhere it appears.
 
-**0.3 · E8 — stop rendering the matplotlib waterfall on sweep solves.**
-`make_waterfall_chart` runs on every solve including all 100 Monte Carlo draws; only the main
-render reads it (`res.waterfall_png`, one consumer). Attack: payload flag `skip_charts` set by
-What-If/sensitivity/MC paths; adapter skips chart generation when set. Measure MC wall-clock
-before/after and record it. DONE = MC output identical, measurably faster, main view unchanged.
+**0.3 · E8 — stop rendering the matplotlib waterfall on sweep solves. ✅ DONE 2026-07-31.**
+`skip_charts` payload flag, ABSENT = draw (a caller that does not know the flag keeps its image);
+five sweep paths — What-If labour, What-If scaling, diagnostic replay, sensitivity, Monte Carlo —
+now share one `solveForNumbers()` that stamps it. What the measurement actually found:
+
+- **The bigger waste was not the one this row named.** `make_heatmap_chart` (~119 ms) ran on
+  every solve *including the main render* and was never put in the result dict at all — no
+  consumer could exist. Deleted. Two result keys were dead the same way (`successions_table`,
+  `storage_cap_m3`): −5,683 bytes, **14.6% of the non-chart payload**, crossing the Pyodide
+  boundary on every solve.
+- **Honest figures.** Waterfall ~49 ms median over 20 warm calls (47–72 ms). A cProfile of a
+  2.9 s golden solve puts *all* Python-level adapter work at ~27 ms — the chart alone was more
+  than twice everything else combined, which is the real argument. Per sweep solve the result
+  JSON goes 81,615 → 33,340 bytes; profit identical to the cent.
+- ⚠️ **The DONE criterion asked for MC wall-clock in the BROWSER and that is NOT measured.**
+  Everything above is CPython. Pyodide is slower, so the browser saves more — but that is an
+  extrapolation, and this plan's own rule says an extrapolation is a hypothesis. **Capture one
+  before/after MC run at the grower's next browser QA** and record it here.
+- Deliberately NOT fixed, recorded as **BACKLOG S20**: the five sweep paths have no solver
+  timeout (only `runOptimizer` does), so one pathological Monte Carlo draw hangs the tab.
+  Pre-existing; adding a timeout aborts work that completes today, which is a behaviour change.
+  `solveForNumbers` is now the single place to put one.
 
 **0.4 · W7 — delete the hidden constraint panel. ✅ DONE 2026-07-31.**
 Card + `renderConstraintSummary` + T18a deleted; `demand_saturation` still flows to the pills and
@@ -145,6 +162,16 @@ ATTACK:
 2. Re-point `tests/test_committed_wages.py::_run_from_js` / `_adapter_code()` and
    `tests/test_adapter_contract.py` at a plain import. Delete the regex extraction and the
    backtick tripwires (obsolete by construction — note that in the commit).
+   ⚠️ **Added by E8, collect it here:** `test_only_the_rendering_path_calls_the_solver_without_
+   skip_charts` counts `runPythonAsync(\`run_from_js` sites in `index.html`. After this move it
+   keeps PASSING while its docstring reasons about a layout that no longer exists — quiet
+   staleness, not a loud break, which is the worse failure. Re-point or retire it in this step.
+3. **Take the chart out of the adapter while it moves** (E8 finding). Every argument
+   `make_waterfall_chart` takes is already in the result dict, so a separate `chart_from_js
+   (result_json)` the render path calls after the solve is a pure move — and it deletes the
+   `skip_charts` flag, its default question, the source-level test above, and the matplotlib
+   strip/stub hacks in three test modules. Otherwise `farm_v2/adapter.py` imports matplotlib at
+   module scope and **the server path has to ship matplotlib to run the money adapter.**
 3. `tests/test_golden_farm.py`'s extractor likewise.
 GUARDS: the existing adapter-contract suite IS the guard; it must pass unmodified except for the
 import mechanics. Blob-sync test extends to the new file.
@@ -174,6 +201,10 @@ explicit migrations, and **reports** unknown ids (G6's say-do rule) instead of s
 GUARDS: round-trip test: save under version N−1 fixture → load → every field lands or is loudly
 listed. A completeness assert: every payload key the adapter reads has a registry entry (the
 E5b concern — solver-vocabulary keys — is satisfied by keying on payload, per the E5b row).
+⚠️ That assert needs an exemption list for payload keys that are not farm facts: `skip_charts`
+(E8) is the first, and asking "what does a farmer have readily available" of it is a category
+error. If the exemption list grows past a couple of entries, that is the signal the payload is
+carrying two different kinds of thing and wants splitting.
 DONE = one source of truth, three views, versioned migration path, silent-drop impossible.
 
 ---

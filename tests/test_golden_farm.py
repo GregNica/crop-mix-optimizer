@@ -435,17 +435,14 @@ def _extract_python_code() -> str:
 
 @pytest.fixture(scope="module")
 def run_from_js():
-    """The app's real adapter, with the chart calls stubbed out (no matplotlib needed)."""
+    """The app's real adapter, with the chart call stubbed out (no matplotlib needed)."""
     code = _extract_python_code()
     ns: dict = {}
-    # Drop the matplotlib import/use lines and stub the two chart builders.
-    code = re.sub(r"^import matplotlib.*$", "", code, flags=re.M)
-    code = re.sub(r"^matplotlib\.use\(.*$", "", code, flags=re.M)
-    code = re.sub(r"^from matplotlib.*$", "", code, flags=re.M)
+    # Drop the matplotlib import/use lines, then stub the one chart builder. `_fig_to_b64` needs
+    # no stub: its only caller is the builder above it, which never runs.
+    code = re.sub(r"^(import matplotlib.*|matplotlib\.use\(.*)$", "", code, flags=re.M)
     exec(compile(code, "index.html:PYTHON_CODE", "exec"), ns)   # noqa: S102
     ns["make_waterfall_chart"] = lambda *a, **k: ""
-    ns["make_heatmap_chart"] = lambda *a, **k: ""
-    ns["_fig_to_b64"] = lambda *a, **k: ""
     return ns["run_from_js"]
 
 

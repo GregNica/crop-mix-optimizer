@@ -7104,7 +7104,6 @@ function bootPyodide() {
 // ============================================================
 const PYTHON_CODE = `
 import json, io, base64, traceback
-import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -7112,15 +7111,14 @@ import matplotlib.patches as mpatches
 from farm_v2.solver import solve_farm_v2
 from farm_v2.utils.water import get_rainfall_weekly
 
-# ----------------------------------------------------------------
-# Crop and channel definitions
-# ----------------------------------------------------------------
+# numpy is NOT imported here: the deleted heatmap was this file's only user of it, and the
+# result serializer below converts arrays by duck-typing (.tolist), not by isinstance. The
+# solver still needs numpy, and Pyodide still loads it — this adapter just does not touch it.
 
-
 # ----------------------------------------------------------------
-# Chart helpers
+# Chart helper
 # ----------------------------------------------------------------
-def _fig_to_b64(fig, dpi=96):
+def _fig_to_b64(fig, dpi=150):
     buf = io.BytesIO()
     fig.savefig(buf, format='png', dpi=dpi, bbox_inches='tight')
     buf.seek(0)
@@ -7185,36 +7183,6 @@ def make_waterfall_chart(revenue, variable_cost, fixed_cost, overhead_cost, inte
     ax.xaxis.grid(True, color='#e5e7eb', linewidth=0.5, zorder=0)
     fig.tight_layout(pad=0.5)
     return _fig_to_b64(fig, dpi=150)
-
-
-def make_heatmap_chart(x_sol, successions, crops, total_land):
-    n_crops = len(crops)
-    grid = np.zeros((n_crops, 52))
-    crop_names = [c['name'] for c in crops]
-
-    for i, s in enumerate(successions):
-        c_idx = s['crop']
-        frac = x_sol[i]
-        if frac < 1e-6:
-            continue
-        for w in s['weeks']:
-            if 1 <= w <= 52:
-                grid[c_idx, w-1] += frac
-
-    fig, ax = plt.subplots(figsize=(12, 3.5))
-    im = ax.imshow(grid, aspect='auto', cmap='Greens', vmin=0, vmax=1,
-                   interpolation='nearest')
-    ax.set_yticks(range(n_crops))
-    ax.set_yticklabels(crop_names, fontsize=8)
-    ax.set_xlabel('Week of Year', fontsize=9)
-    ax.set_xticks(range(0, 52, 4))
-    ax.set_xticklabels([str(w+1) for w in range(0, 52, 4)], fontsize=8)
-    ax.set_title('Planting Plan Heatmap (land fraction by crop & week)', fontsize=10, fontweight='bold', pad=8)
-    cbar = plt.colorbar(im, ax=ax, fraction=0.03, pad=0.02)
-    cbar.set_label('Land fraction', fontsize=8)
-    cbar.ax.tick_params(labelsize=7)
-    fig.tight_layout()
-    return _fig_to_b64(fig)
 
 
 # ----------------------------------------------------------------
@@ -7521,26 +7489,13 @@ def run_from_js(params_json):
         fixed_selling_cost = ch_fixed_per_wk * 52          # annual: a market stall fee is a yearly commitment
         profit = profit - fixed_selling_cost
 
-        # Build successions table (planted only, sorted by acres desc)
-        succs_table = []
-        for i, s in enumerate(succs):
-            frac = float(x_sol[i])
-            planted = int(round(float(y_sol[i])))
-            if frac < 5e-4 and not planted:
-                continue
-            succs_table.append({
-                'name':      s['name'],
-                'crop':      cr[s['crop']]['name'],
-                'start_week': s['start_week'],
-                'land_frac': round(frac, 4),
-                'acres':     round(frac * total_land, 1),
-                'planted':   bool(planted),
-            })
-        succs_table.sort(key=lambda r: r['acres'], reverse=True)
-
-        # Charts
-        waterfall_png = make_waterfall_chart(revenue, variable_cost, fixed_cost, overhead_cost, interest_cost, fixed_selling_cost, profit)
-        heatmap_png   = make_heatmap_chart(x_sol, succs, cr, total_land)
+        # Charts. Only the main render reads waterfall_png; the What-If, sensitivity, Monte Carlo
+        # and diagnostic replay paths read numbers off this result and never the image.
+        # ABSENT means draw it, so a caller that does not know the flag keeps the image it
+        # expects; only an explicit true opts out. The measurement behind this, and the reasoning
+        # for that polarity, live once in test_adapter_contract.py's skip_charts docstring.
+        waterfall_png = '' if p.get('skip_charts') else make_waterfall_chart(
+            revenue, variable_cost, fixed_cost, overhead_cost, interest_cost, fixed_selling_cost, profit)
 
         # Succession schedule for Gantt calendar and pie chart
         sched = []
@@ -7642,7 +7597,6 @@ def run_from_js(params_json):
             # a farm can be comfortable in the cooler and out of barn space, or the reverse.
             'ambient_peak_m3':   float(result.get('ambient_peak_m3', 0.0)),
             'ambient_cap_m3':    float(_cap.get('storage_ambient', {}).get('cap', [0.0])[0]),
-            'storage_cap_m3':    float(harvest_storage_cap),
             'profit':        profit,
             'operating_profit': operating_profit,
             'overhead_cost': overhead_cost,
@@ -7682,7 +7636,6 @@ def run_from_js(params_json):
             'hire_rate_full_weekly':     [round(float(v), 2) for v in result.get('hire_rate_full_weekly', [])],
             'overtime_rate_full_weekly': [round(float(v), 2) for v in result.get('overtime_rate_full_weekly', [])],
             'peak_borrowing': peak_borrow,
-            'successions_table':   succs_table,
             'succession_schedule': sched,
             'crop_names':          crop_names,
             'weekly_land_frac':    [round(v, 4) for v in weekly_land_frac],
@@ -8122,13 +8075,46 @@ async function runOptimizer() {
   done();
 }
 
+/**
+ * Solve for NUMBERS ONLY — no chart image.
+ *
+ * Every caller reads figures off the result and never `waterfall_png`, so `skip_charts` saves a
+ * matplotlib figure build + PNG encode per solve — measurement and polarity reasoning live in
+ * test_adapter_contract.py's skip_charts docstring, quoted once so a re-measure has one home.
+ *
+ * It also owns the paint yield all five sites need: Pyodide runs on this thread and run_from_js
+ * has no Python await, so HiGHS freezes the tab until it returns — without the yield the spinner
+ * set just before the call never appears. See runOptimizer for the full explanation; the real fix
+ * is a Web Worker. ONE frame here, where runOptimizer takes two and explains why two are needed —
+ * that divergence predates this helper (all five sites yielded once) and is preserved rather than
+ * silently changed; resolving it is a paint question, not a chart one.
+ *
+ * runOptimizer is deliberately NOT a caller: it is the one path that renders the image, and it
+ * has its own SOLVER_TIMEOUT_MS race. These five have no timeout at all — pre-existing, and this
+ * helper is where one would go (BACKLOG S20).
+ */
+async function solveForNumbers(p) {
+  await new Promise(requestAnimationFrame);
+  const raw = await pyodide.runPythonAsync(
+    `run_from_js(${JSON.stringify(JSON.stringify({ ...p, skip_charts: true }))})`);
+  return JSON.parse(raw);
+}
+
 function renderResults(res, total_land) {
   // Waterfall chart — KPI grid removed; Peak Borrowing lives in exec summary only.
   // Skip the re-assign when unchanged: the chart is in dollars (unit-invariant), so a unit
   // toggle would otherwise re-decode a ~100 KB data URL for a byte-identical image.
   const wfImg = document.getElementById('chart-waterfall');
-  const wfSrc = 'data:image/png;base64,' + res.waterfall_png;
-  if (wfImg.getAttribute('src') !== wfSrc) wfImg.src = wfSrc;
+  // This is the ONE path that draws the chart, so an empty image here means a solve that opted
+  // out of charts reached the main render — a wiring error, not a missing picture. Say so rather
+  // than assigning `data:image/png;base64,` and showing a broken-image icon.
+  if (!res.waterfall_png) {
+    console.error('renderResults: no waterfall_png — a skip_charts solve reached the main render');
+    wfImg.removeAttribute('src');
+  } else {
+    const wfSrc = 'data:image/png;base64,' + res.waterfall_png;
+    if (wfImg.getAttribute('src') !== wfSrc) wfImg.src = wfSrc;
+  }
 
   // Profit back-check panel (state 1/2/3 depending on uploaded history)
   renderBackCheckPanel(res);
@@ -9978,13 +9964,7 @@ async function runLaborPlanScenario() {
   out.innerHTML = '<div style="font-size:0.82rem;color:#6b7280">Re-solving with flexible labor…</div>';
   try {
     const sp = buildLaborFlexParams(params);
-    // Let the running state paint before this blocking solve. Pyodide runs on this
-    // thread and run_from_js has no Python await, so HiGHS freezes the tab until it
-    // returns — without this the spinner set just above never appears. See
-    // runOptimizer for the full explanation; the real fix is a Web Worker.
-    await new Promise(requestAnimationFrame);
-    const r  = await pyodide.runPythonAsync(`run_from_js(${JSON.stringify(JSON.stringify(sp))})`);
-    const sr = JSON.parse(r);
+    const sr = await solveForNumbers(sp);
     // `invalid_input` carries `errors` (plural) naming exactly what is wrong, and `error` is the
     // generic "Solver did not find an optimal solution" — so rendering only `error` threw away the
     // one sentence that tells the grower what to change. This panel is the ONLY consumer of the
@@ -10130,13 +10110,7 @@ async function runScenario(constraints, factor) {
   const primary = cArr[0];
   let record;
   try {
-    // Let the running state paint before this blocking solve. Pyodide runs on this
-    // thread and run_from_js has no Python await, so HiGHS freezes the tab until it
-    // returns — without this the spinner set just above never appears. See
-    // runOptimizer for the full explanation; the real fix is a Web Worker.
-    await new Promise(requestAnimationFrame);
-    const r  = await pyodide.runPythonAsync(`run_from_js(${JSON.stringify(JSON.stringify(scaledParams))})`);
-    const sr = JSON.parse(r);
+    const sr = await solveForNumbers(scaledParams);
     if (sr.status === 'optimal') {
       const profit = sr.profit || 0;
       const scPeak = getBottleneckPeak(sr, scaledParams, primary.type, primary);
@@ -13825,13 +13799,7 @@ window._diagnoseBaseline = async function() {
 
   let replay;
   try {
-    // Let the running state paint before this blocking solve. Pyodide runs on this
-    // thread and run_from_js has no Python await, so HiGHS freezes the tab until it
-    // returns — without this the spinner set just above never appears. See
-    // runOptimizer for the full explanation; the real fix is a Web Worker.
-    await new Promise(requestAnimationFrame);
-    const r = await pyodide.runPythonAsync(`run_from_js(${JSON.stringify(JSON.stringify(params))})`);
-    replay = JSON.parse(r);
+    replay = await solveForNumbers(params);
   } catch(e) {
     console.error('[Diagnose] Replay solve failed:', e);
     console.groupEnd();
@@ -14038,13 +14006,7 @@ async function runSensitivity() {
   for (const val of values) {
     try {
       const p = {...window._lastParams, [v.param]: val};
-      // Let the running state paint before this blocking solve. Pyodide runs on this
-      // thread and run_from_js has no Python await, so HiGHS freezes the tab until it
-      // returns — without this the spinner set just above never appears. See
-      // runOptimizer for the full explanation; the real fix is a Web Worker.
-      await new Promise(requestAnimationFrame);
-      const r = await pyodide.runPythonAsync(`run_from_js(${JSON.stringify(JSON.stringify(p))})`);
-      const parsed = JSON.parse(r);
+      const parsed = await solveForNumbers(p);
       profits.push(parsed.profit != null ? parsed.profit : null);
     } catch(e) { profits.push(null); }
   }
@@ -14308,13 +14270,7 @@ async function runMonteCarlo() {
         cost_fuel_per_L:  (params.cost_fuel_per_L  || 1.25) * costM,
       };
 
-      // Let the running state paint before this blocking solve. Pyodide runs on this
-      // thread and run_from_js has no Python await, so HiGHS freezes the tab until it
-      // returns — without this the spinner set just above never appears. See
-      // runOptimizer for the full explanation; the real fix is a Web Worker.
-      await new Promise(requestAnimationFrame);
-      const raw = await pyodide.runPythonAsync(`run_from_js(${JSON.stringify(JSON.stringify(p2))})`);
-      const pr  = JSON.parse(raw);
+      const pr = await solveForNumbers(p2);
 
       if (pr.profit != null) {
         profits.push(pr.profit);

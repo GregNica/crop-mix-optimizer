@@ -37,7 +37,7 @@ python3 -m http.server 3000
 
 - Guided parameter walkthrough with progressive disclosure (start simple, add detail as needed)
 - Benchmark defaults with source provenance (UC Cooperative Extension, USDA)
-- Optimal planting schedule output with land heatmap and profit waterfall
+- Optimal planting schedule output with a week-by-week planting calendar and profit waterfall
 - Sensitivity analysis (labor, credit line, binding constraint sweep)
 - Monte Carlo simulation — upload historical yield/price/demand data; app computes mean and variability for P10/P50/P90 forecast
 - Historical rainfall upload for empirical weather variability
