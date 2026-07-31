@@ -106,10 +106,13 @@ data flowing (pills + CSV read it). DONE = no dead render, pills/CSV unchanged, 
 - **W8 row**: annotate that (a)–(d) are scheduled inside Batch 1 (E2), so the row and the plan
   cannot drift.
 
-**0.6 · OPTIONAL (flagged, not approved): U1-interim.** Move the three labour-flex inputs from
-setup into the What-If panel that consumes them; delete the unreachable exec-summary "Bought
-Labor" block. Reversible, removes a live confusion, does not prejudge the wizard — but the grower
-deferred U1 wholesale, so **surface this for a one-line yes/no before doing it.**
+**0.6 · U1-interim — RESOLVED 2026-07-31: DO NOT DO IT.** Grower ruling: *"For the UI, we will
+handle that with the wizard."* No interim move, no pointer, no relabel. The labour-flex controls
+stay exactly where they are until Batch 7 redesigns them. ⚠️ **Consequence to hold consciously:
+the setup toggle continues to do nothing on a normal Optimize — a known say-do gap, accepted
+deliberately rather than overlooked.** It is Batch 7's first input, not a defect to re-report.
+The unreachable exec-summary "Bought Labor" block stays too (it is dead code, not a wrong number);
+delete it when the panel is rebuilt.
 
 ---
 
@@ -261,10 +264,27 @@ Correcting the densities would make both pools *looser*, so the plan would not m
 
 The defect is still real (scale ~2× low across the covered crops; spinach/cucumbers rank order
 flipped ~3×) and still worth fixing for correctness and for farms with smaller storage than the
-demo — but it is **credibility work, not plan-changing work**, and it should be scheduled as the
-low-priority tail of this batch rather than its headline. The non-goal ("volume/pack basis")
-predates the measurement; the sign-off question is whether measured-wrong-but-latent is enough to
-reopen it.
+demo — but it is **credibility work, not plan-changing work**.
+
+**✅ SIGN-OFF OBTAINED 2026-07-31** — the non-goal is narrowly amended in `STRATEGY.md` (amendment
+recorded there, at the lock). **Scope is exactly two things, done together, at the TAIL of this
+batch:**
+1. Correct the 29 template density values against the pack-weight table.
+2. Pull the **room derate** (~35–40% product-to-gross) out of the per-crop densities and into the
+   capacity input, defaulted and disclosed.
+
+They are **coupled — do not ship one without the other.** Fixing densities alone roughly halves
+occupancy and leaves the demo's 275/150 m³ capacities looking oversized; the derate is where the
+missing ~2× actually lives.
+
+**Explicitly OUT of scope** (do not expand into these): the container-picker input — that is
+wizard-era input design, deferred to Batch 7; researching pack basis per buyer or region; any
+further precision. The fail-closed implied-density tripwire is worth keeping as a cheap guard, but
+it is optional if it grows past a few lines.
+
+**Priority: last item in the batch.** If Batch 3 runs long, this is the piece to drop — it changes
+no current plan. Re-check bindingness after the batch's other work: if the crop-data sweep moves
+yields enough to make either pool bind, promote this immediately.
 ATTACK: (a) container PICKER (1-1/9 bu carton 1.383 ft³ / bushel 1.2445 / RPC lug 1.006 / 18-gal
 tote 2.406 / bulk bin 28.7 / 50-lb sack) — container supplies volume exactly; `lb per container`
 becomes an optional override. (b) per-crop default densities from the pack-weight table.
@@ -356,7 +376,17 @@ it is the product's face and every open UI decision was deliberately deferred IN
 
 Also in this horizon, not before: Tier 7 pilot hardening (the moment anyone else gets the URL),
 and **setting N** — the definition of done ("N real growers produce a season plan they would act
-on") still has no N. Ask the grower to pick one; without it bet ③ has phases but no finish line.
+on") still has no N.
+
+**✅ DEFERRED 2026-07-31 by grower ruling** — *"I'm not really thinking about the pilot yet and we
+can address that later."* This is a conscious deferral, not the oversight it was before: N was
+unset for months without anyone noticing, and that is what left the July plan's Phase C
+unexecuted. It is now deferred **on the record, with the consequence stated**: while N is unset,
+Batches 2–6 have no external forcing function and will be paced by model quality alone, which is
+the correct posture *only* while no pilot is intended. ⚠️ **Executor rule: do not silently
+re-scope any batch on pilot-readiness grounds** — if pilot timing starts driving a decision, that
+is the signal to go back and set N first. Revisit when the wizard (Batch 7) is in view, since a
+usable interface is the precondition for anyone outside this project producing a plan at all.
 
 ---
 

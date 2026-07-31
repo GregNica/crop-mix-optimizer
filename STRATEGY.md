@@ -255,8 +255,22 @@ the field should exist. Ask the complexity test first.
 
 Plot-level modelling (soil, pest, flood, sunlight vary per plot and are what the grower thinks
 about hardest — but it needs mapping and is a different app; **disclose the assumption, do not
-approximate it**); weather/yield prediction; volume/pack basis; a third storage regime;
-researching prices and demand (farm-specific by nature).
+approximate it**); weather/yield prediction; ~~volume/pack basis~~ (**NARROWLY AMENDED 2026-07-31,
+grower sign-off — see below**); a third storage regime; researching prices and demand
+(farm-specific by nature).
+
+**Amendment — volume/pack basis (2026-07-31).** The non-goal answered *"should we chase precision
+on pack basis?"* — still **no**. New evidence answered a different question: *are the shipped
+values wrong enough to matter?* Measured — all 29 templates imply 5.0–23.7 lb/ft³ against an
+industry 14–48, and the spinach/cucumbers rank order is inverted (~3× relative error). ⚠️ **It is
+LATENT, not active**: cold storage peaks at 49.3% and ambient at 90.5%, so neither pool binds and
+today's plan is unaffected; correcting it would loosen both. **Amended scope, and nothing wider:**
+correct the template density values **and** pull the room derate (~35–40% product-to-gross) out of
+the per-crop numbers into the capacity input — the two are coupled, and doing either alone leaves
+the fixture internally inconsistent. **Still non-goals:** researching pack basis per buyer or
+region, a container-picker input (that is wizard-era input design, not model truth), and any
+further precision. Rationale: correctness and credibility for farms with tighter storage than the
+demo, at the tail of the crop-data batch — not a priority reorder.
 
 ## The anti-lurch rule
 

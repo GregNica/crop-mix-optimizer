@@ -494,17 +494,44 @@ invite table, so "private" would mean anyone with a Google account who finds the
 
 ---
 
-## Still needed from the grower
+## Rulings on the audit's three open questions (2026-07-31, all resolved)
 
-1. **W17** — what a field hand actually costs locally, $/hr before payroll load.
-2. **R1** — do you spray, what, on which crops, roughly what per acre? (If not: say so and we
-   disclose rather than model.)
-3. **R2** — do you carry insurance, and roughly what per year?
-4. **R4** — do you ever hire a crew by the job (custom harvest/planting)? Priced how?
-5. **R5** — do you sell any volume U-pick?
-6. **M9** — can you weigh and measure one full tote for two or three crops?
-7. **W10** — is your pumping cost separable from your general electric bill?
-8. **X2** — confirm the Cloudflare dashboard shows no deployment.
+**M9 — volume basis: proceed with the recommended scope.** `STRATEGY.md`'s "volume/pack basis"
+non-goal is **narrowly amended at the lock** (see that file). Scope: correct the 29 template
+densities **and** pull the room derate out of them into the capacity input — coupled, never one
+without the other. Container picker and any per-buyer research stay non-goals. Scheduled as the
+**last item of Batch 3**, droppable if the batch runs long, because it changes no current plan.
+
+**U1 labour controls: no interim change — the wizard handles it.** Grower: *"For the UI, we will
+handle that with the wizard."* The setup toggle keeps doing nothing on a normal Optimize until
+Batch 7. Recorded as a **deliberately accepted say-do gap**, so it is not re-reported as a defect
+by the next review pass.
+
+**N (definition of done): deferred, on the record.** Grower: *"I'm not really thinking about the
+pilot yet."* The consequence is stated in `PLAN.md` Batch 7 — while N is unset, no batch may be
+re-scoped on pilot-readiness grounds; if pilot timing ever starts driving a decision, set N first.
+
+---
+
+## Useful from the grower — but NOT blocking (grower: *"extras if I have comments"*)
+
+**Nothing here gates execution.** Each item ships with a sourced benchmark default and a disclosed
+provenance; a grower answer replaces a default, it does not unblock a batch. Recorded so the
+answers land somewhere if they arrive.
+
+1. **W17** — what a field hand actually costs locally, $/hr before payroll load. *(Default: NASS
+   Farm Labor regional field-worker wage.)*
+2. **R1** — do you spray, what, on which crops, roughly what per acre? *(Default: 0 with an honest
+   label until Batch 3 sources extension figures.)*
+3. **R2** — do you carry insurance, roughly what per year? *(Default: benchmark premium; the
+   payment-week input matters more than the amount for C13.)*
+4. **R4 / R5** — do you hire crews by the job? Sell any volume U-pick? *(Shapes Batch 6's spec
+   priorities; the mechanism gets built either way.)*
+5. **M9** — weigh and measure one full tote for 2–3 crops. *(Validates the room derate, the
+   least-sourced number in that fix.)*
+6. **W10** — is pumping separable from your general electric bill? *(Default: whole bill, disclosed.)*
+7. **X2** — confirm the Cloudflare dashboard shows no deployment. *(Evidence already says none;
+   this is the only item with a security consequence if the evidence is wrong.)*
 
 ---
 
