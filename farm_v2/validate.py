@@ -261,6 +261,19 @@ def _check_positive(val: float, name: str) -> None:
         raise ValueError(f"{name} must be positive, got {val!r}.")
 
 
+def _require_employee_numbers(emp: dict, keys: tuple, kind: str, i: int) -> None:
+    # A non-numeric value (None from a blanked field, a string from a hand-edited file) must be
+    # refused as ValueError HERE: a bare `emp["wage"] < 0` raises TypeError instead, and Step 0
+    # only converts ValueError into `invalid_input` — everything else fails OPEN with a warning,
+    # which for a wage means the number is invented downstream.
+    for key in keys:
+        v = emp.get(key)
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            raise ValueError(
+                f"{kind} employee '{emp.get('position', i)}' {key} must be a number, got {v!r}."
+            )
+
+
 def _validate_year_round_employees(employees: list) -> None:
     required = {"position", "count", "type", "wage", "hours_per_week"}
     for i, emp in enumerate(employees):
@@ -274,6 +287,7 @@ def _validate_year_round_employees(employees: list) -> None:
                 f"Year-round employee '{emp.get('position', i)}' type must be "
                 f"'salary' or 'hourly', got '{emp['type']}'."
             )
+        _require_employee_numbers(emp, ("count", "wage", "hours_per_week"), "Year-round", i)
         if emp["count"] < 1:
             raise ValueError(
                 f"Year-round employee '{emp.get('position', i)}' count must be ≥ 1."
@@ -302,6 +316,9 @@ def _validate_seasonal_employees(employees: list) -> None:
                 f"Seasonal employee '{emp.get('position', i)}' type must be "
                 f"'FT' or 'PT', got '{emp['type']}'."
             )
+        _require_employee_numbers(
+            emp, ("count", "wage", "hours_per_week", "start_week", "end_week"), "Seasonal", i,
+        )
         if not (1 <= emp["start_week"] <= 52 and 1 <= emp["end_week"] <= 52):
             raise ValueError(
                 f"Seasonal employee '{emp.get('position', i)}' "
@@ -315,6 +332,18 @@ def _validate_seasonal_employees(employees: list) -> None:
         if emp["count"] < 1:
             raise ValueError(
                 f"Seasonal employee '{emp.get('position', i)}' count must be ≥ 1."
+            )
+        # Symmetric with the year-round path — the asymmetry let a seasonal wage of -18 book
+        # payroll as INCOME (fixed_cost_split['wages'] = -$220,800, a $561,600 phantom profit
+        # swing) and turn the inferred hire price negative, so the optimizer was PAID per
+        # hired hour and drove hiring to its cap. All with zero warnings.
+        if emp["wage"] < 0:
+            raise ValueError(
+                f"Seasonal employee '{emp.get('position', i)}' wage must be ≥ 0."
+            )
+        if emp["hours_per_week"] < 1:
+            raise ValueError(
+                f"Seasonal employee '{emp.get('position', i)}' hours_per_week must be ≥ 1."
             )
 
 

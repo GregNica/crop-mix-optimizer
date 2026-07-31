@@ -370,7 +370,32 @@ class TestHireIsPricedForTheMarketNotTheCrew:
             f"a $0/hr role set the hired rate to ${float(lab['hire_hour_wage'][0]):.2f}"
         )
         assert float(lab["hire_hour_wage"].min()) > 0.0, "hired labour is free in some week"
-        assert float(lab["overtime_hour_wage"].min()) > 0.0, "overtime is free in some week"
+        # EXACT, not merely positive: this crew used to price overtime at $4.00/hr — the $0
+        # roles stayed in the blend's denominator, so "> 0" passed while time-and-a-half on a
+        # $20 hand cost $6. Unpaid roles must not set the overtime price either.
+        assert float(lab["overtime_hour_wage"][0]) == pytest.approx(20.0), (
+            f"$0/hr roles diluted the overtime blend to "
+            f"${float(lab['overtime_hour_wage'][0]):.2f} against the only real wage of $20.00"
+        )
+
+    def test_unpaid_roles_do_not_dilute_the_average_in_their_absence_either(self):
+        """The other half of the dilution: `average_paid_wage` (the fallback for weeks with no
+        paid hourly crew) counted unpaid HOURS in its denominator. An owner at $0/hr beside an
+        $18 seasonal crew averaged $4.55/hr, so overtime in the crew's off-weeks priced at
+        $6.83 with the multiplier — under any real wage, in the UNSAFE direction."""
+        lab = compute_labor_arrays(
+            [{"position": "Owner", "count": 1, "type": "hourly", "wage": 0.0,
+              "hours_per_week": 50.0, "benefits_pct": 0.0}],
+            [{"position": "Picker", "count": 2, "type": "FT", "wage": 18.0,
+              "hours_per_week": 40.0, "benefits_pct": 0.0,
+              "start_week": 20, "end_week": 30}], 52)
+        # Crew weeks: the blend is the pickers' wage, undiluted by the owner's 50 free hours.
+        assert float(lab["overtime_hour_wage"][22]) == pytest.approx(18.0)
+        # Owner-only weeks: the fallback average is the only wage anyone is paid, not $4.55.
+        assert float(lab["overtime_hour_wage"][0]) == pytest.approx(18.0)
+        # Capacity still counts the unpaid hours — they are real hours, just not a price.
+        assert float(lab["labor_capacity"][0]) == pytest.approx(50.0)
+        assert float(lab["labor_capacity"][22]) == pytest.approx(50.0 + 80.0)
 
     @pytest.mark.parametrize("bad", [0, 0.0, -5, "", "abc", "0"])
     def test_an_unusable_explicit_wage_is_refused_not_silently_accepted(self, bad):

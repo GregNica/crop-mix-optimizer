@@ -518,6 +518,39 @@ def solve_farm_v2(
     overtime_rate_full = overtime_hour_wage * overtime_rate_multiplier
     hire_rate_full     = hire_hour_wage * (1.0 + hire_wage_markup)
 
+    # A bought hour must have a real price before the optimizer may buy one. Both rates above
+    # are INFERRED from the crew when the hired-wage box is blank, and a crew with no paid role
+    # (every wage $0 — blank boxes, unpaid family) infers $0 for both: the free-labour defect
+    # (W12b) reopened through a third door, measured at 76,000 hired hours for $0.00 and
+    # +$106,832 of phantom profit on the two-crop fixture, with every validator green. No
+    # markup or multiplier rescues a zero base. This is the point of consumption — whatever
+    # statistic produced the rate, a flex solve at a non-positive price is refused, loudly,
+    # rather than handing out free hours. Checked per-enabled-lever so a fixed-staff solve of
+    # an unpaid crew (a legitimate farm) still runs.
+    _flex_rate_errors = []
+    if hire_enabled and not float(hire_rate_full.min()) > 0:
+        _flex_rate_errors.append(
+            "Hiring is enabled, but the model has no price for a hired hour: no listed role "
+            "has a wage above $0 and no hired wage was given. Enter 'Hired wage $/hr' in the "
+            "labor-flexibility settings, or set a wage on your crew — otherwise hired labour "
+            "would be free and the plan meaningless."
+        )
+    if overtime_enabled and not float(overtime_rate_full.min()) > 0:
+        _flex_rate_errors.append(
+            "Overtime is enabled, but every listed role's wage is $0, so an overtime hour "
+            "would cost nothing. Set a wage on your crew, or disable overtime for this solve."
+        )
+    if _flex_rate_errors:
+        return {
+            "status": "invalid_input",
+            "profit": None,
+            "errors": _flex_rate_errors,
+            "warnings": validation_warnings,
+            "crops": crops,
+            "channels": channels,
+            "successions": [],
+        }
+
     labor_rate = compute_labor_rates(successions, crops, N_WEEKS)  # (N_S, 53)
 
     # Demand

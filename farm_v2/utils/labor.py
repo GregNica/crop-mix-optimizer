@@ -88,7 +88,11 @@ def compute_labor_arrays(
     # seasonal staff too. Charged on FULL hours: `field_time_pct` limits how much of a worker's
     # time is available to crops, not how much of their wage the farm owes.
     committed_weekly_wages = np.zeros(n_weeks, dtype=float)
-    committed_weekly_hours = np.zeros(n_weeks, dtype=float)   # PAID hours, not field-adjusted
+    # Hours of roles the farm actually PAYS (wage > 0), not field-adjusted. Feeds only
+    # `average_paid_wage`: an unpaid role must not sit in the denominator, or it drags the
+    # average below every real wage — an owner at $0 next to an $18 crew averaged $4.55/hr,
+    # pricing overtime at $6.83 with time-and-a-half.
+    committed_weekly_hours = np.zeros(n_weeks, dtype=float)
     hourly_wages          = []          # (effective $/hr, weekly hours) per hourly role (W15)
     piece_rate_workers    = []
 
@@ -110,15 +114,24 @@ def compute_labor_arrays(
             # Annual wage → weekly cost
             weekly_cost = count * wage * (1 + bene) / 52
             committed_weekly_wages += weekly_cost
-            committed_weekly_hours += count * hrs
+            if wage > 0:
+                committed_weekly_hours += count * hrs
 
         elif emp_type == "hourly":
             effective_rate = wage * (1 + bene)
             hourly_wages.append((effective_rate, count * hrs))
             committed_weekly_wages += count * hrs * effective_rate
-            committed_weekly_hours += count * hrs
-            hourly_weighted_wages += total_hrs_per_week * effective_rate
-            hourly_weighted_hours += total_hrs_per_week
+            # Unpaid roles ($0 wage — piece-rate pickers, unpaid family, a blank wage box)
+            # provide CAPACITY but must not set a PRICE. Left in the blend they contribute
+            # hours and no wages, dragging it below every real wage: a $20/hr hand plus two
+            # unpaid family priced overtime at $10.00/hr — "time-and-a-half" became half-time,
+            # the UNSAFE direction (the optimizer buys help the grower cannot get). The hire
+            # inference already excludes them (the `w > 0` filter below); the blend and the
+            # average must apply the same rule or the two prices disagree about the same crew.
+            if wage > 0:
+                committed_weekly_hours += count * hrs
+                hourly_weighted_wages += total_hrs_per_week * effective_rate
+                hourly_weighted_hours += total_hrs_per_week
 
         else:
             raise ValueError(
@@ -170,12 +183,14 @@ def compute_labor_arrays(
         total_hrs_per_week = count * hrs * field
 
         # Week indices are 0-based internally (week w → index w-1)
+        # Same rule as the year-round loop: unpaid roles give capacity, never a price.
         for w_idx in range(start_w - 1, end_w):
             committed_weekly_wages[w_idx] += count * hrs * effective_rate
-            committed_weekly_hours[w_idx] += count * hrs
             labor_capacity[w_idx]        += total_hrs_per_week
-            hourly_weighted_wages[w_idx] += total_hrs_per_week * effective_rate
-            hourly_weighted_hours[w_idx] += total_hrs_per_week
+            if wage > 0:
+                committed_weekly_hours[w_idx] += count * hrs
+                hourly_weighted_wages[w_idx] += total_hrs_per_week * effective_rate
+                hourly_weighted_hours[w_idx] += total_hrs_per_week
 
 
     # --- Blended hourly rate ---
@@ -269,14 +284,17 @@ def compute_labor_arrays(
 
     # Never zero while anyone is paid: a zero blend means "no hourly crew this week", not "labour
     # is free". Getting that wrong is what let 2,080 hired hours cost $0.00.
-    # Both are positive by construction, which is what makes a bought hour never free:
-    #   overtime — the weekly blend, or the average paid wage in weeks with no hourly crew
+    #   overtime — the weekly blend of PAID roles, or the average paid wage where none are on
     #   hire     — validated (> 0) if explicit, else a weighted mean of POSITIVE rates
+    # ⚠️ "While anyone is paid" is load-bearing: a crew with NO paid role at all (every wage $0 —
+    # blank boxes, unpaid family) makes average_paid_wage 0 and BOTH prices 0. No statistic over
+    # an unpaid crew can price a bought hour, so no floor here can fix that case honestly — the
+    # solver refuses to sell flex hours at a non-positive price instead (its Step-2 gate), which
+    # is the point of consumption and holds for every inference past and future.
     # A separate "floor" block used to sit here re-applying np.where to its own output. It was
     # inert on every reachable path — deleting it failed no behavioural test — and where it could
-    # have fired (a farm paying salary for zero hours, so average_paid_wage is 0) it floored with
-    # zero and its promise of "never free" was false anyway. The real defences are the w > 0
-    # filter above and the validation, both of which have tests that fail when removed.
+    # have fired (this all-unpaid case) it floored with zero and its promise of "never free" was
+    # false anyway.
     overtime_hour_wage = np.where(hourly_labor_rate > 0, hourly_labor_rate, average_paid_wage)
     hire_hour_wage     = np.full(n_weeks, float(hire_base), dtype=float)
 

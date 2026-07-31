@@ -256,3 +256,55 @@ class TestDemandWarnings:
         p["crops"] = [bad_crop]
         warnings = validate_params(**p)
         assert any("demand" in w.lower() for w in warnings)
+
+
+# ---------------------------------------------------------------------------
+# Employees — the seasonal path must be as strict as the year-round one
+# (W-review 2026-07-31: a seasonal wage of -18 passed every check and booked
+# payroll as INCOME — fixed_cost_split['wages'] = -$220,800, a $561,600 phantom
+# profit swing — while also turning the inferred hire price negative, so the
+# optimizer was PAID per hired hour.)
+# ---------------------------------------------------------------------------
+
+def _seasonal(**overrides):
+    emp = {"position": "Crew", "count": 2, "type": "FT", "wage": 18.0,
+           "hours_per_week": 40, "start_week": 10, "end_week": 40}
+    emp.update(overrides)
+    return emp
+
+
+class TestEmployeeValidation:
+    def test_negative_seasonal_wage_raises(self, minimal_params):
+        with pytest.raises(ValueError, match="wage"):
+            _call(minimal_params, seasonal_employees=[_seasonal(wage=-18.0)])
+
+    def test_zero_seasonal_wage_is_allowed(self, minimal_params):
+        # Unpaid family / piece-rate roles are legitimate; the solver refuses to
+        # SELL flex hours at that price, but the roster itself is valid.
+        _call(minimal_params, seasonal_employees=[_seasonal(wage=0.0)])
+
+    def test_nonpositive_seasonal_hours_raise(self, minimal_params):
+        with pytest.raises(ValueError, match="hours_per_week"):
+            _call(minimal_params, seasonal_employees=[_seasonal(hours_per_week=-40)])
+        with pytest.raises(ValueError, match="hours_per_week"):
+            _call(minimal_params, seasonal_employees=[_seasonal(hours_per_week=0)])
+
+    @pytest.mark.parametrize("key,val", [
+        ("wage", None), ("wage", "18"), ("hours_per_week", None),
+        ("count", None), ("start_week", None), ("end_week", "40"),
+    ])
+    def test_non_numeric_seasonal_fields_raise_value_error(self, minimal_params, key, val):
+        # ValueError specifically: Step 0 converts it to `invalid_input`, while a
+        # TypeError from `None < 0` would fail OPEN with only a warning.
+        with pytest.raises(ValueError, match=key):
+            _call(minimal_params, seasonal_employees=[_seasonal(**{key: val})])
+
+    @pytest.mark.parametrize("key,val", [
+        ("wage", None), ("wage", "18"), ("hours_per_week", None), ("count", None),
+    ])
+    def test_non_numeric_year_round_fields_raise_value_error(self, minimal_params, key, val):
+        emp = {"position": "Hand", "count": 1, "type": "hourly",
+               "wage": 20.0, "hours_per_week": 40}
+        emp[key] = val
+        with pytest.raises(ValueError, match=key):
+            _call(minimal_params, year_round_employees=[emp])

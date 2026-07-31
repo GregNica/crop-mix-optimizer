@@ -86,6 +86,62 @@ def test_hire_cap_forces_overtime_overflow(two_crop_params):
     assert flex["total_overtime_hours"] > 0.0
 
 
+# ── A bought hour must have a real price (W-review 2026-07-31) ────────────────
+#
+# The free-bought-labour defect's THIRD door: a crew with no paid role (every wage $0 — blank
+# boxes, unpaid family) inferred $0 for both flex prices, and the optimizer took 76,000 hired
+# hours for nothing with every validator green. The solver now refuses a flex solve whose
+# bought-labour rate is not strictly positive, at the point of consumption.
+
+def _all_unpaid_crew(two_crop_params):
+    p = copy.deepcopy(two_crop_params)
+    p["year_round_employees"] = [{
+        "position": "Unpaid Family", "count": 2, "type": "hourly",
+        "wage": 0.0, "hours_per_week": 40.0, "benefits_pct": 0.0,
+    }]
+    p["seasonal_employees"] = []
+    return p
+
+
+def test_hire_on_an_unpaid_crew_is_refused_not_free(two_crop_params):
+    r = solve_farm_v2(**_all_unpaid_crew(two_crop_params),
+                      hire_enabled=True, max_hire_hrs_per_week=2000.0)
+    assert r["status"] == "invalid_input"
+    assert any("hired" in e.lower() for e in r["errors"])
+    assert r["profit"] is None
+
+
+def test_overtime_on_an_unpaid_crew_is_refused_not_free(two_crop_params):
+    r = solve_farm_v2(**_all_unpaid_crew(two_crop_params),
+                      overtime_enabled=True, max_overtime_hrs_per_week=1000.0)
+    assert r["status"] == "invalid_input"
+    assert any("overtime" in e.lower() for e in r["errors"])
+
+
+def test_flex_on_an_empty_crew_is_refused_not_free(two_crop_params):
+    p = copy.deepcopy(two_crop_params)
+    p["year_round_employees"] = []
+    p["seasonal_employees"] = []
+    r = solve_farm_v2(**p, hire_enabled=True, max_hire_hrs_per_week=2000.0)
+    assert r["status"] == "invalid_input"
+
+
+def test_fixed_staff_solve_of_an_unpaid_crew_still_runs(two_crop_params):
+    # An all-volunteer farm is legitimate; only selling it flex hours at $0 is not.
+    r = solve_farm_v2(**_all_unpaid_crew(two_crop_params))
+    assert r["status"] == "optimal"
+    assert r["fixed_cost_split"]["wages"] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_an_explicit_hired_wage_rescues_an_unpaid_crew(two_crop_params):
+    r = solve_farm_v2(**_all_unpaid_crew(two_crop_params),
+                      hire_enabled=True, max_hire_hrs_per_week=2000.0,
+                      hired_wage_per_hr=18.0, hire_wage_markup=0.0)
+    assert r["status"] == "optimal"
+    # Whatever it buys, it pays for: the typed wage, not the crew's $0.
+    assert r["hire_cost"] == pytest.approx(r["total_hired_hours"] * 18.0, rel=1e-6)
+
+
 # ── Payroll load (employer burden on wages) ───────────────────────────────────
 
 def _with_payroll_load(params, load):
