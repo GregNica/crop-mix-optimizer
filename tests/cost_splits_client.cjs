@@ -230,6 +230,13 @@ const EXPECT_FIXED_LABELS = {
     // of what WAS bought, which is what stops the filter from quietly losing money.
     ok('a zero-cost bought component prints no row at all',
        amountOf(rows, 'Hired Labor (wage + markup)') === null);
+    // "Charged nothing" is what would PRINT as nothing, not exact zero. A float residual out of
+    // the solver renders as "-0.00" — sign and all — which is a row claiming a cost of negative
+    // nothing. Exact-equality filtering lets it straight through.
+    W._lastRes = { ...RES, hire_cost: 3e-8, operating_profit: RES.operating_profit - 3e-8 };
+    ok('a float residual that would print as 0.00 is not a component either',
+       amountOf(runExport(), 'Hired Labor (wage + markup)') === null);
+    W._lastRes = RES;
     ok('Total Bought Capacity is still the full sum',
        amountOf(rows, 'Total Bought Capacity') ===
        -(RES.city_water_cost + RES.overtime_cost + RES.hire_cost));
@@ -252,6 +259,34 @@ const EXPECT_FIXED_LABELS = {
     rows = runExport();
     ok('an unaccounted operating cost fires the UNRECONCILED line',
        rows.some(r => text(r[0]).includes('UNRECONCILED')));
+
+    // ⚠️ THE TRIPWIRE FAILED OPEN ON THE ONE FAILURE ITS COMMENT CLAIMS IT WOULD HAVE CAUGHT.
+    // Drop a bought-capacity key — which is exactly what happened to `city_water_cost` when the
+    // adapter did not forward it — and `boughtTotal` is NaN. NaN fails every comparison, so
+    // `Math.abs(NaN) > 0.5` is FALSE: three rows printed "NaN", OPERATING INCOME printed a clean
+    // figure, and nothing fired. A check that goes silent precisely when the data is broken reads
+    // as a pass, which is this repo's most expensive failure class.
+    const { city_water_cost, ...noCityWater } = RES;
+    W._lastRes = noCityWater;
+    rows = runExport();
+    ok('a MISSING payload key fires the UNRECONCILED line rather than printing NaN quietly',
+       rows.some(r => text(r[0]).includes('UNRECONCILED')));
+    // ...and no cell may carry a number-shaped non-number. "NaN" in a money column is read as a
+    // value by a human and by a spreadsheet; an empty cell is worse still, because that is exactly
+    // how a group NAME is drawn, so a revenue line with no figure printed as a header while the
+    // total above it still counted the money.
+    ok('a missing figure says so in words, and is never blank or "NaN"',
+       rows.every(r => r[1] !== 'NaN') &&
+       rows.some(r => String(r[1]).includes('MISSING FROM PAYLOAD')));
+    W._lastRes = RES;
+
+    // The same at the other end: a channel object present but carrying no `revenue`.
+    W._lastRes = { ...RES, channel_sales: { Wholesale: { lbs_sold: 1000, by_crop: {} } } };
+    const noRevRows = runExport();
+    const revRow = noRevRows.find(r => text(r[0]) === 'Wholesale Revenue');
+    ok(`a revenue row with no figure does not masquerade as a group name (got ${JSON.stringify(revRow)})`,
+       revRow && revRow[1] !== '' && String(revRow[1]).includes('MISSING FROM PAYLOAD'));
+    W._lastRes = RES;
 
     // And the same BELOW the line: a deduction inside `profit` that no row explains. This section
     // reconciles only because the adapter deducts exactly overhead, interest and fixed selling; a
@@ -309,6 +344,20 @@ const EXPECT_FIXED_LABELS = {
       const r = rows.find(x => text(x[0]) === want);
       ok(`group name "${want}" carries no amount (its total does)`, r && r[1] === '');
     }
+
+    // A total sits one level OUT from the rows it sums. Operating Expenses is the only section
+    // with two nested groups, so it is the only place this can go wrong — and it did: the total
+    // that adds up the two group totals was printed at their depth, so the indentation stopped
+    // saying what rolls into what in exactly the section with the most to say.
+    ok('Total Operating Expenses is one level out from the group totals it sums',
+       depth(rows.find(r => text(r[0]) === 'Total Operating Expenses')[0]) <
+       depth(rows.find(r => text(r[0]) === 'Total Fixed & Committed Costs')[0]));
+
+    // Peak borrowing is cash the plan must HAVE, not money it spends — the charge for carrying it
+    // is the interest line. Printed negative in a column headed "negative = cost" it read as
+    // $9,000 spent, sitting directly above a positive Opening Cash.
+    ok('peak borrowing prints as a positive requirement, not a cost',
+       amountOf(rows, 'Peak Borrowing / Working Capital Required') === RES.peak_borrowing);
     // ...and a group with nothing under it does not print as a name with no lines. This fixture's
     // one channel charges no stall fee, which is the common case, so the check is on the shipped
     // path rather than a contrived one.
@@ -319,16 +368,24 @@ const EXPECT_FIXED_LABELS = {
     // The OTHER branch: a channel that does charge a stall fee prints as a group — name, indented
     // component, then the total. Testing only the empty case would leave the populated one, which
     // is the one with the indentation in it, unexercised.
+    // The adapter computes fixed_selling_cost as Σ (per-week fee × 52), so a fixture whose
+    // component does not sum to its own total tests a state the app cannot produce — and asserts a
+    // "Total …" line that contradicts the row above it. The result is moved with the params.
+    const FEE_WK = 25, FEE_YR = FEE_WK * 52;
     W._lastParams = { ...PARAMS,
       channels: [{ name: 'Wholesale', fixed_selling_cost_per_wk: 0 },
-                 { name: 'Farmers Market', fixed_selling_cost_per_wk: 25 }] };
+                 { name: 'Farmers Market', fixed_selling_cost_per_wk: FEE_WK }] };
+    W._lastRes = { ...RES, fixed_selling_cost: FEE_YR,
+                   profit: RES.profit - (FEE_YR - RES.fixed_selling_cost) };
     const feeRows = runExport();
     const feeDetail = detailUnder(feeRows, 'Channel Fixed Selling (market fees, retainers)');
     ok(`a channel stall fee prints as an indented component (got ${JSON.stringify(feeDetail)})`,
-       feeDetail && feeDetail.length === 1 && feeDetail[0][1] === -25 * 52);
-    ok('the group closes with its own total when it has components',
-       amountOf(feeRows, 'Total Channel Fixed Selling') === -RES.fixed_selling_cost);
-    W._lastParams = PARAMS;
+       feeDetail && feeDetail.length === 1 && feeDetail[0][1] === -FEE_YR);
+    ok('the group closes with its own total, and the detail sums to it',
+       amountOf(feeRows, 'Total Channel Fixed Selling') === -FEE_YR);
+    ok('a consistent populated group fires no tripwire',
+       !feeRows.some(r => text(r[0]).includes('UNRECONCILED')));
+    W._lastParams = PARAMS; W._lastRes = RES;
   }
 
   if (failures) {

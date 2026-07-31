@@ -8071,6 +8071,13 @@ function exportPLCSV() {
   // optimizer's total and not to this statement — the failure it exists to make visible. It has
   // already earned its keep once: `res.city_water_cost` was not forwarded by the adapter when
   // these rows were written, which would have fired this on every farm buying metered water.
+  //
+  // ⚠️ AND IT FAILED OPEN ON EXACTLY THAT CASE UNTIL `/code-review` MEASURED IT. A missing
+  // bought-capacity key makes `boughtTotal` NaN, NaN fails every comparison, so `Math.abs(NaN) >
+  // 0.5` is FALSE: the three affected rows printed "NaN", OPERATING INCOME printed a clean figure,
+  // and the tripwire whose whole job is to announce that stayed silent. A check that goes quiet
+  // precisely when the data is broken is worse than no check, because it reads as a pass.
+  const misreconciled = v => !Number.isFinite(v) || Math.abs(v) > 0.5;
   const opReconcile = operatingIncome - (grossProfit - totalOpex);
   // The same check BELOW the line. NET PROFIT prints res.profit and reconciles to the three rows
   // above it only because the adapter happens to compute profit as operating_profit minus exactly
@@ -8150,9 +8157,15 @@ function exportPLCSV() {
   const BLANK = ['', ''];
   // `null` means a group NAME, which carries no figure of its own — its total is the line that
   // closes the group. Costs are negated here, once, rather than by each list that feeds in.
-  const at   = (depth, label, amount) =>
-    [IND.repeat(depth) + label, amount == null ? '' : amount.toFixed(2)];
-  const head = (depth, label)         => at(depth, label, null);
+  // A FIGURE THAT IS NOT A NUMBER MUST BE LOUD. `at` used to render a null/undefined amount as an
+  // empty cell — which is exactly how a group NAME is drawn — so a revenue line whose payload key
+  // was missing printed as a header while Total Revenue still counted it, and `cost(…, undefined)`
+  // printed the bare string "NaN". Group names now write their own empty cell, and every other
+  // amount must be a finite number or it says so in words nobody mistakes for money.
+  const money = amount =>
+    Number.isFinite(amount) ? amount.toFixed(2) : 'MISSING FROM PAYLOAD — please report this';
+  const at   = (depth, label, amount) => [IND.repeat(depth) + label, money(amount)];
+  const head = (depth, label)         => [IND.repeat(depth) + label, ''];
   const cost = (depth, label, amount) => at(depth, label, -amount);
 
   // A cost group: its name, its components indented beneath, and its own "Total …" line — UNLESS
@@ -8168,9 +8181,13 @@ function exportPLCSV() {
        cost(1, 'Total ' + name, total)]
     : [cost(1, name + note, total)];
 
-  // A component charged exactly nothing is not evidence of anything: the grower did not buy it.
-  // The channel rows are filtered the same way where they are built.
-  const boughtRows = boughtCapacity.filter(([, amt]) => amt !== 0);
+  // A component charged nothing is not evidence of anything: the grower did not buy it. The
+  // threshold is what would ROUND to a printed 0.00 rather than exact zero — a float residual
+  // of 3e-8 renders as "-0.00", sign and all. The channel rows are filtered where they are
+  // built. NOT applied to `fixedBreakdown`: that split is the solver's own enumeration of what
+  // the farm is charged, and W4 exists because components went missing from it silently — a
+  // configured-but-zero line there is information, not noise.
+  const boughtRows = boughtCapacity.filter(([, amt]) => Math.abs(amt) >= 0.005);
 
   const HEAD = ['Line item', 'Amount ($) — negative = cost'];
   const rows = [
@@ -8192,10 +8209,14 @@ function exportPLCSV() {
     head(0, 'OPERATING EXPENSES'),
     ...group('Fixed & Committed Costs', '', fixedBreakdown, fixedOpex),
     ...group('Bought Capacity', '', boughtRows, boughtTotal),
-    cost(1, 'Total Operating Expenses', totalOpex),
+    // One level out from the two group totals it sums. The rule everywhere in this statement
+    // is that a total sits one level out from the rows it adds up, and this is the only
+    // section with two nested groups — so it was the only place the indentation stopped
+    // saying what rolls into what, which is the confusion this whole shape exists to remove.
+    cost(0, 'Total Operating Expenses', totalOpex),
     // Flush left with the profit lines when it fires. It is the one row in the statement that
     // means "this file is wrong", so it must not read as an ordinary indented cost line.
-    ...(Math.abs(opReconcile) > 0.5
+    ...(misreconciled(opReconcile)
         ? [at(0, 'UNRECONCILED — a cost in the optimizer has no line above. Please report this.',
               opReconcile)] : []),
     at(0, 'OPERATING INCOME', operatingIncome),
@@ -8205,14 +8226,17 @@ function exportPLCSV() {
     cost(1, 'Overhead (insurance, tax, admin, utilities, R&M, vehicles)', overheadCost),
     ...group('Channel Fixed Selling', ' (market fees, retainers)', chOpexRows, sellingCost),
     cost(1, 'Interest on Operating Borrowing', interestCost),
-    ...(Math.abs(netReconcile) > 0.5
+    ...(misreconciled(netReconcile)
         ? [at(0, 'UNRECONCILED — a deduction below operating income has no line above. ' +
                  'Please report this.', netReconcile)] : []),
     at(0, 'NET PROFIT', netProfit),
     BLANK,
 
     head(0, 'CASH FLOW NOTE'),
-    cost(1, 'Peak Borrowing / Working Capital', res.peak_borrowing),
+    // NOT a cost: it is the cash the plan must have on hand at its low point. The charge for
+    // carrying it is `Interest on Operating Borrowing` above, which would double-count it.
+    // Printed negative under a column headed "negative = cost", it read as $9,000 spent.
+    at(1, 'Peak Borrowing / Working Capital Required', res.peak_borrowing),
     at(1, 'Opening Cash', params.opening_cash || 0),
     at(1, 'Credit Line', params.credit_line || 0),
   ];
@@ -10013,9 +10037,17 @@ async function runLaborPlanScenario() {
     await new Promise(requestAnimationFrame);
     const r  = await pyodide.runPythonAsync(`run_from_js(${JSON.stringify(JSON.stringify(sp))})`);
     const sr = JSON.parse(r);
+    // `invalid_input` carries `errors` (plural) naming exactly what is wrong, and `error` is the
+    // generic "Solver did not find an optimal solution" — so rendering only `error` threw away the
+    // one sentence that tells the grower what to change. This panel is the ONLY consumer of the
+    // hired-wage field (it reads the live DOM), so it is the one place a typed $0 can reach the
+    // solver, and it was the one place the reason for the refusal was dropped. The main solve path
+    // renders `errors`; this now does the same.
+    const reasons = (sr.errors || []).map(e => '• ' + e).join('<br>');
     out.innerHTML = (sr.status === 'optimal')
       ? renderLaborPlan(sr, res, sp)
-      : `<div style="font-size:0.82rem;color:#b91c1c">Labor-plan solve failed: ${sr.error || sr.status}</div>`;
+      : `<div style="font-size:0.82rem;color:#b91c1c">Labor-plan solve failed:<br>${
+           reasons || sr.error || sr.status}</div>`;
   } catch (e) {
     out.innerHTML = `<div style="font-size:0.82rem;color:#b91c1c">Error: ${e.message || e}</div>`;
   } finally {

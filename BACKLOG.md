@@ -229,6 +229,8 @@ amount column legitimately starts with one. Then the per-cell assertion in
 `tests/cost_splits_client.cjs` covers all five exports instead of one. Pre-existing duplication, not
 caused by the P&L change; deliberately left out of that diff as too wide for it.
 
+**U1a — `validateParams` blocks the main Optimize on a field the main solve never sends, and the grower may not be able to see it.** From `/code-review` 2026-07-31. `hired_wage_per_hr` lives inside `#labor-flex-controls`, which `toggleLaborFlex` hides when the toggle is off, and the main payload builder does not send labour-flex params at all. Type `0`, turn the toggle off, press Optimize: the run is refused, naming a control that is not on screen, over a value this solve would not have used. Right answer is to validate it where it is CONSUMED (the What-If path, which reads the live field) — but that is the same panel U1 is redesigning, and changing validation gating has no client-side coverage today, so it is folded in here rather than patched blind. ⚠️ Do NOT close it by making a typed value silently ignored: that was the W15 defect the validation exists to prevent.
+
 **U1 — the labour-flexibility controls need a design, not a rename.** From the 2026-07-31 grower
 browser pass, in their words: a toggle in the parameters that only activates once selected in a
 What-If is **"confusing and redundant"** — *"we need a better way to communicate this and select it
