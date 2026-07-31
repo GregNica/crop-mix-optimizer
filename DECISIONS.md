@@ -30,11 +30,38 @@ browser-QA'd 2026-07-31. Labour money path closed and heavily guarded (W9/W12/W1
 **M1 posture (grower, 2026-07-31): do NOT chase the net-margin gap directly.** Fix the pieces;
 margin follows. Evidence supports it — four of the five fixes that moved margin the wrong way were
 reporting fixes aimed at margin-adjacent code, and the one that moved it right (W12, −16.8 points)
-was aimed at correctness elsewhere. ⚠️ My sizing caveat, **an estimate, not a measurement**: the
-named uncharged costs (water, crop protection, insurance) look worth 1–3 points against the ~5
-needed, which would put the remainder on the never-audited revenue side (crop prices and yields —
-Tier 2 M2/M3). Revenue per acre-planting is currently **$9,676**; whether that is realistic is the
-single highest-leverage unaudited number in the model.
+was aimed at correctness elsewhere.
+
+### ⚠️ CORRECTION (2026-07-31, later the same day): my sizing estimate was WRONG, and the grower's posture is better supported than I argued
+
+I estimated the uncharged costs at **1–3 points** against the ~5 needed, and concluded the
+remainder was probably on the revenue side. **The rent-vs-own research plus a code check overturned
+that.** The model is missing far more cost than I counted:
+
+| Missing cost | Status in model | Plausible $/yr | Margin points |
+|---|---|---|---|
+| **Land rent** | field exists, reads **$0** | 19,600 (NASS irrigated avg $245/ac × 80) → 32,000–64,000 (realistic veg ground) | **0.9 – 3.0** |
+| **Repairs / maintenance** | **does not exist** | machinery + structures, typically a large share of ownership cost | **~1 – 2** |
+| **Interest on capital** | **does not exist** (only interest on operating borrowing) | opportunity cost on undepreciated balances | ~0.5 – 1 |
+| **Property / personal-property tax** | **does not exist** | on owned land, structures, equipment | ~0.3 – 1 |
+| **Insurance** (R2) | **does not exist** | farm-level | ~0.2 – 0.9 |
+| **Crop protection** (R1) | **does not exist** | ~fertiliser order of magnitude ($25,454) | **~1.2** |
+| **Water / electricity** (W10) | field missing, charges **$0** | ~4,000 | ~0.2 |
+
+**Verified in code:** six `depreciation_*_years` inputs exist and there is **zero** occurrence of
+repairs, property tax, or interest-on-capital anywhere in `farm_v2/`.
+
+**The DIRTI finding.** Standard farm-management practice costs an owned asset as **D**epreciation +
+**I**nterest + **R**epairs + **T**axes + **I**nsurance — and *"DIRTI can be 50%+ of a machine's
+total lifecycle expense"* (MU Extension G435). **Our model has the D and none of the I-R-T-I.**
+Two consequences: (1) ownership is systematically under-costed, which is a direct M1 contributor;
+(2) any future rent-vs-own toggle would **report a false answer in favour of owning**, because a
+rent quote already bundles the lessor's interest, tax and insurance.
+
+**So the pieces plausibly total 4–9 margin points — enough to close M1 on their own.** That
+vindicates the grower's instinct and retires my "the rest must be on the revenue side" claim as
+unsupported. The revenue side is still unaudited (revenue per acre-planting is **$9,676**, and
+Tier 2 M2/M3 have never checked the prices or yields), but it is no longer the leading suspect.
 
 ---
 
@@ -150,6 +177,13 @@ look like pure cost with no benefit — it can only ever reduce modelled profit.
 if we say so. **It links directly to W2/C4 below: insurance pays for itself in the tail, and we do
 not model tails.**
 
+⚠️ **Third, and it enlarges this item:** insurance is not only a farm-level line — it is the final
+**I** of the **DIRTI** ownership cost (Depreciation, Interest, Repairs, Taxes, Insurance). Our
+assets carry depreciation *only*. So R2 should be built as **part of a complete asset-ownership
+cost**, alongside the missing repairs, interest-on-capital and property tax, rather than as a
+standalone premium field. See the M1 correction above — together those four are a larger margin
+item than everything else on this page.
+
 ---
 
 ### B4 · W5 — The diversity knob
@@ -218,9 +252,33 @@ fixed costs, **machinery is $52,000 — 55% of it**, and everything else is smal
 $14,083, irrigation $8,889, cold storage $6,875, water storage $6,750, equipment storage $5,000,
 ambient $750).
 
-⚠️ **Two gaps the question exposes:** **land rent reads $0** on the demo farm — for a farm that
-rents ground, the single biggest missing cost on this list. And **greenhouse space and retail
-space, both named by the grower, are not modelled at all.**
+**RESEARCH VERDICT (sources in the appendix): build LAND first, then machinery as CUSTOM HIRE.**
+
+- **Land is the biggest line by 2–8×, the most commonly rented asset in the country, and it reads
+  $0 on our demo farm.** 2022 Census: **440,431 farms (23.2%) pay cash rent, $27.31B total, avg
+  $62,010/farm** — the largest rented category by far. **39% of all US farmland acres are rented.**
+  Rates: NASS 2025 irrigated cropland **$244–245/acre national** ($80 WY → $483 CA). ⚠️ **Vegetable
+  ground is not commodity ground** — intensive veg leases run far above the row-crop average
+  (Salinas Valley ~$2,000/acre), and **NASS publishes no vegetable-specific rent series**, which is
+  the main data gap. On 80 acres: $19,600 at the national irrigated average, $32k–64k at realistic
+  diversified-veg rates, $160k (7.5% of revenue) at coastal-CA rates.
+- **Machinery second — but as CUSTOM HIRE per acre, not tractor rental.** Custom work is **3×
+  more prevalent than machinery leasing** (391,283 farms / 20.6%, $10.05B, **up 33% since 2017**)
+  and the operator comes with the machine, so it substitutes for labour as well as capital. It also
+  plugs cleanly into a model that already counts acre-plantings. Whole-crop custom farming runs
+  $150–168/acre (Iowa 2025); at 220 acre-plantings that is **$33k–37k**, against our $52,000
+  owned-machinery line. ⚠️ Vegetable-specific custom rates are thin — the 2025 Maryland/Delaware
+  survey *dropped* bed-forming, plastic-laying and transplanter lines for lack of responses.
+- **Skip greenhouse and retail space** — both are small dollars at this scale (UNL greenhouse
+  $0.53–1.35/ft²/month; farmers-market stalls $20–75/week, ~$400–800/season) and **neither has
+  defensible national tenure data**; the Census has no line item for either.
+- **High-value crops skew owner-operated** (fruit/tree-nut ~88%), so the 39%-rented headline is
+  commodity-driven and should not be assumed for a diversified veg farm.
+
+⚠️ **The caveat that applies to whichever asset we build (see the M1 correction above): we must add
+interest, repairs, taxes and insurance to the OWNERSHIP side at the same time**, or the toggle
+reports a false answer favouring ownership. Our six asset classes carry capital ÷ life — pure
+depreciation — while a rent quote already bundles the rest.
 
 ---
 
