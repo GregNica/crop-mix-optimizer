@@ -386,7 +386,7 @@ if (!csvUS || !csvME) {
   // phantom 2000 lb/acre the farm then solved on — against the import contract (uploads
   // trust the FILE). Blank still defaults; stated nonsense (0 planting weeks) errors loudly.
   const mkCsv = rows => [
-    'crop_name,channel_name,price_per_lb,demand_cap_type,demand_weekly_lbs,yield_per_acre_lbs,min_acreage_if_planted,planting_weeks',
+    'crop_name,channel_name,price_per_lb,demand_cap_type,demand_weekly_lbs,yield_per_acre_lbs,min_acreage_if_planted,planting_weeks,diversity_max_fraction',
     ...rows,
   ].join('\n');
   const zeroKept = withSystem('us', () =>
@@ -419,6 +419,16 @@ if (!csvUS || !csvME) {
     T.parseCropCSV(mkCsv(['Kale,Direct,2.00,weekly_flat,500,8000,2,1.5'])));
   if (!statedFraction.errors.some(e => e.field === 'planting_weeks' && /whole number/.test(e.msg))) {
     fail('crop CSV: a stated planting_weeks of 1.5 was not refused — intOr silently truncates it to 1');
+  }
+  // Stated diversity 0 is refused AT IMPORT because nothing downstream can refuse it: the
+  // crop card renders diversity through a preset select that cannot express 0, so it would
+  // be snapped to a preset with a success message and validate.py would never see the file's
+  // value.
+  const statedZeroDiversity = withSystem('us', () =>
+    T.parseCropCSV(mkCsv(['Kale,Direct,2.00,weekly_flat,500,8000,2,2,0'])));
+  if (!statedZeroDiversity.errors.some(e => e.field === 'diversity_max_fraction')) {
+    fail('crop CSV: a stated diversity_max_fraction of 0 was not refused — the select would '
+       + 'silently snap it to a preset');
   }
   // First-row-wins retry: when a crop's FIRST row fails the crop-level check, the error must
   // name that row, the import must abort (all-or-nothing), and the next row must have been

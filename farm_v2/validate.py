@@ -277,6 +277,17 @@ def _require_employee_numbers(emp: dict, keys: tuple, kind: str, i: int) -> None
             raise ValueError(
                 f"{kind} employee '{emp.get('position', i)}' {key} must be a number, got {v!r}."
             )
+    # Optional keys labor.py does arithmetic on the moment they are present — a None or
+    # string there raises TypeError in Step 2, OUTSIDE the Step-0 try, handing a caller a
+    # traceback where every other bad input gets invalid_input.
+    for key in ("benefits_pct", "field_time_pct"):
+        if key in emp:
+            v = emp[key]
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                raise ValueError(
+                    f"{kind} employee '{emp.get('position', i)}' {key} must be a number, "
+                    f"got {v!r}."
+                )
 
 
 def _require_employee_bounds(emp: dict, kind: str, i: int) -> None:

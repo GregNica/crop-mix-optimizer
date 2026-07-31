@@ -54,15 +54,20 @@ def _cum_net(r):
 def test_seasonal_payroll_shape_reaches_the_cash_floor(two_crop_params):
     """The C13 rhs must carry the SEASONAL cumulative wage bill, not a flat spread.
 
-    Unconstrained, this farm's cash need is $762,896 (min at week 14 — crew on since week 8,
-    revenue still ramping). opening+credit = $762,396 sits $500 below that, so the true floor
-    binds at week 14. Flattening the wage rhs makes week 14's floor ~$15,120 TIGHTER (7 weeks
-    of real crew < 14 weeks of annual mean), so the mutated solver holds the plan ~$15k off
-    the true floor and the binding assertion fails; if it instead exploited the LOOSENED late
-    weeks (wk 42: flat is $5k+ under true), the no-breach assertion fails. Both directions of
-    the mutation are pinned by one solve.
+    The budget must make cash cost PROFIT, not just bind — the same trap the flex test below
+    documents. At need-minus-$500 ($762,396) this fixture sat on an equal-profit plateau
+    (measured: profit $249,982 from $760k up), so the "binding" min was HiGHS tie-breaking
+    and a solver upgrade could park it $11k off the floor spuriously. Measured frontier:
+    infeasible ≤ ~$730k; $740,000 → profit $36,182 with the floor binding TO THE DOLLAR at
+    week 18; $750,000 → $249,982. So $740k prices cash at ~$21 of profit per $1.
+
+    Flattening the wage rhs makes week 18's floor ~$10,800 TIGHTER (11 weeks of real crew
+    < 18 weeks of annual mean) — only ~$10k above the infeasibility edge, so the mutated
+    solve goes infeasible (status assert) or re-plans ~$10.8k off the true floor (binding
+    assert). If it instead exploited the LOOSENED late weeks, the no-breach assert fails.
+    All directions covered by one solve.
     """
-    p = _cash_bound(two_crop_params, crew=6, opening_cash=600_000.0, credit_line=162_396.0)
+    p = _cash_bound(two_crop_params, crew=6, opening_cash=600_000.0, credit_line=140_000.0)
     r = solve_farm_v2(**p)
     assert r["status"] == "optimal", f"fixture must remain solvable: {r['status']} {r.get('errors')}"
     cum = _cum_net(r)
@@ -97,6 +102,13 @@ def test_bought_labor_is_real_money_in_the_cash_floor(two_crop_params):
 
     The bought-hours asserts keep the fixture honest: no bought hours would mean the mutated
     coefficients multiply zeros and this test pins nothing.
+
+    ⚠️ W17 coupling: with no seasonal crew and a blank hired wage, this fixture's flex prices
+    are inferred from the two_crop year-round roster (the paid-roles fallback). If W17
+    replaces blank-box inference with something that refuses salary-heavy crews, this test's
+    status=="optimal" precondition fails LOUDLY — fix by giving the fixture an explicit
+    hired_wage_per_hr and re-deriving the budget from the then-current frontier (the probe
+    recipe is in this docstring's history).
     """
     p = _cash_bound(
         two_crop_params, crew=0, opening_cash=600_000.0, credit_line=115_000.0,
