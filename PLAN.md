@@ -242,10 +242,29 @@ channel-adjacent slice (demand/price laugh-test is held pending bet ①; prices 
 farm-specific inputs by locked non-goal — audit their PROVENANCE, not their truth).
 
 **3.1 · M9 — the volume basis (⚠️ amends a locked non-goal; get the grower's one-line sign-off).**
-Evidence (DECISIONS B5): all 29 templates imply 5.0–23.7 lb/ft³ vs industry 14–48; the
-spinach/cucumbers rank order is FLIPPED (~3× relative error); **ambient storage runs at 90.5%
-utilisation on the golden farm**, so the wrong densities are rationing garlic — the largest crop.
-The non-goal ("volume/pack basis") predates this measurement.
+
+⚠️ **URGENCY CORRECTED 2026-07-31, after this plan's first draft. M9 is LATENT, not active — it is
+not changing today's plan, and my earlier "rationing the largest crop" claim was wrong.** Measured:
+
+| pool | peak / cap | binds? | crops in it |
+|---|---|---|---|
+| cold | 135 / 275 m³ = **49.3%** | no | Spinach, Cucumbers, Kale, Tomatoes, Hot Peppers |
+| ambient | 136 / 150 m³ = **90.5%** | **no** — never reaches 100% in any week | Garlic, Basil |
+
+Three corrections to the first draft: (a) **neither constraint binds**, so nothing is being
+rationed by these numbers today; (b) the ambient crops are **Garlic and Basil**, not "cured alliums
+and winter squash", and garlic's 23.7 lb/ft³ is one of the values the research marked as roughly
+RIGHT (~25–30); (c) **basil is not covered by the research table** — it covers greens/roots/fruits,
+not herbs, and fresh herbs are genuinely very bulky, so basil's 5.0 lb/ft³ may be closer to correct
+than the general ~2× pattern implies. **Do not assume basil is wrong without a source.**
+Correcting the densities would make both pools *looser*, so the plan would not move.
+
+The defect is still real (scale ~2× low across the covered crops; spinach/cucumbers rank order
+flipped ~3×) and still worth fixing for correctness and for farms with smaller storage than the
+demo — but it is **credibility work, not plan-changing work**, and it should be scheduled as the
+low-priority tail of this batch rather than its headline. The non-goal ("volume/pack basis")
+predates the measurement; the sign-off question is whether measured-wrong-but-latent is enough to
+reopen it.
 ATTACK: (a) container PICKER (1-1/9 bu carton 1.383 ft³ / bushel 1.2445 / RPC lug 1.006 / 18-gal
 tote 2.406 / bulk bin 28.7 / 50-lb sack) — container supplies volume exactly; `lb per container`
 becomes an optional override. (b) per-crop default densities from the pack-weight table.

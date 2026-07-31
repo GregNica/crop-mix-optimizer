@@ -236,11 +236,25 @@ all 29 templates:
 **The model has spinach denser than cucumbers; reality has cucumbers 2.0–2.5× denser than
 spinach — a relative error of ~3–3.4× in the wrong direction on that pair.**
 
-⚠️ **This is not academic — it is shaping the plan right now.** Measured on the golden farm:
-**ambient storage runs at 90.5% utilisation** (136 of 150 m³) while cold storage sits at 49.3%.
-Ambient is nearly binding, so the crops stored there (cured alliums, winter squash — and garlic is
-this farm's largest single crop) are being rationed by a volume figure that is wrong by ~2× and
-mis-ordered against its competitors. A storage-binding solve is picking the wrong crop to displace.
+⚠️⚠️ **URGENCY CORRECTED (same day, before the grower acted on it). My first write-up said this was
+"shaping the plan right now". It is NOT — it is latent.** Measured:
+
+| pool | peak / cap | binds? | crops |
+|---|---|---|---|
+| cold | 135 / 275 m³ = **49.3%** | no | Spinach, Cucumbers, Kale, Tomatoes, Hot Peppers |
+| ambient | 136 / 150 m³ = **90.5%** | **no** — no week reaches 100% | Garlic, Basil |
+
+Three things I got wrong and am correcting: (a) **neither pool binds**, so nothing is being
+rationed; (b) the ambient crops are **Garlic and Basil**, not the "cured alliums and winter squash"
+I wrote, and **garlic's 23.7 lb/ft³ is one of the values the research marked roughly RIGHT**
+(~25–30); (c) **basil is a herb and the research table does not cover herbs** — fresh herbs are
+genuinely very bulky, so its 5.0 lb/ft³ may be near-correct. Correcting the densities would loosen
+both pools, so today's plan would not change.
+
+**What that means for scheduling:** the defect is real and worth fixing (correctness, and it bites
+any farm with tighter storage than the demo), but it is **credibility work, not plan-changing
+work** — the low-priority tail of the crop-data batch, not its headline. This correction is the
+"verify the axis the fix does not mention" rule applied to my own finding.
 
 **Negative finding worth recording** (it saves the next person the search): **USDA Agriculture
 Handbook 66 does NOT contain bulk densities.** All 38,822 lines were pulled and grepped — zero hits
