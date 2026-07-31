@@ -19,17 +19,32 @@
  *
  * THE LOAD-BEARING TEST here is the RECONSTRUCTION GUARD: given a result with a full harvest
  * schedule and a params object full of yields and demand caps, but no demand_saturation, the
- * panel must draw NO demand rows and the ranking must offer NO demand levers. That is the exact
+ * export must write NO demand rows and the ranking must offer NO demand levers. That is the exact
  * input the old code turned into a table of invented percentages.
  *
- * WHY jsdom: renderConstraintSummary writes innerHTML and the CSV exporter reaches into the
- * DOM. Both are driven for real here, not pattern-matched — two inert guards shipped in this
- * codebase because a source-level check looked equivalent. Nothing here needs Pyodide.
+ * SURFACES (changed by W7, 2026-07-31). This used to drive the constraint-summary PANEL as well.
+ * That panel had been display:none with no unhide path since Phase 2.3 and is now deleted, so
+ * every check it carried was re-pointed at the two surfaces that still ship the series: the
+ * What-If pills and exportConstraintCSV(). Three of its assertions needed a decision, not a
+ * move, and it is worth being precise about which is which:
+ *   - the at-cap threshold coming from the SOLVER: MOVED to the export, and strengthened — it is
+ *     now driven at a non-default 0.80 rather than asserted at the default.
+ *   - rows built from `res` and never from the form: MOVED (§2b).
+ *   - row ORDER following params: RETIRED, not moved. The export has no such ordering — it ranks
+ *     most-binding-first — so there was nothing to re-point it at. §2 pins the export's own
+ *     ordering instead.
+ *   - "an annual contract has no weekly ceiling", which the panel showed as a blank cell: this
+ *     one was genuinely DROPPED by the first pass of the rework and the export was printing the
+ *     annual fill under "Peak Util %". Caught by review, fixed in the export, and pinned in §2.
+ *
+ * WHY jsdom: the CSV exporter reaches into the DOM and the pills write innerHTML. Both are
+ * driven for real here, not pattern-matched — two inert guards shipped in this codebase because
+ * a source-level check looked equivalent. Nothing here needs Pyodide.
  *
  * Run: node tests/demand_saturation_client.cjs   (or via pytest: test_node_guards.py)
  */
 'use strict';
-const { bootApp } = require('./jsdom_app.cjs');
+const { bootApp, captureCSV } = require('./jsdom_app.cjs');
 
 let failures = 0;
 const fail = m => { failures++; console.error('  x ' + m); };
@@ -44,8 +59,8 @@ const range = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
 //   Garlic/FM     — fill 50%, weekly cap binding in all 7 weeks it can supply. THE case.
 //   Spinach/WS    — sells nothing; the old formula printed 16% here.
 //   Basil/WS      — sells nothing, on an ANNUAL contract; the old formula printed 29%.
-//   Tomatoes/WS   — an annual contract that DOES sell, so "—" in the peak column is not
-//                   confusable with the zero-sales rows.
+//   Tomatoes/WS   — an annual contract that DOES sell, so a peak-week figure printed for it
+//                   would look like a measurement rather than the 0 a zero-sales row shows.
 const RES = {
   revenue: 1621122,
   demand_at_cap_threshold: 0.95,
@@ -109,95 +124,153 @@ const PARAMS = {
   ],
 };
 
-/** The demand rows of the rendered panel, as [{label, season, peak, weeks}]. */
+/** Drive exportConstraintCSV for real and return its parsed lines (row 0 is the header). */
+function exportLines(window, res, params) {
+  window._lastRes = res; window._lastParams = params;
+  const lines = captureCSV(window, () => window.exportConstraintCSV());
+  if (!lines) throw new Error('exportConstraintCSV wrote no file — the export cannot be driven');
+  return lines;
+}
+
+/**
+ * The demand rows of the exported CSV, as [{label, season, peak, weeks, ...}].
+ * `season` is the annual fill and `peak` the binding figure the solver enforces — the two
+ * different, both-correct numbers whose collapse was the W6 defect.
+ */
 function demandRowsOf(window, res, params) {
-  const el = window.document.getElementById('constraint-summary-content');
-  if (!el) throw new Error('#constraint-summary-content missing — the panel cannot be driven');
-  el.innerHTML = '<!-- cleared -->';
-  window.renderConstraintSummary(res, params);
-  return Array.from(el.querySelectorAll('tr'))
-    .map(tr => Array.from(tr.querySelectorAll('td')).map(td => td.textContent.trim()))
-    .filter(c => c.length === 4 && c[0].includes('→'))
-    .map(c => ({ label: c[0], season: c[1], peak: c[2], weeks: c[3] }));
+  const lines = exportLines(window, res, params);
+  const hdr   = lines[0] || [];
+  // A renamed column would otherwise index at -1 and hand every assertion `undefined`, which
+  // reads as a wrong VALUE rather than a missing column. Fail on the column instead. Matched by
+  // prefix because "Weeks at Cap" carries its threshold in the heading; no other column name is
+  // a prefix of another.
+  const col = name => {
+    const i = hdr.findIndex(h => h.startsWith(name));
+    if (i < 0) throw new Error(`the export has no "${name}" column — got ${JSON.stringify(hdr)}`);
+    return i;
+  };
+  const iPeak = col('Peak Util %'), iSeason = col('Avg Util %');
+  const iBase = col('Baseline Value'), iWeeks = col('Peak Week List');
+  const iAtCap = col('Weeks at Cap');
+  return lines.filter(r => r[1] === 'demand_single').map(r => ({
+    label: r[0], peak: r[iPeak], season: r[iSeason],
+    baseline: r[iBase], atCap: r[iAtCap], weeks: r[iWeeks],
+  }));
 }
 
 (async () => {
   const { window } = await bootApp();
   const W = window;
 
-  // ── 1. The panel draws its rows from res.demand_saturation ────────────────
+  // ── 1. The export draws its rows from res.demand_saturation ───────────────
   {
     const rows = demandRowsOf(W, RES, PARAMS);
+    // EVERY crop-channel is exported, not just the three that fit the What-If pill row. A
+    // presentation limit on a pill row has no business bounding an export.
     eq('row count matches the saturation entries', rows.length, 5);
 
-    const find = lbl => rows.find(r => r.label.startsWith(lbl));
+    const find = lbl => rows.find(r => r.label === lbl);
 
     // THE case: two different, both-correct figures on one row. Collapsing them is the defect.
-    const garlic = find('Garlic → Farmers Market');
-    ok('Garlic → Farmers Market row exists', !!garlic);
+    const garlic = find('Garlic / Farmers Market');
+    ok('Garlic / Farmers Market row exists', !!garlic);
     if (garlic) {
-      eq('Garlic/FM season fill is the annual figure', garlic.season, '50%');
-      eq('Garlic/FM peak week is the binding weekly figure', garlic.peak, '100%');
-      ok(`Garlic/FM lists its at-cap weeks (got "${garlic.weeks}")`, /Wk 29, 30/.test(garlic.weeks));
-      ok('Garlic/FM chip says sold, not harvest', /sold \/ cap/.test(garlic.label));
+      eq('Garlic/FM season fill is the annual figure', garlic.season, '50');
+      eq('Garlic/FM peak is the binding weekly figure', garlic.peak, '100');
+      eq('Garlic/FM counts its at-cap weeks instead of "N/A"', garlic.atCap, '7');
+      // Bare week numbers, the same format the physical rows use — the column used to mix
+      // "29; 30" (physical) with "W29; W30" (demand).
+      ok(`Garlic/FM lists its at-cap weeks (got "${garlic.weeks}")`, /^29; 30; 31/.test(garlic.weeks));
+      ok('the baseline value names the weekly ceiling, not a yearly one',
+         /\/wk cap$/.test(garlic.baseline));
     }
 
     // The W6 contradiction: sells nothing, must read 0%. Old formula printed 16%.
-    const spWs = find('Spinach → Wholesale');
-    ok('Spinach → Wholesale row exists', !!spWs);
+    const spWs = find('Spinach / Wholesale');
+    ok('Spinach / Wholesale row exists', !!spWs);
     if (spWs) {
-      eq('Spinach/Wholesale sells nothing so reads 0%', spWs.season, '0%');
-      eq('Spinach/Wholesale has no at-cap weeks', spWs.weeks, '—');
+      eq('Spinach/Wholesale sells nothing so reads 0%', spWs.season, '0');
+      eq('Spinach/Wholesale has no at-cap weeks', spWs.atCap, '0');
     }
   }
 
-  // ── 2. An annual contract shows no weekly ceiling ─────────────────────────
+  // ── 2. An annual contract is reported per YEAR, with no weekly ceiling ─────
   {
     const rows = demandRowsOf(W, RES, PARAMS);
-    const basil = rows.find(r => r.label.startsWith('Basil → Wholesale'));
-    const toms  = rows.find(r => r.label.startsWith('Tomatoes → Wholesale'));
-    ok('Basil → Wholesale row exists', !!basil);
-    ok('Tomatoes → Wholesale row exists', !!toms);
-    // `annual/52` is a limit the solver stopped imposing at B4; the panel kept printing it.
-    if (basil) eq('Basil/Wholesale peak column is blank (annual contract)', basil.peak, '—');
-    if (toms)  eq('Tomatoes/Wholesale peak column is blank (annual contract)', toms.peak, '—');
-    if (basil) eq('Basil/Wholesale sells nothing so reads 0%', basil.season, '0%');
-    if (toms)  eq('Tomatoes/Wholesale fills 2% of its contract', toms.season, '2%');
-    if (toms)  ok('annual rows are labelled as a yearly contract',
-                  /sold \/ yr contract/.test(toms.label));
+    const basil = rows.find(r => r.label === 'Basil / Wholesale');
+    const toms  = rows.find(r => r.label === 'Tomatoes / Wholesale');
+    ok('Basil / Wholesale row exists', !!basil);
+    ok('Tomatoes / Wholesale row exists', !!toms);
+    // `annual/52` is a limit the solver stopped imposing at B4; the readers kept printing it.
+    // On this fixture it would read 2,885 lb/wk for a channel with no weekly ceiling at all.
+    if (basil) {
+      ok(`an annual contract says so rather than counting weeks (got "${basil.atCap}")`,
+         /annual contract/.test(basil.atCap));
+      ok(`and is priced per YEAR, never annual/52 (got "${basil.baseline}")`,
+         /\/yr contract$/.test(basil.baseline));
+      eq('Basil/Wholesale sells nothing so reads 0%', basil.season, '0');
+    }
+    if (toms) eq('Tomatoes/Wholesale fills 2% of its contract', toms.season, '2');
+
+    // THE PEAK COLUMN. No weekly ceiling means no peak-week utilisation to report, and the
+    // solver sets `binding` to the annual fill for these rows — so printing it here labels a
+    // yearly figure as a peak week AND repeats the Avg column verbatim. Tomatoes is the case
+    // that matters: it SELLS, so a number in this column would look like a real measurement
+    // rather than the zero a row selling nothing would show.
+    for (const r of [basil, toms].filter(Boolean)) {
+      ok(`${r.label} reports no peak week for an annual contract (got "${r.peak}")`,
+         /annual contract/.test(r.peak));
+      ok(`${r.label} does not print its annual fill under Peak Util % (Avg reads "${r.season}")`,
+         r.peak !== r.season);
+    }
+    // ...while a weekly cap still reports a real peak-week figure in that column.
+    const spFm = rows.find(r => r.label === 'Spinach / Farmers Market');
+    if (spFm) eq('a weekly cap still reports its peak week', spFm.peak, '100');
+
+    // The rows are RANKED most-binding-first, and that has to survive the text cell above. The
+    // export used to sort on the printed Peak cell; once one of them reads "N/A (annual
+    // contract)" that subtraction is NaN, which leaves the order arbitrary rather than failing —
+    // a grower opening the file sees an unranked list and nothing says so. The sort key now
+    // travels beside the cells instead of being read back out of them.
+    const keyOf = r => Number(/annual contract/.test(r.peak) ? r.season : r.peak);
+    const keys  = rows.map(keyOf);
+    ok(`every row has a numeric rank key (got ${JSON.stringify(keys)})`, keys.every(Number.isFinite));
+    ok(`rows are ordered most-binding-first (got ${JSON.stringify(keys)})`,
+       keys.every((k, i) => i === 0 || keys[i - 1] >= k));
+    // Not vacuous on this fixture: the keys genuinely differ (100, 100, 2, 0, 0), so a shuffled
+    // or NaN-collapsed order has something to violate.
+    ok('and the fixture actually exercises an ordering', new Set(keys).size > 1);
   }
 
   // ── 2b. A stale form cannot drop a row the solver reported ────────────────
   {
-    // params is consulted ONLY for row order. An older saved plan whose params predate one of
-    // the collections must still render every row, in some order — not none. Ordering by params
-    // and silently skipping the rest would hide real numbers behind a form field.
+    // The demand rows are built from `res` alone — params is never consulted for them. An older
+    // saved plan whose params predate one of the collections must still export every row, not
+    // none: reading the form here is what would hide real numbers behind a stale field.
     const noLists = { ...PARAMS, crops: undefined, channels: undefined };
-    const rows = demandRowsOf(W, RES, noLists);
-    eq('every row still renders without params.crops/channels', rows.length, 5);
+    eq('every row still exports without params.crops/channels',
+       demandRowsOf(W, RES, noLists).length, 5);
 
-    // A crop the form no longer lists is appended rather than dropped.
     const dropped = { ...PARAMS, crops: PARAMS.crops.filter(c => c.name !== 'Garlic') };
     const rows2 = demandRowsOf(W, RES, dropped);
-    eq('a crop missing from params is still shown', rows2.length, 5);
-    ok('and it sorts after the ones params does list',
-       rows2.findIndex(r => r.label.startsWith('Garlic')) > 0);
+    eq('a crop missing from params is still exported', rows2.length, 5);
+    ok('including the dropped one', rows2.some(r => r.label.startsWith('Garlic')));
   }
 
-  // ── 2c. Both surfaces label the at-cap threshold from the SOLVER ──────────
+  // ── 2c. The at-cap heading states the SOLVER's threshold ──────────────────
   {
-    // The panel header hardcoded 95 while the CSV read res.demand_at_cap_threshold, so moving
-    // the solver's threshold would have made the table lie while the export stayed honest.
-    // Driven at a non-default value, which is the only way to tell reading it from restating it.
-    const shifted = { ...RES, demand_at_cap_threshold: 0.80 };
-    const el = W.document.getElementById('constraint-summary-content');
-    W.renderConstraintSummary(shifted, PARAMS);
-    ok(`panel header states the solver's threshold, not a literal (got "${
-        (el.textContent.match(/Weeks ≥\d+%/) || ['none'])[0]}")`,
-       /Weeks ≥80%/.test(el.textContent));
-    // ...and the default still renders as before.
-    W.renderConstraintSummary(RES, PARAMS);
-    ok('and the default reads 95%', /Weeks ≥95%/.test(el.textContent));
+    // The counts under this heading are measured at res.demand_at_cap_threshold. The header used
+    // to say ">=100%" over numbers counted at >=95% — the same class of untrue label as the
+    // "(harvest / cap)" chip W6 removed. Driven at a NON-default value, which is the only way to
+    // tell reading the threshold from restating it.
+    const headingOf = res =>
+      (exportLines(W, res, PARAMS)[0] || []).find(h => h.startsWith('Weeks at Cap')) || 'none';
+    // Captured once: driving the export twice would let the failure message quote a different
+    // run from the one that failed.
+    const shifted = headingOf({ ...RES, demand_at_cap_threshold: 0.80 });
+    ok(`the heading states the solver's threshold, not a literal (got "${shifted}")`,
+       /demand ≥80%/.test(shifted));
+    ok('and the default reads 95%', /demand ≥95%/.test(headingOf(RES)));
   }
 
   // ── 3. THE RECONSTRUCTION GUARD ───────────────────────────────────────────
@@ -210,7 +283,7 @@ function demandRowsOf(window, res, params) {
       revenue: RES.revenue,
     };
     const rows = demandRowsOf(W, noSat, PARAMS);
-    ok(`panel draws no demand rows without the solver's series (got ${rows.length}: `
+    ok(`the export writes no demand rows without the solver's series (got ${rows.length}: `
        + `${rows.map(r => r.label).join(' | ')})`, rows.length === 0);
 
     // The ranking must not fall back either — it shares the basis, which is why W6 could not be
@@ -224,15 +297,15 @@ function demandRowsOf(window, res, params) {
     eq('_channelAnnualCap is gone', typeof W._channelAnnualCap, 'undefined');
   }
 
-  // ── 4. The panel and the What-If ranking cannot disagree ──────────────────
+  // ── 4. The export and the What-If ranking cannot disagree ─────────────────
   {
     const rows = demandRowsOf(W, RES, PARAMS);
-    const labels = new Set(rows.map(r => r.label.split(' (')[0].trim()));
+    const labels = new Set(rows.map(r => r.label));
     const cands = W.computeDemandCandidates(RES);
     ok('ranking produced candidates', cands.length > 0);
     for (const dc of cands) {
-      const lbl = `${dc.cropName} → ${dc.channelName}`;
-      ok(`ranked "${lbl}" is a row the panel draws`, labels.has(lbl));
+      const lbl = `${dc.cropName} / ${dc.channelName}`;
+      ok(`ranked "${lbl}" is a row the export writes`, labels.has(lbl));
       eq(`ranked "${lbl}" uses the enforced-row basis`,
          dc.sat, RES.demand_saturation[dc.channelName][dc.cropName].binding);
     }
@@ -321,78 +394,6 @@ function demandRowsOf(window, res, params) {
        /yearly contract/.test(annualTip));
     ok(`and the informational variant drops the deleted basis too — "${annualTip.slice(0, 90)}"`,
        !/harvest\s*÷|total harvest/i.test(annualTip));
-  }
-
-  // ── 5. The constraint CSV reports weeks for a WEEKLY cap ──────────────────
-  {
-    // It used to write "N/A (annual basis)" for every demand row, hiding the one column that
-    // explains a low season figure on a binding weekly cap.
-    let csv = null;
-    const origCreate = W.document.createElement.bind(W.document);
-    W.document.createElement = function (tag) {
-      const el = origCreate(tag);
-      if (tag === 'a') el.click = () => {
-        csv = decodeURIComponent((el.href || '').replace(/^data:text\/csv;charset=utf-8,/, ''));
-      };
-      return el;
-    };
-    W._lastRes = RES; W._lastParams = PARAMS;
-    W.exportConstraintCSV();
-    W.document.createElement = origCreate;
-
-    ok('constraint CSV captured', csv !== null);
-    // A real quoted-CSV split: the Baseline Value column holds things like "2,000 lb/wk cap",
-    // so splitting on every comma silently shifts every column after it — which is how the
-    // first version of this test "failed" against a correct exporter.
-    const splitRow = row => {
-      const out = []; let cur = '', q = false;
-      for (let i = 0; i < row.length; i++) {
-        const c = row[i];
-        if (c === '"') {
-          if (q && row[i + 1] === '"') { cur += '"'; i++; } else { q = !q; }
-        } else if (c === ',' && !q) { out.push(cur); cur = ''; }
-        else cur += c;
-      }
-      out.push(cur);
-      return out;
-    };
-    const lines = (csv || '').replace(/^﻿/, '').split('\n').map(splitRow);
-    const hdr = lines[0] || [];
-    const iSeason = hdr.indexOf('Avg Util %');
-    const iAtCap  = hdr.findIndex(h => h.startsWith('Weeks at Cap'));
-    const iPeakL  = hdr.indexOf('Peak Week List');
-    ok('CSV has the expected columns', iSeason > 0 && iAtCap > 0 && iPeakL > 0);
-    // The heading has to state the threshold the numbers under it were measured at. It said
-    // ">=100%" while demand rows were counted at >=95%, which is the same untrue label as the
-    // "(harvest / cap)" chip W6 removed.
-    ok(`the at-cap heading states the demand threshold (got "${hdr[iAtCap]}")`,
-       hdr[iAtCap].includes('95'));
-
-    // EVERY crop-channel is exported, not just the three that fit the What-If pill row.
-    const demandCsvRows = lines.filter(r => r[1] === 'demand_single');
-    eq('the CSV exports every crop-channel, not the top 3 pills', demandCsvRows.length, 5);
-
-    const garlicRow = lines.find(r => r[0] === 'Garlic / Farmers Market');
-    ok('Garlic / Farmers Market reached the CSV', !!garlicRow);
-    if (garlicRow) {
-      eq('CSV carries the season fill for a weekly cap', garlicRow[iSeason], '50');
-      eq('CSV counts the at-cap weeks instead of "N/A"', garlicRow[iAtCap], '7');
-      // Bare week numbers, same format weekEvidence uses for the physical rows — the column
-      // used to mix "29; 30" (physical) with "W29; W30" (demand).
-      ok(`CSV lists the at-cap weeks (got "${garlicRow[iPeakL]}")`,
-         /^29; 30; 31/.test(garlicRow[iPeakL]));
-      ok('the baseline value names the weekly ceiling, not a yearly one',
-         /\/wk cap$/.test(garlicRow[hdr.indexOf('Baseline Value')]));
-    }
-
-    const basilRow = lines.find(r => r[0] === 'Basil / Wholesale');
-    ok('Basil / Wholesale (annual contract) reached the CSV', !!basilRow);
-    if (basilRow) {
-      ok(`an annual contract still says so (got "${basilRow[iAtCap]}")`,
-         /annual contract/.test(basilRow[iAtCap]));
-      ok(`and is priced per YEAR, never annual/52 (got "${basilRow[hdr.indexOf('Baseline Value')]}")`,
-         /\/yr contract$/.test(basilRow[hdr.indexOf('Baseline Value')]));
-    }
   }
 
   if (failures) {

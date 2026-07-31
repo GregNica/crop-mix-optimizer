@@ -89,13 +89,29 @@ render reads it (`res.waterfall_png`, one consumer). Attack: payload flag `skip_
 What-If/sensitivity/MC paths; adapter skips chart generation when set. Measure MC wall-clock
 before/after and record it. DONE = MC output identical, measurably faster, main view unchanged.
 
-**0.4 · W7 — delete the hidden constraint panel.**
-`#constraint-summary-card` is `display:none` with no unhide path; ~200 lines render into it per
-solve. Grower direction (W13 ruling + interface memory): the assistant renders these on request.
-Attack: delete card + `renderConstraintSummary` + the T18a assertion; **keep** `demand_saturation`
-data flowing (pills + CSV read it). DONE = no dead render, pills/CSV unchanged, suite green.
+**0.4 · W7 — delete the hidden constraint panel. ✅ DONE 2026-07-31.**
+Card + `renderConstraintSummary` + T18a deleted; `demand_saturation` still flows to the pills and
+the CSV. Net −281 lines. Three things worth carrying forward:
+- **The guard, not the deletion, was the work.** The jsdom harness drove the panel in five
+  sections. Re-pointing them at the export needed a decision per assertion, not a move: two moved
+  (one strengthened — the at-cap threshold is now driven at a non-default 0.80), one was
+  **retired** (row order from params — the export ranks by binding, so there was nothing to point
+  it at), and one was **dropped by my first pass and caught by review**: "an annual contract has
+  no weekly ceiling", which the panel showed as a blank cell. The export was printing the annual
+  fill under "Peak Util %" — the `annual/52` fiction class, back for the third time. Fixed in the
+  export, pinned in §2, mutation-verified.
+- **A fabricated number went with it.** The panel's diversity rows read `ci.diversity_fraction`,
+  a key that exists nowhere, so every row fell through to `1/numCrops`. New row **S19**: C8 is the
+  one constraint no surface reports, and the exec-summary tooltip claimed otherwise (copy fixed).
+- Five mutations run, five dead. `/simplify` found the harness had grown its own `captureCSV` —
+  the duplication `jsdom_app.cjs` was created at W4 to end.
 
-**0.5 · Stale rows — close or rescope in `BACKLOG.md`:**
+**Consequence now live:** C2 (D4's committed-sales view) has no home to render into; it builds its
+own surface, or the assistant renders it. That was flagged in the W7 row and is recorded here so
+it is not rediscovered.
+
+**0.5 · Stale rows — close or rescope in `BACKLOG.md`. ✅ ALREADY DONE** by the audit session
+itself (`53a1c44`/`ca4f446`) — verified 2026-07-31, no work needed. All three below are applied:
 - **W13**: verified 2026-07-31 — post-W12 the margin kernel carries `labor_hours_per_acre`
   (physical) and no labour dollars, so the "hurdle uses a labour cost the objective no longer
   charges" defect is **gone**. Rescope the row to what remains: the *instrument* question

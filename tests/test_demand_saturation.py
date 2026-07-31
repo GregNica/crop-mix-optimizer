@@ -2,8 +2,9 @@
 DEMAND SATURATION — how full each crop-channel's market is (W6).
 
 WHAT THIS GUARDS. `demand_saturation` answers "how much of this buyer's appetite did the plan
-fill, and is their cap what stops me selling more". It feeds the constraint-summary panel, the
-What-If bottleneck ranking, and the constraint CSV.
+fill, and is their cap what stops me selling more". It feeds the What-If bottleneck ranking and
+the constraint CSV. (It fed a third reader, the constraint-summary panel, until W7 deleted it —
+the panel had been display:none with no unhide path since Phase 2.3.)
 
 WHY IT EXISTS. The client used to compute it as
 

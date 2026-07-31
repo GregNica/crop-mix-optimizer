@@ -1932,12 +1932,6 @@
         </div>
       </div>
 
-      <!-- Constraint Utilization Summary hidden (Phase 2.3) — data accessible via What-If CSV export -->
-      <div class="card" style="display:none;margin-top:1rem" id="constraint-summary-card">
-        <h2>Constraint Utilization Summary</h2>
-        <div id="constraint-summary-content"></div>
-      </div>
-
       <!-- Contribution Margin Table -->
       <div class="card" style="margin-top:1rem" id="contribution-margin-card">
         <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.6rem">
@@ -6933,7 +6927,7 @@ function renderExecutiveSummary(res, params) {
       ${lowCrop ? `<div class="exec-item"><div class="exec-label" title="Per crop AND channel, on allocated per-acre cost (excludes committed wages). A negative figure does NOT mean stop selling there: once the ground is planted for a better channel, surplus sold here still adds cash — it just cannot carry a full share of the growing cost.">Weakest Crop + Channel</div><div class="exec-value">${lowCrop}</div></div>` : ''}
       ${topContrib ? `<div class="exec-item"><div class="exec-label" title="Per CROP, summed across all its channels, from the solved plan. A crop can top this list while one of its channels is the weakest above.">Biggest Contributor (all channels)</div><div class="exec-value">${topContrib}</div></div>` : ''}
       <div class="exec-item"><div class="exec-label">Peak Labor Week</div><div class="exec-value">${peakLaborStr}</div></div>
-      <div class="exec-item"><div class="exec-label" title="Land rarely hits 100% in any single week — and that's expected, not idle ground. Succession planting staggers crops in and out, so the field is never fully occupied at one instant. When utilization is well below 100%, the binding limit is usually crop diversity/rotation caps, water, labor, or sales capacity — not land. The What-If panel below identifies which constraint is actually binding.">Peak Land-Use Week ⓘ</div><div class="exec-value">${peakLandStr}</div></div>
+      <div class="exec-item"><div class="exec-label" title="Land rarely hits 100% in any single week — and that's expected, not idle ground. Succession planting staggers crops in and out, so the field is never fully occupied at one instant. When utilization is well below 100%, the binding limit is usually water, labor, storage or sales capacity — not land. The What-If panel below identifies which of those is actually binding. Rotation/diversity caps can also bind, and are the one limit no surface reports yet.">Peak Land-Use Week ⓘ</div><div class="exec-value">${peakLandStr}</div></div>
       <div class="exec-item"><div class="exec-label">${peakBorrowLabel}</div><div class="exec-value">${peakBorrow}</div></div>
     </div>`;
 }
@@ -8139,9 +8133,6 @@ function renderResults(res, total_land) {
   // Profit back-check panel (state 1/2/3 depending on uploaded history)
   renderBackCheckPanel(res);
 
-  // Constraint summary (kept hidden but data populated for CSV export)
-  renderConstraintSummary(res, window._lastParams);
-
   // Contribution margins
   renderContributionMargins(window._lastParams);
 }
@@ -8411,9 +8402,12 @@ function exportPLCSV() {
 // Export Constraint Utilization CSV
 // ============================================================
 /**
- * Phase 3.4.2: constraint export with per-week evidence.
+ * Constraint export with per-week evidence. Since W7 deleted the constraint-summary panel this
+ * is the ONLY surface that lists every crop-channel; the What-If pills show the top 3.
  * Columns: Constraint, Type, Peak Util%, Avg Util%, Status, Baseline Value,
- *          Weeks at Cap (≥100%), Weeks Near Cap (≥90%), Peak Week(s), Near-Cap Week List
+ *          Weeks at Cap, Weeks Near Cap (≥90%), Peak Week List, Near-Cap Week List
+ * The at-cap heading states its own threshold, because physical rows count at ≥100% and demand
+ * rows at whatever the solver published (`demand_at_cap_threshold`) — it read "≥100%" over both.
  */
 function exportConstraintCSV() {
   const res    = window._lastRes;
@@ -8474,8 +8468,12 @@ function exportConstraintCSV() {
 
   // Demand rows come straight from res.demand_saturation rather than from the ranked pills, which
   // are sliced to the top 3 for the What-If UI (W6). A presentation limit on a pill row has no
-  // business bounding an export: the panel beside it lists every crop-channel, and a CSV that
-  // silently stopped at three read as though the farm only had three.
+  // business bounding an export: this file is the only place every crop-channel is listed, so a
+  // CSV that silently stopped at three read as though the farm only had three.
+  //
+  // Rows carry their sort key beside them rather than sorting on a printed cell: the Peak column
+  // is text for an annual contract (below), and `b[2] - a[2]` over that yields NaN, which sorts
+  // arbitrarily instead of failing.
   const demandRows = [];
   Object.entries(res.demand_saturation || {}).forEach(([chName, byCrop]) => {
     Object.entries(byCrop).forEach(([cropName, d]) => {
@@ -8485,8 +8483,15 @@ function exportConstraintCSV() {
       // no weekly row to report. Both kinds used to say "N/A (annual basis)", which hid the one
       // column that explains a low season figure on a fully binding weekly cap.
       const annual = d.basis === 'annual';
-      demandRows.push([
-        `${cropName} / ${chName}`, 'demand_single', bindPct,
+      demandRows.push({ bindPct, cells: [
+        `${cropName} / ${chName}`, 'demand_single',
+        // An annual contract has no weekly ceiling, so it has no peak-week utilisation. For those
+        // rows the solver sets `binding` to the ANNUAL fill (solver.py:1696) — the identical
+        // number already printed in the next column — so putting it under "Peak Util %" would
+        // label a yearly figure as a peak week. That is the `annual/52` fiction B4 removed from
+        // the solver and W6 removed from the readers; it reached this column because the deleted
+        // constraint panel was the only surface that said "—" here.
+        annual ? 'N/A (annual contract)' : bindPct,
         Math.round((d.fill || 0) * 100), statusOf(bindPct),
         annual ? `${fmtUnit(d.cap_lbs || 0, U_LB)}/yr contract`
                : `${fmtUnit(d.peak_week_cap_lbs || 0, U_LB)}/wk cap`,
@@ -8495,10 +8500,10 @@ function exportConstraintCSV() {
         annual ? 'N/A (annual contract)' : '—',
         annual ? '' : weekList(wks, 10),
         annual ? '' : '—',
-      ]);
+      ] });
     });
   });
-  demandRows.sort((a, b) => b[2] - a[2]);
+  demandRows.sort((a, b) => b.bindPct - a.bindPct);
 
   ranked.filter(c => c.type !== 'demand_single').forEach(c => {
     const peakPct = Math.round(c.peak * 100);
@@ -8507,237 +8512,13 @@ function exportConstraintCSV() {
                c.displayFn ? c.displayFn(params, 1.0) : '',
                ev.atCap, ev.near, ev.peakWks, ev.nearWks]);
   });
-  demandRows.forEach(r => rows.push(r));
+  demandRows.forEach(r => rows.push(r.cells));
 
   const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
   const a   = document.createElement('a');
   a.href     = 'data:text/csv;charset=utf-8,' + encodeURIComponent(String.fromCharCode(0xFEFF) + csv);
   a.download = 'constraint_utilization.csv';
   a.click();
-}
-
-// ============================================================
-// Constraint Summary
-// ============================================================
-function renderConstraintSummary(res, params) {
-  const el = document.getElementById('constraint-summary-content');
-  if (!el) return;
-  const sched       = res.succession_schedule || [];
-  const opWeeks     = 52;
-  const harvestCap  = parseFloat((params || {}).harvest_storage_cap) || 10000;
-  const totalLand   = parseFloat((params || {}).total_land) || 150;
-
-  const fmtN = n => (n == null || isNaN(n)) ? '—' : Number(n).toLocaleString();
-  const weeklyLand  = res.weekly_land_frac    || new Array(52).fill(0);
-  const weeklyHarv  = res.weekly_harvest_vol  || new Array(52).fill(0);
-  const weeklyWaterU = res.weekly_water_used  || new Array(52).fill(0);
-  const weeklyWaterS = res.weekly_water_supply|| new Array(52).fill(null);
-  const weeklyLaborU = res.weekly_labor_used  || new Array(52).fill(0);
-  const weeklyLaborS = res.weekly_labor_supply|| new Array(52).fill(null);
-  const weeklyCashFlow = res.weekly_cash_flow || [];
-  const openingCash    = res.opening_cash     || (params && params.opening_cash) || 0;
-  const creditLine     = res.credit_line      || (params && params.credit_line)  || 0;
-
-  // Only look at operating weeks
-  const slice = (arr) => arr.slice(0, opWeeks);
-
-  // The threshold the DEMAND rows were built at, taken from the solver rather than restated here.
-  // The header hardcoded 95 while exportConstraintCSV one screen away read the published value, so
-  // moving AT_CAP_FRACTION would have made this table lie while the CSV stayed honest.
-  const atCapPct = Math.round((res.demand_at_cap_threshold != null
-                               ? res.demand_at_cap_threshold : 0.95) * 100);
-
-  // The "Weeks at cap" cell, shared by the physical, budget and demand rows. It was written out
-  // three times verbatim in this one function, so a change to the cap or the "Wk " prefix would
-  // have reached two of the three.
-  const weeksCell = (wks) =>
-    `<td style="padding:4px 10px;font-size:0.72rem;color:#6b7280">${wks.length > 0
-      ? 'Wk ' + wks.slice(0, 8).join(', ') + (wks.length > 8 ? '…' : '') : '—'}</td>`;
-
-  function summaryRow(name, usedArr, supplyArr, unitLabel, tooltip) {
-    // supplyArr: array of per-week capacities (can be non-uniform)
-    const fracs = usedArr.map((v, i) => {
-      const cap = Array.isArray(supplyArr) ? supplyArr[i] : supplyArr;
-      return (cap > 0) ? Math.min(1.0, v / cap) : 0;
-    });
-    const active = fracs.filter(f => f > 0.001);
-    if (active.length === 0) return '';
-    const avg  = active.reduce((s,x) => s+x, 0) / active.length;
-    const peak = Math.max(...fracs);
-    const tightWks = fracs.map((f,i) => f >= 0.95 ? i+1 : null).filter(Boolean);
-    const pctClass  = avg  >= 0.90 ? 'color:#dc2626;font-weight:700' : avg  >= 0.70 ? 'color:#d97706;font-weight:600' : 'color:#059669';
-    const peakClass = peak >= 0.95 ? 'color:#dc2626;font-weight:700' : peak >= 0.80 ? 'color:#d97706' : 'color:#059669';
-    const tipAttr   = tooltip ? ` title="${tooltip}"` : '';
-    return `<tr>
-      <td style="padding:4px 10px;font-size:0.78rem;font-weight:600"${tipAttr}>${name} <span style="font-size:0.68rem;color:#9ca3af;font-weight:400">${unitLabel}</span></td>
-      <td style="padding:4px 10px;text-align:right;font-size:0.78rem;${pctClass}">${(avg*100).toFixed(0)}%</td>
-      <td style="padding:4px 10px;text-align:right;font-size:0.78rem;${peakClass}">${(peak*100).toFixed(0)}%</td>
-      ${weeksCell(tightWks)}
-    </tr>`;
-  }
-
-  // Land utilization (vs 100% = totalLand acres)
-  const landRow = summaryRow('Land Utilization', slice(weeklyLand), new Array(opWeeks).fill(1.0), '(fraction of farm)', 'Weekly fraction of total farm acreage in active crop phases. 100% = fully planted.');
-
-  // Harvest storage
-  const harvRow = summaryRow('Harvest / Cold Storage', slice(weeklyHarv), new Array(opWeeks).fill(harvestCap), `(cap ${fmtUnit(harvestCap, U_M3)})`, 'Peak produce HELD in storage each week vs your cold-storage capacity. Product carried past its harvest week counts for as long as it sits.');
-
-  // Water utilization (vs supply)
-  const waterRow = weeklyWaterS[0] != null
-    ? summaryRow('Irrigation Water', slice(weeklyWaterU), slice(weeklyWaterS), `(vs supply ${unitStr(U_L)}/wk)`, 'Weekly crop water demand vs total water supply (well + rainfall + catchment).')
-    : '';
-
-  // Labor utilization (vs available hours)
-  const laborRow = weeklyLaborS[0] != null
-    ? summaryRow('Field Labor', slice(weeklyLaborU), slice(weeklyLaborS), '(vs available hrs/wk)', 'Weekly field labor hours needed vs available hours from all staff positions.')
-    : '';
-
-  // Budget / Cash Position — how much of the cash headroom is consumed each week
-  let budgetRow = '';
-  if (weeklyCashFlow.length > 0 && (openingCash + creditLine) > 0) {
-    const cashCapacity = openingCash + creditLine; // total drawdown capacity
-    // cumulative_cash[w] = opening_cash + sum of weekly_cash_flow[0..w]
-    let cumCash = openingCash;
-    const cashUsedArr = [];  // fraction of capacity consumed = (capacity - cumCash) / capacity
-    for (let w = 0; w < Math.min(opWeeks, weeklyCashFlow.length); w++) {
-      cumCash += weeklyCashFlow[w];
-      const used = Math.max(0, cashCapacity - cumCash) / cashCapacity;
-      cashUsedArr.push(Math.min(1.0, used));
-    }
-    const cashSupply = new Array(cashUsedArr.length).fill(1.0);
-    // Build row manually (supply is already 1.0 fraction)
-    const active = cashUsedArr.filter(f => f > 0.001);
-    if (active.length > 0) {
-      const avg  = active.reduce((s,x) => s+x, 0) / active.length;
-      const peak = Math.max(...cashUsedArr);
-      const tightWks = cashUsedArr.map((f,i) => f >= 0.95 ? i+1 : null).filter(Boolean);
-      const pctClass  = avg  >= 0.90 ? 'color:#dc2626;font-weight:700' : avg  >= 0.70 ? 'color:#d97706;font-weight:600' : 'color:#059669';
-      const peakClass = peak >= 0.95 ? 'color:#dc2626;font-weight:700' : peak >= 0.80 ? 'color:#d97706' : 'color:#059669';
-      budgetRow = `<tr>
-        <td style="padding:4px 10px;font-size:0.78rem;font-weight:600" title="How much of your total cash headroom (opening cash + credit line = $${fmtN(cashCapacity)}) is consumed. At 100% you have hit the credit limit.">Cash / Budget <span style="font-size:0.68rem;color:#9ca3af;font-weight:400">(of $${fmtN(cashCapacity)} headroom)</span></td>
-        <td style="padding:4px 10px;text-align:right;font-size:0.78rem;${pctClass}">${(avg*100).toFixed(0)}%</td>
-        <td style="padding:4px 10px;text-align:right;font-size:0.78rem;${peakClass}">${(peak*100).toFixed(0)}%</td>
-        ${weeksCell(tightWks)}
-      </tr>`;
-    }
-  }
-
-  // Crop Diversity — per-crop acre-week utilization vs diversity limit
-  const cropInfo = {};
-  (params && params.crops || []).forEach(c => { cropInfo[c.name] = c; });
-
-  const diversityRows = [];
-  const cropAcreWeeks = {};
-  sched.forEach(s => {
-    const key = s.crop || s.name || 'Unknown';
-    if (!cropAcreWeeks[key]) cropAcreWeeks[key] = 0;
-    cropAcreWeeks[key] += s.acres * s.weeks.length;
-  });
-
-  const numCrops = Object.keys(cropAcreWeeks).length || 1;
-  let maxDivFrac = 0;
-  const divRowsArr = [];
-  Object.entries(cropAcreWeeks).forEach(([cropName, acreWeeks]) => {
-    const ci = cropInfo[cropName];
-    const divFrac = ci ? (parseFloat(ci.diversity_fraction) || (1 / numCrops)) : (1 / numCrops);
-    const cap = divFrac * totalLand * opWeeks;
-    const frac = cap > 0 ? Math.min(1.0, acreWeeks / cap) : 0;
-    if (frac > maxDivFrac) maxDivFrac = frac;
-    const pctClass = frac >= 0.95 ? 'color:#dc2626;font-weight:700' : frac >= 0.80 ? 'color:#d97706' : 'color:#059669';
-    divRowsArr.push(`<tr>
-      <td style="padding:3px 10px 3px 20px;font-size:0.75rem;color:#374151" title="Annual acre-weeks used vs crop rotation limit for ${cropName}">&nbsp;&nbsp;${cropName} <span style="font-size:0.68rem;color:#9ca3af">(${(divFrac*100).toFixed(0)}% farm limit)</span></td>
-      <td style="padding:3px 10px;text-align:right;font-size:0.75rem;${pctClass}">${(frac*100).toFixed(0)}%</td>
-      <td style="padding:3px 10px;text-align:right;font-size:0.75rem;color:#9ca3af">—</td>
-      <td style="padding:3px 10px;font-size:0.72rem;color:#9ca3af">annual rotation</td>
-    </tr>`);
-  });
-
-  // Demand satisfaction per crop per channel — READ from the solver (W6), never recomputed.
-  //
-  // This used to be `gross annual harvest / this channel's cap`, and the numerator was the
-  // crop's whole harvest across EVERY channel. So a crop selling nothing at all into Wholesale
-  // still printed a Wholesale saturation, beside a channel pie built from `channel_sales`
-  // showing it selling nothing there — on the shipped farm, Basil/Wholesale read 29% against
-  // zero pounds sold. It also rebuilt the weekly caps from the form and ASSIGNED overlapping
-  // demand ranges where the solver accumulates them, which is the client half of S7.
-  //
-  // Both figures come from `res.demand_saturation` now, each measured against the row the
-  // solver enforces. The two columns are NOT the same statement and neither is redundant:
-  // Garlic/Farmers Market fills 50% of the year's cap while sitting at its weekly ceiling in
-  // all seven weeks it can supply (the garlic is not lifted until W29 and the window opens at
-  // W22). See the note in solver.py — reporting only the annual figure was the trap here.
-  //
-  // Row ORDER follows params so the panel reads in the same order as the rest of the app; every
-  // number comes from res. Ordering is the ONLY thing params is consulted for here, so it falls
-  // back to the series' own key order when params does not carry the lists — a saved plan that
-  // predates one of them must render the rows in some order, not none.
-  const demandRows = [];
-  const satByChannel = res.demand_saturation || {};
-  // Present in the params order first, then anything params does not mention, so nothing the
-  // solver reported can be dropped by a stale form.
-  const inParamsOrder = (preferred, present) =>
-    preferred.filter(n => present.includes(n)).concat(present.filter(n => !preferred.includes(n)));
-  const channelNames = Object.keys(satByChannel);
-  const cropNames = [...new Set(channelNames.flatMap(ch => Object.keys(satByChannel[ch])))];
-  const orderedCrops = inParamsOrder(((params && params.crops) || []).map(c => c.name), cropNames);
-  const orderedChannels = inParamsOrder(((params && params.channels) || []).map(c => c.name), channelNames);
-
-  orderedCrops.forEach(cropName => {
-    orderedChannels.forEach(chName => {
-      const d = (satByChannel[chName] || {})[cropName];
-      if (!d) return;                       // unplanted crop, or no cap on this crop-channel
-      const isAnnual = d.basis === 'annual';
-      const fill     = d.fill || 0;
-      const peakWk   = d.peak_week_frac;
-      const tightWks = d.weeks_at_cap || [];
-
-      const fillClass = fill >= 0.9 ? 'color:#dc2626;font-weight:700' : fill >= 0.6 ? 'color:#d97706' : 'color:#059669';
-      const peakClass = peakWk == null ? 'color:#9ca3af'
-                      : peakWk >= 0.95 ? 'color:#dc2626;font-weight:700'
-                      : peakWk >= 0.80 ? 'color:#d97706' : 'color:#059669';
-      const fillTitle = isAnnual
-        ? `sold ÷ annual contract: ${fmtUnit(d.sold_lbs, U_LB)} ÷ ${fmtUnit(d.cap_lbs, U_LB)} = ${(fill*100).toFixed(0)}%. This channel is one yearly total, so it has no weekly ceiling.`
-        : `sold ÷ this channel's cap for the year: ${fmtUnit(d.sold_lbs, U_LB)} ÷ ${fmtUnit(d.cap_lbs, U_LB)} = ${(fill*100).toFixed(0)}%. Weeks the crop cannot supply yet still count in the cap, so read this beside the peak week.`
-        ;
-      const peakTitle = isAnnual
-        ? 'No weekly ceiling on an annual contract — the solver enforces the yearly total only.'
-        : 'Pounds sold ÷ that week’s cap, in the tightest week. 100% means the cap is what stops you selling more.';
-      const chip = isAnnual ? '(sold / yr contract)' : '(sold / cap)';
-      demandRows.push(`<tr>
-        <td style="padding:4px 10px;font-size:0.78rem">${escHtml(cropName)} → ${escHtml(chName)} <span style="font-size:0.68rem;color:#9ca3af" title="${fillTitle}">${chip}</span></td>
-        <td style="padding:4px 10px;text-align:right;font-size:0.78rem;${fillClass}" title="${fillTitle}">${(fill*100).toFixed(0)}%</td>
-        <td style="padding:4px 10px;text-align:right;font-size:0.78rem;${peakClass}" title="${peakTitle}">${peakWk == null ? '—' : (peakWk*100).toFixed(0) + '%'}</td>
-        ${weeksCell(tightWks)}
-      </tr>`);
-    });
-  });
-
-  const sectionHdr = (label) =>
-    `<tr><td colspan="4" style="padding:6px 10px 2px;font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:#6b7280;border-top:1px solid #e5e7eb">${label}</td></tr>`;
-
-  const divSection = divRowsArr.length > 0 ? sectionHdr('Crop Rotation / Diversity') + divRowsArr.join('') : '';
-
-  el.innerHTML = `<table style="border-collapse:collapse;width:100%;font-size:0.79rem">
-    <thead><tr>
-      <th style="text-align:left;padding:4px 10px;border-bottom:2px solid #d1d5db;color:#374151">Constraint</th>
-      <th style="text-align:right;padding:4px 10px;border-bottom:2px solid #d1d5db;color:#374151" title="Physical constraints: avg weekly utilization ÷ capacity. Demand rows: pounds SOLD into that channel ÷ its cap for the whole year.">Avg / Season ⓘ</th>
-      <th style="text-align:right;padding:4px 10px;border-bottom:2px solid #d1d5db;color:#374151" title="Physical: peak weekly utilization. Demand: pounds sold ÷ that week's cap, in the tightest week — blank for annual contracts, which have no weekly ceiling.">Peak Wk ⓘ</th>
-      <th style="text-align:left;padding:4px 10px;border-bottom:2px solid #d1d5db;color:#374151" title="Physical rows: weeks at or above 95% of capacity. Demand rows: weeks the channel sold at or above ${atCapPct}% of that week's cap, the threshold the solver reports.">Weeks ≥${atCapPct}%</th>
-    </tr></thead>
-    <tbody>
-      ${sectionHdr('Physical Resources')}
-      ${landRow}${harvRow}${waterRow}${laborRow}${budgetRow}
-      ${divSection}
-      ${demandRows.length ? sectionHdr('Market Demand Satisfaction (% of demand cap filled)') : ''}
-      ${demandRows.join('')}
-    </tbody>
-  </table>
-  <p style="font-size:0.7rem;color:#9ca3af;margin-top:0.5rem">
-    Physical resources &amp; budget: <span style="color:#dc2626">Red ≥90%</span> = constraint is binding (may be limiting land use).
-    Demand rows are pounds <strong>sold</strong> — what the plan actually commits to each buyer — not pounds harvested.
-    A low season figure beside a <span style="color:#dc2626">red peak week</span> means the cap is binding whenever you
-    can supply it, and the season figure is low only because the crop is not ready for part of the buyer's window.
-  </p>`;
 }
 
 // ============================================================
@@ -9824,9 +9605,9 @@ function rankBottlenecks(res, params) {
       // weekly figure from the form, and all three of its branches were the deleted cap
       // builder's failure modes surviving one function call from the fix:
       //   * `annual_demand_lbs / 52` is the exact `annual/52` fiction B4 removed from the solver
-      //     and this commit deletes from the panel — so an annual contract, whose own row says
-      //     it has NO weekly ceiling, was labelled "9,615 lb/wk cap" (500,000 ÷ 52 on the demo
-      //     farm's Kale/Wholesale).
+      //     and W6 removed from the readers — so an annual contract, whose own row says it has
+      //     NO weekly ceiling, was labelled "9,615 lb/wk cap" (500,000 ÷ 52 on the demo farm's
+      //     Kale/Wholesale). It came back in the CSV's Peak column and was caught again at W7.
       //   * `demand_ranges[0]` took the FIRST range only, so a channel wanting 2,000 lb/wk for
       //     half the year and 3,000 for the rest labelled as 2,000 — and overlapping ranges
       //     were not summed, the same client-side assign-instead-of-accumulate as S7.
@@ -10838,15 +10619,9 @@ window._testWhatIf = function() {
     && c.cropName === 'Spinach' && c.channelName === 'Wholesale');
   console.assert(noSales17.length === 0, 'T17f: a channel with zero sales must not be offered as a lever');
 
-  // ── T18: constraint-summary-card hidden; Export CSV button in What-If header ──
-  const cSummaryCard = document.getElementById('constraint-summary-card');
-  if (cSummaryCard) {
-    const hidden = cSummaryCard.style.display === 'none' || getComputedStyle(cSummaryCard).display === 'none';
-    console.assert(hidden, 'T18a: constraint-summary-card should be hidden');
-  } else {
-    console.warn('T18a: constraint-summary-card not found in DOM');
-  }
-  // Export CSV button should be in bottleneck-card header area
+  // ── T18: Export CSV button in What-If header ──
+  // T18a asserted the constraint-summary card stayed hidden; the card is deleted (W7), so the
+  // export below is now the only surface for these numbers.
   const bottleneckCard18 = document.getElementById('bottleneck-card');
   if (bottleneckCard18) {
     const hasExportBtn = bottleneckCard18.querySelector('[onclick="exportConstraintCSV()"]') !== null;
@@ -11003,7 +10778,7 @@ window._testWhatIf = function() {
   console.assert(run1Labor === 15,  `T26e: run1 labor=15 (unchanged), got ${run1Labor}`);
   console.log('T26: baseline immutability across sequential runs verified ✓');
 
-  // ── T27: the What-If ranking and the constraint panel cannot disagree (W6) ──
+  // ── T27: neither reader of demand_saturation can invent a number (W6) ──
   // This used to assert that _channelAnnualCap matched an inline copy of the same formula in
   // renderConstraintSummary — parity between two client-side reimplementations. Both are gone:
   // there is one source, res.demand_saturation, so parity is now structural. What is worth
@@ -11022,17 +10797,13 @@ window._testWhatIf = function() {
     `T27e: computeDemandCandidates signature is (res), got arity ${computeDemandCandidates.length}`);
   console.assert(computeSingleDemandPeak.length === 3,
     `T27f: computeSingleDemandPeak signature is (res, crop, channel), got arity ${computeSingleDemandPeak.length}`);
-  // The panel reads the same object, so a row it draws must be a row the ranking can see.
-  const panelPairs27 = new Set();
-  Object.entries(mockResD.demand_saturation).forEach(([ch, byCrop]) =>
-    Object.keys(byCrop).forEach(cp => panelPairs27.add(`${cp}/${ch}`)));
-  computeDemandCandidates(mockResD).forEach(dc => {
-    console.assert(panelPairs27.has(`${dc.cropName}/${dc.channelName}`),
-      `T27d: ranking offered ${dc.cropName}/${dc.channelName}, which the panel does not show`);
-  });
+  // T27d asserted that every ranked pair was a pair the constraint panel drew. With the panel
+  // deleted (W7) it was reduced to reading `demand_saturation` back out of the same object the
+  // ranking reads, which T27a/T27e already pin. The live version of that cross-reader check is
+  // demand_saturation_client.cjs §4, against the CSV export — a surface that still exists.
   console.log('T27: one source for demand saturation — no client-side cap builder, no fallback ✓');
 
-  // ── T28: demand entries carry the panel's own numbers, not a re-derivation ──
+  // ── T28: demand entries carry the solver's own numbers, not a re-derivation ──
   const allC28 = rankBottlenecks(mockResD, mockParamsD);
   const demC28 = allC28.filter(c => c.type === 'demand_single');
   console.assert(demC28.length >= 1, `T28a: at least 1 demand_single in ranked, got ${demC28.length}`);
