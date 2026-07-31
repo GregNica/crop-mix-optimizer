@@ -413,6 +413,36 @@ if (!csvUS || !csvME) {
     fail('crop CSV: a STATED planting_weeks of 0 imported without an error — silently defaulting '
        + 'it is the coercion class, and forwarding it is garbage; it must be refused loudly');
   }
+  // A stated FRACTION in a whole-number column is refused too — it used to pass the ≥1 gate
+  // and then be silently truncated by intOr ("1.5 planting weeks" became 1).
+  const statedFraction = withSystem('us', () =>
+    T.parseCropCSV(mkCsv(['Kale,Direct,2.00,weekly_flat,500,8000,2,1.5'])));
+  if (!statedFraction.errors.some(e => e.field === 'planting_weeks' && /whole number/.test(e.msg))) {
+    fail('crop CSV: a stated planting_weeks of 1.5 was not refused — intOr silently truncates it to 1');
+  }
+  // First-row-wins retry: when a crop's FIRST row fails the crop-level check, the error must
+  // name that row, the import must abort (all-or-nothing), and the next row must have been
+  // validated as the would-be source (a second bad row must produce its own error).
+  const retry = withSystem('us', () => T.parseCropCSV(mkCsv([
+    'Kale,Direct,2.00,weekly_flat,500,8000,2,0',
+    'Kale,Wholesale,1.00,weekly_flat,900,8000,2,3',
+  ])));
+  if (retry.crops.length !== 0) fail('crop CSV: a file with errors must import nothing (all-or-nothing)');
+  const rowsFlagged = retry.errors.filter(e => e.field === 'planting_weeks').map(e => e.row);
+  // Header is row 1, so the bad first data row is row 2; the valid row 3 is promoted to the
+  // first-row-wins source and passes validation without an error of its own.
+  if (JSON.stringify(rowsFlagged) !== JSON.stringify([2])) {
+    fail(`crop CSV: expected exactly row 2 flagged (row 3 is valid and becomes the retried `
+       + `first-row source), got rows ${JSON.stringify(rowsFlagged)}`);
+  }
+  const retryBothBad = withSystem('us', () => T.parseCropCSV(mkCsv([
+    'Kale,Direct,2.00,weekly_flat,500,8000,2,0',
+    'Kale,Wholesale,1.00,weekly_flat,900,8000,2,0',
+  ])));
+  if (retryBothBad.errors.filter(e => e.field === 'planting_weeks').length !== 2) {
+    fail('crop CSV: after a bad first row, the promoted second row must be validated too — '
+       + 'a bad row 2 sailed through as the unvalidated first-row-wins source');
+  }
 
   // Cross-system: the units row is what decides, so a CSV downloaded in one system and
   // uploaded in the other must still land on the same canonical crop. Without this, a

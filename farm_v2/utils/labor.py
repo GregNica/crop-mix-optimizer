@@ -18,9 +18,13 @@ Derived arrays (all 52-element, 0-indexed for weeks 1..52):
   committed_weekly_wages[w]  $/week owed to EVERY listed worker (W12) — the wage bill, charged
                               on full hours regardless of how much the crops use
   labor_capacity[w]          total available hours in week w (salaried + hourly)
-  overtime_hour_wage[w]      $/hour base for your own crew staying late
-  hire_hour_wage[w]          $/hour base for a NEW hire (W15) — regular hours are already
-                              paid by the committed wage bill, so both are charged in FULL
+  overtime_hour_wage[w]      $/hour for your own crew staying late (blend of PAID roles,
+                              which already carries each role's benefits_pct)
+  hire_hour_wage[w]          $/hour for a NEW hire (W15), LOAD-INCLUSIVE: an explicit wage
+                              has hired_wage_load_pct applied here; an inferred one carries
+                              each role's benefits_pct. Only the hire markup is applied
+                              downstream. Regular hours are already paid by the committed
+                              wage bill, so bought hours are charged in FULL
   piece_rate_per_lb[c][ch]   $/lb harvest cost per crop/channel — sourced from crop defs,
                               not computed here, but the module documents the pattern.
 
@@ -66,6 +70,15 @@ def compute_labor_arrays(
         Each dict with keys: position, count, type ("FT"|"PT"),
         start_week, end_week, wage ($/hour), hours_per_week, benefits_pct,
         and optionally: piece_rate_per_lb (float).
+
+    hired_wage_per_hr : float | None
+        BASE $/hr for a hired hand on the local market. None (blank) = infer an
+        hours-weighted mean over the farm's PAID hourly roles. 0 or negative is refused.
+
+    hired_wage_load_pct : float
+        Employer payroll load applied to an EXPLICIT hired wage, here, next to where every
+        other wage gets its load via benefits_pct. The inferred branch needs none — each
+        role's wage already carries its own load.
         ⚠️ `min_guaranteed_hours` is ACCEPTED AND IGNORED (W11/W14). It can never bind: committed
         wages already pay count x hours_per_week, which is >= count x min(min_guaranteed, hours)
         for every input. Wiring it back would put a floor underneath a floor and double-charge.
@@ -79,10 +92,14 @@ def compute_labor_arrays(
         "labor_capacity"            np.ndarray shape (n_weeks,) — total hrs/week (1-indexed)
         "hourly_labor_rate"         np.ndarray shape (n_weeks,) — blended $/hr
         "committed_weekly_wages"    np.ndarray shape (n_weeks,) — $/week owed to ALL listed staff
-        "overtime_hour_wage"        np.ndarray shape (n_weeks,) — $/hr base for YOUR crew
-                                    staying late; never zero while anyone is paid
-        "hire_hour_wage"            np.ndarray shape (n_weeks,) — $/hr base for a NEW hire,
-                                    from `hired_wage_per_hr`, else hours-weighted over paid roles
+        "overtime_hour_wage"        np.ndarray shape (n_weeks,) — $/hr for YOUR crew staying
+                                    late (paid-roles blend, load-inclusive); never zero
+                                    while anyone is paid
+        "hire_hour_wage"            np.ndarray shape (n_weeks,) — LOAD-INCLUSIVE $/hr for a
+                                    NEW hire: `hired_wage_per_hr` × (1+hired_wage_load_pct),
+                                    else hours-weighted over paid roles (already loaded).
+                                    Only the hire markup is applied downstream — treating
+                                    this as a "base" rate double-applies the payroll load
         "piece_rate_workers"        list[dict] — seasonal workers with piece_rate_per_lb set
     """
     labor_capacity        = np.zeros(n_weeks, dtype=float)
@@ -225,8 +242,10 @@ def compute_labor_arrays(
     # price, and it is shared by overtime (existing crew, where the blend is genuinely right) and
     # hire (a new person from the local market, where it is only a proxy). On a farm whose only
     # worker is a $95k manager it prices a hired field hand at $40.60/hr. The error direction is
-    # SAFE — it over-prices bought labour, and the defect it replaced was free labour — but the
-    # honest fix is an explicit "what does a hand cost around here" input. See backlog W15.
+    # SAFE — it over-prices bought labour, and the defect it replaced was free labour. The
+    # explicit "what does a hand cost around here" input exists now (`hired_wage_per_hr`,
+    # W15 closed); this fallback covers only the blank-box case, and which statistic should
+    # stand here is the OPEN decision. See backlog W17.
     average_paid_wage = (float(committed_weekly_wages.sum()) / total_paid_hours
                          if total_paid_hours > 0 else 0.0)
 

@@ -99,6 +99,47 @@ bootApp().then(({ window: w }) => {
     }
   }
 
+  // 6 — readHiredWageBox is THE definition of blank-vs-typed for the hired wage (a typed $0
+  // was silently reinterpreted as blank once; that bug shipped). Pin the classification.
+  const hwBox = doc.getElementById('hired_wage_per_hr');
+  const hwSaved = hwBox.value;
+  hwBox.value = '';
+  let hw = w.readHiredWageBox();
+  if (!hw.blank) fail('readHiredWageBox: an empty box must classify as blank (= infer)');
+  hwBox.value = '19';
+  hw = w.readHiredWageBox();
+  if (hw.blank || hw.wage !== 19) fail(`readHiredWageBox: typed 19 gave blank=${hw.blank} wage=${hw.wage}`);
+  hwBox.value = '0';
+  hw = w.readHiredWageBox();
+  if (hw.blank || hw.wage !== 0) {
+    fail(`readHiredWageBox: typed 0 gave blank=${hw.blank} wage=${hw.wage} — a typed 0 is a `
+       + `refusable VALUE, not blank; classifying it blank is the silent-reinterpretation bug`);
+  }
+  hwBox.value = hwSaved;
+
+  // 7 — the printed bought-hour price must weight hours against the RIGHT weeks. The hour
+  // series is 1-indexed (53 entries) and the rate arrays 0-indexed (52) — an off-by-one
+  // would print a wrong dollar figure to the grower with everything green. Synthetic plan:
+  // 10 hrs at $20 (week 1) + 30 hrs at $40 (week 52) → weighted $35.00; zero OT hours →
+  // fallback to the annual mean of the OT rate array ($30.00).
+  const hireHours = new Array(53).fill(0); hireHours[1] = 10; hireHours[52] = 30;
+  const hireRates = new Array(52).fill(0); hireRates[0] = 20; hireRates[51] = 40;
+  const sr = {
+    profit: 120000,
+    hired_hours_weekly: hireHours, overtime_hours_weekly: new Array(53).fill(0),
+    hire_rate_full_weekly: hireRates, overtime_rate_full_weekly: new Array(52).fill(30),
+  };
+  const planHtml = w.renderLaborPlan(sr, { profit: 100000 },
+    { hire_wage_markup: 0, overtime_rate_multiplier: 1.5, payroll_load_pct: 0.25, hired_wage_per_hr: null });
+  if (!planHtml.includes('$35.00')) {
+    fail(`renderLaborPlan priced 10h@$20 + 30h@$40 as something other than $35.00 — the `
+       + `1-indexed hours / 0-indexed rates offset is wrong (got: `
+       + `${(planHtml.match(/~\$[\d.]+\/hr/g) || []).join(', ')})`);
+  }
+  if (!planHtml.includes('$30.00')) {
+    fail('renderLaborPlan: with zero OT hours the OT price must fall back to the annual mean ($30.00)');
+  }
+
   if (failures) { console.error(`labor_ui_client: ${failures} FAILURE(S)`); process.exit(1); }
   console.log('labor UI (client): all checks passed (count visible on every row type, blank wage refused, typed 0 legal)');
   process.exit(0);

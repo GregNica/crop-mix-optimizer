@@ -82,6 +82,15 @@ def test_fractional_headcount_survives_the_adapter(golden_out):
     one layer below the fix. A fractional count must change the wage bill it produces."""
     p = _payload()
     emp = next(e for e in p["employees"] if e["type"] != "salary")
+    # Precondition, so roster drift cannot make this guard silently inert: the int()
+    # truncation is only distinguishable from correct behavior when the truncated scaled
+    # count equals the ORIGINAL count (int(2×1.2)=2 → wages flat under the mutation). If a
+    # golden re-capture ever changes this row's count so that stops holding, fail loudly
+    # here instead of letting the mutation slip through a still-green assertion.
+    assert int(emp["count"] * 1.2) == int(emp["count"]), (
+        f"golden roster drifted (first non-salary count={emp['count']}): pick a row where "
+        f"int(count*1.2) == count, or the truncation mutation becomes undetectable"
+    )
     emp["count"] = emp["count"] * 1.2
     out = json.loads(_run_from_js()(json.dumps(p)))
     assert out.get("status") == "optimal", out.get("error", "")[:300]
@@ -91,19 +100,54 @@ def test_fractional_headcount_survives_the_adapter(golden_out):
     )
 
 
-@pytest.mark.parametrize("key", ["credit_line", "harvest_storage_cap", "cost_fert_per_lb",
+@pytest.mark.parametrize("key", ["credit_line", "cost_fert_per_lb",
                                  "overhead_pct_of_revenue"])
 def test_a_blanked_numeric_field_is_a_status_not_a_traceback(key):
     """parseFloat('') is NaN, JSON.stringify(NaN) is 'null', so a blanked box arrives as a
     PRESENT None — p.get's default never applies — and float(None) used to hand the grower a
-    raw TypeError traceback instead of a plan. The adapter now treats present-None as absent
-    (the field's documented default). Whatever the solve concludes, it must be a status dict,
-    never the blanket-except 'error' path."""
+    raw TypeError traceback instead of a plan. For genuinely optional/rate fields the adapter
+    treats present-None as absent (the documented default). Whatever the solve concludes, it
+    must be a status dict, never the blanket-except 'error' path."""
     p = _payload()
     p[key] = None
     out = json.loads(_run_from_js()(json.dumps(p)))
     assert out.get("status") != "error", (
         f"a null {key} still crashes the adapter: {out.get('error', '')[:200]}"
+    )
+
+
+@pytest.mark.parametrize("key", ["harvest_storage_cap", "water_storage_capacity"])
+def test_a_blanked_capacity_field_is_refused_not_invented(key):
+    """The first version of the present-None fix defaulted these too — and a blanked storage
+    box then solved 'optimal' while charging depreciation on the 1e9 no-constraint default
+    (profit −$25.9B rendered as a plan), and a blanked tank box invented $5.8k/yr. Capacity
+    and price boxes that are always sent must be REFUSED when blanked, loudly, same contract
+    as well_weekly_cap_L ('the value would be invented'). Absent stays the documented default
+    for toggle-off/server callers — only present-None is refused."""
+    p = _payload()
+    p[key] = None
+    out = json.loads(_run_from_js()(json.dumps(p)))
+    assert out.get("status") == "error" and key in out.get("error", ""), (
+        f"a blanked {key} was not refused — the solve ran on an invented value "
+        f"(status={out.get('status')}, profit={out.get('profit')})"
+    )
+
+
+def test_the_payroll_load_reaches_a_hired_hour_through_the_adapter():
+    """Kills deleting the hired_wage_load_pct kwarg from the adapter's solve call.
+
+    The /simplify pass moved the load multiplication from the adapter into labor.py; the only
+    tests asserting the load called compute_labor_arrays directly, so removing the kwarg
+    would silently resurrect the 25% hire under-pricing for every browser caller with the
+    whole suite green. This runs the REAL adapter with flex on and pins the published rate."""
+    p = _payload(labor_flex_enabled=True, hire_enabled=True, max_hire_hrs_per_week=400.0,
+                 hire_wage_markup=0.0, hired_wage_per_hr=19.0, payroll_load_pct=0.25)
+    out = json.loads(_run_from_js()(json.dumps(p)))
+    assert out.get("status") == "optimal", out.get("error", "")[:300]
+    assert out["hire_rate_full_weekly"][0] == pytest.approx(19.0 * 1.25), (
+        f"typed $19.00 at 25% payroll load published as "
+        f"${out['hire_rate_full_weekly'][0]}/hr — the load fell out of the adapter→labor.py "
+        f"hand-off (19.00 = zero-applied, 29.6875 = double-applied)"
     )
 
 
