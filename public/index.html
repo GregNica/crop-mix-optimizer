@@ -1570,7 +1570,7 @@
   <div id="section-labor-channels" class="section-panel">
     <div class="section-guidance">
       <span class="sg-req">Required:</span> at least one labor position and at least one sales channel — both are pre-loaded. &nbsp;
-      <span class="sg-opt">Labor types:</span> <strong>Salary</strong> = fixed annual cost, not tied to crop phases. <strong>Hourly (Seasonal)</strong> = paid for their stated hours across their stated weeks, whether or not the crops use them; the hourly rate you enter here applies to workers designated as seasonal in this workflow. <strong>Seasonal</strong> = crew billed only between Start–End week at that rate. &nbsp;
+      <span class="sg-opt">Labor types:</span> <strong>Salary</strong> = annual wage, year-round. <strong>Hourly</strong> = $/hr for their stated weekly hours, all 52 weeks. <strong>Seasonal</strong> = $/hr for their stated hours between Start–End week only. Every listed worker is a committed cost — paid whether or not the crops use their hours. &nbsp;
       <span class="sg-note">Channels defined here automatically appear in every crop form. Add or remove channels here — not per crop.</span>
     </div>
     <div id="section-val-labor-channels" class="section-val-banner" role="alert" aria-live="polite"></div>
@@ -1584,7 +1584,7 @@
     <!-- 5. Labor -->
     <div class="card span-3">
       <h2>Labor <span class="tip" data-tip="Defaults are sized for an ~80-acre diversified-veg operation (1 manager + 2 equipment operators + 12 seasonal + 8 harvest crew).&#10;&#10;Scale up for larger farms (add an operations manager and more crew); scale down for smaller.&#10;&#10;Labor is the largest committed cost — over-staffing a small farm will show a loss even with good crops.">?</span></h2>
-      <p style="font-size:0.73rem;color:#6b7280;margin:0 0 0.6rem"><strong>Salary</strong> = year-round fixed cost. <strong>Hourly (Seasonal)</strong> = paid for their stated hours across their stated weeks, whether or not the crops use them; the hourly rate you enter applies to seasonal workers. <strong>Seasonal</strong> = crew billed only between Start–End week.</p>
+      <p style="font-size:0.73rem;color:#6b7280;margin:0 0 0.6rem"><strong>Salary</strong> = annual wage, year-round. <strong>Hourly</strong> = $/hr for their stated weekly hours, all 52 weeks. <strong>Seasonal</strong> = $/hr for their stated hours between Start–End week only. Every listed worker is paid for their stated hours whether or not the crops use them.</p>
       <div class="form-group" style="margin-bottom:0.7rem;max-width:320px">
         <label>Payroll load (% on wages) <span class="tip" data-tip="Employer payroll burden ON TOP of the base wages entered below — payroll taxes (FICA, FUTA/SUTA), workers' comp, health benefits, unemployment insurance.&#10;&#10;Applied to ALL staff (salaried and hourly), so any extra hiring or overtime carries it too. Set 0 only if the wages you entered already include the full burden.&#10;&#10;Typical: 15–35%.">?</span></label>
         <input type="number" id="payroll_load_pct" value="25" min="0" max="100" step="1">
@@ -1597,7 +1597,7 @@
         <label class="pd-toggle-row" for="labor_flex_enabled" style="margin-bottom:0.3rem">
           <input type="checkbox" id="labor_flex_enabled" onchange="toggleLaborFlex(this.checked)">
           <strong>Labor flexibility assumptions</strong>&nbsp;(for the What-If “Plan optimal labor” tool)
-          <span class="tip" data-tip="Your main plan always uses the FIXED staff you defined above. These settings feed the What-If 'Plan optimal labor' tool in the Results section, which answers 'how much should I staff up to reach the best plan?'&#10;&#10;That tool lets the optimizer buy extra labor to lift a labor bottleneck — cheaper hired labor (up to your cap) first, then overtime — and reports the staffing recommendation, cost, and profit gain vs your fixed staff.">?</span>
+          <span class="tip" data-tip="Your main plan always uses the FIXED staff you defined above. These settings feed the What-If 'Plan optimal labor' tool in the Results section, which answers 'how much should I staff up to reach the best plan?'&#10;&#10;That tool lets the optimizer buy extra labor to lift a labor bottleneck — hired help and/or overtime, whichever costs less each week, within your caps — and reports the staffing recommendation, cost, and profit gain vs your fixed staff.">?</span>
         </label>
         <div id="labor-flex-helper" class="pd-helper">Open to set how much labor you could realistically add and at what cost. These feed the “Plan optimal labor” tool under What-If — they don’t change your main (fixed-staff) plan.</div>
         <div id="labor-flex-controls" style="display:none;margin-top:0.5rem;padding:0.6rem;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px">
@@ -1608,7 +1608,7 @@
           <div class="form-group"><label>Hired wage markup (%) <span class="tip" data-tip="Extra cost of HIRED labor above the hired wage set above: temp-agency fees, onboarding/training, lower productivity, extra supervision/management of the added crew, and any benefits beyond the farm-wide payroll load. 0% = the hired wage above (or, if that is blank, the hours-weighted average of your hourly roles) with no extra on top; the hiring cap is then the only constraint.&#10;&#10;(Step costs like needing a whole new foreman are not modeled here — that's discrete staffing.)">?</span></label><input type="number" id="hire_wage_markup_pct" value="0" min="0" max="100" step="5"></div>
           <div style="font-size:0.78rem;font-weight:700;color:#374151;margin:0.7rem 0 0.35rem">Overtime — existing crew, premium pay</div>
           <label class="pd-toggle-row" for="labor_flex_overtime" style="margin-bottom:0.3rem"><input type="checkbox" id="labor_flex_overtime" checked> Allow overtime</label>
-          <div class="form-group"><label>Overtime pay multiplier <span class="tip" data-tip="Pay rate for overtime hours as a multiple of base wage (1.5 = time-and-a-half). Overtime is used beyond the hiring cap.">?</span></label><input type="number" id="overtime_rate_multiplier" value="1.5" min="1" max="3" step="0.1"></div>
+          <div class="form-group"><label>Overtime pay multiplier <span class="tip" data-tip="Pay rate for overtime hours as a multiple of your crew's blended wage (1.5 = time-and-a-half). The optimizer buys overtime whenever it is the cheaper option that week — there is no fixed order between hiring and overtime.">?</span></label><input type="number" id="overtime_rate_multiplier" value="1.5" min="1" max="3" step="0.1"></div>
           <div class="form-group"><label>Max overtime (hrs/week) <span class="tip" data-tip="Cap on overtime hours per week. Leave blank for no explicit cap.">?</span></label><input type="number" id="max_overtime_hrs_per_week" value="200" min="0" step="20" placeholder="blank = no limit"></div>
         </div>
       </div>
@@ -1649,8 +1649,8 @@
       <summary class="assumptions-summary">ℹ Assumptions &amp; Limitations</summary>
       <div class="assumptions-body">
         <ul>
-          <li>Salaried workers are a fixed annual cost; their hours are not tracked against crop-phase demand by the optimizer.</li>
-          <li>Hourly labor is perfectly divisible — fractional headcount-weeks are allowed; minimum shift or crew-size constraints are not modelled.</li>
+          <li>Every listed worker — salaried, hourly, or seasonal — is a committed cost: paid for their stated hours over their stated weeks, whether or not the plan uses them. Their stated hours (× Field %) also count toward weekly labor capacity, salaried staff included.</li>
+          <li>Crop labor use is continuous (a plan can use any fraction of an hour); minimum shift or crew-size constraints are not modelled.</li>
           <li>Channel prices and demand caps are fixed for the full planning horizon; price volatility is not modelled (use Monte Carlo for sensitivity).</li>
           <li>Packaging cost is a constant per-lb rate; volume discounts and buyer-specific contract terms are not modelled.</li>
         </ul>
@@ -1868,7 +1868,7 @@
             <div style="font-size:0.92rem;font-weight:700;color:#374151">🧑‍🌾 Plan optimal labor</div>
             <button onclick="runLaborPlanScenario()" id="labor-plan-btn" style="padding:0.3rem 0.9rem;background:#2d6a4f;border:none;color:#fff;border-radius:7px;font-size:0.78rem;font-weight:700;cursor:pointer">Plan optimal labor →</button>
           </div>
-          <p style="font-size:0.78rem;color:#6b7280;margin:0.3rem 0 0">Your plan above uses your fixed staff. This re-solves letting the optimizer buy extra labor (hiring then overtime, within the limits set in <a onclick="jumpToSetup('labor-channels','labor_flex_enabled')" style="color:#2d6a4f;text-decoration:underline;cursor:pointer">Labor → Labor flexibility assumptions</a>) and tells you how much to staff up — and what it's worth.</p>
+          <p style="font-size:0.78rem;color:#6b7280;margin:0.3rem 0 0">Your plan above uses your fixed staff. This re-solves letting the optimizer buy extra labor (hiring and/or overtime, whichever costs less each week, within the limits set in <a onclick="jumpToSetup('labor-channels','labor_flex_enabled')" style="color:#2d6a4f;text-decoration:underline;cursor:pointer">Labor → Labor flexibility assumptions</a>) and tells you how much to staff up — and what it's worth.</p>
           <div id="labor-plan-result" style="margin-top:0.6rem"></div>
         </div>
       </div>

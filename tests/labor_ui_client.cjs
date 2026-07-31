@@ -83,6 +83,25 @@ bootApp().then(({ window: w }) => {
   }
   if (sal.count !== 1) fail(`+20% labor scaled a SALARY row to count=${sal.count}`);
 
+  // 5 — copy the code has outgrown must stay dead. Each phrase below described a mechanism
+  // the solver no longer has (W15 removed the hire-then-overtime fill order; W12 made every
+  // worker committed and capacity-counted), survived one fix pass in three tooltips, and
+  // primes the grower to misread a correct result. Scan the whole document INCLUDING
+  // data-tip attributes, minus the embedded Python blob.
+  const html = doc.documentElement.outerHTML.replace(/const FARM_V2_FILES[\s\S]*?`;/, '');
+  const deadPhrases = [
+    ['hired labor (up to your cap) first',       'the pre-W15 fill order (hire first)'],
+    ['hiring then overtime',                     'the pre-W15 fill order'],
+    ['Overtime is used beyond the hiring cap',   'the pre-W15 fill order (overtime as overflow)'],
+    ['not tracked against crop-phase demand',    'salaried hours DO feed weekly labor capacity'],
+    ['perfectly divisible — fractional headcount-weeks', 'the retired usage-billed labor model'],
+  ];
+  for (const [phrase, why] of deadPhrases) {
+    if (html.includes(phrase)) {
+      fail(`dead copy is back: "${phrase}" — this describes ${why}, which the solver does not do`);
+    }
+  }
+
   if (failures) { console.error(`labor_ui_client: ${failures} FAILURE(S)`); process.exit(1); }
   console.log('labor UI (client): all checks passed (count visible on every row type, blank wage refused, typed 0 legal)');
   process.exit(0);
