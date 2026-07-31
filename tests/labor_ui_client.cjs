@@ -154,6 +154,31 @@ bootApp().then(({ window: w }) => {
     fail('renderLaborPlan: with zero OT hours the OT price must fall back to the annual mean ($30.00)');
   }
 
+  // 7b — the printed price must SHOW ITS ARITHMETIC. Grower QA 2026-07-31: with $15.00 typed
+  // and a 25% payroll load the footer read "~$18.75/hr all-in (your typed wage +0% markup)" —
+  // the figure is 25% above what they typed, the only term naming that 25% sat in a separate
+  // trailing sentence, and the "+0%" made the load look like the markup. Every term that
+  // moved the number is named inline now, and zero terms are omitted rather than printed.
+  const typedRates = new Array(52).fill(18.75);
+  const typedSr = { ...sr, hire_rate_full_weekly: typedRates };
+  const typedHtml = w.renderLaborPlan(typedSr, { profit: 100000 },
+    { hire_wage_markup: 0, overtime_rate_multiplier: 1.5, payroll_load_pct: 0.25, hired_wage_per_hr: 15 });
+  if (!typedHtml.includes('$18.75/hr all-in')) fail('renderLaborPlan: typed-wage all-in price missing');
+  if (!/\$15\.00\/hr/.test(typedHtml) || !/25% payroll load/.test(typedHtml)) {
+    fail('renderLaborPlan: a typed wage must show its derivation inline ("your $15.00/hr '
+       + '+25% payroll load") — the grower could not see where the extra 25% came from');
+  }
+  if (/\+0%/.test(typedHtml)) {
+    fail('renderLaborPlan: a 0% term is printed ("+0%") — that is what made the payroll load '
+       + 'read as the markup; omit zero terms instead');
+  }
+  // With a markup set, BOTH multipliers are named.
+  const markedUp = w.renderLaborPlan(typedSr, { profit: 100000 },
+    { hire_wage_markup: 0.2, overtime_rate_multiplier: 1.5, payroll_load_pct: 0.25, hired_wage_per_hr: 15 });
+  if (!/25% payroll load/.test(markedUp) || !/20% hiring markup/.test(markedUp)) {
+    fail('renderLaborPlan: with a markup set, both the payroll load and the markup must be named');
+  }
+
   if (failures) { console.error(`labor_ui_client: ${failures} FAILURE(S)`); process.exit(1); }
   console.log('labor UI (client): all checks passed (count visible on every row type, blank wage refused, typed 0 legal)');
   process.exit(0);

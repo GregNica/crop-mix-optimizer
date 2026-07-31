@@ -10264,10 +10264,28 @@ function renderLaborPlan(sr, baseRes, sp) {
   const hireRate = avgBoughtRate(hw, sr.hire_rate_full_weekly);
   const otRate   = avgBoughtRate(ow, sr.overtime_rate_full_weekly);
   const hirePriceStr = hireRate != null ? `~$${hireRate.toFixed(2)}/hr all-in` : 'an inferred rate';
-  const hireSrcStr = sp.hired_wage_per_hr
-    ? `your typed wage +${markup}% markup`
-    : `inferred from your paid hourly roles +${markup}% — enter a known local wage under Labor → Labor flexibility if this is off`;
+  // SHOW THE ARITHMETIC, in the same breath as the number. The first version said "your
+  // typed wage +0% markup" beside a figure 25% higher than what the grower typed, and
+  // disclosed the payroll load in a separate trailing sentence — so the number looked wrong
+  // and the one term that explained it arrived too late to connect. Every term that moved
+  // the figure is now named inline, and terms set to 0 are omitted rather than printed as
+  // "+0%", which is what made the load look like the markup.
+  const terms = [];
+  if (sp.hired_wage_per_hr) {
+    terms.push(`your $${Number(sp.hired_wage_per_hr).toFixed(2)}/hr`);
+    if (load) terms.push(`+${load}% payroll load`);
+  } else {
+    terms.push('the hours-weighted average of your paid hourly roles (payroll load included)');
+  }
+  if (markup) terms.push(`+${markup}% hiring markup`);
+  const hireSrcStr = terms.join(' ')
+    + (sp.hired_wage_per_hr ? '' : ' — enter a known local wage under Labor → Labor flexibility if this is off');
   const otPriceStr = otRate != null ? `~$${otRate.toFixed(2)}/hr` : `your crew's rate ×${mult}`;
+  // The blend moves week to week as crews come and go (on the shipped farm it runs ~$37.74
+  // in full-crew weeks to ~$48.75 when only the operators are on), so name the averaging —
+  // otherwise the single figure looks like a rate nobody on the payroll actually earns.
+  const otSrcStr = `your crew's blended wage${load ? ', payroll load included,' : ''} ×${mult}`
+    + (totOT > 0.5 ? ', averaged over the weeks the plan uses it' : '');
 
   const hireLine = totHire > 0.5
     ? `<li><strong>Hire up to ~${peakWorkers} extra worker${peakWorkers === 1 ? '' : 's'}</strong> at peak (week ${peakHireWk}), active roughly <strong>weeks ${firstW}–${lastW}</strong> — about ${Math.round(totHire).toLocaleString()} added labor-hours over the season.</li>`
@@ -10281,7 +10299,7 @@ function renderLaborPlan(sr, baseRes, sp) {
       <div style="font-size:0.95rem;font-weight:800;color:#166534;margin-bottom:0.35rem">+${fmt(delta)}${fmtPct} profit vs your fixed-staff plan</div>
       <div style="font-size:0.8rem;color:#374151;margin-bottom:0.25rem">To capture it, plan to:</div>
       <ul style="margin:0 0 0.45rem 1.1rem;padding:0;font-size:0.82rem;color:#374151;line-height:1.5">${hireLine}${otLine}</ul>
-      <div style="font-size:0.72rem;color:#6b7280">New plan profit ${fmt(sr.profit)} vs ${fmt(baseRes.profit)} fixed-staff. Headcount assumes ${HRS_PER_WORKER_WK} hrs/worker/week. Hires priced at <strong>${hirePriceStr}</strong> (${hireSrcStr}); overtime at <strong>${otPriceStr}</strong> (crew rate ×${mult}). Payroll load ${load}% is already inside both. Adjust under Labor → Labor flexibility assumptions.</div>
+      <div style="font-size:0.72rem;color:#6b7280">New plan profit ${fmt(sr.profit)} vs ${fmt(baseRes.profit)} fixed-staff. Headcount assumes ${HRS_PER_WORKER_WK} hrs/worker/week. Hires priced at <strong>${hirePriceStr}</strong> = ${hireSrcStr}. Overtime at <strong>${otPriceStr}</strong> = ${otSrcStr}. Adjust under Labor → Labor flexibility assumptions.</div>
     </div>`;
 }
 
