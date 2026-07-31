@@ -1,431 +1,389 @@
-# Open Decisions — what needs the grower's call, and what hinges on each
+# Open Decisions — the grower's rulings, with evidence and consequences
 
-**Purpose.** `BACKLOG.md` is the single list of WORK. This file is the list of **DECISIONS** —
-the subset of that work which cannot proceed until a human chooses, plus the decisions that were
-already made and never executed. Written 2026-07-31 for a deep-model audit of the plan.
-
-**How to read an entry.** Each carries: the question in one sentence, why it is open, the
-*evidence* (measured numbers where they exist — estimates are labelled), the options with their
-consequences, a recommendation, and what it blocks. Recommendations are mine and are the thing
-the audit should attack hardest.
+**Purpose.** `BACKLOG.md` is the list of WORK. This file is the list of **DECISIONS**. Rulings
+below are the grower's, recorded 2026-07-31 in their own framing; the analysis under each is mine
+and is what an audit should attack.
 
 **State of the build.** Branch `feat/server-llm-expansion`, 399 pytest + 9 node harnesses green,
-blob and golden payload in sync, browser-QA'd by the grower today. The labour money path
-(W9/W12/W14/W15/W16 + the 2026-07-31 adversarial review and its fix arc) is closed and heavily
-guarded. Golden farm: revenue $2,134,530, profit $428,547, **net margin 20.1%**.
+browser-QA'd 2026-07-31. Labour money path closed and heavily guarded (W9/W12/W14/W15/W16 + an
+8-lens adversarial review, a red-team pass, and mutation-verified guards).
 
-**A standing note on M1 (the net-margin problem).** Real diversified-veg net margin is 5–15%; the
-model says 20.1%. The grower's position, 2026-07-31, is **not to chase M1 directly** — the
-reasoning being that fixing the other pieces may resolve it as a side effect. The evidence
-supports that: of the five fixes that moved margin, the four that moved it the WRONG way were all
+**The golden farm's real cost structure** — the anchor for most decisions below:
+
+| | $/yr | % revenue |
+|---|---|---|
+| Revenue | 2,134,530 | — |
+| **Wages** (committed) | 855,150 | 40.1% |
+| Overhead (flat 16%) | 341,525 | 16.0% |
+| Seed / transplants | 194,973 | 9.1% |
+| Packaging | 170,187 | 8.0% |
+| Machinery | 52,000 | 2.4% |
+| Fertiliser | 25,454 | 1.2% |
+| Storage + irrigation (5 lines) | 42,347 | 2.0% |
+| Fuel | 8,244 | 0.4% |
+| **Water** | **0** | **0.0%** |
+| Land rent | **0** | **0.0%** |
+| **Profit** | **428,547** | **20.1%** |
+
+220.6 acre-plantings, 7 crops, 198,034,968 L of water pumped per year.
+
+**M1 posture (grower, 2026-07-31): do NOT chase the net-margin gap directly.** Fix the pieces;
+margin follows. Evidence supports it — four of the five fixes that moved margin the wrong way were
 reporting fixes aimed at margin-adjacent code, and the one that moved it right (W12, −16.8 points)
-was aimed at correctness elsewhere. Several decisions below (B1, B2, B3, B5) each move M1 as a
-by-product. **Sizing caution:** my rough estimate is that the named uncharged costs total 1–3
-points, not the ~5 needed, so if M1 is the target the revenue side (crop prices and yields, never
-audited — Tier 2 M2/M3) probably holds the rest. That estimate is not measured.
+was aimed at correctness elsewhere. ⚠️ My sizing caveat, **an estimate, not a measurement**: the
+named uncharged costs (water, crop protection, insurance) look worth 1–3 points against the ~5
+needed, which would put the remainder on the never-audited revenue side (crop prices and yields —
+Tier 2 M2/M3). Revenue per acre-planting is currently **$9,676**; whether that is realistic is the
+single highest-leverage unaudited number in the model.
 
 ---
 
-## GROUP A — Blocking work right now
+## GROUP A — Labour and UI
 
-### A1 · U1 — What does the base plan assume about hiring, and where do its controls live?
+### A1 · U1 — What the base plan assumes about hiring
+**RULING: DEFER.** *"We're going to overhaul the UI with a wizard chatbot driving what the user
+sees and reads."*
 
-**Question.** Should the main Optimize be allowed to buy labour, or is hiring always a separate
-What-If?
+**Agreed, with one caveat.** Deferring the design is right — a chatbot-driven UI surfaces hiring as
+a question it asks, not a form section, so designing the form now is work we would throw away.
 
-**Why open.** The "Labor flexibility assumptions" toggle sits in the setup form, but the main
-payload builder never sends `labor_flex_enabled` — so a normal Optimize always solves with fixed
-staff no matter how the toggle is set. That is deliberate and documented. The grower's ruling
-after browser QA: *"confusing and redundant… we need a better way to communicate this and select
-it in the UI."* So the current arrangement is rejected; what replaces it is undecided.
+⚠️ **But deferring leaves a control in the setup form that does nothing on a normal solve** — the
+exact say-do gap that tripped the grower in QA. **Recommended 10-minute interim: remove the
+labour-flexibility block from setup and surface those three inputs inside the What-If panel that
+actually consumes them.** That is option (b) from the original framing, it costs nothing, it
+removes the confusion today, and it does not prejudge the wizard. Also unblocks U1a (validation
+naming a hidden control) and lets the dead exec-summary block at `index.html:~6907` be deleted.
 
-**Evidence (verified 2026-07-31).** `labor_flex_enabled` appears in `public/index.html` at the
-form control (~1598), the adapter (~7301), the What-If builder `buildLaborFlexParams` (~10165) and
-the result forwarding (~7672) — **and nowhere in the main payload builder.** Related dead code:
-the exec-summary "Bought Labor (optimized)" block (~6907) is gated on `res.labor_flex_enabled`,
-which is never true on the path that renders it, so that block is unreachable.
-
-**Options.**
-- **(a) Main payload sends it.** The toggle means what it looks like. ⚠️ Consequence: the headline
-  plan becomes "what I'd do if I could hire" — the headline profit changes, and the plan is no
-  longer executable with the crew the grower listed.
-- **(b) Delete it from setup; the What-If owns hiring entirely.** The cost inputs (cap, markup,
-  wage) move into the What-If panel where they are actually consumed. Nothing is lost — the main
-  solve never read them. Setup gets shorter.
-- **(c) Keep both, but make the split a visible choice** — e.g. a two-state control at the top of
-  Results: "Plan with my current crew" / "Let the plan hire". Costs a design.
-
-**Recommendation: (b).** The base plan should be executable with the crew you actually listed, and
-(b) is the only option that removes the say-do gap without moving the headline number. But this is
-genuinely a product decision about what the headline plan *means*, which is why it is here.
-
-**Blocks.** U1a (validation gating — do not close it by making a typed value silently ignored;
-that was the W15 defect), U2 (below), the dead exec-summary block, and the labour half of C7.
-
-**Cost / reversibility.** (b) is small and reversible — DOM moves, no solver change.
+**Depends on:** E5 (field registry) — the backlog says it must precede any UI overhaul, and the
+grower has agreed to do E5 "before we build too much more". Sequencing is consistent.
 
 ---
 
-### A2 · U2 — Wording for the two labour levers
-
-**Question.** Approve or redraft the relabelling of "Optimize labor" and "Labor Availability" as
-hiring decisions.
-
-**Why open.** Agreed in principle already; needs sign-off on words. The mechanism is right and the
-framing is wrong — the two levers give opposite-signed answers and nothing on screen says why.
-
-**Evidence (measured by the grower).** "Optimize labor" (10 extra workers, weeks 9–50) → **+$110K
-profit**. "Labor availability +40%" → **−$167K**. Both correct: the first lets the solver *buy*
-hours and it only buys an hour that pays for itself (an option you can decline is worth ≥ 0); the
-second scales your **crew count**, a commitment you owe whether it is used or not (+40% of a ~$736K
-bill ≈ +$295K of payroll against ~$127K of extra margin).
-
-**Proposed wording.** *"Optimize labor buys hours that pay for themselves."* /
-*"Labor availability hires people whether they pay for themselves or not."*
-
-**Recommendation.** Ship those two sentences with U1's redesign, not before — the same panel is
-being rebuilt.
+### A2 · U2 — Wording of the two labour levers
+**Folded into U1's deferral** — same panel. The two measured sentences are banked for the redesign:
+*"Optimize labor buys hours that pay for themselves"* (+$110K measured) /
+*"Labor availability hires people whether they pay for themselves or not"* (−$167K measured).
 
 ---
 
-### A3 · W17 — Stop inferring a market wage from your own payroll?
-
-**Question.** When the hired-wage box is blank, what should the model do?
-
-**Why open.** Three inference rules have shipped, each fixing the previous one's tail, and **all
-three are the same category error: a statistic about the farm's own payroll is not a market
-price.**
-
-**Evidence.**
-1. Average over all paid hours → dragged up by salaried staff; a manager-only farm priced a hired
-   field hand at **$40.60/hr**.
-2. Unweighted `min` over listed roles → dragged down to the least representative role; a single
-   2 h/wk helper at $12 would price all 20,800 potential hired hours. ⚠️ This reversed the error
-   into the **unsafe** direction — over-pricing merely refuses good hires, under-pricing makes the
-   optimizer buy help the grower cannot actually get.
-3. Current: hours-weighted over PAID hourly roles. The shipped test expects **$25.33** from one $40
-   tractor operator plus two $18 field hands (`tests/test_committed_wages.py:334`) — a grower hiring
-   a field hand pays $18. ⚠️ The all-salaried farm still reproduces defect (1) exactly: no hourly
-   role means the fallback is the salaried average, so a $52k manager prices a hired field hand at
-   $25.00/hr.
-
-**New since this was tabled.** The app now **prints the number** — the What-If footer shows
-"~$25.71/hr all-in" on the demo farm against your own harvest crew at $19 + 25% load = $23.75. You
-can now see the inference and judge it, which you could not before.
-
-**Options.**
-- **(a) Prefill the field with a defensible regional default, label it "estimate — correct this",
-  make blank impossible.** No hidden inference; the grower owns the number. Needs a sourced default
-  (same treatment as the other benchmark defaults, with provenance).
-- **(b) Keep blank-means-infer, but weight only SEASONAL/field roles** — the ones structurally
-  comparable to a hire. Better statistic, same category error, cheapest.
-- **(c) Require the field.** Honest, adds friction to the What-If.
-
-**Recommendation: (a).** It is the only option that stops the model from asserting a market price
-it cannot know. (b) is a reasonable interim if (a)'s default cannot be sourced defensibly.
-
-**Cost.** Small-to-medium; the work is finding a defensible default, not wiring it.
+### A3 · W17 — The hired-wage inference
+**PENDING — needs one number from the grower: what a field hand actually costs locally, per hour,
+before payroll load.** The app now prints its inference (~$25.71/hr all-in on the demo crew) so the
+comparison is finally possible. Recommendation stands: prefill a defensible regional default,
+label it as an estimate to correct, and make blank an explicit choice rather than a hidden
+inference. Three inference rules have shipped and all three were the same category error.
 
 ---
 
-## GROUP B — What the model charges, and what its knobs mean
+## GROUP B — What the model charges
 
-### B1 · W10 — Is on-farm irrigation water free at the margin?
+### B1 · W10 — Irrigation water
+**RULING: model it as an ENTERED ELECTRICITY COST, not a computed pumping cost.** *"If a farmer
+knows their electricity bills and can enter that parameter it's a lot more real than calculating
+pump costs."*
 
-**Question.** Should pumping your own water cost the plan anything per litre?
+**Agreed, and it is the better answer for a reason worth recording:** a farmer can verify a number
+they read off a bill; nobody can verify a pumping calculation with head height and pump efficiency
+in it, so a computed figure would be precision without accuracy.
 
-**Evidence (verified 2026-07-31).** `well_cost_per_L` is a real solver parameter (default `0.0`,
-`farm_v2/solver.py:265`) and is charged into the water cost (`:605`) — but **there is no form field
-for it anywhere in the app**; the only occurrence in `index.html` is inside the generated solver
-blob. So `variable_cost_split.water` is structurally **$0.00 on every farm**, and the P&L carries a
-$0.00 line that looks like a bug.
+**Sizing (mine, estimate):** 198M L lifted ~30 m at typical efficiency ≈ 27,000 kWh ≈ **$4,000/yr**
+— 0.19% of revenue. So this is worth about **one-fifth of a margin point**. Close it for honesty,
+not for M1.
 
-**The subtlety.** The locked cost-accounting basis already routes pump **energy** to overhead. If
-you also charge per litre, you double-count.
+⚠️ **Watch the double-count:** the locked cost-accounting basis already routes pump energy to
+overhead (currently a flat 16% of revenue = $341,525). If we add an entered electricity cost, it
+must come OUT of the overhead assumption or the farm pays twice. **This is the real work in W10 —
+not the input, the de-duplication.**
 
-**Options.**
-- **(a) It genuinely is free at the margin** (you own the well; the energy is in overhead) → keep
-  $0 and make the label state the reason rather than implying a measurement.
-- **(b) Add a pumping-cost input** and remove pump energy from overhead to avoid the double-count.
-
-**Recommendation: (a)** unless you meter pumping separately and want it visible per crop.
-
-**Cost.** Trivial either way. Worth closing just to remove a line that reads as broken.
+**Open sub-question:** an electric bill is farm-wide (pumps, coolers, packhouse, lights). Do we
+want the whole bill as a fixed cost, or the irrigation share only? Whole-bill is more verifiable;
+irrigation-share is what makes water cost per crop meaningful.
 
 ---
 
-### B2 · R1 — Crop protection: add the category, and at what granularity?
+### B2 · R1 — Crop protection
+**RULING: BUILD IT, modelled like fertiliser.** *"Most crops will have a recommended application
+amount per chemical."*
 
-**Question.** Herbicide/insecticide/fungicide have no cost field while fertiliser does. Add one,
-and is it per-crop or farm-wide?
+**Agreed, and the research supports the shape.** NASS 2022 (22 crops, 17 states): which chemical
+class dominates **flips by crop** — squash is fungicide-led (69% of acres), sweet corn
+herbicide-led (82%) — so a farm-wide rate would be wrong for most crops. Per-crop, like fertiliser,
+is right.
 
-**Evidence.** NASS 2022 Ag Chemical Use (22 crops, 17 states). ⚠️ The commonly cited ">90% of
-farms" figure is **unsupported for any single class** — the max is 82% of planted acres for one
-class. **The real finding is the variance: which class dominates flips by crop** (squash is
-fungicide-led at 69%, sweet corn herbicide-led at 82%). That argues for a **per-crop cost like
-fertiliser**, not a farm-wide rate or an overhead line.
+**The grower's framing sharpens it further:** application *rate* per chemical × price, rather than a
+flat $/acre, matches how a label and a spray plan actually read, and it makes the number auditable
+against an extension guide. It also mirrors what the model already does for fertiliser.
 
-**Options.** (a) per-crop $/acre category — mirrors fertiliser, and after W4's refactor a sixth
-variable-cost category is one edit; (b) farm-wide rate; (c) fold into overhead %; (d) don't model,
-disclose the omission.
+**Anchor:** fertiliser costs this farm $25,454/yr (1.2% of revenue) across 220 acre-plantings.
+Crop protection should land in the same order of magnitude — call it **~1 margin point**.
 
-**Recommendation: (a).** Note the mechanism is cheap and **the per-crop default values are the
-actual work** — that is agronomy (M2/M3), not plumbing.
-
-**Moves M1** in the right direction (a real cost currently charged at zero).
+**The work is the DATA, not the mechanism.** After W4's refactor a sixth variable-cost category is
+one edit; sourcing defensible per-crop application rates for 7+ crops is agronomy (M2/M3 territory).
 
 ---
 
 ### B3 · R2 — Insurance
+**RULING: BUILD IT.** Grower asked: *"Is insurance booked differently from an accounting
+perspective? Is there some sort of depreciation treatment we should be thinking about?"*
 
-**Question.** Crop / liability / equipment insurance is not modelled at all. Add a farm-level fixed
-cost, fold into overhead, or disclose?
+**Answer: no depreciation, and the distinction is worth stating precisely.**
 
-**Evidence.** Historically low on small farms but rising; the USDA Micro Farm Program now covers
-diversified revenue to $350k. Interacts with the deterministic-yield gap — the model has no crop
-failure, so insurance has nothing to insure against inside the model.
+Depreciation applies to **capital assets you own and consume over years** — you capitalise the
+purchase and expense it across its useful life. Insurance buys **coverage over a window of time**,
+so it is a **period operating expense**, expensed as the coverage elapses.
 
-**Recommendation.** A single farm-level fixed-cost field, or an explicit line in the overhead
-definition. Cheap. **Moves M1** the right way.
+The one accounting wrinkle is **prepaid insurance**: pay a 12-month premium up front and accrual
+accounting books it as a current *asset* (prepaid expense), then amortises it monthly as coverage
+is consumed. **For our model that wrinkle collapses** — we are already a 52-week model, so
+spreading an annual premium across the weeks it covers *is* the amortisation. No new machinery.
+
+⚠️ **Where it genuinely does matter: CASH TIMING.** Premiums are typically due at or before
+planting (crop-insurance sales-closing dates), not smeared evenly. A lump payment in week 8 hits
+the C13 weekly cash floor very differently from $X/week flat. **This is exactly the W12 lesson** —
+committed wages were the first fixed line that was not flat, and flattening it mis-stated the burn
+in both directions. So model insurance as a fixed cost **with an optional payment week**, not just
+a weekly rate.
+
+⚠️ **A second, deeper point to disclose:** crop-insurance **indemnities are revenue in a bad year**,
+and our model has no bad years (deterministic yields, no crop failure). So insurance will always
+look like pure cost with no benefit — it can only ever reduce modelled profit. That is honest only
+if we say so. **It links directly to W2/C4 below: insurance pays for itself in the tail, and we do
+not model tails.**
 
 ---
 
-### B4 · W5 — What does `crop_diversity_max` promise?
+### B4 · W5 — The diversity knob
+**RULING: possibly BOTH.** *"Would it make sense for this to be both acre-weeks and total acres
+planted at any given time?"*
 
-**Question.** The knob is an acre-**weeks** share, but "0.60" reads as "at most 60% of my farm in
-garlic". It actually permits **100% of the farm in garlic for 31 weeks**.
+**Yes — and they are genuinely different questions, so both is the right answer.**
 
-**Options.** (a) relabel with a worked example; (b) rescale it to a true land share; (c) both.
+- **Peak standing share** — "no more than 60% of my ground in garlic *at any one time*." A land and
+  risk **concentration** limit. This is what the current label reads like.
+- **Acre-weeks share** — "garlic does not occupy more than 60% of my land-*time* across the year."
+  A **rotational intensity** limit. This is what the knob currently does.
 
-**Recommendation.** Decide what you want it to *mean* first — (b) changes plans, (a) does not. This
-is a decision about the promise, not the code.
+A crop can pass one and fail the other, and the backlog's own example is exactly that case: garlic
+at 100% of the farm for 31 weeks is **100% peak standing** (fails a 60% peak limit) but
+**31/52 = 60% acre-weeks** (passes a 60% acre-weeks limit).
+
+**Feasibility: cheap.** The model already accounts for land per week (C1). A per-crop peak-standing
+row is `Σ x[i] standing in week w ≤ frac × total_land`, for each crop × week — about
+**7 × 52 = 364 extra rows** on this farm, negligible against the existing model.
+
+⚠️ **Adding a binding constraint changes plans**, so ship the peak-standing knob **defaulted to
+permissive (100%)** and let the grower tighten it, or the golden farm moves for a reason unrelated
+to any defect.
 
 ---
 
 ### B5 · M9 — The volume basis
-
-**Question.** `crop_size_m3_per_lb = TOTE_M3 / lbs_per_tote`, where `lbs_per_tote` is an **ergonomic
-lift weight, not a density**. Two prior audits disagree on the direction of the error.
-
-**Why it matters.** It sets storage occupancy, so it feeds the cold/ambient capacity constraints —
-it can change the plan, not just a report.
-
-**Recommendation.** This needs a **measurement**, not an opinion: weigh and measure a filled tote
-for two or three representative crops. Until then any "fix" is a coin flip between two audits.
-**Moves M1** in an unknown direction.
+**RULING: keep `lbs_per_tote` as the input** (most intuitive for a grower to enter), but
+**research what the industry actually does.** — *research commissioned, results in the appendix.*
 
 ---
 
 ### B6 · W13 — The margin hurdle
+**RULING: hide it; surface only if the user asks.** *"In the new UI this will become something if
+the user asks for it and otherwise does not need to be seen."*
 
-**Question.** `min_viable_margin_pct` drops crop-channels **before the solve**, using a per-crop
-labour cost the objective no longer charges (W12 made wages committed). Keep, replace, or delete?
-
-**Evidence (verified).** Default is `0` = off (`index.html:1414`), so this is **latent, not
-shipping**. On the demo farm nothing scores below ~22%, so any single-digit floor is now a no-op.
-
-**Options** (recorded previously): (a) delete it; (b) replace with an explicit per-channel "exclude"
-checkbox; (c) rebase it on per-lb contribution.
-
-**Recommendation: (a) or (b).** A hurdle that drops channels before the solve using a *different*
-cost model than the solver is the app disagreeing with its own optimizer — and using the
-disagreement to change the plan. If it stays, it must read the solver's own margin.
+**Agreed, with two conditions.**
+1. It must stay **default-off** (it is: `min_viable_margin_pct` value="0").
+2. ⚠️ **The underlying defect must be fixed BEFORE the assistant can set it.** The hurdle drops
+   crop-channels *before* the solve using a per-crop labour cost the objective no longer charges
+   (W12 made wages committed). Hidden-in-a-form is safe because nobody sets it; **reachable-by-chat
+   is not**, because the assistant could silently drop channels using arithmetic the solver
+   disagrees with. Fix the basis, or do not wire it to the chatbot.
 
 ---
 
 ## GROUP C — Product shape
 
-### C1 · W7 — The hidden constraint panel: surface or delete?
-
-**Evidence (verified).** `#constraint-summary-card` is hardcoded `style="display:none"`
-(`index.html:1930`) and no code path ever unhides it; an in-page test asserts it stays hidden. So
-~200 lines of money-adjacent rendering run on **every solve, including all 100 Monte Carlo draws**,
-into a card nobody can see.
-
-**Interactions.** The Market Demand Satisfaction table inside it is the natural home for **C2** (the
-contract commitment schedule, deliverable D4). The standing interface direction says *don't build
-UI panels* — which argues for delete-and-let-the-assistant-render.
-
-**Options.** (a) surface it; (b) delete it, and let C2 build its own surface; (c) delete it and
-render through the assistant.
-
-**Recommendation.** (b) or (c). The numbers behind it are correct now (W6), so nothing is lost by
-deleting the view.
+### C1 · W7 — The hidden constraint panel
+**Not separately ruled; folded into the UI overhaul.** The panel renders ~200 lines into a card
+hardcoded `display:none` (`index.html:1930`) on every solve including all 100 Monte Carlo draws.
+Under a chatbot-driven UI the answer is **delete** and let the assistant render these numbers on
+request — consistent with the W13 ruling above. The numbers behind it are correct (W6), so nothing
+is lost.
 
 ---
 
-### C2 · P13 + R6 — Rent vs buy, per asset
+### C2 · P13 / R6 — Rent vs own
+**RULING: build it, simply.** Assets named: **land, implements, tractors, greenhouse space, retail
+space.** *"The simpler the better… what are the heavy hitters out of what we have so far?"* —
+*research commissioned, results in the appendix.*
 
-**Question.** Every asset is modelled as owned. Should a farm be able to say it leases its cooler,
-rents equipment, or crops rented ground?
+**Heavy hitters from what we model today** (answering the direct question): of $94,347 in non-wage
+fixed costs, **machinery is $52,000 — 55% of it**, and everything else is small (fuel storage
+$14,083, irrigation $8,889, cold storage $6,875, water storage $6,750, equipment storage $5,000,
+ambient $750).
 
-**Evidence.** Depreciation shipped (6 assets, each with capital cost + life). The rent/buy half
-never started; there is one weekly Property Mortgage/Rent field for land and nothing else.
-**28% of US farms operate partly or entirely on rented land; 39% of all acres are leased**
-(AFBF/ERS on the 2022 Census). The grower has raised this twice.
-
-**Options.** (a) per-asset own/rent toggle; (b) leave as is and document; (c) fold into C3's general
-mechanism below.
-
-**Recommendation.** Decide C3 first — if the general mechanism is built, this comes with it.
-
----
-
-### C3 · R3 / R4 / R5 — One mechanism, or five features? ⭐ the biggest structural call here
-
-**Question.** An independent research pass confirmed the **(crop × operation × cost basis)**
-hypothesis — contract labour and short-term equipment rental both came back tagged that shape,
-unprompted. Building that ONE mechanism would collapse **M4, M5, M6, P8 and P13** into it.
-
-**What is unexpressible today.**
-- **R4 — contract/custom work priced per unit** (per acre, bin, carton, ton). Labour is hours × wage
-  only. **195,000 US farms report contract-labour expense against 437,000 reporting hired labour**
-  — ~45% of farms that employ anyone also buy labour by contract. Not a specialty case.
-  ⚠️ `piece_rate_per_lb` already exists on seasonal employees, is computed into `piece_rate_workers`,
-  and is **read by nothing** — piece rate *looks* supported and is inert.
-- **R5 — U-pick / customer-harvest channels** should zero `labor_harv` for the volume sold that way.
-  Harvest labour is currently a crop attribute charged on all volume regardless of destination.
-  This is the per-channel cost-to-serve primitive.
-
-**Options.** (a) commit to the general mechanism; (b) keep bolting on individual features;
-(c) defer both and document the gaps.
-
-**Recommendation: (a), but not immediately** — it is the highest-leverage structural bet on this
-list and it wants a spec of its own. Worth the audit's attention specifically.
+⚠️ **Two gaps the question exposes:** **land rent reads $0** on the demo farm — for a farm that
+rents ground, the single biggest missing cost on this list. And **greenhouse space and retail
+space, both named by the grower, are not modelled at all.**
 
 ---
 
-### C4 · W2 / W3 — Monte Carlo has perfect foresight
+### C3 · R3 / R4 / R5 — One mechanism
+**RULING: ONE mechanism.** *"One mechanism, and see if there are any current solver functions that
+can be collapsed or simplified in this same manner."*
 
-**Question.** Monte Carlo **re-optimizes the crop mix on every draw**, then presents the result as a
-"1-in-10 bad year planning floor". That is a plan that knew the weather in advance.
+**Agreed — and the second half of that instruction is the more valuable half.** The shape is *a
+resource bought at a price, capped, charged per unit of some basis*. Candidates already in the
+solver that fit it:
 
-**Consequence.** W3 ("crop plan stability" labelling crops Fragile by selection frequency) is an
-artifact of this, not a risk measure.
+- **Overtime and hire** — flagged by review as ~7 copy-pasted block pairs (allocation, objective,
+  bounds, C2, C13, extraction, cost, cash, capacity_series). A lever table collapses them.
+- **City water** — same shape exactly: a bought resource, priced per litre, capped per week.
+- **Cold and ambient storage** — two capped pools with identical structure and separate hand-wiring.
+- **Then the new ones land in the same table**: contract labour (per acre/bin/ton — **R4**, ~45% of
+  US farms that employ anyone also buy labour by contract), U-pick harvest-labour offsets (**R5**),
+  equipment rental, custom work.
 
-**Fix shape.** Freeze `x`/`y`, re-evaluate under each draw, let only sales allocation re-optimize.
-The gap between the two modes is itself worth reporting — it *is* the value of perfect foresight.
+⚠️ **`piece_rate_per_lb` already exists on seasonal employees, computes into `piece_rate_workers`,
+and is read by NOTHING** — piece rate looks supported and is inert. It should be either the first
+consumer of the new mechanism or deleted.
 
-**Recommendation.** Do it before shipping any risk claim (deliverables D6/D7 depend on it).
-
----
-
-### C5 · Which deliverables next?
-
-**Evidence.** Of the grower's 10 ranked deliverables, **7 are reporting problems** — the solver
-computes the data and discards it: yield projection by week (C6), labor calendar (C7 —
-`capacity_series.labor {used, cap}`, `hired_hours_weekly`, `overtime_hours_weekly` all exist with no
-view), contract commitment schedule (C2 — now on W1's honest per-channel numbers), season plan table
-(C1), benchmark deviation (C8 — `CROP_PROVENANCE` renders nowhere).
-
-**Blocked on modelling, not reporting:** the seeding calendar (D2) needs `planting_type` wired —
-**M4**, it is carried on every template and dropped before the math; seed ordering (D5) needs a
-seeding rate or plant density — **M7**, the model has cost per acre but never quantity.
-
-**Competitive note.** D1/D2/D5/D9 are **table stakes competitors already ship** (VeggieCropper
-calculates seeds, bed spacing and seeding dates). D3/D6/D7/D8/D10 are category-of-one — no
-competitor decides what to plant.
-
-**Decision.** Pick the next 2–3. My order would be **C7 (labor calendar) → C2 (commitment schedule)
-→ C6 (yield series)**: all three are views over data that already exists and reconciles.
+**This is the largest structural bet on the list and deserves its own spec.** It also partly depends
+on the grower's answers to R4/R5 (do you hire crews by the job? do you sell U-pick?), which are
+still open.
 
 ---
 
-### C6 · ⚠️ Near-optimal alternative plans — DECIDED, NEVER BUILT, NOT IN THE BACKLOG
+### C4 · C5 — Which reports first
+**RULING: deferred to me,** weighted by *"which ones actually benefit us to build earlier by diving
+into potentially buggy territory."*
 
-**Status.** Decided 2026-07-27: summarise close-profit alternative plans and let the grower choose;
-build the Python side, defer the UI. It replaces the margin-hurdle crutch honestly. **It was never
-built and it is not in `BACKLOG.md`** — it exists only in session memory.
+**Recommendation: (1) labor calendar, (2) contract commitment schedule.**
 
-**Why this is flagged as a decision.** A decided item that fell out of the list is exactly how Phase
-B came to look finished while B4–B8 were open. Either put it in the backlog or retire it explicitly.
+- **Labor calendar (C7)** first. `capacity_series.labor {used, cap}`, `hired_hours_weekly` and
+  `overtime_hours_weekly` all exist; there is no view. It is a view over the **most recently
+  verified data in the repo**, and it makes the single biggest cost line legible — right now the
+  grower sees an $855,150 wage number and has no picture of *which weeks they are short-handed or
+  idle*. That turns 40% of revenue into a decision instead of a total.
+- **Commitment schedule (C2)** second — deliverable D4, ranked 4th by the grower, sitting on
+  `channel_sales`, which reconciles to the cent since W1.
+
+**On "buggy territory": the riskiest report is benchmark deviation (C8)**, because it renders
+`CROP_PROVENANCE` against crop numbers that have **never been audited** (M2/M3). It would surface
+data-quality gaps — genuinely valuable, but it is agronomy work wearing a reporting costume, and it
+should be scheduled as such. **Yield projection (C6)** needs a derived series that does not exist
+yet, so it is more new code than the other two.
+
+---
+
+### C5 · W2 — Monte Carlo: can it move pre-solve?
+**GROWER'S QUESTION:** *"Is there a way to bring the Monte Carlo pre-solve rather than post-solve?
+I guess this would mean the solver is not just working off means of parameters, but an adjusted
+mean based on the CV… I'm not sure I'm thinking about the math right. Would that benefit the model
+or overly complicate it?"*
+
+**The instinct is right, the math is nearly right, and there is a real modelling gain here — not
+just a reporting fix.** Four options, in increasing cost:
+
+**(a) What we do now — re-optimise on every draw.** Wrong: each draw's plan knew that season's
+weather in advance. It reports the value of clairvoyance and labels it a planning floor. W3's
+"crop stability" labels are an artifact of this, not a risk measure.
+
+**(b) Freeze and evaluate.** Solve once, then score that ONE plan under N draws. Cheap (N
+evaluations, no re-solves), and it answers the question a grower actually has: *how does the plan I
+am about to execute hold up across seasons?* **This is the minimum honest fix.**
+
+**(c) What you are proposing — plan on adjusted parameters.** Shift yields/prices by some function
+of their CV before solving (e.g. plan at the 30th percentile instead of the mean). **This is a
+legitimate, well-established technique** — a practical form of chance-constrained programming, and
+it is what growers do intuitively when they "plan for a bad year". Implementation is genuinely
+small: one knob, a parameter transform, **no new variables and no solve-time cost.**
+
+**(d) Two-stage stochastic programming** — the textbook answer. Choose planting (`x`,`y`) once;
+let sales allocation (`v`) adapt per scenario; maximise expected profit across all scenarios in a
+single program. ⚠️ Cost: the `v` block (crops × channels × 52) multiplies by the scenario count. At
+20 scenarios that is 20× the largest variable block on a solve already taking ~5s against a 75s
+wall. **Real risk of hitting the time limit.**
+
+**The correction to your reasoning, and it strengthens your case:** optimising on means is
+systematically **optimistic** even after the foresight bug is fixed. The optimizer packs the plan
+right up against constraints — storage, demand caps, cash — that only hold *on average*; in any
+real season some bind harder and the plan underdelivers. So the expected profit of the mean-optimal
+plan is *below* the profit computed at the mean. Your "adjusted mean" is a direct and legible way
+to buy that optimism back.
+
+**The caveat:** CV alone does not tell you *how much* to adjust. The right shift depends on how
+costly each parameter's uncertainty is, which depends on which constraints bind — and that varies
+by crop and channel. So a single "plan at the 30th percentile" knob is a **good heuristic, not a
+derivation**, and should be labelled as a conservatism dial rather than presented as optimal.
+
+**Recommendation: (b) then (c) — they compose, and neither is a rewrite.** Fix the foresight bug
+first because it is currently making a false claim; then add the conservatism dial; then evaluate
+the conservative plan under (b)'s draws. The product sentence becomes: *"here is your plan, built
+to survive a 1-in-3 bad year, and here is how it performed across 100 simulated seasons."* Skip (d)
+unless solve time stops mattering.
+
+**Does it over-complicate? No — (c) arguably SIMPLIFIES the story**, because Monte Carlo stops
+being a separate mysterious mode and becomes a dial on the main plan.
 
 ---
 
-## GROUP D — Structural and process
+## GROUP D — Engineering
 
-### D1 · E2 — Extract `run_from_js` from the HTML template literal?
-
-**Evidence.** ~340 lines of money-affecting Python live inside a JS template literal in
-`index.html`, testable only by regex-extracting them from a string. Today alone: the adapter
-produced two of the defects the review caught (a dropped `gap_note`, and `_num` inventing capacity
-defaults), and a **backtick inside a Python comment terminated the literal and broke the page** —
-a class of failure that cannot exist once the file is a file. It is also on the critical path for
-the server/LLM work this branch is named after: a second adapter author is the exact scenario that
-made the payroll-load relocation urgent.
-
-**Options.** (a) now; (b) when the server work starts; (c) never.
-
-**Recommendation: (a) or (b), and say which.** This is cheap insurance on the path we are already
-committed to.
-
----
+### D1 · E2 — Extract the adapter from the HTML template literal
+**RULING: yes, important priority.** ~340 lines of money-affecting Python inside a JS template
+literal, testable only by regex-extracting it from a string. It produced two of the defects caught
+in yesterday's review, and a backtick inside a Python comment can break the entire page. On the
+critical path for the server work this branch is named after.
 
 ### D2 · E1 — The in-page test suite
-
-**Evidence.** A 3,425-line console-assert function — **25% of `index.html`** — ships to every user,
-never runs automatically, prints "All what-if tests passed" unconditionally, **crashes with a
-ReferenceError**, leaves the remaining blocks dead, and corrupts live app state on crash. Measured
-in a real browser (Chromium + Pyodide): **18 assertion failures on a fresh load, 25 after a solve.**
-
-**Options.** (a) delete it; (b) port the blocks that carry real coverage into jsdom harnesses and
-delete the rest; (c) fix in place.
-
-**Recommendation: (b).** We are already doing this incrementally — there are 9 `.cjs` harnesses now,
-and each new guard has gone there rather than in-page. This just finishes it.
-
----
+**RULING: yes, but not urgent.** 3,425 lines (25% of `index.html`) shipping to every user, crashing
+on load, printing "All what-if tests passed" unconditionally; measured 18 assertion failures on a
+fresh load, 25 after a solve. **Approach: port the blocks with real coverage into the jsdom
+harnesses and delete the rest** — that migration is already two-thirds done (9 `.cjs` harnesses).
 
 ### D3 · E5 — The field registry
+**RULING: yes, and do it before building much more.** Three overlapping registries keyed by
+form-field id; `FORM_STATE_VERSION` stamped but never read; `applyFormState` silently skips ids it
+cannot find, so a markup rename **silently drops fields from saved plans**. Correctly sequenced
+ahead of the UI overhaul that U1 is deferred into.
 
-**Evidence.** Three partial registries keyed by form-field id (`DATA_F_REGISTRY` units,
-`CROP_PROVENANCE` sources, `CHATBOT_FIELDS` chat descriptions) that overlap and will drift.
-`FORM_STATE_VERSION` is stamped but **never read**, and `applyFormState` silently skips ids it
-cannot find — so any markup rename **silently drops fields from saved plans**. The backlog says this
-"must precede any UI overhaul".
+### D4 · G4 — The false privacy promise
+**RULING: fix the copy now**, and *"we do need to spend some more time thinking about what makes
+sense about the data."* The hub says *"All calculations run in your browser. No data is sent
+anywhere"* while the assistant POSTs the entire form state — farm size, cash, credit line, wages,
+prices — to a third-party LLM, and plans persist to Neon. **Copy fix is immediate; the data-policy
+question is recorded as open** (what should be sent, what should stay local, what should be
+retained and for how long).
 
-**Decision.** Do it before U1's redesign, or accept the drift and the silent-drop risk knowingly.
+### D5 · X2 — Is it live on the internet?
+**GROWER'S QUESTION:** *"Right now this is not live on the internet is it? If so we need to address
+this soon."*
 
----
+**Evidence says NO — not deployed.** No `wrangler deploy` in any of 24 local wrangler logs, no
+deployment artifacts, and no deploy step in CI (`.github/workflows/` has none). `wrangler.jsonc`
+defines the Worker but secrets are documented as local-only (`.dev.vars`).
 
-## GROUP E — Deferred, but should be explicit
-
-### E1 · G4 — The privacy promise is currently false
-
-**Evidence.** The hub says *"All calculations run in your browser. No data is sent anywhere."* The
-assistant POSTs the **entire form state** — farm size, cash, credit line, wages, prices — to a
-third-party LLM, and plans persist to Neon.
-
-**Recommendation.** Fix the copy **now**. It is a statement about user data, it costs nothing to
-correct, and it is the one Tier 7 item that is wrong even with a single user (you).
-
----
-
-### E2 · X2 — Who sees this, and when?
-
-**Status.** Deferred twice. The grower has said to work at a flexible pace and not prioritise by
-when someone will see it — so Phase G (account allowlist, rate limiting on `/api/chat`, Origin/CSRF,
-scenario-identity races) stays parked.
-
-**The decision to make explicit.** That parking is correct **only while nobody else has the URL**.
-Google sign-in currently has no allowlist, domain restriction, or invite table — "private pilot"
-today means anyone with a Google account who finds the URL. Confirm that holds, or pull Tier 7
-forward.
+⚠️ **I cannot prove it from this machine** — verifying requires Cloudflare auth. **Definitive
+10-second check:** log in at dash.cloudflare.com → Workers & Pages → look for `farm-optimizer`; or
+run `npx wrangler deployments list` in an authenticated terminal. **If it IS deployed, Tier 7
+becomes urgent immediately** — Google sign-in currently has no allowlist, domain restriction or
+invite table, so "private" would mean anyone with a Google account who finds the URL.
 
 ---
 
-## Where I would point the audit hardest
+## Still needed from the grower
 
-1. **C3 (one mechanism vs five features)** — the highest-leverage structural bet, and the one I am
-   least able to size alone.
-2. **A1 (what the base plan assumes about hiring)** — my recommendation (b) is a product judgement
-   about what the headline number means, and reasonable people could pick (c).
-3. **The M1 sizing estimate** in the header — I claim the uncharged costs are worth 1–3 points and
-   the rest is on the revenue side. That is an estimate, not a measurement, and if it is wrong the
-   whole "don't chase M1 directly" posture should be re-examined.
-4. **B5 (volume basis)** — two prior audits disagree; a third opinion without a physical measurement
-   adds nothing, and the audit should say so rather than pick a side.
+1. **W17** — what a field hand actually costs locally, $/hr before payroll load.
+2. **R1** — do you spray, what, on which crops, roughly what per acre? (If not: say so and we
+   disclose rather than model.)
+3. **R2** — do you carry insurance, and roughly what per year?
+4. **R4** — do you ever hire a crew by the job (custom harvest/planting)? Priced how?
+5. **R5** — do you sell any volume U-pick?
+6. **M9** — can you weigh and measure one full tote for two or three crops?
+7. **W10** — is your pumping cost separable from your general electric bill?
+8. **X2** — confirm the Cloudflare dashboard shows no deployment.
 
-**Where I would NOT spend audit effort:** the labour money path (W9/W12/W15/W16 and today's fix arc)
-— it has had `/simplify`, `/code-review`, an 8-lens adversarial review, a red-team pass and
-mutation-verified guards within the last two days, and is the most-reviewed code in the repo.
+---
+
+## Appendix — commissioned research
+
+*Two research briefs were commissioned 2026-07-31 and are recorded in the following sections:
+(1) how the produce industry actually expresses storage volume (M9), and (2) what farms of this
+size rent vs own, with dollar magnitudes (P13/R6). Results appended on completion.*

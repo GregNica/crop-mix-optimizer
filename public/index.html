@@ -1137,7 +1137,13 @@
         <li><strong>4 setup steps:</strong> Farm Basics → Water → Labor &amp; Channels → Crops</li>
         <li><strong>Takes about 10–15 minutes</strong> with benchmark defaults pre-filled — less if you accept them as-is.</li>
         <li>The optimizer finds the planting schedule that maximizes profit while respecting your land, water, labor, and market constraints.</li>
-        <li>All calculations run in your browser. No data is sent anywhere.</li>
+        <!-- This line used to read "All calculations run in your browser. No data is sent
+             anywhere." The first sentence is true; the second was NOT, and it is a claim about
+             the grower's own financial data — farm size, cash, credit line, wages, prices. The
+             assistant POSTs the whole form state to a third-party LLM, and saved plans persist
+             to the database. Say what actually happens; the broader data policy (what is sent,
+             what is retained, for how long) is an open decision recorded in DECISIONS.md. -->
+        <li><strong>The optimizer runs entirely in your browser</strong> — your plan is solved on your own machine, not on a server. Saved plans are stored in your account, and if you use the assistant, the farm details on screen are sent to the AI service that answers you.</li>
       </ul>
       <button id="intro-dismiss" onclick="dismissIntro()">Got it — hide this</button>
     </div>
