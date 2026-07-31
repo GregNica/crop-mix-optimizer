@@ -213,7 +213,61 @@ to any defect.
 
 ### B5 · M9 — The volume basis
 **RULING: keep `lbs_per_tote` as the input** (most intuitive for a grower to enter), but
-**research what the industry actually does.** — *research commissioned, results in the appendix.*
+**research what the industry actually does.**
+
+**RESEARCH VERDICT: the input is intuitive and the DERIVATION is wrong — in two ways, which is
+exactly why two prior audits disagreed about the direction. There is no single direction.**
+
+**Defect 1 — scale, ~2× across the board.** `lbs_per_tote` is a hand-lift weight (the library runs
+12–57 lb) divided by an 18-gallon tote (`TOTE_M3 = 0.068137` m³ = **2.406 ft³**, `index.html:2447`)
+that nobody fills to that weight. The whole library implies **5.0–23.7 lb/ft³** where industry pack
+weights imply **14–48 lb/ft³**. An 18-gal tote of cucumbers at a real 38 lb/ft³ would weigh ~91 lb —
+well past the [NIOSH 51 lb load constant](https://www.cdc.gov/niosh/docs/2007-131/pdfs/2007-131.pdf),
+which is the ~50 lb convention hiding inside every hand-handled container spec.
+
+**Defect 2 — the rank order is SIGN-FLIPPED on the exact pair the concern named.** Verified across
+all 29 templates:
+
+| | model implies | industry (KSU pack weights) |
+|---|---|---|
+| Spinach | **12.9 lb/ft³** | 16–20 |
+| Cucumbers | **9.6 lb/ft³** | 36–44 |
+
+**The model has spinach denser than cucumbers; reality has cucumbers 2.0–2.5× denser than
+spinach — a relative error of ~3–3.4× in the wrong direction on that pair.**
+
+⚠️ **This is not academic — it is shaping the plan right now.** Measured on the golden farm:
+**ambient storage runs at 90.5% utilisation** (136 of 150 m³) while cold storage sits at 49.3%.
+Ambient is nearly binding, so the crops stored there (cured alliums, winter squash — and garlic is
+this farm's largest single crop) are being rationed by a volume figure that is wrong by ~2× and
+mis-ordered against its competitors. A storage-binding solve is picking the wrong crop to displace.
+
+**Negative finding worth recording** (it saves the next person the search): **USDA Agriculture
+Handbook 66 does NOT contain bulk densities.** All 38,822 lines were pulled and grepped — zero hits
+for "bulk density", "lb/ft³" or "kg/m³". AH-66 is temperature / RH / ethylene / shelf life. The
+usable substitute is bushel-denominated pack weights ÷ the container's exact legal volume
+(1 US bushel = 2,150.42 in³ = **1.2445 ft³**), which cross-checks internally (greens at two box
+sizes agree; winter squash carton and bulk bin agree).
+
+**Recommendation — keep the container idea, fix what it means.**
+1. **Make the input a container PICKER**, not a free-text weight: 1-1/9 bu carton (1.383 ft³) /
+   bushel box (1.2445) / RPC field lug (1.006) / 18-gal tote (2.406) / 48×48×28 bulk bin (28.7) /
+   50-lb sack. The container then supplies the volume **exactly**, and `lb per container` becomes an
+   optional override.
+2. **Ship per-crop default bulk densities** from the pack-weight table.
+3. **Add a fail-CLOSED tripwire**: warn when an entered weight implies a density more than ~1.5×
+   outside the published range. ⚠️ Given this repo's history of tripwires failing open on NaN
+   (the P&L reconciliation guard), guard the non-finite branch explicitly.
+4. ⚠️ **Separately expose the room derate.** Product occupies only ~35–40% of gross room volume once
+   bins, pallets, aisles and airflow are counted (USDA NASS reports 82% *usable* of gross for racked
+   warehouses — a different derate, and the industry conflates the two). That factor is currently
+   smeared into the per-crop densities, which is part of why they all read ~2× low. **It is a
+   property of the room, not the crop, and belongs in the capacity input.**
+5. **Do NOT switch to bins-per-acre** — it re-encodes yield, which the model already has, and
+   growers cannot estimate it for a crop they have not grown.
+
+**Grower action still useful:** weighing one full tote of two or three crops would validate the
+derate in (4), which is the least well-sourced number in this section.
 
 ---
 
@@ -440,8 +494,32 @@ invite table, so "private" would mean anyone with a Google account who finds the
 
 ---
 
-## Appendix — commissioned research
+## Appendix — commissioned research (2026-07-31)
 
-*Two research briefs were commissioned 2026-07-31 and are recorded in the following sections:
-(1) how the produce industry actually expresses storage volume (M9), and (2) what farms of this
-size rent vs own, with dollar magnitudes (P13/R6). Results appended on completion.*
+Both briefs are folded into B5 (M9) and C2 (P13/R6) above. Primary sources, for audit:
+
+**Volume basis (M9).**
+[USDA Agriculture Handbook 66](https://www.ars.usda.gov/ARSUserFiles/oc/np/CommercialStorage/CommercialStorage.pdf)
+(bushel conversion p. 8; **contains no bulk densities** — verified by full-text grep) ·
+[KSU MF-979 container/pack weights](http://okfarmtoschool.com/wp-content/uploads/containers-and-packaging.pdf) ·
+[UGA C780 weights & processed yields](https://fieldreport.caes.uga.edu/publications/C780/weights-and-processed-yields-of-fruits-and-vegetables/) ·
+[NC State, Produce Packaging Ch. 9](https://content.ces.ncsu.edu/introduction-to-the-postharvest-engineering-for-fresh-fruits-and-vegetables/9-produce-packaging) ·
+[USDA NASS Capacity of Refrigerated Warehouses, Feb 2026](https://esmis.nal.usda.gov/sites/default/release-files/795764/rfwh0126.pdf) ·
+[NIOSH 51 lb load constant](https://www.cdc.gov/niosh/docs/2007-131/pdfs/2007-131.pdf) ·
+[Rehrig 6413 RPC spec](https://www.rehrigpacific.com/supply-chain/products-and-solutions/6413-rpc) ·
+[MacroBin 26FV](https://palletsandbins.com/products/48x48x28-vented-agricultural-harvest-bin-california-standard)
+
+**Rent vs own (P13/R6).**
+[2022 Census of Agriculture, Table 3 — Farm Production Expenses](https://www.nass.usda.gov/Publications/AgCensus/2022/Full_Report/Volume_1,_Chapter_2_US_State_Level/st99_2_003_003.pdf) ·
+[ERS: 39% of farmland rented](https://www.ers.usda.gov/data-products/charts-of-note/chart-detail?chartId=109182) ·
+[ERS Farmland Ownership and Tenure](https://www.ers.usda.gov/topics/farm-economy/land-use-land-value-tenure/farmland-ownership-and-tenure) ·
+[NASS 2025 Land Values and Cash Rents](https://www.nass.usda.gov/Publications/Highlights/2025/2025LandValuesCashRents_FINAL.pdf) ·
+[MU Extension G435 — the DIRTI five](https://extension.missouri.edu/publications/g435) ·
+[Iowa State, Acquiring Farm Machinery Services](https://www.extension.iastate.edu/agdm/crops/html/a3-21.html) ·
+[UNL custom rates 2025](https://cap.unl.edu/news/custom-rates-2025-field-operations/)
+
+⚠️ **Data gaps both briefs flagged, worth carrying:** NASS publishes **no vegetable-specific cash
+rent series** (row-crop averages badly understate intensive veg ground), **no national tenure data
+for greenhouse or retail space**, and the 2025 Maryland/Delaware custom-rate survey **dropped
+vegetable-specific lines** (bed-forming, plastic-laying, transplanting) for lack of responses. Where
+this file cites a vegetable figure it is inference from adjacent data, not a published series.
