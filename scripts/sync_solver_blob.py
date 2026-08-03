@@ -35,6 +35,33 @@ def find_blob(lines: list[str]) -> tuple[int, dict]:
     sys.exit(f"error: no line starting with {PREFIX!r} found in {INDEX}")
 
 
+def render_blob_line(blob: dict) -> str:
+    """The exact text of the `const FARM_V2_FILES = {...};` line, escaped for an inline <script>.
+
+    ESCAPES EVERY `<` as the JSON escape `\\u003c`. That decodes back to `<`, so json.loads
+    round-trips it byte-for-byte and the drift check is unaffected — but no blob content can
+    reach the HTML tokenizer as a `<` any more.
+
+    Why `<` and not just `</script`, which is the obvious hazard: `</script` is not the only
+    sequence the tokenizer acts on. An unterminated `<!--` in script data enters
+    script-data-escaped, and a following `<script` + delimiter enters script-data-DOUBLE-escaped,
+    in which the element's own `</script>` no longer closes it and the rest of the document is
+    swallowed. That is WORSE than the sequence we set out to guard, it needs no `</script` at
+    all, and the two ingredients need not even be in the same module. Escaping `</` alone also
+    REGRESSED one case: a raw `</script` is what EXITS the double-escaped state, so neutralising
+    it removed an accidental escape hatch (measured with parse5: page intact before, swallowed
+    after). Escaping `<` closes the entire class instead of playing whack-a-mole with sequences.
+
+    Nothing else needs escaping: json.dumps defaults to ensure_ascii=True, so every non-ASCII
+    character — including U+2028/U+2029, which are JS line terminators — is already `\\uXXXX`.
+
+    This is the backtick hazard's CLASS. E2 retired "no backticks in PYTHON_CODE" because the
+    adapter left the JS template literal — correct for backticks, but the class is "embedded
+    Python breaks out of its JS container", and that moved rather than died.
+    """
+    return f"{PREFIX}{json.dumps(blob).replace('<', chr(92) + 'u003c')};\n"
+
+
 def read_disk(keys: list[str]) -> dict[str, str]:
     out = {}
     for key in keys:
@@ -78,13 +105,18 @@ def main() -> int:
         print("\nOK: embedded blob matches disk.")
         return 0
 
-    if not drift and not missing:
-        print("\nAlready in sync; nothing written.")
-        return 0
-
     for k in missing:
         disk[k] = (REPO / k).read_text()
     new_blob = {k: disk[k] for k in sorted(disk)}
+    # Compare the RENDERED line, not just the parsed content. A blob that is in sync with disk
+    # but written unescaped is exactly the state test_blob_sync's <script> guard fails on — and
+    # the early return here used to make the remedy that test prints ("run the sync script") a
+    # no-op, so the developer was told to run a command that refused to do anything. README's
+    # hand-copy instructions make that state reachable.
+    rendered = render_blob_line(new_blob)
+    if not drift and not missing and lines[idx] == rendered:
+        print("\nAlready in sync; nothing written.")
+        return 0
     # Escape every `</` as `<\/`. The blob lives inside an inline <script>, and json.dumps does
     # NOT escape `/` — so a `</script` anywhere in farm_v2/*.py (a docstring, a comment about the
     # HTML embed, a URL) would close the tag early and blank the page. `\/` is a legal JSON
@@ -94,8 +126,7 @@ def main() -> int:
     # because the adapter stopped living in a JS template literal — correct for backticks, but
     # the CLASS is "embedded Python breaks out of its JS container", and that moved rather than
     # died. Closed by construction here, with a fail-closed backstop in tests/test_blob_sync.py.
-    escaped = json.dumps(new_blob).replace("</", "<\\/")
-    lines[idx] = f"{PREFIX}{escaped};\n"
+    lines[idx] = rendered
     INDEX.write_text("".join(lines))
     print(f"\nRewrote blob: {len(drift)} updated, {len(missing)} added.")
     return 0

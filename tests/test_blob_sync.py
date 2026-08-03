@@ -64,29 +64,75 @@ class TestBlobSync:
         missing = required - set(blob.keys())
         assert not missing, f"solver modules missing from the embedded blob: {sorted(missing)}"
 
-    def test_no_embedded_python_can_close_the_script_tag(self):
-        """A `</script` in any embedded module would blank the page, invisibly to Python.
+    def test_no_embedded_python_can_reach_the_html_tokenizer(self):
+        """No raw `<` in the rendered blob line — the whole class, not one sequence.
 
-        The blob sits inside an inline <script>, and `json.dumps` does NOT escape `/` — so a
-        `</script` in a docstring, a comment about the HTML embed, or a URL closes the tag early.
-        The page dies; every Python test stays green. That asymmetry is exactly the backtick
-        incident (a backtick inside a comment closed the old PYTHON_CODE template literal while
-        the extractor kept returning valid Python), and E2 retired that guard on the correct but
-        narrow ground that backticks are ordinary inside a double-quoted JS string.
+        The blob sits inside an inline <script>, and `json.dumps` escapes neither `<` nor `/`.
+        The obvious hazard is `</script`, which closes the element early and blanks the page
+        invisibly to every Python test (the backtick incident's class, relocated by E2).
 
-        The hazard CLASS — embedded Python breaking out of its JS container — moved rather than
-        died, so the guard is re-pointed at the class instead of the character. `sync_solver_blob`
-        escapes `</` as `<\\/` when it writes, which closes this by construction; this asserts the
-        rendered line, so a hand-edit or a future writer change cannot quietly reopen it.
+        But guarding `</script` alone is whack-a-mole, and a review proved it BOTH ways: an
+        unterminated `<!--` in script data enters script-data-escaped, and a following `<script`
+        + delimiter enters script-data-DOUBLE-escaped, where the element's own `</script>` no
+        longer closes it and the rest of the document is swallowed — worse than the guarded case,
+        containing no `</script` at all, and the two ingredients need not even be in the same
+        module. Escaping only `</` also REGRESSED that case, because a raw `</script` is what
+        exits the double-escaped state.
 
-        Fail-CLOSED: it checks the RAW line, not the parsed blob (the parse decodes `<\\/` back to
-        `</`, which would make this pass no matter what shipped).
+        So the writer escapes every `<` as `\\u003c` and this asserts the outcome: zero `<`.
+        Total, and immune to whichever sequence the tokenizer cares about next.
+
+        Fail-CLOSED: reads the RAW line, never the parsed blob — parsing decodes `\\u003c` back
+        to `<`, so a parsed check would pass no matter what shipped.
         """
         raw = next((l for l in INDEX.read_text().splitlines() if l.strip().startswith(PREFIX)),
                    None)
         assert raw is not None, "FARM_V2_FILES line not found"
-        assert "</script" not in raw.lower(), (
-            "an embedded farm_v2 module contains `</script`, which closes the inline <script> "
-            "early and blanks the page. Re-run `python3 scripts/sync_solver_blob.py` (it escapes "
-            "`</` as `<\\/`), or remove the sequence from the source."
+        assert "<" not in raw, (
+            f"the rendered blob contains {raw.count('<')} raw '<' — embedded Python can reach "
+            "the HTML tokenizer and break the page. Re-run `python3 scripts/sync_solver_blob.py`."
         )
+
+
+class TestBlobWriter:
+    """The WRITER, not the artifact.
+
+    The escape shipped with no test of its own: no farm_v2 module contains `<` today, so
+    deleting `.replace(...)` from the writer left the entire suite green. The artifact guard
+    above is fail-closed on what happens to be checked in; this pins the mechanism, on input the
+    repo does not contain and should survive if it ever does.
+    """
+
+    HOSTILE = {
+        # Each line is a plausible docstring/comment for a module that documents this very embed.
+        "farm_v2/a.py": '"""the blob sits in a <script> tag, closed by </script> --"""\n',
+        "farm_v2/b.py": "s = '</SCRIPT>'; t = '<!--'; u = 'a</b'; v = '<script >'\n",
+        "farm_v2/c.py": "p = 'C:\\\\path'; q = '\\\\</'; r = '\u2028\u2029\u4e2d'\n",
+    }
+
+    def _render(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_sync_blob", REPO / "scripts" / "sync_solver_blob.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod, mod.render_blob_line(self.HOSTILE)
+
+    def test_the_writer_neutralises_every_angle_bracket(self):
+        _mod, line = self._render()
+        assert "<" not in line, "the writer let a raw '<' through"
+
+    def test_the_writer_round_trips_byte_for_byte(self):
+        """Neutralising the page must not corrupt the code — Pyodide imports these strings."""
+        mod, line = self._render()
+        decoded = json.loads(line[len(mod.PREFIX):].rstrip().rstrip(";"))
+        assert decoded == self.HOSTILE, (
+            "escaping changed the Python source. The browser would run different bytes than "
+            "pytest does — the exact false-green the blob-sync guard exists to prevent."
+        )
+
+    def test_the_rendered_line_is_pure_ascii(self):
+        """json.dumps' ensure_ascii already handles U+2028/U+2029, which are JS line
+        terminators — this pins that we still rely on it rather than having turned it off."""
+        _mod, line = self._render()
+        assert line.isascii()

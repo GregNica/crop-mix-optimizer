@@ -25,7 +25,6 @@ double-counted, the margin hurdle running on phantom rates) will each move these
 fixed — that is expected, and the new values should be recorded here with a note saying why.
 """
 import json
-import pathlib
 import re
 
 import pytest

@@ -14,7 +14,6 @@ Two rules carry the whole change, and neither had a test until this file:
   2. PAYROLL IS NOT FLAT. It is the first fixed line with a weekly profile, so it must reach the
      cash floor as the profile rather than as an annual total divided by 52.
 """
-import pathlib
 
 import numpy as np
 import pytest
