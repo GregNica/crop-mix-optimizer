@@ -7203,6 +7203,22 @@ function fmt(n) {
   return '$' + n.toLocaleString('en-US', {minimumFractionDigits: 0, maximumFractionDigits: 0});
 }
 
+// A frame yield that STILL RESOLVES IN A HIDDEN TAB.
+//
+// Chrome pauses requestAnimationFrame entirely in a backgrounded, minimized or fully-occluded
+// window. Every site that yields a frame mid-computation therefore stops dead when the grower
+// looks at something else — and the worst of them is solveForNumbers, which yields ONCE PER
+// SWEEP SOLVE: a 100-draw Monte Carlo backgrounded halfway through simply stops, indefinitely,
+// looking exactly like a hang. (Measured symptom, reported from a real run.) The render path has
+// the same problem between a finished solve and renderResults.
+//
+// The timer arm removes the dependency; whichever fires first wins. In a visible tab rAF wins and
+// the behaviour is unchanged, so this costs the paint nothing.
+const paintYield = () => Promise.race([
+  new Promise(requestAnimationFrame),
+  new Promise(r => setTimeout(r, 50)),
+]);
+
 const SOLVER_TIMEOUT_MS = 90000; // 90 seconds
 // The draw is a SECOND Python call since E2, awaited after the solver's race has already
 // resolved — so without its own bound it is the one unbounded await in runOptimizer, and a wedge
@@ -7542,17 +7558,8 @@ async function runOptimizer() {
   // Two frames, not one: the first lets style/layout settle, the second guarantees the
   // paint has actually happened. This does NOT animate the bar during the solve — nothing
   // on this thread can. The real fix is moving Pyodide into a Web Worker.
-  await new Promise(requestAnimationFrame);
-  await new Promise(requestAnimationFrame);
-
-  // A frame yield that still resolves in a BACKGROUND TAB. rAF does not fire while hidden, and
-  // the yields around the chart sit between "solve finished" and renderResults/switchToResults —
-  // so on a 75 s solve the grower tabs away, comes back, and the page is still saying "Solving…"
-  // until the first frame lands. The timer arm removes the dependency; whichever fires first wins.
-  const paintYield = () => Promise.race([
-    new Promise(requestAnimationFrame),
-    new Promise(r => setTimeout(r, 50)),
-  ]);
+  await paintYield();
+  await paintYield();
 
   const done = () => {
     setRunning(false);
@@ -7690,7 +7697,7 @@ async function runOptimizer() {
  * helper is where one would go (BACKLOG S20).
  */
 async function solveForNumbers(p) {
-  await new Promise(requestAnimationFrame);
+  await paintYield();
   const raw = await pyodide.runPythonAsync(
     `run_from_js(${JSON.stringify(JSON.stringify(p))})`);
   return JSON.parse(raw);
