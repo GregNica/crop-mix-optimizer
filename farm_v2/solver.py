@@ -130,6 +130,14 @@ def report_solve_status(highs_status: int, time_limited_incumbent: bool) -> str:
     return _STATUS_MAP.get(highs_status, f"unknown({highs_status})")
 
 
+# The statuses that carry a REAL PLAN. 'time_limit_feasible' is one of them: HiGHS stopped on the
+# clock with a feasible incumbent rather than proving optimality (SPEC_v3 §7.1), so the plan is
+# usable and the UI says so. Named here because the adapter and the chart both gate on it, and a
+# fourth status added to two of the three places fails silently in opposite directions — the chart
+# returning '' reads to the client as a wiring error rather than as an unsolved farm.
+PLAN_STATUSES = ("optimal", "time_limit_feasible")
+
+
 # ---------------------------------------------------------------------------
 # Index helpers
 # ---------------------------------------------------------------------------

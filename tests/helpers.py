@@ -16,6 +16,9 @@ import pathlib
 # this module exists at all.
 REPO = pathlib.Path(__file__).resolve().parent.parent
 INDEX = REPO / "public" / "index.html"
+# The shipped farm's payload, as the browser sends it. Four modules had each re-derived this
+# path with their own `parent` walk — same reason as REPO above.
+GOLDEN_PAYLOAD = REPO / "tests" / "golden" / "default_farm_payload.json"
 
 
 def index_src() -> str:

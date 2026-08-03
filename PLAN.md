@@ -37,9 +37,15 @@ These are the compressed lessons of the last two weeks. Each one is paid for.
    uncommitted work twice in this repo's history).
 6. **After editing `farm_v2/`**: `python3 scripts/sync_solver_blob.py`, and run
    `npm run test:blob && npm run test:payload`.
-7. **No backticks inside `PYTHON_CODE` comments** — the first one terminates the JS template
-   literal (broke the page once). Moot for the adapter after E2 lands; still true for any
-   remaining embedded Python.
+7. **Embedded Python must not break out of its JS container.** ~~No backticks inside
+   `PYTHON_CODE`~~ — retired 2026-08-02 by E2: there is no template literal any more, and a
+   backtick inside the blob's double-quoted JSON is an ordinary character. **The CLASS moved
+   rather than died**, which the retirement nearly missed: the blob sits in an inline `<script>`
+   and `json.dumps` does *not* escape `/`, so a `</script` in any `farm_v2/*.py` would close the
+   tag early and blank the page — invisibly to every Python test, exactly the backtick
+   asymmetry. Now closed by construction (`sync_solver_blob.py` writes `<\/`) with a fail-closed
+   backstop in `tests/test_blob_sync.py`, both mutation-verified. **The lesson generalises: when
+   you retire a guard because its mechanism moved, ask what the mechanism's CLASS is.**
 8. **When you kill a coercion idiom, grep the pipeline for the IDIOM, not the field** —
    `parseFloat(x) || d` and present-None-defaults each resurfaced one layer away, same day they
    were "fixed".
@@ -180,7 +186,36 @@ delete it when the panel is rebuilt.
 
 ## Batch 1 — Structural enablers (E2 + W8, then E5)
 
-**1.1 · E2 — extract the Python adapter to `farm_v2/adapter.py`.**
+**1.1 · E2 — extract the Python adapter to `farm_v2/adapter.py`. ✅ DONE 2026-08-02.**
+568 lines left `index.html`; `farm_v2/adapter.py` (493) + `farm_v2/charts.py` (107). **Proved
+equivalent BEFORE the page was touched, and again after `/simplify`:** same result-dict key set,
+zero value diffs, profit identical to the last digit ($428,546.6374901873), and the waterfall PNG
+byte-identical (same SHA, 42,592 B). 407 pytest / 11 harnesses / blob + payload green.
+
+Carry forward:
+- **`skip_charts` is DELETED, not moved.** Once drawing is a separate call the flag has no work
+  to do, and a sixth sweep path cannot forget a flag that does not exist. E8's saving is now
+  structural. Its two flag tests became four sharper ones, incl. a SUBPROCESS check that
+  importing the adapter pulls in no matplotlib — an in-process `sys.modules` check could not
+  fail, since pytest may have imported it already.
+- **The blob-sync trap fired and the guard caught it**, exactly as this plan predicted: the sync
+  script reported both new modules "on disk but NOT embedded" before they were added.
+- ⚠️ **`/simplify` found FIVE in-page self-tests that were TAUTOLOGIES** (T162c, T189a/b/c, and
+  T145 partly). They grep `document.documentElement.innerHTML`, which contains the assertion's
+  own source — and four checked for `p.get('rate_irrigation'`-style strings the adapter has
+  NEVER contained (it uses `_num`). They would pass with `FARM_V2_FILES = {}`. Pre-existing, not
+  E2's doing, and my own first check was fooled the same way (the string IS in the page — in the
+  test). Re-pointed at the parsed blob, where the haystack cannot contain the needle. **Any
+  in-page source grep must read `pySrc(file)`, never `innerHTML`.**
+- One behaviour improvement, deliberate and not a pure move: a chart failure used to hit the
+  adapter's blanket `except` and cost the grower the whole plan; it now costs the drawing.
+  Plus a `requestAnimationFrame` yield before the draw — `stopProgress` had already marked the
+  bar complete, so without it the grower saw a finished bar over a frozen tab.
+- ⚠️ **NOT verified: the Pyodide boot path.** pytest proves the module imports under CPython and
+  the blob check proves it ships, but nothing executes `from farm_v2.adapter import run_from_js`
+  in a browser — jsdom cannot run Pyodide. **Browser QA must confirm boot + a drawn waterfall.**
+
+Original attack plan, for history:
 WHY: ~340 lines of money-affecting Python in a JS template literal, testable only by regex
 extraction; produced two reviewed defects and one page-breaking backtick this week; prerequisite
 for the server path (bet ③) and for any second caller.

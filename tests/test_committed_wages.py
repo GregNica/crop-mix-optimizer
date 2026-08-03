@@ -14,7 +14,6 @@ Two rules carry the whole change, and neither had a test until this file:
   2. PAYROLL IS NOT FLAT. It is the first fixed line with a weekly profile, so it must reach the
      cash floor as the profile rather than as an annual total divided by 52.
 """
-import functools
 import pathlib
 
 import numpy as np
@@ -24,6 +23,8 @@ pytest.importorskip("scipy")
 
 from farm_v2.solver import solve_farm_v2            # noqa: E402
 from farm_v2.utils.labor import compute_labor_arrays  # noqa: E402
+from farm_v2.adapter import run_from_js               # noqa: E402  (a module since E2)
+from tests.helpers import GOLDEN_PAYLOAD  # noqa: E402
 
 
 class TestWagesAreChargedOnFullHours:
@@ -436,32 +437,6 @@ class TestHireIsPricedForTheMarketNotTheCrew:
         )
 
 
-@functools.lru_cache(maxsize=1)
-def _adapter_code():
-    """Read index.html and compile PYTHON_CODE once per session — the read+regex+compile is
-    repeated by every _run_from_js() caller otherwise. Only the compile is cached; each call
-    still gets a FRESH namespace, which the gap-note test relies on to substitute the solver."""
-    import re
-    from tests.helpers import index_src
-    src = index_src()
-    code = re.search(r"const PYTHON_CODE = `(.*?)`;", src, re.S).group(1)
-    code = re.sub(r"^(import matplotlib.*|matplotlib\.use\(.*|from matplotlib.*)$", "", code,
-                  flags=re.M)
-    return compile(code, "index.html:PYTHON_CODE", "exec")
-
-
-def _run_from_js(return_ns=False):
-    """The app's real Python adapter, extracted from index.html the way test_golden_farm does.
-
-    With return_ns=True also returns the exec namespace, so a test can substitute
-    `solve_farm_v2` and pin what the adapter FORWARDS separately from what the solver computes.
-    """
-    ns: dict = {}
-    exec(_adapter_code(), ns)   # noqa: S102
-    ns["make_waterfall_chart"] = lambda *a, **k: ""
-    return (ns["run_from_js"], ns) if return_ns else ns["run_from_js"]
-
-
 def test_a_typed_hired_wage_actually_solves_and_carries_the_payroll_load():
     """EXECUTES the adapter. The previous version of this test grepped it, and that is why the
     feature shipped broken.
@@ -475,9 +450,9 @@ def test_a_typed_hired_wage_actually_solves_and_carries_the_payroll_load():
     with this field set. This does.
     """
     import json
-    run = _run_from_js()
+    run = run_from_js
     payload = json.loads(
-        (pathlib.Path(__file__).resolve().parent / "golden" / "default_farm_payload.json").read_text())
+        GOLDEN_PAYLOAD.read_text())
     payload["hired_wage_per_hr"] = 19.00
     payload["payroll_load_pct"] = 0.25
     out = json.loads(run(json.dumps(payload)))

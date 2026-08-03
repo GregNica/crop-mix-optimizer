@@ -31,15 +31,14 @@ import re
 import pytest
 
 from farm_v2.solver import VC_CATEGORIES
+from farm_v2.adapter import run_from_js as _adapter_run_from_js
 from tests.helpers import (
+    GOLDEN_PAYLOAD as PAYLOAD,
+    INDEX,
     SATURATION_KEYS,
     annual_equivalent_cap,
     saturation_entries,
 )
-
-REPO = pathlib.Path(__file__).resolve().parent.parent
-INDEX = REPO / "public" / "index.html"
-PAYLOAD = REPO / "tests" / "golden" / "default_farm_payload.json"
 
 pytest.importorskip("numpy")
 pytest.importorskip("scipy")
@@ -407,43 +406,22 @@ CASH_TIMED_LINES = {"profit", "interest_cost"}
 CENT = 0.01
 
 
-def _extract_python_code() -> str:
-    """Pull the PYTHON_CODE template literal out of index.html.
-
-    It is a JS backtick string, so `${...}` interpolations would be a problem — there are
-    none today, and this asserts that stays true rather than silently mangling the source.
-    """
-    src = INDEX.read_text()
-    start = src.index("const PYTHON_CODE = `") + len("const PYTHON_CODE = `")
-    end = src.index("`;", start)
-    code = src[start:end]
-    assert "${" not in code, (
-        "PYTHON_CODE now contains a JS interpolation; this extractor would inline it "
-        "verbatim and the golden test would be running something other than the app's code."
-    )
-    # A backtick ENDS the template literal in the browser, so the page breaks while this
-    # extractor — which slices to the first "`;" — happily keeps returning valid Python and
-    # every test here stays green. That happened once: a backtick inside a comment in the
-    # result dict. Only the node harnesses caught it. Fail here too.
-    assert "`" not in code, (
-        "PYTHON_CODE contains a backtick, which closes the JS template literal early and "
-        "breaks the page. Python-side tests cannot see this; use quotes in comments."
-    )
-    # matplotlib is only needed for the chart PNGs, which this test does not exercise.
-    return code
-
-
 @pytest.fixture(scope="module")
 def run_from_js():
-    """The app's real adapter, with the chart call stubbed out (no matplotlib needed)."""
-    code = _extract_python_code()
-    ns: dict = {}
-    # Drop the matplotlib import/use lines, then stub the one chart builder. `_fig_to_b64` needs
-    # no stub: its only caller is the builder above it, which never runs.
-    code = re.sub(r"^(import matplotlib.*|matplotlib\.use\(.*)$", "", code, flags=re.M)
-    exec(compile(code, "index.html:PYTHON_CODE", "exec"), ns)   # noqa: S102
-    ns["make_waterfall_chart"] = lambda *a, **k: ""
-    return ns["run_from_js"]
+    """The app's real adapter — a plain import since E2.
+
+    This used to slice the PYTHON_CODE template literal out of index.html, assert it carried no
+    `${...}` interpolation and no backtick, strip the matplotlib import lines and stub the chart
+    builder. All of that is obsolete by construction: `farm_v2/adapter.py` is a module, so there
+    is no literal to mangle and nothing to strip.
+
+    The two tripwires are retired rather than relocated, and that is deliberate. The backtick one
+    guarded a real page-breaking failure (a backtick in a comment closed the literal early while
+    this extractor happily kept returning valid Python, so only the node harnesses caught it) —
+    but the adapter now travels in the FARM_V2_FILES blob, which is JSON inside a DOUBLE-quoted
+    JS string. A backtick there is an ordinary character. The hazard is gone, not merely unpinned.
+    """
+    return _adapter_run_from_js
 
 
 @pytest.fixture(scope="module")

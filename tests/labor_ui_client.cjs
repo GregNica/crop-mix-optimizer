@@ -84,21 +84,22 @@ bootApp().then(({ window: w }) => {
   // the solver no longer has (W15 removed the hire-then-overtime fill order; W12 made every
   // worker committed and capacity-counted), survived one fix pass in three tooltips, and
   // primes the grower to misread a correct result. Scan the whole document INCLUDING
-  // data-tip attributes, minus BOTH embedded-Python regions. The first version stripped
-  // with /FARM_V2_FILES[\s\S]*?`;/ — but the blob ends in };, not `;, so the non-greedy
-  // match ran ~185KB past it to the first template literal's close, deleting renderLaborRow
-  // (the markup this harness guards) from the scanned text while leaving PYTHON_CODE in
-  // scope. The blob is one LINE, so a line-anchored match is the robust strip; each strip
-  // asserts it actually removed something, the same discipline jsdom_app.cjs uses.
+  // data-tip attributes, minus the embedded Python. The first version stripped with
+  // /FARM_V2_FILES[\s\S]*?`;/ — but the blob ends in };, not `;, so the non-greedy match ran
+  // ~185KB past it to the first template literal's close, deleting renderLaborRow (the markup
+  // this harness guards) from the scanned text. The blob is one LINE, so a line-anchored match
+  // is the robust strip; it asserts it actually removed something, the same discipline
+  // jsdom_app.cjs uses.
+  //
+  // ONE strip now, where there used to be two: E2 moved the adapter out of its own
+  // `const PYTHON_CODE = ...` template literal and into farm_v2/adapter.py, so it travels
+  // inside this same blob. The second strip would silently match nothing today, which is why
+  // it is deleted rather than left in — a no-op strip guarded by a length check is a test that
+  // fails for a reason unrelated to what it guards.
   const rawHtml = doc.documentElement.outerHTML;
   let html = rawHtml.replace(/const FARM_V2_FILES = .*/, '');
   if (html.length > rawHtml.length - 100000) {
     fail('blob strip removed almost nothing — FARM_V2_FILES is no longer one line, fix the strip');
-  }
-  const beforePy = html.length;
-  html = html.replace(/const PYTHON_CODE = `[\s\S]*?`;/, '');
-  if (html.length > beforePy - 10000) {
-    fail('PYTHON_CODE strip removed almost nothing — the adapter is still in the dead-phrase scan');
   }
   const deadPhrases = [
     ['hired labor (up to your cap) first',       'the pre-W15 fill order (hire first)'],

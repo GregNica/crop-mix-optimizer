@@ -85,7 +85,17 @@ def main() -> int:
     for k in missing:
         disk[k] = (REPO / k).read_text()
     new_blob = {k: disk[k] for k in sorted(disk)}
-    lines[idx] = f"{PREFIX}{json.dumps(new_blob)};\n"
+    # Escape every `</` as `<\/`. The blob lives inside an inline <script>, and json.dumps does
+    # NOT escape `/` — so a `</script` anywhere in farm_v2/*.py (a docstring, a comment about the
+    # HTML embed, a URL) would close the tag early and blank the page. `\/` is a legal JSON
+    # escape that decodes to `/`, so json.loads round-trips it and the drift check is unaffected.
+    #
+    # This is the backtick hazard, relocated. E2 retired the "no backticks in PYTHON_CODE" guard
+    # because the adapter stopped living in a JS template literal — correct for backticks, but
+    # the CLASS is "embedded Python breaks out of its JS container", and that moved rather than
+    # died. Closed by construction here, with a fail-closed backstop in tests/test_blob_sync.py.
+    escaped = json.dumps(new_blob).replace("</", "<\\/")
+    lines[idx] = f"{PREFIX}{escaped};\n"
     INDEX.write_text("".join(lines))
     print(f"\nRewrote blob: {len(drift)} updated, {len(missing)} added.")
     return 0
