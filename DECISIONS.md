@@ -494,6 +494,110 @@ invite table, so "private" would mean anyone with a Google account who finds the
 
 ---
 
+## GROUP E — Loss, storage and shelf life (proposals, 2026-08-29; awaiting the grower)
+
+Raised by the grower reading toy v1: *"does 85% mean the other 15% is not sellable, or that it
+couldn't find sales? If it's the latter, shouldn't that get factored into storage?"* Backlog rows
+**G1/G2/G3**. All three measured before proposing. **They ship as one batch or not at all** —
+E1 makes holding physically honest, E3 makes it cost something, and E2 sets the honest durations;
+any one alone moves the plan the wrong way.
+
+### E1 · G1 — split `sell_through_fraction` in two, because it is two things
+
+**The finding.** The form defines sell-through as *"after spoilage, grade-outs, returns, and
+unsold perishables"*. The solver implements grade-out at harvest only: `succ_weekly_sellable_lbs`
+= `st x land x yield / n_harv` feeds C4a's inventory inflow, C4b's room occupancy, C4c's shelf
+life and the waste report, so the missing 15% never occupies a cooler. Returns came back from a
+buyer, unsold perishables sat in the room, spoilage largely happens IN store. All were cooled.
+
+**Measured, golden farm:** room occupancy understated by 1/0.85 = **17.6%**. Ambient barn
+**90.5% → 106.5% of capacity** — the shipped default plan is infeasible on the disclosed reading
+of its own input. Cold 49.3% → 58.0%.
+
+**Why the obvious fix is wrong, and this is the part worth reading.** My first recommendation was
+"narrow sell-through to grade-out and let demand caps + waste carry the rest." **That is wrong.**
+Measured: 8 of 14 crop-channel rows sit at 100% of their weekly ceiling and `waste` is 0 lb across
+all seven crops. The optimizer grows exactly what it can sell, so **the model never has
+systematically unsold product** — the cap already prevents it existing. Demand caps carry the
+deterministic CEILING; they carry no variance below it. Narrowing sell-through to field cull would
+delete the only representation of "you brought it and it did not sell" and make the farm more
+profitable and less realistic — the direction every mis-fix here has moved.
+
+**The grower cannot supply the split** (asked directly: *"highly variable"*). That is not a gap in
+their knowledge, it is evidence the two things are different quantities and need different names.
+
+**PROPOSAL — two fractions, applied on opposite sides of the store:**
+
+| name | meaning | applied | today |
+|---|---|---|---|
+| `pack_out_fraction` | gross harvest → marketable product leaving the field/packhouse. Culls, off-grade, damage. **Never enters the cooler.** | at harvest, before inventory | this is what `st` silently does |
+| `sell_through_fraction` | marketable product OFFERED → actually sold. Returns, unsold at market, rejected loads. **Was cooled, shipped, and did not come back.** | at the sale, after storage | not modelled at all |
+
+Both are standard produce terms and neither is a coinage.
+
+**Mechanism.** `v[c,ch,w]` stays pounds SOLD — demand caps and revenue are untouched. The
+inventory drawdown becomes `v / sell_through`: to sell 85 lb you shipped 100. Linear (a constant
+coefficient), so nothing about the LP changes shape. Then:
+- C4a inflow uses `pack_out x H` — culls never enter the room ✓
+- C4b room occupancy rises, because product now passes through the store before being lost ✓
+- the lost portion leaves inventory and never returns — the grower's own point, *perishables do
+  not go back in the cooler* ✓
+- report `market_loss_lbs` beside `waste_by_crop`, per this repo's rule that an invisible number
+  is an unauditable one
+
+**DEFAULTS — the one real decision.** Preserving today's economics needs
+`pack_out x sell_through = 0.85`, and the split is unknown. Three options:
+1. `pack_out=1.0, sell_through=0.85` — all loss downstream. **Conservative for sizing** (the barn
+   goes infeasible, which is the honest reading of today's tooltip) and it makes the existing copy
+   true. **Recommended interim.**
+2. `pack_out=0.85, sell_through=1.0` — today's behaviour exactly. Zero movement, and the tooltip
+   stays false.
+3. Per-crop sourced pack-out rates from extension budgets (published for vegetables, typically
+   70–95%). **The right end state, and it is Batch 3 crop-data work**, not this fix.
+
+Recommend shipping (1) with the mechanism, then (3) with the crop sweep. ⚠️ (1) re-pins the golden
+farm and will need the Batch protocol: own commit, assert the direction, document per-line deltas.
+
+**COMPLEXITY TEST:** passes. "What share of what you pick is packable?" and "what share of what
+you take to market comes home?" are both things a grower has a feel for; "sell-through" as a
+single blended number is not.
+
+### E2 · G2 — every shipped shelf life comes from a deprecated field
+
+`shelf_life_weeks` appears **once** in `index.html`, inside the embedded solver blob. No UI writes
+it, so all seven crops fall through `c.get("shelf_life_weeks", c.get("sales_spread_weeks", 1))` to
+the old field. A sales WINDOW is not a shelf life. Live: Spinach 2, Cucumbers 2, Kale 2, Tomatoes
+1, Hot Peppers 2, Garlic 16, Basil 1. Garlic's real storage life is 26–35 weeks.
+
+⚠️ Compounded: the 2026-07-28 ruling made `L` COUNT the harvest week and its own note says
+*"anything relying on the old reading needs its value raised by one."* The values were never
+raised, so every crop authored under the old reading has one week LESS selling time than intended,
+and `L=1` (Tomatoes, Basil) now means "hold nothing at all."
+
+**PROPOSAL:** a per-crop `shelf_life_weeks` field with sourced defaults (USDA Handbook 66, the
+same source the crop library already cites for storage), the +1 correction applied crop by crop
+with its reasoning recorded, and `sales_spread_weeks` retained as an IMPORT alias only.
+**Blocked by E3** — see below. Ride Batch 3.
+
+### E3 · G3 — holding is free, and that blocks E2
+
+`storage_loss_frac_per_week` is fully implemented in the solver (it is the `(1-loss)` coefficient
+in C4a and the decay weighting in C4c) and **defaults to 0 with no form field anywhere** — the
+adapter reads a payload key nothing ever sends. This is the playbook's Phase-3 class exactly: *a
+feature implemented in the solver and switched off by an empty column.*
+
+Consequence: a long shelf life is pure upside. Raising garlic to a truthful 30 weeks (E2) without
+this makes hoarding strictly better, which is why SPEC_v3 §3.4 names it a hard prerequisite.
+
+**PROPOSAL:** wire the existing parameter to a per-crop field with sourced defaults (a few tenths
+of a percent per week for cured alliums, several percent for leafy greens). No solver change is
+needed — the mechanism is already there and already guarded. This is the cheapest of the three and
+it unblocks E2.
+
+**ORDER: E3 → E1 → E2, one re-pin at the end.**
+
+---
+
 ## Rulings on the audit's three open questions (2026-07-31, all resolved)
 
 **M9 — volume basis: proceed with the recommended scope.** `STRATEGY.md`'s "volume/pack basis"
