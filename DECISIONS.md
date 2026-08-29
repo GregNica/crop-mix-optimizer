@@ -562,6 +562,64 @@ farm and will need the Batch protocol: own commit, assert the direction, documen
 you take to market comes home?" are both things a grower has a feel for; "sell-through" as a
 single blended number is not.
 
+---
+
+#### ⭐ GROWER RULING, 2026-08-29 — sell-through is PER CROP x CHANNEL
+
+> *"It depends per crop whether or not product can be brought back from market. To me this says
+> that the sell-through needs to be specific to crop AND channel. In the current app's UI, this
+> means it should not fall under market channel or crop, but under the parameters within each
+> channel on each crop."*
+
+**Accepted, and it supersedes the farm-wide field.** The reasoning that got here, in the grower's
+own steps: a wholesaler orders, you deliver, you invoice — **there is no unsold portion**, so
+sell-through is ~1.0 by construction. At a market stall you bring a full display because you
+cannot sell from an empty table, so you always offer more than you sell — and whether the
+remainder is *lost* or merely *delayed* depends on the crop, not the channel.
+
+So the quantity is **channel x storability**, and only a crop-channel cell can hold it.
+
+**Placement is already correct in the data model:** `crop["channels"][name]` holds `price_per_lb`,
+`packaging_cost_per_lb` and the demand cap. `sell_through_fraction` belongs beside them. Today the
+solver has a farm-wide default plus a per-CROP override and **no channel dimension at all**
+(`solver.py` Step 3b / C4a), so this is a new axis, not a move.
+
+**The grower's other reframing, also accepted:** *"could it be that demand cap is the demand
+projection, and then sell-through is the variance in that?"* Yes — and it is sharper than anything
+previously written down here. The cap is the planning figure; sell-through is the shortfall
+against it; and it only bites where the remainder cannot be carried forward:
+
+| | cap means | sell-through | why |
+|---|---|---|---|
+| Wholesale / contract | a purchase order | ~1.0 | you grow to the order; losses are rejections, a different event |
+| CSA | pre-sold shares | ~1.0 | paid before it is planted |
+| Market, perishable | a forecast | < 1.0 | full table, unsold is compost |
+| Market, storable | a forecast | ~1.0 seasonally | unsold goes back in the barn — **delayed, not lost** |
+
+**MEASURED SIZE OF THE ERROR.** On the golden farm **57% of pounds move through Wholesale**
+(726,987 lb, 40% of revenue). A farm-wide 0.85 charges a market-stall haircut to every one of
+them: **128,292 lb** grown, cooled, stored and discarded on a channel that would have had a signed
+order.
+
+⚠️ **DIRECTION WARNING, stated before it is built.** Wholesale at ~1.0 drops the farm's blended
+loss from 15% to roughly 6–7%, so the farm grows less, spends less, and **net margin goes UP** —
+the wrong way for M1, which is already too high at 20.1%. Partly offset by storage rising. This
+project has a documented pattern of correct fixes moving margin the wrong way (four of them); the
+answer is to model the market-day overage honestly, not to keep a wrong number because its sign is
+convenient.
+
+**A SECOND FIELD FOLLOWS FROM THE RULING.** "Brought back from market" needs somewhere to live.
+Proposed as a per-crop-channel `returns_to_store_fraction`: 0 for perishables at a stall, ~1 for
+cured storables, irrelevant where sell-through is 1.0. Alternative shape — a single per-crop "can
+be re-offered" flag — is simpler but cannot express the same crop behaving differently at two
+outlets, which is precisely the distinction the ruling turns on. **Recommend the crop-channel
+fraction; flagging it as the one place this ruling adds a knob rather than moving one.**
+
+⚠️ Sourcing is OPEN: the ranges above (wholesale 97–99%, market perishables 70–90% per market day,
+CSA ~100%) are my characterisation and carry **no citation yet**. Per this project's own rule a
+number no stranger can check does not ship — these need extension/market-survey sources before
+they become defaults. Rides Batch 3 with the crop-data sweep.
+
 ### E2 · G2 — every shipped shelf life comes from a deprecated field
 
 `shelf_life_weeks` appears **once** in `index.html`, inside the embedded solver blob. No UI writes
