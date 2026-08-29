@@ -1,5 +1,21 @@
 """
-build_toy_v1.py — generates the Spine + Storage toy model workbook.
+build_toy_v2.py — generates the Loss + Storage toy model workbook.
+
+v2 CHANGES ONE THING, and it is the thing the grower's question exposed (backlog G1 /
+DECISIONS E1): `sell_through_fraction` was doing two incompatible jobs at once.
+
+  pack_out_fraction   gross harvest -> marketable product. Culls, off-grade, damage.
+                      Applied AT HARVEST, before the store. Never occupies a cooler.
+  sell_through_fraction  marketable product OFFERED -> actually sold. Returns, unsold at
+                      market, rejected loads. Applied AT THE SALE, after the store. This
+                      product WAS cooled and shipped; it just did not come back.
+
+v1 applied a single 0.85 at harvest, so 15% of the crop never entered the room at all. That
+understates room occupancy by 1/0.85 = 17.6% for whatever share of the loss happens downstream.
+
+The comparison is built INTO this sheet rather than shipped as a second file: set pack-out 0.85
+/ sell-through 1.00 and it reproduces v1 exactly. Same total loss, same money, different cooler.
+That is the whole lesson, and two workbooks would have drifted.
 
 WHY A GENERATOR AND NOT A HAND-BUILT SHEET. The calendar (which week each succession
 plants, grows and harvests) and every crop constant are read from the SAME source the app
@@ -8,7 +24,7 @@ A hand-typed sheet would be a second guess at the model, and the whole point of 
 to be an INDEPENDENT CHECK on the app's arithmetic — which it cannot be if its inputs are
 a retyped approximation. Re-run this after any crop-data change.
 
-Output: farm_toy_v1_spine_storage.xlsx  (open in LibreOffice Calc or Excel)
+Output: farm_toy_v2_loss_and_storage.xlsx  (open in LibreOffice Calc or Excel)
 """
 import json, sys, pathlib
 
@@ -35,7 +51,8 @@ PICKED = ["Spinach W10", "Spinach W34", "Kale W12", "Kale W32", "Garlic W47"]
 all_succ = {s["name"]: s for s in generate_successions(list(crops.values()), 2024)}
 succs = [all_succ[n] for n in PICKED]
 
-STF        = payload["sell_through_fraction"]      # 0.85
+STF        = payload["sell_through_fraction"]      # 0.85 — now the AT-THE-SALE fraction
+PACK_OUT   = 1.00                                  # DECISIONS E1 option (1); see the crop table
 COLD_CAP   = payload["harvest_storage_cap"]        # 275 m3
 AMB_CAP    = payload["ambient_storage_cap"]        # 150 m3
 TOTAL_LAND = payload["total_land"]                 # 80 acres
@@ -70,157 +87,159 @@ rd = wb.active
 rd.title = "READ ME"   # content written at the END, once row numbers are known
 rd.column_dimensions["A"].width = 112
 readme = [
- ("Farm toy model — v1: THE SPINE + STORAGE", F_TITLE),
+ ("Farm toy model — v2: LOSS + STORAGE", F_TITLE),
  ("", None),
- ("WHAT THIS IS", F_H1),
- ("A hand-checkable model of the smallest part of the app that you did not build in Excel:", None),
- ("what you plant becomes what you harvest becomes what you can hold becomes what you sell.", None),
- ("There is NO solver in this version. You type the acres. Everything else is arithmetic you", None),
- ("can follow cell by cell.", None),
+ ("WHAT CHANGED FROM v1, AND WHY", F_H1),
+ ("You asked whether 85% sell-through means the other 15% is not sellable, or that it could not", None),
+ ("be sold — and if the latter, whether it should count against storage. It should, and v1 got", None),
+ ("it wrong. So did the app; it is filed as G1 / DECISIONS E1.", None),
  ("", None),
- ("Three crops, chosen to make one distinction visible: Spinach and Kale are refrigerated", None),
- ("(the cooler); Garlic is cured and lives in the barn at ambient temperature. They compete", None),
- ("for two SEPARATE capped spaces, which is why the app has two storage pools.", None),
+ ("One number was doing two incompatible jobs. It is now two numbers, applied on opposite sides", None),
+ ("of the store:", None),
+ ("", None),
+ ("   PACK-OUT       gross harvest -> marketable product.", F_BOLD),
+ ("                  Culls, off-grade, damage. Sorted out at harvest. NEVER ENTERS THE COOLER.", None),
+ ("", None),
+ ("   SELL-THROUGH   marketable product OFFERED -> actually sold.", F_BOLD),
+ ("                  Returns, unsold at market, rejected loads. This product WAS cooled, WAS", None),
+ ("                  stored and WAS shipped. It just did not come back.", None),
+ ("", None),
+ ("You said the split is highly variable, and that is exactly why they cannot be one number. A", None),
+ ("farm that leaves 15% in the field and a farm that brings 15% home from market have identical", None),
+ ("revenue and identical growing costs — and need different sized coolers.", None),
+ ("", None),
+ ("THE DEMONSTRATION — it is built into this sheet, not a second file", F_H1),
+ ("Ships as Pack-out 1.00 / Sell-through 0.85: ALL loss is downstream.", None),
+ ("     Peak COLD {PK_COLD} m3      Peak AMBIENT {PK_AMB} m3", F_BOLD),
+ ("", None),
+ ("Now set Pack-out to 0.85 and Sell-through to 1.00 ({PACKOUT} and {SELLTHRU}). That is v1, and", None),
+ ("it is also what the app does today: all loss in the field.", None),
+ ("     Peak COLD {V1_COLD} m3      Peak AMBIENT {V1_AMB} m3", F_BOLD),
+ ("", None),
+ ("Same loss. Same pounds sold. Same money. THE COOLER REQUIREMENT DIFFERS BY {DELTA_PCT}.", F_BOLD),
+ ("", None),
+ ("On the real 80-acre farm that difference takes the barn from 90.5% full to 106.5% — from", None),
+ ("comfortable to physically impossible. That is why this was worth stopping for.", None),
+ ("", None),
+ ("HOW THE FLOW READS NOW", F_H1),
+ ("Each crop block runs top to bottom in the order the product actually moves:", None),
+ ("", None),
+ ("     Harvested (gross)              everything that comes off the field", None),
+ ("       field cull                   removed here, never cooled            <- PACK-OUT", None),
+ ("     Packed out -> INTO the store   what the cooler must hold", None),
+ ("     Stock carried in / shrink      what was already there, and what it lost", None),
+ ("     In store this week", None),
+ ("     Shipped out of store           = what you sell, divided by sell-through", None),
+ ("     Sold                           the pounds that became cash          <- SELL-THROUGH", None),
+ ("       market loss                  cooled, shipped, unsold, gone", None),
+ ("     Stock carried out", None),
+ ("     ROOM OCCUPANCY                 carried in + everything packed out", None),
+ ("", None),
+ ("Read the two loss lines against each other: FIELD CULL is above the store and costs you no", None),
+ ("cooler space; MARKET LOSS is below it and costs you all of it.", None),
+ ("", None),
+ ("WHY 'SHIPPED' IS BIGGER THAN 'SOLD'", F_H1),
+ ("Because to sell 850 lb at 85% sell-through you have to send 1,000. The store gives up the", None),
+ ("full 1,000; only 850 turns into money. That division is the whole mechanism, and it is why", None),
+ ("sell-through cannot be modelled as a simple price discount — you pay to grow, cool and store", None),
+ ("every pound, and get paid for 85% of them.", None),
  ("", None),
  ("HOW TO USE IT", F_H1),
- ("1. Go to the 'Model' sheet. Every YELLOW cell is an input. Nothing else should be typed in.", None),
+ ("1. Every YELLOW cell is an input. Nothing else should be typed in.", None),
  ("2. Start with the acres in {ACRES}. Change one. Watch the whole sheet move.", None),
- ("3. Watch row 'COLD POOL headroom' and 'AMBIENT POOL headroom'. Red = you have overflowed", None),
- ("   that store in that week. The app would call this plan infeasible.", None),
- ("", None),
- ("THE ONE THING THIS SHEET EXISTS TO SHOW", F_H1),
- ("Set every crop's 'Sell rate lb/wk' high enough that stock never builds up. Closing inventory", None),
- ("goes to zero in every week — you are selling everything the week you pick it.", None),
- ("Now look at the cold pool. IT IS STILL FULL IN THE HARVEST WEEKS.", F_BOLD),
- ("", None),
- ("That is the whole point of the storage constraint, and it is the thing the app got wrong", None),
- ("for months. A cooler is sized by what passes THROUGH it, not by what sleeps in it. Field", None),
- ("heat has to come off spinach within the hour whether it ships Tuesday or Friday. The old", None),
- ("version measured end-of-week stock, so a farm that sold everything immediately was reported", None),
- ("as needing NO cooler at all.", None),
- ("", None),
- ("The formula that encodes this is on the 'Room occupancy' rows:", None),
- ("      room this week = (stock you carried in) + (everything you harvest this week)", F_BOLD),
- ("...counted BEFORE any of it ships. You size a cooler for the worst Tuesday, not the average.", None),
- ("", None),
- ("WHAT THIS VERSION DOES NOT CARRY", F_H1),
- ("Stated plainly so you know the edges, and so nothing here is a surprise later:", None),
- ("  - No demand caps. 'Sell rate lb/wk' is a stand-in for the buyer. The real model has", None),
- ("    per-channel weekly AND annual caps, which is layer 2.", None),
- ("  - No prices, costs, revenue or profit. This layer is physical only.", None),
- ("  - No cash, no labour, no water, no crop diversity, no planting/harvest throughput limits.", None),
- ("  - Shelf life is shown as a WARNING, not enforced, and it ignores the decay weighting the", None),
- ("    real constraint applies. See the 'Over shelf life?' rows.", None),
- ("  - The real model DECIDES the acres. Here you type them. That is layer 2 as well.", None),
- ("", None),
- ("WHY 'Sold' USES MIN() - AND WHY THAT IS A FINDING, NOT A SHORTCUT", F_H1),
- ("The 'Sold' row is MIN(what you have, what you can move). That is fine here because nothing", None),
- ("is being optimised. But MIN() is NOT LINEAR, so a linear solver cannot use it. This is", None),
- ("exactly why the real model does not have a 'sold' formula at all: it makes the pounds sold a", None),
- ("DECISION VARIABLE and bounds it with a constraint instead. When the spreadsheet cannot", None),
- ("express something, that is usually telling you something true about the solver.", None),
- ("", None),
- ("!! THE SCALE WARNING - READ THIS BEFORE CONCLUDING ANYTHING", F_H1),
- ("Small models are TIGHT; large ones are LOOSE. This toy has 3 crops and 5 plantings. The", None),
- ("real farm has 7 crops and 220 acre-plantings. Which constraints BIND, and which crops are", None),
- ("worth planting, change with scale, and this sheet will get that wrong.", None),
- ("", None),
- ("So: this toy teaches MECHANISM - how storage works, what it measures, what it takes away.", None),
- ("It does NOT tell you which constraint is actually binding on your farm. The app already", None),
- ("answers that (capacity_series returns used-vs-cap per week for every pool). Any conclusion", None),
- ("drawn here gets re-measured against the real farm before it becomes a plan item.", None),
+ ("3. Watch the 'room left' rows under LAND, COLD STORE and AMBIENT STORE. Red = over the limit", None),
+ ("   in that week, which the app treats as an infeasible plan, not a warning.", None),
  ("", None),
  ("HOW THE SHEET IS LAID OUT", F_H1),
- ("Sections 1-3 are inputs. Section 4 is the year, week 1 to 52 running left to right.", None),
+ ("Sections 1-3 are inputs. Section 4 is the year, week 1 to 52, left to right.", None),
  ("Only columns A and B are frozen, so scrolling up and down is free. Every band repeats its own", None),
- ("week-number strip, so you never lose your place going right.", None),
+ ("week-number strip so you never lose your place going right.", None),
  ("", None),
- ("EVERY CONSTRAINT IS THREE ROWS, and they are the same three rows you wrote in the original", None),
- ("Group 5 model - 'Available Land' / '<=' / '1', on the Model sheet at rows 16-18:", None),
+ ("EVERY CONSTRAINT IS THREE ROWS — the same shape you wrote in the original Group 5 model", None),
+ ("('Available Land' / '<=' / '1', Model sheet rows 16-18):", None),
  ("        LAND in the ground     18.0  18.0  18.0   ...   <- what the plan uses", None),
  ("                                 <=    <=    <=", None),
  ("          limit                80.0  80.0  80.0   ...   <- what you have", None),
  ("          room left            62.0  62.0  62.0   ...", None),
- ("Read downwards, it IS the inequality. There are three of these: LAND, COLD STORE and", None),
- ("AMBIENT STORE. Red means that week is over the limit.", None),
+ ("Read downwards, it IS the inequality. Three of them: LAND, COLD STORE, AMBIENT STORE.", None),
  ("", None),
- ("WHY 'LAND' IS HERE WHEN YOU ALREADY UNDERSTAND IT", F_H1),
- ("Because it is the one constraint you already read fluently, so the two storage blocks below", None),
- ("it are a familiar SHAPE carrying an unfamiliar quantity. It also shows something worth", None),
- ("seeing: the five acre figures sum to 30 acres, but peak land in the ground is only 18,", None),
- ("because the plantings overlap in time rather than all at once. The app checks the WEEK, never", None),
- ("the annual sum - a distinction it once got wrong, satisfying a 3-acre commitment with", None),
- ("eighteen separate 1-acre plantings that never reserved a single acre.", None),
+ ("CHECK IT WORKED — the numbers you should see on opening", F_H1),
+ ("Every planting 6 acres, Pack-out 1.00, Sell-through 0.85, shrink 0, sell rate 1,000,000:", None),
+ ("     Peak LAND in the ground  {PK_LAND} acres in {LAND_WKS}   (you have 80)", F_BOLD),
+ ("     Peak COLD store          {PK_COLD} m3  in week {PK_COLD_WK}         (cooler holds 275)", F_BOLD),
+ ("     Peak AMBIENT store       {PK_AMB} m3  in week {PK_AMB_WK}         (barn holds 150)", F_BOLD),
+ ("     Stock carried out        0 lb in every week, all three crops", F_BOLD),
+ ("     Spinach  gross {SPINACH_GROSS} lb -> sold {SPINACH_SOLD} -> market loss {SPINACH_MLOSS}", None),
+ ("     Kale     gross {KALE_GROSS} lb -> sold {KALE_SOLD} -> market loss {KALE_MLOSS}", None),
+ ("     Garlic   gross {GARLIC_GROSS} lb -> sold {GARLIC_SOLD} -> market loss {GARLIC_MLOSS}", None),
+ ("If those do not match, tell me — do not work around it.", None),
  ("", None),
- ("CHECK IT WORKED - the numbers you should see on opening", F_H1),
- ("With the sheet as shipped (every planting 6 acres, sell rate 1,000,000, shrink 0%):", None),
- ("     Peak LAND in the ground 18.0 acres in weeks 12-17  (you have 80)", F_BOLD),
- ("     Peak COLD store         66.6 m3  in week 41      (cooler holds 275)", F_BOLD),
- ("     Peak AMBIENT store      61.0 m3  in week 30      (barn holds 150)", F_BOLD),
- ("     Stock carried out       0 lb in every week, for all three crops", F_BOLD),
- ("     Spinach 51,000 lb sold | Kale 81,600 lb | Garlic 51,000 lb", None),
- ("If those match, the sheet is calculating correctly. If they do not, tell me - do not work", None),
- ("around it. A toy you cannot trust is worse than no toy.", None),
- ("", None),
- ("Note the pair in bold: closing stock is ZERO all year, and the cooler is still 66.6 m3 full.", None),
+ ("Note the pair in bold: closing stock is ZERO all year and the cooler is still {PK_COLD} m3 full.", None),
+ ("A cooler is sized by what passes THROUGH it, not by what sleeps in it. Field heat has to come", None),
+ ("off spinach within the hour whether it ships Tuesday or Friday. The app measured end-of-week", None),
+ ("stock for months, so a farm that sold everything the week it picked was reported as needing", None),
+ ("no cooler at all.", None),
  ("", None),
  ("THREE THINGS TO TRY", F_H1),
- ("Each one changes ONE input. Change it, look, then put it back.", None),
  ("", None),
- ("EXPERIMENT 1 - overflow the stores.  Set all five acre cells ({ACRES}) to 25.", F_BOLD),
- ("   Expect: peak COLD 277.6 m3 in week 41, red for 1 week. Peak AMBIENT 254.0 m3 in week 30,", None),
- ("   red for 1 week. The app would refuse this plan outright - not warn about it, refuse it.", None),
- ("   Note it takes ~24.8 acres per planting to break the cooler, and the break is in ONE week.", None),
- ("   That is what a capacity constraint feels like: nothing, nothing, nothing, infeasible.", None),
+ ("EXPERIMENT 1 — where the loss happens.  Set Pack-out to 0.85 and Sell-through to 1.00.", F_BOLD),
+ ("   Expect: peak COLD {V1_COLD} m3, peak AMBIENT {V1_AMB} m3, market loss 0, field cull {SP_CULL} lb for", None),
+ ("   Spinach. Sold is UNCHANGED at {SPINACH_SOLD} lb. Same money, {DELTA_PCT} less cooler.", None),
  ("", None),
- ("EXPERIMENT 2 - hold stock, and watch what does NOT happen.  Put acres back to 6.", F_BOLD),
+ ("EXPERIMENT 2 — overflow the stores.  Put pack-out back to 1.00, set all five acre cells", F_BOLD),
+ ("   ({ACRES}) to 25.", F_BOLD),
+ ("   Expect: peak COLD {BIG_COLD} m3 (red, over 275) and peak AMBIENT {BIG_AMB} m3 (red, over 150).", None),
+ ("   At v1's numbers the cooler survived this; it does not any more. The cooler now breaks at", None),
+ ("   about {BREAK_AC} acres per planting instead of {V1_BREAK}.", None),
+ ("", None),
+ ("EXPERIMENT 3 — hold stock, and watch what does NOT happen.  Acres back to 6.", F_BOLD),
  ("   Set Garlic's 'Sell rate lb/wk' ({G_SELL}) to 2000.", F_BOLD),
- ("   Expect: Garlic now sells 46,000 lb instead of 51,000, carries 5,000 lb into next year,", None),
- ("   and 'Over shelf life?' reaches 19,000 lb.", None),
- ("   BUT peak AMBIENT is still 61.0 m3 in week 30 - EXACTLY as before.", F_BOLD),
- ("   Holding stock for months did not raise the peak by a single cubic metre, because the peak", None),
- ("   is set by the week the harvest lands, not by how long you keep it. This is the same point", None),
- ("   as the opening one, arriving from the other direction: size the barn for harvest day.", None),
+ ("   Expect: Garlic sells less, carries stock into next year, and trips the shelf-life warning.", None),
+ ("   BUT peak AMBIENT is still {PK_AMB} m3 in week {PK_AMB_WK} — exactly as before. Holding stock for months", F_BOLD),
+ ("   did not add one cubic metre, because the peak is set by the week the harvest lands.", None),
+ ("   Then set Garlic's 'Shrink %/wk' ({G_SHRINK}) to 2% and watch the leftovers disappear —", None),
+ ("   shrink is what stops a long shelf life being free money.", None),
  ("", None),
- ("EXPERIMENT 3 - make holding cost something.  Leave sell rate at 2000.", F_BOLD),
- ("   Set Garlic's 'Shrink %/wk' ({G_SHRINK}) to 2%.", F_BOLD),
- ("   Expect: Garlic sells 41,474 lb (down 4,526), loses 9,526 lb to shrink, and carries NOTHING", None),
- ("   into next year - the shrink ate the leftovers. 'Over shelf life' falls to 10,047 lb.", None),
- ("   Without shrink, a long shelf life is pure upside and the model would hoard. Shrink is what", None),
- ("   makes storing a real decision with a real cost.", None),
+ ("WHAT THIS VERSION STILL DOES NOT CARRY", F_H1),
+ ("  - No demand caps. 'Sell rate lb/wk' is a stand-in for the buyer. The real model has", None),
+ ("    per-channel weekly AND annual caps — that is the next layer.", None),
+ ("  - No prices, costs, revenue or profit. This layer is physical only.", None),
+ ("  - No cash, no labour, no water, no diversity, no planting/harvest throughput limits.", None),
+ ("  - Shelf life is a WARNING, not enforced, and ignores the decay weighting the real", None),
+ ("    constraint applies.", None),
+ ("  - The real model DECIDES the acres. Here you type them.", None),
+ ("  - The app itself does NOT yet do what this sheet does. G1/E1 is a proposal awaiting your", None),
+ ("    decision; today the app still applies one fraction at harvest.", None),
+ ("", None),
+ ("WHY 'Shipped' AND 'Sold' USE MIN() — AND WHY THAT IS A FINDING", F_H1),
+ ("MIN() is not linear, so a linear solver cannot use it. That is exactly why the real model has", None),
+ ("no 'sold' formula: it makes pounds sold a DECISION VARIABLE and bounds it with a constraint", None),
+ ("instead. When the spreadsheet cannot express something, that is usually telling you something", None),
+ ("true about the solver.", None),
+ ("", None),
+ ("!! THE SCALE WARNING — READ BEFORE CONCLUDING ANYTHING", F_H1),
+ ("Small models are TIGHT; large ones are LOOSE. This toy has 3 crops and 5 plantings; the real", None),
+ ("farm has 7 crops and 220 acre-plantings. Which constraints BIND changes with scale, and this", None),
+ ("sheet will get that wrong. It teaches MECHANISM. The app's capacity_series tells you which", None),
+ ("constraint is actually binding on your farm. Nothing concluded here becomes a plan item", None),
+ ("without re-measuring against the real farm.", None),
  ("", None),
  ("HAS THIS SHEET BEEN CHECKED?", F_H1),
- ("Yes, and it is worth knowing how, because you should not have to take it on trust.", None),
+ ("Yes. Every crop constant and planting date is READ FROM THE APP by the generator — nothing is", None),
+ ("retyped. The whole workbook is CALCULATED by a formula engine and compared cell by cell", None),
+ ("against a separate model of the same arithmetic, under two configurations. Every yellow input", None),
+ ("is changed and the sheet re-calculated to prove it reaches the numbers at the bottom. And no", None),
+ ("number on the Model sheet is frozen except the week strips and the week-1 zero.", None),
  ("", None),
- ("  - Every crop constant and every planting date is READ FROM THE APP by the generator.", None),
- ("    Nothing is retyped, so this sheet cannot quietly describe a different farm.", None),
- ("  - The whole workbook is CALCULATED by a formula engine and compared, cell by cell, against", None),
- ("    a separate model of the same arithmetic written from scratch. 52 weeks x 3 crops x 6 rows,", None),
- ("    under two configurations - the shipped defaults AND a stressed one with shrink and sales", None),
- ("    limits switched on.", None),
- ("  - Every yellow input is changed and the sheet re-calculated, to prove it actually reaches", None),
- ("    the numbers at the bottom. An input wired to nothing is exactly the defect you found.", None),
- ("  - Nothing on the Model sheet is a frozen number except the week strips and the week-1 zero.", None),
+ ("  Run it yourself:   .venv/bin/python toy_models/verify_toy_v2.py", None),
  ("", None),
- ("  Run it yourself:   .venv/bin/python toy_models/verify_toy_v1.py", None),
- ("", None),
- ("YOU FOUND ONE OF THESE, AND IT IS WHY THE CHECKS ABOVE EXIST", F_H1),
- ("'lb/harvest wk per acre' (column E) shipped as five typed numbers instead of formulas. The", None),
- ("harvest itself was always live - change sell-through and the real pounds did move - but that", None),
- ("one column sat frozen beside them, and would have disagreed the moment you touched a yield.", None),
- ("A number printed next to a live one that can drift from it is this project's single most", None),
- ("repeated defect. Your inference was the right one: a stale value at the top is a reason to", None),
- ("check all of them. So all of them are now checked, every time the file is rebuilt.", None),
- ("", None),
- ("Also fixed in the same pass: 'Yield lb/acre' and 'm3 per lb' were live all along but were not", None),
- ("coloured yellow, so two of the biggest levers on the sheet looked like read-only reference.", None),
- ("They are yellow now.", None),
+ ("You found the frozen column in v1 within a minute of opening it. That is why these checks", None),
+ ("exist, and why they now run on every rebuild.", None),
  ("", None),
  ("WHERE THE NUMBERS COME FROM", F_H1),
- ("Every crop constant and every planting calendar on the Model sheet is READ FROM THE APP by", None),
- ("toy_models/build_toy_v1.py - the same succession generator the solver uses, and the same", None),
- ("golden payload the tests pin. Nothing is retyped. See the 'Crop data' sheet for the values", None),
- ("and their sources. Re-run the generator after any crop-data change.", None),
+ ("Crop constants from tests/golden/default_farm_payload.json; planting calendar from the app's", None),
+ ("own succession generator. See the 'Crop data' sheet. Regenerate after any crop-data change:", None),
+ ("     python3 toy_models/build_toy_v2.py", None),
 ]
 
 # ===========================================================================
@@ -302,7 +321,7 @@ r += 2
 
 # ---- INPUT: acres per succession ----
 put(r, 1, "1 — WHAT YOU PLANT   (acres)", font=F_H1); r += 1
-hdr = ["Succession", "Acres", "Crop", "Harvest weeks", "lb/harvest wk per acre"]
+hdr = ["Succession", "Acres", "Crop", "Harvest weeks", "gross lb/harvest wk per acre"]
 for j, h in enumerate(hdr):
     put(r, 1 + j, h, font=F_BOLD, fill=HDR_FILL, border=True)
 r += 1
@@ -322,8 +341,7 @@ for s in succs:
     # a frozen copy beside a live figure is this project's most-repeated defect — the grower spotted
     # it here within a minute of opening the file, and was right to conclude there would be more.
     # (There were not, but only because every other displayed number already derived itself.)
-    put(r, 5, f'=$B${crop_row_pending[crop["name"]]}*$C${crop_row_pending[crop["name"]]}/{nharv}',
-        fmt="#,##0", border=True)
+    put(r, 5, f'=$B${crop_row_pending[crop["name"]]}/{nharv}', fmt="#,##0", border=True)
     succ_meta.append({"row": r, "s": s, "crop": crop["name"], "nharv": nharv})
     r += 1
 put(r, 1, "Total acres planted", font=F_BOLD)
@@ -339,8 +357,8 @@ r += 2
 
 # ---- INPUT: crop settings ----
 put(r, 1, "2 — HOW EACH CROP BEHAVES", font=F_H1); r += 1
-cols = ["Crop", "Yield lb/acre", "Sell-through", "m3 per lb", "Store", "Shelf life wk",
-        "Shrink %/wk", "Sell rate lb/wk"]
+cols = ["Crop", "Yield lb/acre", "Pack-out", "Sell-through", "m3 per lb", "Store",
+        "Shelf life wk", "Shrink %/wk", "Sell rate lb/wk"]
 for j, h in enumerate(cols):
     put(r, 1 + j, h, font=F_BOLD, fill=HDR_FILL, border=True)
 r += 1
@@ -354,12 +372,16 @@ for name in CROP_NAMES:
     # the propagation check proves it. They were rendered as plain constants, which read as
     # "look, do not touch" for two of the biggest levers on the sheet.
     put(r, 2, c["yield_per_acre"], fill=IN_FILL, fmt="#,##0", border=True)
-    put(r, 3, STF, fill=IN_FILL, fmt="0.00", border=True)
-    put(r, 4, c["crop_size_m3_per_lb"], fill=IN_FILL, fmt="0.0000000", border=True)
-    put(r, 5, pool, border=True, fill=POOL_C if pool == "Cold" else POOL_A)
-    put(r, 6, c.get("shelf_life_weeks", c.get("sales_spread_weeks", 1)), fill=IN_FILL, border=True)
-    put(r, 7, 0.0, fill=IN_FILL, fmt="0.0%", border=True)
-    put(r, 8, 1000000, fill=IN_FILL, fmt="#,##0", border=True)
+    # DEFAULTS per DECISIONS E1 option (1): all of today's 15% treated as DOWNSTREAM loss.
+    # Conservative for sizing, and it makes the app's own tooltip true. Set 0.85 / 1.00 to
+    # reproduce v1 exactly.
+    put(r, 3, PACK_OUT, fill=IN_FILL, fmt="0.00", border=True)
+    put(r, 4, STF, fill=IN_FILL, fmt="0.00", border=True)
+    put(r, 5, c["crop_size_m3_per_lb"], fill=IN_FILL, fmt="0.0000000", border=True)
+    put(r, 6, pool, border=True, fill=POOL_C if pool == "Cold" else POOL_A)
+    put(r, 7, c.get("shelf_life_weeks", c.get("sales_spread_weeks", 1)), fill=IN_FILL, border=True)
+    put(r, 8, 0.0, fill=IN_FILL, fmt="0.0%", border=True)
+    put(r, 9, 1000000, fill=IN_FILL, fmt="#,##0", border=True)
     crop_row[name] = r
     assert crop_row_pending[name] == r, (
         f"crop settings row moved: reserved {crop_row_pending[name]} for {name}, wrote {r}. "
@@ -404,16 +426,16 @@ for m in succ_meta:
     phrow = r
     m["phase_row"] = phrow
     r += 1
-    put(r, 1, "   lbs harvested (sellable)", font=F_SMALL)
+    put(r, 1, "   lbs harvested (GROSS)", font=F_SMALL)
     put(r, 2, "lb", font=F_NOTE)
     for w in range(1, 53):
         col = wl(w)
         put(r, wcol(w),
-            f'=IF({col}{phrow}="H",$B${m["row"]}*$B${crop_row[m["crop"]]}*$C${crop_row[m["crop"]]}/{m["nharv"]},0)',
+            f'=IF({col}{phrow}="H",$B${m["row"]}*$B${crop_row[m["crop"]]}/{m["nharv"]},0)',
             fmt="#,##0")
     succ_harv_row.setdefault(m["crop"], []).append(r)
     r += 1
-put(r, 1, "P = planting   G = growing   H = harvesting.  Only sellable pounds are shown (yield x sell-through).", font=F_NOTE)
+put(r, 1, "P = planting   G = growing   H = harvesting.  GROSS pounds — everything that comes off the field.", font=F_NOTE)
 r += 2
 
 # The one constraint the grower already knows, in the layout they already read — so the
@@ -437,58 +459,86 @@ for name in CROP_NAMES:
     r += 1
     r = week_header(r)
 
-    put(r, 1, "Harvested this week", font=F_SMALL); put(r, 2, "lb", font=F_NOTE)
+    # ---- BEFORE THE STORE ------------------------------------------------
+    put(r, 1, "Harvested (gross)", font=F_SMALL); put(r, 2, "lb", font=F_NOTE)
     for w in range(1, 53):
         parts = "+".join(f"{wl(w)}{hr}" for hr in succ_harv_row[name])
         put(r, wcol(w), f"={parts}", fmt="#,##0")
+    R_GROSS = r; r += 1
+
+    put(r, 1, "   field cull (never cooled)", font=F_SMALL); put(r, 2, "lb", font=F_NOTE)
+    for w in range(1, 53):
+        put(r, wcol(w), f"={wl(w)}{R_GROSS}*(1-$C${cr})", fmt="#,##0")
+    R_CULL = r; r += 1
+
+    put(r, 1, "Packed out -> INTO the store", font=F_BOLD); put(r, 2, "lb", font=F_NOTE)
+    for w in range(1, 53):
+        put(r, wcol(w), f"={wl(w)}{R_GROSS}*$C${cr}", fmt="#,##0")
     R_HARV = r; r += 1
 
+    # ---- IN THE STORE ----------------------------------------------------
     put(r, 1, "Stock carried in", font=F_SMALL); put(r, 2, "lb", font=F_NOTE)
     for w in range(1, 53):
-        put(r, wcol(w), 0 if w == 1 else f"={wl(w-1)}{r+4}", fmt="#,##0")
+        put(r, wcol(w), 0 if w == 1 else f"={wl(w-1)}{r+6}", fmt="#,##0")
     R_OPEN = r; r += 1
 
     put(r, 1, "   lost to shrink", font=F_SMALL); put(r, 2, "lb", font=F_NOTE)
     for w in range(1, 53):
-        put(r, wcol(w), f"={wl(w)}{R_OPEN}*$G${cr}", fmt="#,##0")
+        put(r, wcol(w), f"={wl(w)}{R_OPEN}*$H${cr}", fmt="#,##0")
     R_SHRINK = r; r += 1
 
-    put(r, 1, "Available to sell", font=F_SMALL); put(r, 2, "lb", font=F_NOTE)
+    put(r, 1, "In store this week", font=F_SMALL); put(r, 2, "lb", font=F_NOTE)
     for w in range(1, 53):
         put(r, wcol(w), f"={wl(w)}{R_OPEN}-{wl(w)}{R_SHRINK}+{wl(w)}{R_HARV}", fmt="#,##0")
     R_AVAIL = r; r += 1
 
-    put(r, 1, "Sold", font=F_SMALL); put(r, 2, "lb", font=F_NOTE)
+    # ---- LEAVING THE STORE ----------------------------------------------
+    # Sell rate is the BUYER's appetite, in pounds SOLD. To sell S you must ship S / sell-through,
+    # so the drawdown on the store is the larger number. Shipping is capped by what is in store.
+    put(r, 1, "Shipped out of store", font=F_SMALL); put(r, 2, "lb", font=F_NOTE)
     for w in range(1, 53):
-        put(r, wcol(w), f"=MIN({wl(w)}{R_AVAIL},$H${cr})", fmt="#,##0")
+        put(r, wcol(w), f"=MIN({wl(w)}{R_AVAIL},$I${cr}/$D${cr})", fmt="#,##0")
+    R_SHIP = r; r += 1
+
+    put(r, 1, "Sold", font=F_BOLD); put(r, 2, "lb", font=F_NOTE)
+    for w in range(1, 53):
+        put(r, wcol(w), f"={wl(w)}{R_SHIP}*$D${cr}", fmt="#,##0")
     R_SOLD = r; r += 1
+
+    put(r, 1, "   market loss (did not come back)", font=F_SMALL); put(r, 2, "lb", font=F_NOTE)
+    for w in range(1, 53):
+        put(r, wcol(w), f"={wl(w)}{R_SHIP}-{wl(w)}{R_SOLD}", fmt="#,##0")
+    R_MLOSS = r; r += 1
 
     put(r, 1, "Stock carried out", font=F_BOLD); put(r, 2, "lb", font=F_NOTE)
     for w in range(1, 53):
-        put(r, wcol(w), f"={wl(w)}{R_AVAIL}-{wl(w)}{R_SOLD}", fmt="#,##0")
+        put(r, wcol(w), f"={wl(w)}{R_AVAIL}-{wl(w)}{R_SHIP}", fmt="#,##0")
     R_CLOSE = r; r += 1
 
     put(r, 1, "ROOM OCCUPANCY", font=F_BOLD)
     put(r, 2, "m3", font=F_NOTE)
     for w in range(1, 53):
-        put(r, wcol(w), f"=({wl(w)}{R_OPEN}+{wl(w)}{R_HARV})*$D${cr}", fmt="0.0",
+        put(r, wcol(w), f"=({wl(w)}{R_OPEN}+{wl(w)}{R_HARV})*$E${cr}", fmt="0.0",
             fill=POOL_C if pool == "Cold" else POOL_A)
     R_ROOM = r; r += 1
-    put(r, 1, "   = carried in + ALL of this week's harvest, before any of it ships", font=F_NOTE)
+    put(r, 1, "   = carried in + everything PACKED OUT this week, before any of it ships.", font=F_NOTE)
+    r += 1
+    put(r, 1, "   Market loss is already counted here — it was in the room before it left.", font=F_NOTE)
     r += 1
 
     put(r, 1, "Over shelf life?", font=F_SMALL); put(r, 2, "lb", font=F_NOTE)
     for w in range(1, 53):
         put(r, wcol(w),
             f'=MAX(0,{wl(w)}{R_CLOSE}-SUMIFS(${wl(1)}${R_HARV}:${LAST}${R_HARV},'
-            f'${wl(1)}${ROW_WEEKNUM}:${LAST}${ROW_WEEKNUM},">="&{wl(w)}${ROW_WEEKNUM}-$F${cr}+2,'
+            f'${wl(1)}${ROW_WEEKNUM}:${LAST}${ROW_WEEKNUM},">="&{wl(w)}${ROW_WEEKNUM}-$G${cr}+2,'
             f'${wl(1)}${ROW_WEEKNUM}:${LAST}${ROW_WEEKNUM},"<="&{wl(w)}${ROW_WEEKNUM}))',
             fmt="#,##0")
     R_OLD = r; r += 1
     put(r, 1, "   stock older than its shelf life — a WARNING here, a hard constraint in the app", font=F_NOTE)
     r += 2
-    crop_block[name] = dict(harv=R_HARV, sold=R_SOLD, close=R_CLOSE, room=R_ROOM,
-                            shrink=R_SHRINK, old=R_OLD, pool=pool)
+    crop_block[name] = dict(gross=R_GROSS, cull=R_CULL, harv=R_HARV, ship=R_SHIP, sold=R_SOLD,
+                            mloss=R_MLOSS, close=R_CLOSE, room=R_ROOM, shrink=R_SHRINK,
+                            old=R_OLD, pool=pool)
 
 # ---- pools ----
 put(r, 1, "5 — THE TWO STORES", font=F_H1); r += 1
@@ -528,9 +578,16 @@ summary("Weeks the barn overflows",
 r += 1
 for name in CROP_NAMES:
     b = crop_block[name]
-    summary(f"{name} — harvested", f"=SUM({wl(1)}{b['harv']}:{LAST}{b['harv']})", "#,##0", "lb sellable")
-    summary(f"{name} — sold",      f"=SUM({wl(1)}{b['sold']}:{LAST}{b['sold']})", "#,##0", "lb")
-    summary(f"{name} — lost to shrink", f"=SUM({wl(1)}{b['shrink']}:{LAST}{b['shrink']})", "#,##0", "lb")
+    summary(f"{name} — harvested (gross)", f"=SUM({wl(1)}{b['gross']}:{LAST}{b['gross']})", "#,##0", "lb off the field")
+    summary(f"{name} — field cull", f"=SUM({wl(1)}{b['cull']}:{LAST}{b['cull']})", "#,##0",
+            "lb  — never entered the store")
+    summary(f"{name} — packed out", f"=SUM({wl(1)}{b['harv']}:{LAST}{b['harv']})", "#,##0",
+            "lb  — this is what the cooler has to hold")
+    summary(f"{name} — shipped", f"=SUM({wl(1)}{b['ship']}:{LAST}{b['ship']})", "#,##0", "lb out of store")
+    summary(f"{name} — SOLD", f"=SUM({wl(1)}{b['sold']}:{LAST}{b['sold']})", "#,##0", "lb", bold=True)
+    summary(f"{name} — market loss", f"=SUM({wl(1)}{b['mloss']}:{LAST}{b['mloss']})", "#,##0",
+            "lb  — was cooled and shipped, did not sell, does not come back")
+    summary(f"{name} — lost to shrink", f"=SUM({wl(1)}{b['shrink']}:{LAST}{b['shrink']})", "#,##0", "lb in store")
     summary(f"{name} — left at year end", f"={LAST}{b['close']}", "#,##0",
             "lb  (the app anchors stock at zero on 1 Jan, so this is stranded)")
     summary(f"{name} — over shelf life at worst", f"=MAX({wl(1)}{b['old']}:{LAST}{b['old']})", "#,##0",
@@ -549,7 +606,7 @@ cd.cell(row=1, column=1, value=rows[0][0]).font = F_TITLE
 cd.cell(row=2, column=1,
         value="Source: tests/golden/default_farm_payload.json (the payload the browser sends) and "
               "farm_v2.utils.calendar.generate_successions (the app's own calendar).").font = F_NOTE
-cd.cell(row=3, column=1, value="Regenerate with:  python3 toy_models/build_toy_v1.py").font = F_NOTE
+cd.cell(row=3, column=1, value="Regenerate with:  python3 toy_models/build_toy_v2.py").font = F_NOTE
 hdrs = ["Field", "Spinach", "Kale", "Garlic", "What it means"]
 for j, h in enumerate(hdrs):
     c = cd.cell(row=5, column=1 + j, value=h); c.font = F_BOLD; c.fill = HDR_FILL
@@ -600,6 +657,70 @@ for m in succ_meta:
     rr += 1
 
 # ---------------------------------------------------------------------------
+# The numbers the READ ME promises, COMPUTED — never typed.
+#
+# Three of them shipped 0.1 out on the first pass because I rounded by hand while writing the
+# prose. Same class as the cell coordinates below and as the frozen column the grower found in
+# v1: a figure written beside its source instead of derived from it. The README cannot now
+# promise a number the sheet does not produce.
+# ---------------------------------------------------------------------------
+def _sim(acres, packout, stf, sell, shrink):
+    gross = {n: [0.0] * 53 for n in CROP_NAMES}
+    for pn, m in zip(PICKED, succ_meta):
+        s_ = m["s"]; cn = m["crop"]
+        for w in harvest_weeks_of(s_, 52):
+            gross[cn][w] += acres * crops[cn]["yield_per_acre"] / m["nharv"]
+    close = {n: [0.0] * 53 for n in CROP_NAMES}
+    room = {n: [0.0] * 53 for n in CROP_NAMES}
+    sold = {n: 0.0 for n in CROP_NAMES}
+    cull = {n: 0.0 for n in CROP_NAMES}
+    mloss = {n: 0.0 for n in CROP_NAMES}
+    for n in CROP_NAMES:
+        for w in range(1, 53):
+            packed = gross[n][w] * packout
+            cull[n] += gross[n][w] - packed
+            opening = close[n][w - 1] if w > 1 else 0.0
+            in_store = opening - opening * shrink + packed
+            ship = min(in_store, sell / stf)
+            sold[n] += ship * stf
+            mloss[n] += ship - ship * stf
+            close[n][w] = in_store - ship
+            room[n][w] = (opening + packed) * crops[n]["crop_size_m3_per_lb"]
+    cold = [room["Spinach"][w] + room["Kale"][w] for w in range(1, 53)]
+    amb = [room["Garlic"][w] for w in range(1, 53)]
+    return dict(cold=max(cold), cold_wk=cold.index(max(cold)) + 1,
+                amb=max(amb), amb_wk=amb.index(max(amb)) + 1,
+                gross={n: sum(gross[n]) for n in CROP_NAMES}, sold=sold, cull=cull, mloss=mloss)
+
+
+_BASE = _sim(6.0, PACK_OUT, STF, 1e6, 0.0)
+_V1   = _sim(6.0, STF, 1.0, 1e6, 0.0)
+_BIG  = _sim(25.0, PACK_OUT, STF, 1e6, 0.0)
+_land = [0.0] * 53
+for m in succ_meta:
+    for wk in m["s"]["weeks"]:
+        _land[((wk - 1) % 52) + 1] += 6.0
+_peak_land = max(_land[1:])
+_land_wks = [w for w in range(1, 53) if _land[w] == _peak_land]
+NUMS = {
+    "{PK_COLD}":   f"{_BASE['cold']:.1f}",   "{PK_COLD_WK}": str(_BASE["cold_wk"]),
+    "{PK_AMB}":    f"{_BASE['amb']:.1f}",    "{PK_AMB_WK}":  str(_BASE["amb_wk"]),
+    "{V1_COLD}":   f"{_V1['cold']:.1f}",     "{V1_AMB}":     f"{_V1['amb']:.1f}",
+    "{BIG_COLD}":  f"{_BIG['cold']:.1f}",    "{BIG_AMB}":    f"{_BIG['amb']:.1f}",
+    "{PK_LAND}":   f"{_peak_land:.1f}",
+    "{LAND_WKS}":  f"weeks {_land_wks[0]}-{_land_wks[-1]}",
+    "{BREAK_AC}":  f"{6.0 * COLD_CAP / _BASE['cold']:.1f}",
+    "{V1_BREAK}":  f"{6.0 * COLD_CAP / _V1['cold']:.1f}",
+    "{SP_CULL}":   f"{_V1['cull']['Spinach']:,.0f}",
+    "{DELTA_PCT}": f"{(_BASE['cold'] / _V1['cold'] - 1) * 100:.1f}%",
+}
+for _n in CROP_NAMES:
+    NUMS[f"{{{_n.upper()}_GROSS}}"] = f"{_BASE['gross'][_n]:,.0f}"
+    NUMS[f"{{{_n.upper()}_SOLD}}"]  = f"{_BASE['sold'][_n]:,.0f}"
+    NUMS[f"{{{_n.upper()}_MLOSS}}"] = f"{_BASE['mloss'][_n]:,.0f}"
+
+
+# ---------------------------------------------------------------------------
 # READ ME content, written LAST so its cell references are the real ones.
 #
 # The first version hard-coded them. Adding one row to the input block shifted every crop
@@ -612,20 +733,22 @@ GARLIC_ROW = crop_row["Garlic"]
 COORDS = {
     "{ACRES}":      f"B{ROW_SUCC}:B{ROW_SUCC + len(succ_meta) - 1}",
     "{LAND}":       f"B{ROW_LAND}",
-    "{G_SELL}":     f"H{GARLIC_ROW}",
-    "{G_SHRINK}":   f"G{GARLIC_ROW}",
+    "{G_SELL}":     f"I{GARLIC_ROW}",
+    "{G_SHRINK}":   f"H{GARLIC_ROW}",
+    "{PACKOUT}":    f"C{crop_row['Spinach']}:C{crop_row['Garlic']}",
+    "{SELLTHRU}":   f"D{crop_row['Spinach']}:D{crop_row['Garlic']}",
     "{COLDCAP}":    f"B{ROW_COLDCAP}",
     "{AMBCAP}":     f"B{ROW_AMBCAP}",
 }
 row_i = 1
 for text, font in readme:
-    for k, v in COORDS.items():
+    for k, v in {**COORDS, **NUMS}.items():
         text = text.replace(k, v)
     c = rd.cell(row=row_i, column=1, value=text)
     if font: c.font = font
     row_i += 1
 
-out = REPO / "toy_models" / "farm_toy_v1_spine_storage.xlsx"
+out = REPO / "toy_models" / "farm_toy_v2_loss_and_storage.xlsx"
 wb.save(out)
 print(f"wrote {out}")
 print(f"  crops: {', '.join(CROP_NAMES)}")

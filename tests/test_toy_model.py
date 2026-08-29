@@ -1,7 +1,7 @@
 """
 The toy model's numbers must not drift from the app's.
 
-`toy_models/farm_toy_v1_spine_storage.xlsx` exists to be an INDEPENDENT check on the app's
+`toy_models/farm_toy_v2_loss_and_storage.xlsx` exists to be an INDEPENDENT check on the app's
 arithmetic — a grower opens it, changes an acre figure and verifies by hand what the solver
 claims. That only works while its crop constants and its planting calendar are the app's.
 Nothing about a spreadsheet fails loudly when a crop's m3/lb changes underneath it; it just
@@ -17,7 +17,7 @@ So this pins two things:
      its harvest week was reported as needing no cooler at all), it is the one thing this toy
      exists to teach, and it is invisible in a rendered spreadsheet — the cells look identical.
 
-Regenerate with:  python3 toy_models/build_toy_v1.py
+Regenerate with:  python3 toy_models/build_toy_v2.py
 """
 import json
 import re
@@ -28,7 +28,7 @@ from tests.helpers import REPO
 
 openpyxl = pytest.importorskip("openpyxl")
 
-WORKBOOK = REPO / "toy_models" / "farm_toy_v1_spine_storage.xlsx"
+WORKBOOK = REPO / "toy_models" / "farm_toy_v2_loss_and_storage.xlsx"
 TOY_CROPS = ("Spinach", "Kale", "Garlic")
 PICKED = ["Spinach W10", "Spinach W34", "Kale W12", "Kale W32", "Garlic W47"]
 
@@ -36,7 +36,7 @@ PICKED = ["Spinach W10", "Spinach W34", "Kale W12", "Kale W32", "Garlic W47"]
 @pytest.fixture(scope="module")
 def model():
     if not WORKBOOK.exists():
-        pytest.skip(f"{WORKBOOK.name} not built; run toy_models/build_toy_v1.py")
+        pytest.skip(f"{WORKBOOK.name} not built; run toy_models/build_toy_v2.py")
     return openpyxl.load_workbook(WORKBOOK)["Model"]
 
 
@@ -55,17 +55,25 @@ def _labelled_rows(ws):
 
 
 def _crop_blocks(ws):
-    """{CROP: {row label: row number}} for each per-crop block."""
+    """{CROP: {row label: row number}}, delimited by the NEXT block header.
+
+    Never by a fixed row count. Too narrow silently drops the last rows of a block; too wide
+    reads the NEXT crop's rows under this crop's names, so every comparison is wrong while every
+    lookup succeeds. Measured while building v2: the second presented as twelve real defects.
+    """
+    heads = [r for r in range(1, ws.max_row + 1)
+             if isinstance(ws.cell(row=r, column=1).value, str)
+             and "—" in ws.cell(row=r, column=1).value
+             and ws.cell(row=r, column=1).value.endswith("store")]
     blocks = {}
-    for row in range(1, ws.max_row + 1):
-        v = ws.cell(row=row, column=1).value
-        if isinstance(v, str) and "—" in v and v.endswith("store"):
-            seq = {}
-            for rr in range(row + 1, row + 12):
-                lv = ws.cell(row=rr, column=1).value
-                if isinstance(lv, str):
-                    seq[lv.strip()] = rr
-            blocks[v.split(" ")[0]] = seq
+    for i, r in enumerate(heads):
+        stop = heads[i + 1] if i + 1 < len(heads) else ws.max_row + 1
+        seq = {}
+        for rr in range(r + 1, stop):
+            lv = ws.cell(row=rr, column=1).value
+            if isinstance(lv, str) and lv.strip():
+                seq.setdefault(lv.strip(), rr)
+        blocks[ws.cell(row=r, column=1).value.split(" ")[0]] = seq
     return blocks
 
 
@@ -81,10 +89,10 @@ def test_crop_constants_match_the_app(model, payload):
         r = [x for x in rows[name] if model.cell(row=x, column=2).value == crop["yield_per_acre"]]
         assert r, f"{name}: no settings row carrying the app's yield_per_acre"
         r = r[0]
-        assert model.cell(row=r, column=4).value == pytest.approx(
+        assert model.cell(row=r, column=5).value == pytest.approx(
             crop["crop_size_m3_per_lb"], rel=0, abs=1e-15), f"{name}: m3/lb has drifted"
         want_pool = "Cold" if crop.get("cold_storage", True) else "Ambient"
-        assert model.cell(row=r, column=5).value == want_pool, f"{name}: storage pool has drifted"
+        assert model.cell(row=r, column=6).value == want_pool, f"{name}: storage pool has drifted"
 
 
 def test_farm_constants_match_the_app(model, payload):
@@ -128,7 +136,11 @@ def test_room_occupancy_measures_throughput_not_what_sleeps_there(model, crop):
     b = _crop_blocks(model)[crop]
     f = model.cell(row=b["ROOM OCCUPANCY"], column=4).value      # week 2
     assert f"D{b['Stock carried in']}" in f, f"{crop}: ROOM does not read stock carried in"
-    assert f"D{b['Harvested this week']}" in f, f"{crop}: ROOM does not read this week's harvest"
+    assert f"D{b['Packed out -> INTO the store']}" in f, (
+        f"{crop}: ROOM does not read what was PACKED OUT this week. It must not read the GROSS "
+        f"harvest either — field cull never entered the room (G1/E1).")
+    assert f"D{b['Harvested (gross)']}" not in f, (
+        f"{crop}: ROOM reads GROSS harvest, so field cull is occupying a cooler it never saw")
     assert f"D{b['Stock carried out']}" not in f, (
         f"{crop}: ROOM reads stock carried OUT — this is the lower-bound defect, "
         f"and the sheet would teach it as correct")
@@ -138,10 +150,12 @@ def test_room_occupancy_measures_throughput_not_what_sleeps_there(model, crop):
 def test_the_inventory_chain_actually_chains(model, crop):
     b = _crop_blocks(model)[crop]
     assert model.cell(row=b["Stock carried in"], column=4).value == f"=C{b['Stock carried out']}"
-    assert model.cell(row=b["Available to sell"], column=4).value == (
-        f"=D{b['Stock carried in']}-D{b['lost to shrink']}+D{b['Harvested this week']}")
+    assert model.cell(row=b["In store this week"], column=4).value == (
+        f"=D{b['Stock carried in']}-D{b['lost to shrink']}+D{b['Packed out -> INTO the store']}")
     assert model.cell(row=b["Stock carried out"], column=4).value == (
-        f"=D{b['Available to sell']}-D{b['Sold']}")
+        f"=D{b['In store this week']}-D{b['Shipped out of store']}"), (
+        "the store gives up what was SHIPPED, not what was SOLD — the difference is the market "
+        "loss, and it does not come back (G1/E1)")
 
 
 def test_each_pool_sums_its_own_crops_only(model):
@@ -247,6 +261,7 @@ def test_readme_coordinates_point_at_what_they_claim():
     claims = [
         (r"Set Garlic's 'Sell rate lb/wk' \(([A-Z]+\d+)\)", "Garlic", "Sell rate lb/wk"),
         (r"Set Garlic's 'Shrink %/wk' \(([A-Z]+\d+)\)",     "Garlic", "Shrink %/wk"),
+        (r"Pack-out to 0\.85 and Sell-through to 1\.00 \(([A-Z]+\d+):[A-Z]+\d+", "Spinach", "Pack-out"),
     ]
     header_row = None
     for r in range(1, 40):
@@ -257,7 +272,7 @@ def test_readme_coordinates_point_at_what_they_claim():
     cols = {model.cell(row=header_row, column=c).value: c for c in range(1, 12)}
 
     for pattern, crop, field in claims:
-        m = re.search(pattern, text)
+        m = re.search(pattern, text, re.IGNORECASE)
         assert m, f"the READ ME no longer names a cell for {crop} {field}"
         coord = m.group(1)
         cell = model[coord]
@@ -268,7 +283,8 @@ def test_readme_coordinates_point_at_what_they_claim():
             f"READ ME says {coord} is {field}, but that column is "
             f"{model.cell(row=header_row, column=cell.column).value!r}")
 
-    m = re.search(r"acre cells \(([A-Z]+\d+):([A-Z]+\d+)\)", text)
+    # tolerant of line wrapping — the range may sit on the line after "acre cells"
+    m = re.search(r"acre cells[\s\S]{0,60}?\(([A-Z]+\d+):([A-Z]+\d+)\)", text)
     assert m, "the READ ME no longer names the acre input range"
     first, last = model[m.group(1)], model[m.group(2)]
     assert last.row - first.row + 1 == len(PICKED), "acre range does not cover all five plantings"
@@ -313,7 +329,7 @@ def test_no_derived_value_is_frozen(model):
 
 
 def test_the_sheet_actually_calculates_correctly():
-    """Run toy_models/verify_toy_v1.py — it CALCULATES the workbook.
+    """Run toy_models/verify_toy_v2.py — it CALCULATES the workbook.
 
     Everything above reads formulas as text, and text can be well-formed and wrong. This shells
     out to the venv because `formulas` cannot be installed into the system interpreter pytest
@@ -331,7 +347,7 @@ def test_the_sheet_actually_calculates_correctly():
     if probe.returncode != 0:
         pytest.skip("`formulas` not installed in .venv — run: .venv/bin/pip install formulas")
 
-    r = subprocess.run([str(venv), str(REPO / "toy_models" / "verify_toy_v1.py")],
+    r = subprocess.run([str(venv), str(REPO / "toy_models" / "verify_toy_v2.py")],
                        capture_output=True, text=True, cwd=REPO, timeout=600)
     assert r.returncode == 0, (
         "the toy workbook does not calculate correctly:\n"

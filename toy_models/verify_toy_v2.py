@@ -1,7 +1,7 @@
 """
-verify_toy_v1.py — EVALUATE the toy workbook and prove it works.
+verify_toy_v2.py — EVALUATE the toy workbook and prove it works.
 
-Run:  .venv/bin/python toy_models/verify_toy_v1.py
+Run:  .venv/bin/python toy_models/verify_toy_v2.py
       (needs `formulas`; `tests/test_toy_model.py` runs this as a subprocess)
 
 WHY THIS EXISTS. openpyxl reads formulas as TEXT. Every static check — "is this a formula",
@@ -42,7 +42,7 @@ from openpyxl.utils import get_column_letter
 
 from farm_v2.utils.calendar import generate_successions, harvest_weeks_of
 
-WB = REPO / "toy_models" / "farm_toy_v1_spine_storage.xlsx"
+WB = REPO / "toy_models" / "farm_toy_v2_loss_and_storage.xlsx"
 PFX = f"'[{WB.name}]MODEL'!"          # exact case — see the trap note above
 CROPS = ("Spinach", "Kale", "Garlic")
 PICKED = [("Spinach W10", "Spinach"), ("Spinach W34", "Spinach"),
@@ -68,17 +68,29 @@ def labels():
     return out
 
 
+def _is_block_header(v):
+    return isinstance(v, str) and "—" in v and v.endswith("store")
+
+
 def crop_blocks():
+    """Delimit each block by the NEXT header, never by a fixed row count.
+
+    A fixed window is wrong in both directions and fails silently either way: too narrow and
+    the last rows vanish (KeyError, loud); too wide and it reads the NEXT crop's rows under
+    this crop's names, so every comparison comes out wrong while the lookup succeeds. The
+    second is the dangerous one — it looks like twelve real defects.
+    """
+    heads = [r for r in range(1, ws.max_row + 1)
+             if _is_block_header(ws.cell(row=r, column=1).value)]
     out = {}
-    for r in range(1, ws.max_row + 1):
-        v = ws.cell(row=r, column=1).value
-        if isinstance(v, str) and "—" in v and v.endswith("store"):
-            seq = {}
-            for rr in range(r + 1, r + 14):
-                lv = ws.cell(row=rr, column=1).value
-                if isinstance(lv, str):
-                    seq[lv.strip()] = rr
-            out[v.split(" ")[0]] = seq
+    for i, r in enumerate(heads):
+        stop = heads[i + 1] if i + 1 < len(heads) else ws.max_row + 1
+        seq = {}
+        for rr in range(r + 1, stop):
+            lv = ws.cell(row=rr, column=1).value
+            if isinstance(lv, str) and lv.strip():
+                seq.setdefault(lv.strip(), rr)      # first occurrence wins
+        out[ws.cell(row=r, column=1).value.split(" ")[0]] = seq
     return out
 
 
@@ -116,31 +128,44 @@ crops = {c["name"]: c for c in payload["crops"] if c["name"] in CROPS}
 gen = {s["name"]: s for s in generate_successions(list(crops.values()), 2024)}
 
 
-def simulate(acres, stf, sell, shrink):
-    harv = {n: [0.0] * 53 for n in crops}
+def simulate(acres, packout, stf, sell, shrink):
+    """The v2 flow: pack-out BEFORE the store, sell-through AFTER it."""
+    gross = {n: [0.0] * 53 for n in crops}
     land = [0.0] * 53
     for pn, cn in PICKED:
         s = gen[pn]
         hw = harvest_weeks_of(s, 52)
         for w in hw:
-            harv[cn][w] += acres[pn] * crops[cn]["yield_per_acre"] * stf[cn] / max(1, len(hw))
+            gross[cn][w] += acres[pn] * crops[cn]["yield_per_acre"] / max(1, len(hw))
         for wk in s["weeks"]:
             land[((wk - 1) % 52) + 1] += acres[pn]
+    packed = {n: [gross[n][w] * packout[n] for w in range(53)] for n in crops}
+    cull = {n: [gross[n][w] - packed[n][w] for w in range(53)] for n in crops}
     close = {n: [0.0] * 53 for n in crops}
     room = {n: [0.0] * 53 for n in crops}
+    ship = {n: [0.0] * 53 for n in crops}
+    sold = {n: [0.0] * 53 for n in crops}
+    mloss = {n: [0.0] * 53 for n in crops}
     for n, c in crops.items():
         for w in range(1, 53):
             opening = close[n][w - 1] if w > 1 else 0.0
-            avail = opening - opening * shrink[n] + harv[n][w]
-            close[n][w] = avail - min(avail, sell[n])
-            room[n][w] = (opening + harv[n][w]) * c["crop_size_m3_per_lb"]
-    return dict(harv=harv, land=land, room=room, close=close,
+            in_store = opening - opening * shrink[n] + packed[n][w]
+            ship[n][w] = min(in_store, sell[n] / stf[n])
+            sold[n][w] = ship[n][w] * stf[n]
+            mloss[n][w] = ship[n][w] - sold[n][w]
+            close[n][w] = in_store - ship[n][w]
+            # Room = opening + everything PACKED OUT. Market loss is inside this: it was in the
+            # room before it left. Field cull never appears, because it never came in.
+            room[n][w] = (opening + packed[n][w]) * c["crop_size_m3_per_lb"]
+    return dict(gross=gross, packed=packed, cull=cull, ship=ship, sold=sold, mloss=mloss,
+                land=land, room=room, close=close,
                 cold=[room["Spinach"][w] + room["Kale"][w] for w in range(1, 53)],
                 amb=[room["Garlic"][w] for w in range(1, 53)])
 
 
-BASE = dict(acres={pn: 6.0 for pn, _ in PICKED}, stf={n: 0.85 for n in crops},
-            sell={n: 1e6 for n in crops}, shrink={n: 0.0 for n in crops})
+BASE = dict(acres={pn: 6.0 for pn, _ in PICKED}, packout={n: 1.00 for n in crops},
+            stf={n: 0.85 for n in crops}, sell={n: 1e6 for n in crops},
+            shrink={n: 0.0 for n in crops})
 
 
 def compare(tag, got, want, tol=1e-6):
@@ -157,7 +182,12 @@ def check_values(tag, overrides, params):
     s = simulate(**params)
     for n in CROPS:
         b = BLK[n.upper()]
-        compare(f"[{tag}] {n} harvested",         row(d, b["Harvested this week"]), s["harv"][n])
+        compare(f"[{tag}] {n} harvested gross",   row(d, b["Harvested (gross)"]),  s["gross"][n])
+        compare(f"[{tag}] {n} field cull",        row(d, b["field cull (never cooled)"]), s["cull"][n])
+        compare(f"[{tag}] {n} packed out",        row(d, b["Packed out -> INTO the store"]), s["packed"][n])
+        compare(f"[{tag}] {n} shipped",           row(d, b["Shipped out of store"]), s["ship"][n])
+        compare(f"[{tag}] {n} sold",              row(d, b["Sold"]),               s["sold"][n])
+        compare(f"[{tag}] {n} market loss",       row(d, b["market loss (did not come back)"]), s["mloss"][n])
         compare(f"[{tag}] {n} stock carried out", row(d, b["Stock carried out"]),   s["close"][n])
         compare(f"[{tag}] {n} room occupancy",    row(d, b["ROOM OCCUPANCY"]),      s["room"][n], 1e-4)
     compare(f"[{tag}] LAND in the ground", row(d, LBL["LAND in the ground"][0]), s["land"])
@@ -174,38 +204,54 @@ print("   Measured — flipping the shrink sign in the generator passed this sec
 print("   stressed configuration was added.")
 d0 = check_values("defaults", None, BASE)
 
-STRESS_OV = {"B6": 10.0, "B10": 8.0, "C16": 0.50, "H18": 2000.0, "G18": 0.02,
-             "H16": 9000.0, "G17": 0.05}
+# Both fractions off their defaults, on different crops, so a swap between them cannot pass.
+STRESS_OV = {"B6": 10.0, "B10": 8.0,
+             "C16": 0.80, "D16": 0.50, "I16": 9000.0,          # Spinach: both fractions + cap
+             "C17": 0.90, "H17": 0.05,                          # Kale: pack-out + shrink
+             "D18": 0.70, "I18": 2000.0, "H18": 0.02}           # Garlic: sell-through + shrink
 STRESS_P = dict(
     acres={**{pn: 6.0 for pn, _ in PICKED}, "Spinach W10": 10.0, "Garlic W47": 8.0},
-    stf={"Spinach": 0.50, "Kale": 0.85, "Garlic": 0.85},
+    packout={"Spinach": 0.80, "Kale": 0.90, "Garlic": 1.00},
+    stf={"Spinach": 0.50, "Kale": 0.85, "Garlic": 0.70},
     sell={"Spinach": 9000.0, "Kale": 1e6, "Garlic": 2000.0},
     shrink={"Spinach": 0.0, "Kale": 0.05, "Garlic": 0.02})
 check_values("stressed", STRESS_OV, STRESS_P)
+
+# The v1 configuration, reachable from v2: all loss in the field. This is the sheet's own
+# built-in demonstration, so it is pinned rather than left to the reader to trust.
+V1_OV = {f"{c}{r}": v for r in (16, 17, 18) for c, v in (("C", 0.85), ("D", 1.00))}
+V1_P = dict(acres={pn: 6.0 for pn, _ in PICKED}, packout={n: 0.85 for n in crops},
+            stf={n: 1.00 for n in crops}, sell={n: 1e6 for n in crops},
+            shrink={n: 0.0 for n in crops})
+check_values("v1-equivalent", V1_OV, V1_P)
 
 print("\nB. PROPAGATION — perturb each input, does anything downstream move?")
 peak = lambda d, lab, i=0: max(float(x) for x in row(d, LBL[lab][i]) if x is not None)
 total = lambda d, c, r: sum(float(x) for x in row(d, BLK[c][r]) if x is not None)
 worst = lambda d, i: min(float(x) for x in row(d, LBL["room left"][i]) if x is not None)
-base_sp, base_cold = total(d0, "SPINACH", "Harvested this week"), peak(d0, "COLD STORE")
+base_sp = total(d0, "SPINACH", "Harvested (gross)")
+base_sold = total(d0, "SPINACH", "Sold")
+base_cold = peak(d0, "COLD STORE")
 
 for tag, ov, pred in [
     ("acres         B6  6 -> 12",        {"B6": 12.0},
-     lambda d: total(d, "SPINACH", "Harvested this week") > base_sp * 1.4),
-    ("sell-through  C16 0.85 -> 0.50",   {"C16": 0.50},
-     lambda d: total(d, "SPINACH", "Harvested this week") < base_sp * 0.7),
+     lambda d: total(d, "SPINACH", "Harvested (gross)") > base_sp * 1.4),
+    ("PACK-OUT      C16 1.00 -> 0.60",   {"C16": 0.60},
+     lambda d: peak(d, "COLD STORE") < base_cold * 0.85),
+    ("SELL-THROUGH  D16 0.85 -> 0.50",   {"D16": 0.50},
+     lambda d: total(d, "SPINACH", "Sold") < base_sold * 0.7),
     ("yield         B16 5000 -> 10000",  {"B16": 10000},
-     lambda d: total(d, "SPINACH", "Harvested this week") > base_sp * 1.8),
-    ("m3 per lb     D16 x2",             {"D16": crops["Spinach"]["crop_size_m3_per_lb"] * 2},
+     lambda d: total(d, "SPINACH", "Harvested (gross)") > base_sp * 1.8),
+    ("m3 per lb     E16 x2",             {"E16": crops["Spinach"]["crop_size_m3_per_lb"] * 2},
      lambda d: peak(d, "COLD STORE") > base_cold * 1.2),
-    ("sell rate     H18 -> 2000",        {"H18": 2000.0},
+    ("sell rate     I18 -> 2000",        {"I18": 2000.0},
      lambda d: total(d, "GARLIC", "Stock carried out") > 0),
-    ("shrink        G18 -> 2%",          {"H18": 2000.0, "G18": 0.02},
+    ("shrink        H18 -> 2%",          {"I18": 2000.0, "H18": 0.02},
      lambda d: total(d, "GARLIC", "lost to shrink") > 0),
     ("cold cap      B22 275 -> 50",      {"B22": 50.0},  lambda d: worst(d, 1) < 0),
     ("ambient cap   B23 150 -> 20",      {"B23": 20.0},  lambda d: worst(d, 2) < 0),
     ("land          B12 80 -> 10",       {"B12": 10.0},  lambda d: worst(d, 0) < 0),
-    ("shelf life    F18 16 -> 2",        {"H18": 2000.0, "F18": 2},
+    ("shelf life    G18 16 -> 2",        {"I18": 2000.0, "G18": 2},
      lambda d: total(d, "GARLIC", "Over shelf life?") > 0),
 ]:
     try:
@@ -232,6 +278,29 @@ for line in ws.iter_rows():
         frozen.append(f"{c.coordinate}={c.value} (row {ws.cell(row=c.row, column=1).value!r})")
 report(not frozen, f"every number is a formula or a declared input"
                    + ("" if not frozen else " — FROZEN: " + "; ".join(frozen[:6])))
+
+print("\nD. THE READ ME PROMISES WHAT THE SHEET PRODUCES")
+# The prose names numbers the reader will check by eye. They are generated from a simulator, so
+# this closes the loop: what the document promises must equal what the workbook computes.
+rd = load_workbook(WB)["READ ME"]
+prose = "\n".join(str(rd.cell(row=r, column=1).value or "") for r in range(1, rd.max_row + 1))
+peak_cold = max(float(x) for x in row(d0, LBL["COLD STORE"][0]) if x is not None)
+peak_amb = max(float(x) for x in row(d0, LBL["AMBIENT STORE"][0]) if x is not None)
+peak_land = max(float(x) for x in row(d0, LBL["LAND in the ground"][0]) if x is not None)
+for name, val, unit in (("COLD", peak_cold, "m3"), ("AMBIENT", peak_amb, "m3"),
+                        ("LAND in the ground", peak_land, "acres")):
+    txt = f"{val:.1f} {unit}"
+    report(txt in prose, f"READ ME states the real peak {name} ({txt})")
+for crop in CROPS:
+    b = BLK[crop.upper()]
+    sold = sum(float(x) for x in row(d0, b["Sold"]) if x is not None)
+    report(f"{sold:,.0f}" in prose, f"READ ME states {crop}'s real sold total ({sold:,.0f} lb)")
+# and the v1-equivalent figures the demonstration turns on
+dv1 = calc(V1_OV)
+v1c = max(float(x) for x in row(dv1, LBL["COLD STORE"][0]) if x is not None)
+v1a = max(float(x) for x in row(dv1, LBL["AMBIENT STORE"][0]) if x is not None)
+report(f"{v1c:.1f} m3" in prose and f"{v1a:.1f} m3" in prose,
+       f"READ ME states the real v1-equivalent peaks ({v1c:.1f} / {v1a:.1f} m3)")
 
 print("\n" + ("ALL CHECKS PASSED" if not failures else f"{len(failures)} FAILURE(S)"))
 sys.exit(1 if failures else 0)
