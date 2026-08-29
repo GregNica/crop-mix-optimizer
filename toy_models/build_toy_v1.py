@@ -67,7 +67,7 @@ wb = Workbook()
 # SHEET 1 — READ ME
 # ===========================================================================
 rd = wb.active
-rd.title = "READ ME"
+rd.title = "READ ME"   # content written at the END, once row numbers are known
 rd.column_dimensions["A"].width = 112
 readme = [
  ("Farm toy model — v1: THE SPINE + STORAGE", F_TITLE),
@@ -84,7 +84,7 @@ readme = [
  ("", None),
  ("HOW TO USE IT", F_H1),
  ("1. Go to the 'Model' sheet. Every YELLOW cell is an input. Nothing else should be typed in.", None),
- ("2. Start with the acres in B6:B10. Change one. Watch the whole sheet move.", None),
+ ("2. Start with the acres in {ACRES}. Change one. Watch the whole sheet move.", None),
  ("3. Watch row 'COLD POOL headroom' and 'AMBIENT POOL headroom'. Red = you have overflowed", None),
  ("   that store in that week. The app would call this plan infeasible.", None),
  ("", None),
@@ -130,8 +130,31 @@ readme = [
  ("answers that (capacity_series returns used-vs-cap per week for every pool). Any conclusion", None),
  ("drawn here gets re-measured against the real farm before it becomes a plan item.", None),
  ("", None),
+ ("HOW THE SHEET IS LAID OUT", F_H1),
+ ("Sections 1-3 are inputs. Section 4 is the year, week 1 to 52 running left to right.", None),
+ ("Only columns A and B are frozen, so scrolling up and down is free. Every band repeats its own", None),
+ ("week-number strip, so you never lose your place going right.", None),
+ ("", None),
+ ("EVERY CONSTRAINT IS THREE ROWS, and they are the same three rows you wrote in the original", None),
+ ("Group 5 model - 'Available Land' / '<=' / '1', on the Model sheet at rows 16-18:", None),
+ ("        LAND in the ground     18.0  18.0  18.0   ...   <- what the plan uses", None),
+ ("                                 <=    <=    <=", None),
+ ("          limit                80.0  80.0  80.0   ...   <- what you have", None),
+ ("          room left            62.0  62.0  62.0   ...", None),
+ ("Read downwards, it IS the inequality. There are three of these: LAND, COLD STORE and", None),
+ ("AMBIENT STORE. Red means that week is over the limit.", None),
+ ("", None),
+ ("WHY 'LAND' IS HERE WHEN YOU ALREADY UNDERSTAND IT", F_H1),
+ ("Because it is the one constraint you already read fluently, so the two storage blocks below", None),
+ ("it are a familiar SHAPE carrying an unfamiliar quantity. It also shows something worth", None),
+ ("seeing: the five acre figures sum to 30 acres, but peak land in the ground is only 18,", None),
+ ("because the plantings overlap in time rather than all at once. The app checks the WEEK, never", None),
+ ("the annual sum - a distinction it once got wrong, satisfying a 3-acre commitment with", None),
+ ("eighteen separate 1-acre plantings that never reserved a single acre.", None),
+ ("", None),
  ("CHECK IT WORKED - the numbers you should see on opening", F_H1),
  ("With the sheet as shipped (every planting 6 acres, sell rate 1,000,000, shrink 0%):", None),
+ ("     Peak LAND in the ground 18.0 acres in weeks 12-17  (you have 80)", F_BOLD),
  ("     Peak COLD store         66.6 m3  in week 41      (cooler holds 275)", F_BOLD),
  ("     Peak AMBIENT store      61.0 m3  in week 30      (barn holds 150)", F_BOLD),
  ("     Stock carried out       0 lb in every week, for all three crops", F_BOLD),
@@ -144,14 +167,14 @@ readme = [
  ("THREE THINGS TO TRY", F_H1),
  ("Each one changes ONE input. Change it, look, then put it back.", None),
  ("", None),
- ("EXPERIMENT 1 - overflow the stores.  Set all five acre cells (B6:B10) to 25.", F_BOLD),
+ ("EXPERIMENT 1 - overflow the stores.  Set all five acre cells ({ACRES}) to 25.", F_BOLD),
  ("   Expect: peak COLD 277.6 m3 in week 41, red for 1 week. Peak AMBIENT 254.0 m3 in week 30,", None),
  ("   red for 1 week. The app would refuse this plan outright - not warn about it, refuse it.", None),
  ("   Note it takes ~24.8 acres per planting to break the cooler, and the break is in ONE week.", None),
  ("   That is what a capacity constraint feels like: nothing, nothing, nothing, infeasible.", None),
  ("", None),
  ("EXPERIMENT 2 - hold stock, and watch what does NOT happen.  Put acres back to 6.", F_BOLD),
- ("   Set Garlic's 'Sell rate lb/wk' (H17) to 2000.", F_BOLD),
+ ("   Set Garlic's 'Sell rate lb/wk' ({G_SELL}) to 2000.", F_BOLD),
  ("   Expect: Garlic now sells 46,000 lb instead of 51,000, carries 5,000 lb into next year,", None),
  ("   and 'Over shelf life?' reaches 19,000 lb.", None),
  ("   BUT peak AMBIENT is still 61.0 m3 in week 30 - EXACTLY as before.", F_BOLD),
@@ -160,7 +183,7 @@ readme = [
  ("   as the opening one, arriving from the other direction: size the barn for harvest day.", None),
  ("", None),
  ("EXPERIMENT 3 - make holding cost something.  Leave sell rate at 2000.", F_BOLD),
- ("   Set Garlic's 'Shrink %/wk' (G17) to 2%.", F_BOLD),
+ ("   Set Garlic's 'Shrink %/wk' ({G_SHRINK}) to 2%.", F_BOLD),
  ("   Expect: Garlic sells 41,474 lb (down 4,526), loses 9,526 lb to shrink, and carries NOTHING", None),
  ("   into next year - the shrink ate the leftovers. 'Over shelf life' falls to 10,047 lb.", None),
  ("   Without shrink, a long shelf life is pure upside and the model would hoard. Shrink is what", None),
@@ -172,9 +195,6 @@ readme = [
  ("golden payload the tests pin. Nothing is retyped. See the 'Crop data' sheet for the values", None),
  ("and their sources. Re-run the generator after any crop-data change.", None),
 ]
-for i, (text, font) in enumerate(readme, start=1):
-    c = rd.cell(row=i, column=1, value=text)
-    if font: c.font = font
 
 # ===========================================================================
 # SHEET 2 — MODEL
@@ -193,6 +213,59 @@ def put(r, c, v, font=None, fill=None, fmt=None, align=None, border=False):
     if align: cell.alignment = Alignment(horizontal=align)
     if border: cell.border = BOX
     return cell
+
+
+def week_header(r, note=""):
+    """A week-number strip. REPEATED at the head of every band on purpose.
+
+    The first version froze rows 1-25 so the week numbers would stay visible, which pinned the
+    whole input block and left about five scrollable rows on a normal screen — vertical scrolling
+    looked broken while horizontal still worked. Freezing the LABEL COLUMNS only and repeating
+    this strip costs six rows and cannot do that.
+    """
+    put(r, 1, "Week", font=F_BOLD, fill=HDR_FILL)
+    put(r, 2, note, font=F_NOTE, fill=HDR_FILL)
+    for w in range(1, 53):
+        put(r, wcol(w), w, font=F_BOLD, fill=HDR_FILL, align="center")
+    return r + 1
+
+
+def constraint_triplet(r, label, lhs_formula, cap_ref, fill, note):
+    """The original Group 5 model's own idiom: a row of values, a '<=' row, and the limit.
+
+    Read top to bottom it IS the inequality. Copied deliberately from 'Model' rows 16-18 of
+    'Group 5_Baby Model_Final (2).xlsx' (Available Land / <= / 1), because that is the layout
+    the grower wrote and already reads without translation.
+    """
+    put(r, 1, label, font=F_BOLD, fill=fill)
+    put(r, 2, "used", font=F_NOTE)
+    for w in range(1, 53):
+        put(r, wcol(w), lhs_formula(w), fmt="0.0", fill=fill)
+    used = r; r += 1
+    put(r, 1, "", font=F_BOLD)
+    put(r, 2, "", font=F_NOTE)
+    for w in range(1, 53):
+        put(r, wcol(w), "<=", align="center", font=F_BOLD)
+    r += 1
+    put(r, 1, "  limit", font=F_BOLD)
+    put(r, 2, "cap", font=F_NOTE)
+    for w in range(1, 53):
+        put(r, wcol(w), f"={cap_ref}", fmt="0.0")
+    r += 1
+    put(r, 1, "  room left", font=F_SMALL)
+    put(r, 2, "", font=F_NOTE)
+    for w in range(1, 53):
+        put(r, wcol(w), f"={cap_ref}-{wl(w)}{used}", fmt="0.0")
+    head = r; r += 1
+    put(r, 1, note, font=F_NOTE)
+    r += 2
+    for rng, op, formula in ((head, "lessThan", ["0"]), (used, "greaterThan", [cap_ref])):
+        ws.conditional_formatting.add(
+            f"{wl(1)}{rng}:{LAST}{rng}",
+            CellIsRule(operator=op, formula=formula,
+                       fill=PatternFill("solid", fgColor="FFC7CE"),
+                       font=Font(color="9C0006", bold=True)))
+    return r, used, head
 
 r = 1
 put(r, 1, "FARM TOY MODEL — v1: the spine + storage"); ws.cell(row=r, column=1).font = F_TITLE
@@ -220,8 +293,13 @@ for s in succs:
     r += 1
 put(r, 1, "Total acres planted", font=F_BOLD)
 put(r, 2, f"=SUM(B{ROW_SUCC}:B{r-1})", font=F_BOLD, fmt="0.0")
-put(r, 3, f"of {TOTAL_LAND} acres of ground", font=F_NOTE)
+put(r, 3, "sum of the five above — but they overlap in time, so this is NOT peak land use", font=F_NOTE)
 ROW_TOTACRES = r
+r += 1
+put(r, 1, "Land you have", font=F_BOLD)
+put(r, 2, TOTAL_LAND, fill=IN_FILL, fmt="0.0", border=True)
+put(r, 3, "acres — the limit the 'LAND in the ground' rows below are measured against", font=F_NOTE)
+ROW_LAND = r
 r += 2
 
 # ---- INPUT: crop settings ----
@@ -262,12 +340,9 @@ r += 2
 # ---- week header ----
 put(r, 1, "4 — THE YEAR, WEEK BY WEEK", font=F_H1); r += 1
 ROW_WEEKNUM = r
-put(r, 1, "Week", font=F_BOLD, fill=HDR_FILL)
-put(r, 2, "", fill=HDR_FILL)
-for w in range(1, 53):
-    put(r, wcol(w), w, font=F_BOLD, fill=HDR_FILL, align="center")
-ws.freeze_panes = ws.cell(row=r + 1, column=3)
-r += 1
+r = week_header(r)
+# Columns A-B only. See week_header's docstring for why no rows are frozen.
+ws.freeze_panes = "C1"
 
 # ---- per-succession phase + harvest ----
 put(r, 1, "PLANTING CALENDAR", font=F_BOLD); r += 1
@@ -286,6 +361,7 @@ for m in succ_meta:
             put(r, wcol(w), PHASE_TXT[phase_by_week[w]], align="center", font=F_SMALL,
                 fill=CALC_FILL)
     phrow = r
+    m["phase_row"] = phrow
     r += 1
     put(r, 1, "   lbs harvested (sellable)", font=F_SMALL)
     put(r, 2, "lb", font=F_NOTE)
@@ -299,6 +375,17 @@ for m in succ_meta:
 put(r, 1, "P = planting   G = growing   H = harvesting.  Only sellable pounds are shown (yield x sell-through).", font=F_NOTE)
 r += 2
 
+# The one constraint the grower already knows, in the layout they already read — so the
+# storage rows below are a familiar shape carrying an unfamiliar quantity.
+r = week_header(r, "acres")
+land_lhs = lambda w: "=" + "+".join(
+    f'IF({wl(w)}{m["phase_row"]}<>"",$B${m["row"]},0)' for m in succ_meta)
+r, ROW_LANDUSED, _ = constraint_triplet(
+    r, "LAND in the ground", land_lhs, f"$B${ROW_LAND}", None,
+    "   Acres standing in the ground that week. A succession occupies its ground from planting "
+    "to its LAST harvest week — which is why the five acre figures above can sum past your land "
+    "and still be legal, as long as no single WEEK does.")
+
 # ---- per-crop inventory + storage ----
 crop_block = {}
 for name in CROP_NAMES:
@@ -307,6 +394,7 @@ for name in CROP_NAMES:
     put(r, 1, f"{name.upper()}  —  {pool.lower()} store", font=F_H1)
     put(r, 2, "", fill=POOL_C if pool == "Cold" else POOL_A)
     r += 1
+    r = week_header(r)
 
     put(r, 1, "Harvested this week", font=F_SMALL); put(r, 2, "lb", font=F_NOTE)
     for w in range(1, 53):
@@ -363,31 +451,18 @@ for name in CROP_NAMES:
 
 # ---- pools ----
 put(r, 1, "5 — THE TWO STORES", font=F_H1); r += 1
+put(r, 1, "Same three-row shape as LAND above, and as 'Available Land / <= / 1' in the original "
+          "Group 5 model. Read each block downwards: it IS the inequality.", font=F_NOTE)
+r += 1
 pool_rows = {}
 for pool, cap_row, fill in (("Cold", ROW_COLDCAP, POOL_C), ("Ambient", ROW_AMBCAP, POOL_A)):
     members = [n for n in CROP_NAMES if crop_block[n]["pool"] == pool]
-    put(r, 1, f"{pool.upper()} POOL used", font=F_BOLD, fill=fill)
-    put(r, 2, "m3", font=F_NOTE)
-    for w in range(1, 53):
-        parts = "+".join(f"{wl(w)}{crop_block[n]['room']}" for n in members)
-        put(r, wcol(w), f"={parts}", fmt="0.0", fill=fill)
-    used = r; r += 1
-    put(r, 1, f"{pool.upper()} POOL headroom", font=F_BOLD)
-    put(r, 2, "m3", font=F_NOTE)
-    for w in range(1, 53):
-        put(r, wcol(w), f"=$B${cap_row}-{wl(w)}{used}", fmt="0.0")
-    head = r; r += 1
-    put(r, 1, f"   {pool} store holds {', '.join(members)}. NEGATIVE = overflowed = the app calls this infeasible.",
-        font=F_NOTE)
-    r += 2
-    ws.conditional_formatting.add(
-        f"{wl(1)}{head}:{LAST}{head}",
-        CellIsRule(operator="lessThan", formula=["0"],
-                   fill=PatternFill("solid", fgColor="FFC7CE"), font=Font(color="9C0006", bold=True)))
-    ws.conditional_formatting.add(
-        f"{wl(1)}{used}:{LAST}{used}",
-        CellIsRule(operator="greaterThan", formula=[f"$B${cap_row}"],
-                   fill=PatternFill("solid", fgColor="FFC7CE"), font=Font(color="9C0006", bold=True)))
+    r = week_header(r, "m3")
+    lhs = (lambda mem: (lambda w: "=" + "+".join(
+        f"{wl(w)}{crop_block[n]['room']}" for n in mem)))(members)
+    r, used, head = constraint_triplet(
+        r, f"{pool.upper()} STORE", lhs, f"$B${cap_row}", fill,
+        f"   Holds {', '.join(members)}. A RED cell is not a warning — the app refuses the plan.")
     pool_rows[pool] = dict(used=used, head=head, cap=cap_row)
 
 # ---- summary ----
@@ -482,6 +557,32 @@ for m in succ_meta:
     cd.cell(row=rr, column=3, value=f"W{s['weeks'][0]} to W{((s['weeks'][-1]-1)%52)+1} ({len(s['weeks'])} wk)")
     cd.cell(row=rr, column=4, value=", ".join("W%d" % w for w in harvest_weeks_of(s, 52)))
     rr += 1
+
+# ---------------------------------------------------------------------------
+# READ ME content, written LAST so its cell references are the real ones.
+#
+# The first version hard-coded them. Adding one row to the input block shifted every crop
+# settings row by one, and the instructions then pointed at the wrong crop — the sheet said
+# "set Garlic's shrink (G17)" at a cell holding Kale's. A document that names a coordinate has
+# to derive it, exactly as this project's totals are summed from their parts rather than
+# written beside them.
+# ---------------------------------------------------------------------------
+GARLIC_ROW = crop_row["Garlic"]
+COORDS = {
+    "{ACRES}":      f"B{ROW_SUCC}:B{ROW_SUCC + len(succ_meta) - 1}",
+    "{LAND}":       f"B{ROW_LAND}",
+    "{G_SELL}":     f"H{GARLIC_ROW}",
+    "{G_SHRINK}":   f"G{GARLIC_ROW}",
+    "{COLDCAP}":    f"B{ROW_COLDCAP}",
+    "{AMBCAP}":     f"B{ROW_AMBCAP}",
+}
+row_i = 1
+for text, font in readme:
+    for k, v in COORDS.items():
+        text = text.replace(k, v)
+    c = rd.cell(row=row_i, column=1, value=text)
+    if font: c.font = font
+    row_i += 1
 
 out = REPO / "toy_models" / "farm_toy_v1_spine_storage.xlsx"
 wb.save(out)

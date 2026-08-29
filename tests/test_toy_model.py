@@ -148,8 +148,8 @@ def test_each_pool_sums_its_own_crops_only(model):
     """The 'grouped on the wrong column' trap: a pool row that silently totals the wrong set."""
     b = _crop_blocks(model)
     rows = _labelled_rows(model)
-    cold = model.cell(row=rows["COLD POOL used"][0], column=4).value
-    amb = model.cell(row=rows["AMBIENT POOL used"][0], column=4).value
+    cold = model.cell(row=rows["COLD STORE"][0], column=4).value
+    amb = model.cell(row=rows["AMBIENT STORE"][0], column=4).value
     sp, ka, ga = (str(b[c]["ROOM OCCUPANCY"]) for c in ("SPINACH", "KALE", "GARLIC"))
     assert sp in cold and ka in cold and ga not in cold, "cold pool is not Spinach + Kale"
     assert ga in amb and sp not in amb and ka not in amb, "ambient pool is not Garlic alone"
@@ -165,3 +165,113 @@ def test_no_formula_points_off_the_sheet(model):
                 for m in re.finditer(r"\$?[A-Z]{1,2}\$?(\d+)", c.value):
                     assert int(m.group(1)) <= model.max_row, f"{c.coordinate}: {c.value}"
     assert n > 1500, f"only {n} formulas — the sheet has gone static, which no edit should do"
+
+
+# ---------------------------------------------------------------------------
+# 3 — the layout itself (both defects the grower found on first open)
+# ---------------------------------------------------------------------------
+
+def test_freezing_does_not_eat_the_scrollable_window(model):
+    """Freeze the label COLUMNS, never the rows.
+
+    v1 froze at C26 to keep the week numbers visible, which pinned rows 1-25 — the entire input
+    block — and left about five scrollable rows on a normal screen. Vertical scrolling looked
+    broken while horizontal still worked, and it hid the 52-week calendar the grower was looking
+    for, so one layout mistake read as two missing features.
+    """
+    fp = model.freeze_panes
+    assert fp is not None, "columns A-B should stay pinned while scrolling right"
+    row = int("".join(ch for ch in fp if ch.isdigit()))
+    assert row == 1, (
+        f"freeze_panes={fp} pins {row - 1} rows; freezing ANY row here re-creates the "
+        f"dead-scroll defect. Repeat the week strip instead — see week_header().")
+
+
+def test_week_numbers_are_repeated_at_every_band(model):
+    """With no frozen rows, each band carries its own week strip or the grid is unreadable."""
+    strips = [r for r in range(1, model.max_row + 1)
+              if model.cell(row=r, column=1).value == "Week"
+              and model.cell(row=r, column=3).value == 1
+              and model.cell(row=r, column=54).value == 52]
+    assert len(strips) >= 6, f"only {len(strips)} week strips; every band needs one"
+    gaps = [b - a for a, b in zip(strips, strips[1:])]
+    assert max(gaps) < 30, f"a {max(gaps)}-row gap between week strips — too far to read against"
+
+
+def test_every_constraint_reads_as_an_inequality(model):
+    """LHS row / '<=' row / limit row — the original Group 5 model's own layout.
+
+    Copied from 'Model' rows 16-18 of the source workbook (Available Land / <= / 1). The grower
+    wrote that sheet, so it is the one shape here that needs no explaining.
+    """
+    rows = _labelled_rows(model)
+    for label in ("LAND in the ground", "COLD STORE", "AMBIENT STORE"):
+        assert label in rows, f"{label} band is missing"
+        top = rows[label][0]
+        assert model.cell(row=top + 1, column=3).value == "<=", f"{label}: no '<=' row beneath it"
+        limit = model.cell(row=top + 2, column=3).value
+        assert isinstance(limit, str) and limit.startswith("="), (
+            f"{label}: the limit row must REFERENCE the input cell, not restate its number — "
+            f"got {limit!r}")
+
+
+def test_land_band_measures_standing_acres_not_the_annual_sum(model):
+    """Acres in the ground THAT WEEK.
+
+    Summing the year's plantings instead is a real defect this project already shipped and
+    measured (C15): with a 3-acre commitment and a 1-acre/week cap the solver satisfied an
+    annual-sum floor with eighteen separate 1-acre plantings, peak standing acreage 6, and not
+    one acre actually reserved. A commitment is a quantity of ground, not of activity.
+    """
+    rows = _labelled_rows(model)
+    f = model.cell(row=rows["LAND in the ground"][0], column=4).value
+    assert f.count("IF(") == 5, f"land row should test all five plantings, got {f!r}"
+    assert 'D' in f and '<>""' in f, "land row should read the phase strip for that WEEK"
+
+
+def test_readme_coordinates_point_at_what_they_claim():
+    """Every cell the instructions name must hold the thing the sentence says it holds.
+
+    This is the defect the grower hit on first read: the READ ME hard-coded "set Garlic's shrink
+    (G17)", then a row was added to the input block, every crop settings row shifted by one, and
+    G17 became KALE's shrink. The sheet confidently instructed the wrong crop. Same class as this
+    project's totals-written-beside-their-parts rule — a reference has to be DERIVED, and the
+    generator now builds these from the live row numbers.
+
+    Cheap to assert and it fails the moment the layout moves again.
+    """
+    wb = openpyxl.load_workbook(WORKBOOK)
+    rd, model = wb["READ ME"], wb["Model"]
+    text = "\n".join(str(rd.cell(row=r, column=1).value or "") for r in range(1, rd.max_row + 1))
+
+    claims = [
+        (r"Set Garlic's 'Sell rate lb/wk' \(([A-Z]+\d+)\)", "Garlic", "Sell rate lb/wk"),
+        (r"Set Garlic's 'Shrink %/wk' \(([A-Z]+\d+)\)",     "Garlic", "Shrink %/wk"),
+    ]
+    header_row = None
+    for r in range(1, 40):
+        if model.cell(row=r, column=1).value == "Crop" and model.cell(row=r, column=2).value == "Yield lb/acre":
+            header_row = r
+            break
+    assert header_row, "could not find the crop settings header"
+    cols = {model.cell(row=header_row, column=c).value: c for c in range(1, 12)}
+
+    for pattern, crop, field in claims:
+        m = re.search(pattern, text)
+        assert m, f"the READ ME no longer names a cell for {crop} {field}"
+        coord = m.group(1)
+        cell = model[coord]
+        assert model.cell(row=cell.row, column=1).value == crop, (
+            f"READ ME says {coord} is {crop}'s {field}, but row {cell.row} is "
+            f"{model.cell(row=cell.row, column=1).value!r}")
+        assert cell.column == cols[field], (
+            f"READ ME says {coord} is {field}, but that column is "
+            f"{model.cell(row=header_row, column=cell.column).value!r}")
+
+    m = re.search(r"acre cells \(([A-Z]+\d+):([A-Z]+\d+)\)", text)
+    assert m, "the READ ME no longer names the acre input range"
+    first, last = model[m.group(1)], model[m.group(2)]
+    assert last.row - first.row + 1 == len(PICKED), "acre range does not cover all five plantings"
+    for row in range(first.row, last.row + 1):
+        assert model.cell(row=row, column=1).value in PICKED, (
+            f"row {row} is not one of the five plantings — the acre range has drifted")
