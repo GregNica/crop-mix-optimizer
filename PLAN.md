@@ -43,9 +43,18 @@ These are the compressed lessons of the last two weeks. Each one is paid for.
    rather than died**, which the retirement nearly missed: the blob sits in an inline `<script>`
    and `json.dumps` does *not* escape `/`, so a `</script` in any `farm_v2/*.py` would close the
    tag early and blank the page — invisibly to every Python test, exactly the backtick
-   asymmetry. Now closed by construction (`sync_solver_blob.py` writes `<\/`) with a fail-closed
-   backstop in `tests/test_blob_sync.py`, both mutation-verified. **The lesson generalises: when
-   you retire a guard because its mechanism moved, ask what the mechanism's CLASS is.**
+   asymmetry. **The first fix escaped `<\/` and was WRONG IN BOTH DIRECTIONS** (`617cc53`):
+   `</script` is not the only sequence the tokenizer acts on — an unterminated `<!--` plus a later
+   `<script` reaches script-data-double-escaped, where the element's own `</script>` no longer
+   closes it — and a raw `</script` is what EXITS that state, so neutralising it removed an
+   accidental escape hatch (measured with parse5: page intact before, swallowed after). Now closed
+   by construction — `sync_solver_blob.py` escapes **every `<`** as `\u003c` — with a fail-closed
+   backstop in `tests/test_blob_sync.py` that reads the RAW line, plus a `TestBlobWriter` over a
+   hostile fixture (the writer previously had NO test: no `farm_v2` module contains `<`, so
+   deleting the escape left the suite green). All mutation-verified. **The lesson generalises
+   twice: when you retire a guard because its mechanism moved, ask what the mechanism's CLASS is —
+   and then check you have not drawn the class too narrowly. Escape the character class, not the
+   sequence.**
 8. **When you kill a coercion idiom, grep the pipeline for the IDIOM, not the field** —
    `parseFloat(x) || d` and present-None-defaults each resurfaced one layer away, same day they
    were "fixed".
@@ -184,7 +193,7 @@ delete it when the panel is rebuilt.
 
 ---
 
-## Batch 1 — Structural enablers (E2 + W8, then E5)
+## Batch 1 — Structural enablers (E2 + W8, then E5, then T4)
 
 **1.1 · E2 — extract the Python adapter to `farm_v2/adapter.py`. ✅ DONE 2026-08-02.**
 568 lines left `index.html`; `farm_v2/adapter.py` (493) + `farm_v2/charts.py` (107). **Proved
@@ -270,6 +279,36 @@ E5b concern — solver-vocabulary keys — is satisfied by keying on payload, pe
 error. If the exemption list grows past a couple of entries, that is the signal the payload is
 carrying two different kinds of thing and wants splitting.
 DONE = one source of truth, three views, versioned migration path, silent-drop impossible.
+
+**1.4 · T4 — the headless-browser smoke test (scheduled 2026-08-29; BACKLOG row T4, previously ❓).**
+WHY: **jsdom cannot run Pyodide**, and that single gap is why E2 sat "unverified in the browser"
+for four weeks, why every batch boundary ends in a standing human QA ask, and why the
+hidden-tab Monte Carlo stall (`0a3c15b`) reached a grower with 407 tests green. Guardrail 15 keeps
+grower browser QA — this does not replace it; it stops the *mechanical* half of it (does it boot,
+does it solve, does it draw, are there console errors) being a person's job on every batch.
+The suite currently has three tiers — pytest over `farm_v2/`, jsdom over the client, blob/payload
+sync — and **none of them executes the shipped artifact.**
+ATTACK:
+1. Playwright (or the `browse` skill's headless Chromium) against `npm run dev` on 8787 — the
+   Worker, not `http.server`, so the gate and `/api/*` are the shipped ones. ⚠️ `ss -ltnp | grep
+   878` first; a stale wrangler on 8787 means QA'ing old code (documented incident 2026-07-31).
+2. Assert, in one run: Pyodide boots; `from farm_v2.adapter import run_from_js` is live; the demo
+   farm solves; profit is a finite number matching `tests/test_golden_farm.py`'s pin to the dollar;
+   the waterfall `<img>` has non-zero dimensions; **zero console errors**; and the in-page self-test
+   suite reports its assertion count (which would have caught the `renderCropChannelHTML`
+   ReferenceError that killed 34 lines of it silently).
+3. One backgrounded-tab case: run a short Monte Carlo with the page hidden and assert it still
+   completes. That is the regression `0a3c15b` fixed and nothing currently pins it.
+GUARDS: the test IS the guard. Mutation-check it the cheap way — break the blob (`FARM_V2_FILES =
+{}`), stub `paintYield`'s rAF to never fire, and blank the chart call; each must fail a distinct
+assertion. ⚠️ **A smoke test that passes against a broken page is the tautology class this repo
+has already shipped five times** (E2's `innerHTML` self-tests) — assert on *rendered state*, never
+on page source.
+SIZE: deliberately small. One spec file, under ~150 lines, not a UI-coverage project. If it grows
+past that it has stopped being a smoke test.
+DONE = one command that boots the real artifact and fails loudly when it does not work; the browser
+QA ask at each batch boundary shrinks to judgement calls (does this number look right to a grower)
+rather than "does it run".
 
 ---
 

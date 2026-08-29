@@ -21,17 +21,27 @@ A team (Group 5) built an Excel spreadsheet with Microsoft Solver to figure this
 
 ## Current Deliverable — `index.html`
 
-A self-contained single-file web application. No installation, no server required in principle (see below). The farmer configures their crops, costs, water, and labor; the app runs a Mixed-Integer Linear Program (MILP) and returns an optimal planting plan with sensitivity analysis and Monte Carlo risk simulation.
+A single-page web application. The farmer configures their crops, costs, water, and labor; the app runs a Mixed-Integer Linear Program (MILP) and returns an optimal planting plan with sensitivity analysis and Monte Carlo risk simulation. **The solve is 100% client-side** (Pyodide/WebAssembly) — the server never solves — but the app ships as a **Cloudflare Worker** that serves the page, gates login, and handles `/api/*`. See `SETUP.md`.
 
 ### How to run
 
-**Recommended (local server, avoids browser file:// restrictions):**
+**The real app — use this:**
+```bash
+npm install
+npm run dev          # wrangler dev → http://localhost:8787
+```
+That is the Worker: static app + login gate + `/api/*`. Check `http://localhost:8787/api/health` returns `{"ok":true,...}`.
+
+**Static-only fallback**, for solver/UI work when you don't need the API:
 ```bash
 python3 -m http.server 3000
-# then open http://localhost:3000 in Chrome or Edge
+# then open http://localhost:3000/public/index.html
 ```
+⚠️ This serves the file directly, so the **login gate is bypassed and every `/api/*` call 404s**. The solver is client-side, so optimization, charts and Monte Carlo all work — but this is not the app as it ships. Don't QA auth, saved plans or the chatbot here.
 
-**WSL2 users:** Run the command above in a WSL2 terminal. Chrome/Edge on Windows will reach `localhost:3000` automatically.
+⚠️ **Check for a stale server before QA:** `ss -ltnp | grep 878`. A leftover `wrangler dev` holding 8787 will push a fresh one to 8788, and opening the habitual URL then tests old code. One server only.
+
+**WSL2 users:** Run these in a WSL2 terminal. Chrome/Edge on Windows reach `localhost` automatically.
 
 ### What it includes
 
@@ -41,7 +51,7 @@ python3 -m http.server 3000
 - Sensitivity analysis (labor, credit line, binding constraint sweep)
 - Monte Carlo simulation — upload historical yield/price/demand data; app computes mean and variability for P10/P50/P90 forecast
 - Historical rainfall upload for empirical weather variability
-- Sales-spread window per crop (shelf-stable crops like garlic can sell across multiple post-harvest weeks)
+- Per-crop **shelf life** with weekly storage shrink (shelf-stable crops like garlic sell across many post-harvest weeks; `sales_spread_weeks` is the deprecated predecessor and still imports 1:1)
 - Depreciation-based fixed cost model (harvest storage, water tank, irrigation, equipment, fuel storage)
 - Cash flow constraint with opening cash and credit line
 
@@ -49,21 +59,23 @@ python3 -m http.server 3000
 
 ## `farm_v2/` — Python Solver Source
 
-The `farm_v2/` directory contains the Python solver that powers the web app. The solver code runs **inside the browser** via [Pyodide](https://pyodide.org) (Python compiled to WebAssembly) — the `farm_v2/` source files are embedded as strings inside `index.html` at build time.
+The `farm_v2/` directory contains the Python that powers the web app — the MILP solver, the JSON-in/JSON-out adapter every caller converges on, and the chart renderer. It runs **inside the browser** via [Pyodide](https://pyodide.org) (Python compiled to WebAssembly): all ten `farm_v2/*.py` files are embedded in `index.html` as one JSON blob, `FARM_V2_FILES`.
 
 ### Relationship between `farm_v2/` and `index.html`
 
 ```
-farm_v2/solver.py   ←→   embedded in index.html as FARM_V2_FILES["farm_v2/solver.py"]
-farm_v2/utils/*.py  ←→   embedded in index.html as FARM_V2_FILES["farm_v2/utils/..."]
+farm_v2/{solver,adapter,charts,validate}.py  ←→  embedded in index.html as
+farm_v2/utils/{calendar,demand,labor,water}.py    FARM_V2_FILES["farm_v2/<path>.py"]
 ```
 
-**Important:** These are kept in sync manually. If you modify solver logic:
-1. Edit the source file in `farm_v2/`
-2. Copy the updated content into the corresponding string inside `FARM_V2_FILES` in `index.html`
-3. Test via the web app
+**Do NOT hand-edit the blob.** After changing anything under `farm_v2/`:
+```bash
+python3 scripts/sync_solver_blob.py      # rewrites the blob from disk
+npm run test:blob && npm run test:payload # verifies embed == disk, and the golden payload
+```
+The script owns the escaping (every `<` becomes `\u003c`, so a `</script` in a docstring cannot close the inline `<script>` and blank the page) — copying content in by hand loses that.
 
-Failing to update both will cause `farm_v2/` and `index.html` to diverge silently — the web app will use the old embedded version while `farm_v2/` shows the new code.
+Failing to sync makes `farm_v2/` and `index.html` diverge **silently**: pytest runs the fresh code while the browser runs the stale blob. `npm run test:blob` is the guard, and it is fail-closed.
 
 ### Running the solver standalone (without the web app)
 
@@ -84,15 +96,16 @@ This is a **Mixed-Integer Linear Program (MILP)**:
 - **Binary variables** `y[i]`: whether to plant a succession at all (yes/no)
 - **Sales variables** `v[crop, channel, week]`: lbs sold per crop per channel per week
 - **Objective**: maximize annual profit
-- **Constraints**: land, water, labor, harvest storage, weekly demand caps, crop diversity, cash flow
+- **Inventory variables** `inv[crop, week]`, `waste[crop, week]`: lbs held and lbs discarded
+- **Constraints**: land, labor, water (with an on-farm tank that actually banks), an inventory balance with shelf-life and per-week shrink, two capped storage pools (refrigerated + ambient), weekly *and* annual demand caps, crop diversity, committed acres, planting/harvest throughput, and a weekly cash floor
 
-The solver is `scipy.optimize.milp` (wraps the open-source HiGHS solver). Typical solve time: under 5 seconds.
+The solver is `scipy.optimize.milp` (wraps the open-source HiGHS solver). A single solve of the demo farm is ~3.5 s in CPython and **~12 s in the browser** (wasm costs roughly 3.5x — measured, not extrapolated). Monte Carlo is 100 full solves, so budget ~20 minutes for a 100-draw run.
 
 ---
 
 ## Historical Files
 
-These files are not tracked in git but exist locally as reference artifacts. They document the earlier phases of the project.
+Reference artifacts from the earlier phases. **All of these are tracked in git** — the repo keeps its own provenance.
 
 | File | What It Is |
 |------|-----------|
@@ -104,7 +117,7 @@ These files are not tracked in git but exist locally as reference artifacts. The
 | `tests/` | Phase 2 unit tests for the Python solver modules |
 | `validation/` | Validation runs comparing notebook output to Excel |
 
-These are intentionally not committed to keep the repository clean. The Phase 1 notebook verified Python results match Excel to within $0.01 (< 0.0001%) on all metrics. That verification is the foundation the web app builds on.
+The Phase 1 notebook verified Python results match Excel to within $0.01 (< 0.0001%) on all metrics. That verification is the foundation the web app builds on. The struck-through rows above are the only ones actually removed; they are recoverable from git history at the commits named.
 
 ---
 
@@ -112,10 +125,10 @@ These are intentionally not committed to keep the repository clean. The Phase 1 
 
 - Fixed yields per acre — no crop failure, weather damage, or pest pressure modeled in the deterministic solve (Monte Carlo handles variability)
 - Revenue accrues in the week sales occur — no receivables lag
-- Harvest storage constraint applies at harvest week; sales-spread crops must have adequate storage capacity set
+- Storage is measured as **room occupancy** — opening stock plus the whole of that week's harvest, counted before any of it ships — so it sizes a cooler rather than reporting what sleeps in it. Crops flagged `cold_storage: false` (cured alliums, winter squash) use a separate, also-capped ambient pool
 - Land costs (rent/mortgage) default to $0 — users with leased land should enter their actual weekly cost
 - No crop rotation or multi-year soil health modeling
-- Labor is treated as a cost, not a decision variable (Phase 5 scope)
+- Labor capacity is a constraint and wages are a **committed** weekly cost — every listed worker is paid for their stated hours whether the crops need them or not, so a marginal crop hour is free and is rationed by capacity rather than by price. Hours bought *beyond* the crew (overtime, hired hands) **are** decision variables, priced separately: overtime at your crew's blended rate × a multiplier, hire at an entered market wage
 
 ---
 
