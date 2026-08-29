@@ -275,3 +275,66 @@ def test_readme_coordinates_point_at_what_they_claim():
     for row in range(first.row, last.row + 1):
         assert model.cell(row=row, column=1).value in PICKED, (
             f"row {row} is not one of the five plantings — the acre range has drifted")
+
+
+# ---------------------------------------------------------------------------
+# 4 — the deep check: EVALUATE the sheet
+# ---------------------------------------------------------------------------
+
+def test_no_derived_value_is_frozen(model):
+    """Every number is a formula, a declared input, or one of three known constants.
+
+    The grower found `lb/harvest wk` shipped as five baked numbers sitting beside the live
+    harvest rows they described: change sell-through and the real figures moved while the
+    printed one did not. Same class as this project's totals-written-beside-their-parts rule,
+    in a spreadsheet.
+
+    A whitelist, not a spot fix — anything new that is neither computed nor typed by the
+    grower fails here, including whatever the next layer adds.
+    """
+    week_rows = {r for r in range(1, model.max_row + 1)
+                 if model.cell(row=r, column=1).value == "Week"}
+    anchors = {r for r in range(1, model.max_row + 1)
+               if str(model.cell(row=r, column=1).value).strip() == "Stock carried in"}
+    frozen = []
+    for row in model.iter_rows():
+        for c in row:
+            if not isinstance(c.value, (int, float)) or isinstance(c.value, bool):
+                continue
+            yellow = bool(c.fill and c.fill.fgColor and c.fill.fgColor.rgb
+                          and "FFF2CC" in str(c.fill.fgColor.rgb))
+            if yellow or c.row in week_rows or (c.row in anchors and c.column == 3):
+                continue
+            frozen.append(f"{c.coordinate}={c.value} "
+                          f"(row {model.cell(row=c.row, column=1).value!r})")
+    assert not frozen, (
+        "frozen derived value(s) — make them formulas or mark them as inputs: "
+        + "; ".join(frozen[:8]))
+
+
+def test_the_sheet_actually_calculates_correctly():
+    """Run toy_models/verify_toy_v1.py — it CALCULATES the workbook.
+
+    Everything above reads formulas as text, and text can be well-formed and wrong. This shells
+    out to the venv because `formulas` cannot be installed into the system interpreter pytest
+    runs on (PEP 668), and because a check that silently skips is not a check. Same subprocess
+    pattern E2 used to prove the adapter imports no matplotlib.
+
+    Skips ONLY if the venv or the engine is genuinely absent, and says so loudly.
+    """
+    import subprocess
+
+    venv = REPO / ".venv" / "bin" / "python"
+    if not venv.exists():
+        pytest.skip(f"{venv} missing — cannot evaluate the workbook")
+    probe = subprocess.run([str(venv), "-c", "import formulas"], capture_output=True)
+    if probe.returncode != 0:
+        pytest.skip("`formulas` not installed in .venv — run: .venv/bin/pip install formulas")
+
+    r = subprocess.run([str(venv), str(REPO / "toy_models" / "verify_toy_v1.py")],
+                       capture_output=True, text=True, cwd=REPO, timeout=600)
+    assert r.returncode == 0, (
+        "the toy workbook does not calculate correctly:\n"
+        + "\n".join(l for l in r.stdout.splitlines() if "FAIL" in l or "FAILURE" in l)
+        + ("\n" + r.stderr[-2000:] if r.stderr.strip() else ""))
+    assert "ALL CHECKS PASSED" in r.stdout

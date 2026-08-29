@@ -189,6 +189,33 @@ readme = [
  ("   Without shrink, a long shelf life is pure upside and the model would hoard. Shrink is what", None),
  ("   makes storing a real decision with a real cost.", None),
  ("", None),
+ ("HAS THIS SHEET BEEN CHECKED?", F_H1),
+ ("Yes, and it is worth knowing how, because you should not have to take it on trust.", None),
+ ("", None),
+ ("  - Every crop constant and every planting date is READ FROM THE APP by the generator.", None),
+ ("    Nothing is retyped, so this sheet cannot quietly describe a different farm.", None),
+ ("  - The whole workbook is CALCULATED by a formula engine and compared, cell by cell, against", None),
+ ("    a separate model of the same arithmetic written from scratch. 52 weeks x 3 crops x 6 rows,", None),
+ ("    under two configurations - the shipped defaults AND a stressed one with shrink and sales", None),
+ ("    limits switched on.", None),
+ ("  - Every yellow input is changed and the sheet re-calculated, to prove it actually reaches", None),
+ ("    the numbers at the bottom. An input wired to nothing is exactly the defect you found.", None),
+ ("  - Nothing on the Model sheet is a frozen number except the week strips and the week-1 zero.", None),
+ ("", None),
+ ("  Run it yourself:   .venv/bin/python toy_models/verify_toy_v1.py", None),
+ ("", None),
+ ("YOU FOUND ONE OF THESE, AND IT IS WHY THE CHECKS ABOVE EXIST", F_H1),
+ ("'lb/harvest wk per acre' (column E) shipped as five typed numbers instead of formulas. The", None),
+ ("harvest itself was always live - change sell-through and the real pounds did move - but that", None),
+ ("one column sat frozen beside them, and would have disagreed the moment you touched a yield.", None),
+ ("A number printed next to a live one that can drift from it is this project's single most", None),
+ ("repeated defect. Your inference was the right one: a stale value at the top is a reason to", None),
+ ("check all of them. So all of them are now checked, every time the file is rebuilt.", None),
+ ("", None),
+ ("Also fixed in the same pass: 'Yield lb/acre' and 'm3 per lb' were live all along but were not", None),
+ ("coloured yellow, so two of the biggest levers on the sheet looked like read-only reference.", None),
+ ("They are yellow now.", None),
+ ("", None),
  ("WHERE THE NUMBERS COME FROM", F_H1),
  ("Every crop constant and every planting calendar on the Model sheet is READ FROM THE APP by", None),
  ("toy_models/build_toy_v1.py - the same succession generator the solver uses, and the same", None),
@@ -275,11 +302,14 @@ r += 2
 
 # ---- INPUT: acres per succession ----
 put(r, 1, "1 — WHAT YOU PLANT   (acres)", font=F_H1); r += 1
-hdr = ["Succession", "Acres", "Crop", "Harvest weeks", "lb/harvest wk at 1 acre"]
+hdr = ["Succession", "Acres", "Crop", "Harvest weeks", "lb/harvest wk per acre"]
 for j, h in enumerate(hdr):
     put(r, 1 + j, h, font=F_BOLD, fill=HDR_FILL, border=True)
 r += 1
 ROW_SUCC = r
+# The crop settings table lands below this one, so its row numbers are computed up front:
+# 5 succession rows + 'Total acres planted' + 'Land you have' + blank + section head + header.
+crop_row_pending = {n: ROW_SUCC + len(PICKED) + 5 + i for i, n in enumerate(CROP_NAMES)}
 succ_meta = []
 for s in succs:
     crop = crops[s["crop_name"]] if "crop_name" in s else crops[CROP_NAMES[s["crop"]]]
@@ -288,7 +318,12 @@ for s in succs:
     put(r, 2, 6.0, fill=IN_FILL, fmt="0.0", border=True)          # <- INPUT
     put(r, 3, crop["name"], border=True)
     put(r, 4, ", ".join("W%d" % w for w in harvest_weeks_of(s, 52)), font=F_SMALL, border=True)
-    put(r, 5, round(crop["yield_per_acre"] * STF / nharv, 1), fmt="#,##0", border=True)
+    # A FORMULA, never a baked number. This column describes the live harvest rows below it, and
+    # a frozen copy beside a live figure is this project's most-repeated defect — the grower spotted
+    # it here within a minute of opening the file, and was right to conclude there would be more.
+    # (There were not, but only because every other displayed number already derived itself.)
+    put(r, 5, f'=$B${crop_row_pending[crop["name"]]}*$C${crop_row_pending[crop["name"]]}/{nharv}',
+        fmt="#,##0", border=True)
     succ_meta.append({"row": r, "s": s, "crop": crop["name"], "nharv": nharv})
     r += 1
 put(r, 1, "Total acres planted", font=F_BOLD)
@@ -315,14 +350,20 @@ for name in CROP_NAMES:
     c = crops[name]
     pool = "Cold" if c.get("cold_storage", True) else "Ambient"
     put(r, 1, name, border=True)
-    put(r, 2, c["yield_per_acre"], fmt="#,##0", border=True)
+    # Yellow because they ARE live inputs — every formula that needs them reads these cells, and
+    # the propagation check proves it. They were rendered as plain constants, which read as
+    # "look, do not touch" for two of the biggest levers on the sheet.
+    put(r, 2, c["yield_per_acre"], fill=IN_FILL, fmt="#,##0", border=True)
     put(r, 3, STF, fill=IN_FILL, fmt="0.00", border=True)
-    put(r, 4, c["crop_size_m3_per_lb"], fmt="0.0000000", border=True)
+    put(r, 4, c["crop_size_m3_per_lb"], fill=IN_FILL, fmt="0.0000000", border=True)
     put(r, 5, pool, border=True, fill=POOL_C if pool == "Cold" else POOL_A)
     put(r, 6, c.get("shelf_life_weeks", c.get("sales_spread_weeks", 1)), fill=IN_FILL, border=True)
     put(r, 7, 0.0, fill=IN_FILL, fmt="0.0%", border=True)
     put(r, 8, 1000000, fill=IN_FILL, fmt="#,##0", border=True)
     crop_row[name] = r
+    assert crop_row_pending[name] == r, (
+        f"crop settings row moved: reserved {crop_row_pending[name]} for {name}, wrote {r}. "
+        f"The 'lb/harvest wk' formulas above point at the reserved row.")
     r += 1
 put(r, 1, "Shrink is weight lost in store each week. Sell rate stands in for the buyer (layer 2 makes it real).", font=F_NOTE)
 r += 2
