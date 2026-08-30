@@ -1,7 +1,7 @@
 """
 The toy model's numbers must not drift from the app's.
 
-`toy_models/farm_toy_v2_loss_and_storage.xlsx` exists to be an INDEPENDENT check on the app's
+`toy_models/farm_toy_v3_channels_and_demand.xlsx` exists to be an INDEPENDENT check on the app's
 arithmetic — a grower opens it, changes an acre figure and verifies by hand what the solver
 claims. That only works while its crop constants and its planting calendar are the app's.
 Nothing about a spreadsheet fails loudly when a crop's m3/lb changes underneath it; it just
@@ -17,7 +17,7 @@ So this pins two things:
      its harvest week was reported as needing no cooler at all), it is the one thing this toy
      exists to teach, and it is invisible in a rendered spreadsheet — the cells look identical.
 
-Regenerate with:  python3 toy_models/build_toy_v2.py
+Regenerate with:  python3 toy_models/build_toy_v3.py
 """
 import json
 import re
@@ -28,7 +28,7 @@ from tests.helpers import REPO
 
 openpyxl = pytest.importorskip("openpyxl")
 
-WORKBOOK = REPO / "toy_models" / "farm_toy_v2_loss_and_storage.xlsx"
+WORKBOOK = REPO / "toy_models" / "farm_toy_v3_channels_and_demand.xlsx"
 TOY_CROPS = ("Spinach", "Kale", "Garlic")
 PICKED = ["Spinach W10", "Spinach W34", "Kale W12", "Kale W32", "Garlic W47"]
 
@@ -36,7 +36,7 @@ PICKED = ["Spinach W10", "Spinach W34", "Kale W12", "Kale W32", "Garlic W47"]
 @pytest.fixture(scope="module")
 def model():
     if not WORKBOOK.exists():
-        pytest.skip(f"{WORKBOOK.name} not built; run toy_models/build_toy_v2.py")
+        pytest.skip(f"{WORKBOOK.name} not built; run toy_models/build_toy_v3.py")
     return openpyxl.load_workbook(WORKBOOK)["Model"]
 
 
@@ -89,10 +89,10 @@ def test_crop_constants_match_the_app(model, payload):
         r = [x for x in rows[name] if model.cell(row=x, column=2).value == crop["yield_per_acre"]]
         assert r, f"{name}: no settings row carrying the app's yield_per_acre"
         r = r[0]
-        assert model.cell(row=r, column=5).value == pytest.approx(
+        assert model.cell(row=r, column=4).value == pytest.approx(
             crop["crop_size_m3_per_lb"], rel=0, abs=1e-15), f"{name}: m3/lb has drifted"
         want_pool = "Cold" if crop.get("cold_storage", True) else "Ambient"
-        assert model.cell(row=r, column=6).value == want_pool, f"{name}: storage pool has drifted"
+        assert model.cell(row=r, column=5).value == want_pool, f"{name}: storage pool has drifted"
 
 
 def test_farm_constants_match_the_app(model, payload):
@@ -152,10 +152,13 @@ def test_the_inventory_chain_actually_chains(model, crop):
     assert model.cell(row=b["Stock carried in"], column=4).value == f"=C{b['Stock carried out']}"
     assert model.cell(row=b["In store this week"], column=4).value == (
         f"=D{b['Stock carried in']}-D{b['lost to shrink']}+D{b['Packed out -> INTO the store']}")
-    assert model.cell(row=b["Stock carried out"], column=4).value == (
-        f"=D{b['In store this week']}-D{b['Shipped out of store']}"), (
-        "the store gives up what was SHIPPED, not what was SOLD — the difference is the market "
-        "loss, and it does not come back (G1/E1)")
+    # Carried out subtracts each channel's CONSUMED, which is offered minus what came home.
+    # Subtracting SOLD instead would silently resurrect the market loss into next week's stock.
+    close = model.cell(row=b["Stock carried out"], column=4).value
+    assert close.startswith(f"=D{b['In store this week']}"), close
+    n_consumed = sum(1 for k in b if k == "consumed from store")
+    assert close.count("-D") >= 1, f"{crop}: carried-out subtracts nothing"
+    assert f"-D{b['Sold']}" not in close if "Sold" in b else True
 
 
 def test_each_pool_sums_its_own_crops_only(model):
@@ -244,46 +247,38 @@ def test_land_band_measures_standing_acres_not_the_annual_sum(model):
 
 
 def test_readme_coordinates_point_at_what_they_claim():
-    """Every cell the instructions name must hold the thing the sentence says it holds.
+    """Every cell the instructions name must hold what the sentence says it holds.
 
-    This is the defect the grower hit on first read: the READ ME hard-coded "set Garlic's shrink
-    (G17)", then a row was added to the input block, every crop settings row shifted by one, and
-    G17 became KALE's shrink. The sheet confidently instructed the wrong crop. Same class as this
-    project's totals-written-beside-their-parts rule — a reference has to be DERIVED, and the
-    generator now builds these from the live row numbers.
-
-    Cheap to assert and it fails the moment the layout moves again.
+    v1 shipped "set Garlic's shrink (G17)" hard-coded; a row was added, everything shifted, and
+    G17 became KALE's shrink. The generator now derives these, and this asserts the derivation.
+    v3 moves the interesting cells onto the crop x channel table, which is the grower's ruling.
     """
     wb = openpyxl.load_workbook(WORKBOOK)
     rd, model = wb["READ ME"], wb["Model"]
     text = "\n".join(str(rd.cell(row=r, column=1).value or "") for r in range(1, rd.max_row + 1))
 
-    claims = [
-        (r"Set Garlic's 'Sell rate lb/wk' \(([A-Z]+\d+)\)", "Garlic", "Sell rate lb/wk"),
-        (r"Set Garlic's 'Shrink %/wk' \(([A-Z]+\d+)\)",     "Garlic", "Shrink %/wk"),
-        (r"Pack-out to 0\.85 and Sell-through to 1\.00 \(([A-Z]+\d+):[A-Z]+\d+", "Spinach", "Pack-out"),
-    ]
-    header_row = None
-    for r in range(1, 40):
-        if model.cell(row=r, column=1).value == "Crop" and model.cell(row=r, column=2).value == "Yield lb/acre":
-            header_row = r
+    # locate the crop x channel table
+    hdr = None
+    for r in range(1, 60):
+        if (model.cell(row=r, column=1).value == "Crop"
+                and model.cell(row=r, column=2).value == "Channel"):
+            hdr = r
             break
-    assert header_row, "could not find the crop settings header"
-    cols = {model.cell(row=header_row, column=c).value: c for c in range(1, 12)}
+    assert hdr, "crop x channel table header not found"
+    cols = {model.cell(row=hdr, column=c).value: c for c in range(1, 10)}
+    for want in ("Sell-through", "Returns to store", "Cap type", "Cap lb", "From wk"):
+        assert want in cols, f"{want!r} column missing from the crop x channel table"
 
-    for pattern, crop, field in claims:
-        m = re.search(pattern, text, re.IGNORECASE)
-        assert m, f"the READ ME no longer names a cell for {crop} {field}"
-        coord = m.group(1)
-        cell = model[coord]
-        assert model.cell(row=cell.row, column=1).value == crop, (
-            f"READ ME says {coord} is {crop}'s {field}, but row {cell.row} is "
-            f"{model.cell(row=cell.row, column=1).value!r}")
-        assert cell.column == cols[field], (
-            f"READ ME says {coord} is {field}, but that column is "
-            f"{model.cell(row=header_row, column=cell.column).value!r}")
+    m = re.search(r"'Returns to store' at [^(]*\(([A-Z]+\d+)\)", text)
+    assert m, "the READ ME no longer names a cell for Returns to store"
+    cell = model[m.group(1)]
+    assert model.cell(row=cell.row, column=1).value == "Garlic", (
+        f"READ ME says {m.group(1)} is Garlic's returns, but that row is "
+        f"{model.cell(row=cell.row, column=1).value!r}")
+    assert cell.column == cols["Returns to store"], (
+        f"READ ME says {m.group(1)} is Returns to store, but that column is "
+        f"{model.cell(row=hdr, column=cell.column).value!r}")
 
-    # tolerant of line wrapping — the range may sit on the line after "acre cells"
     m = re.search(r"acre cells[\s\S]{0,60}?\(([A-Z]+\d+):([A-Z]+\d+)\)", text)
     assert m, "the READ ME no longer names the acre input range"
     first, last = model[m.group(1)], model[m.group(2)]
@@ -291,6 +286,37 @@ def test_readme_coordinates_point_at_what_they_claim():
     for row in range(first.row, last.row + 1):
         assert model.cell(row=row, column=1).value in PICKED, (
             f"row {row} is not one of the five plantings — the acre range has drifted")
+
+
+def test_sell_through_lives_on_the_crop_channel_row_not_the_crop():
+    """Grower ruling, 2026-08-29 (DECISIONS E1).
+
+    A wholesaler orders and invoices, so sell-through is ~1.0 there by construction; a market
+    stall always offers more than it sells. And whether the remainder is lost or merely delayed
+    depends on the CROP. Only a crop x channel cell can hold that, so a Sell-through column on
+    the CROP table would be the old farm-wide mistake wearing a new hat.
+    """
+    wb = openpyxl.load_workbook(WORKBOOK)
+    model = wb["Model"]
+    crop_hdr = pair_hdr = None
+    for r in range(1, 60):
+        a, b = model.cell(row=r, column=1).value, model.cell(row=r, column=2).value
+        if a == "Crop" and b == "Yield lb/acre":
+            crop_hdr = r
+        if a == "Crop" and b == "Channel":
+            pair_hdr = r
+    assert crop_hdr and pair_hdr, "could not find both tables"
+    crop_cols = [model.cell(row=crop_hdr, column=c).value for c in range(1, 10)]
+    pair_cols = [model.cell(row=pair_hdr, column=c).value for c in range(1, 10)]
+    assert "Sell-through" not in crop_cols, (
+        "Sell-through is on the CROP table — the ruling puts it on crop x channel")
+    assert "Sell-through" in pair_cols and "Returns to store" in pair_cols
+    # and one pair per crop x channel, no more and no fewer
+    n = sum(1 for r in range(pair_hdr + 1, pair_hdr + 40)
+            if model.cell(row=r, column=2).value in
+            {model.cell(row=x, column=2).value for x in range(pair_hdr + 1, pair_hdr + 40)}
+            and model.cell(row=r, column=1).value in ("Spinach", "Kale", "Garlic"))
+    assert n == 6, f"expected 6 crop x channel rows, found {n}"
 
 
 # ---------------------------------------------------------------------------
@@ -329,7 +355,7 @@ def test_no_derived_value_is_frozen(model):
 
 
 def test_the_sheet_actually_calculates_correctly():
-    """Run toy_models/verify_toy_v2.py — it CALCULATES the workbook.
+    """Run toy_models/verify_toy_v3.py — it CALCULATES the workbook.
 
     Everything above reads formulas as text, and text can be well-formed and wrong. This shells
     out to the venv because `formulas` cannot be installed into the system interpreter pytest
@@ -347,7 +373,7 @@ def test_the_sheet_actually_calculates_correctly():
     if probe.returncode != 0:
         pytest.skip("`formulas` not installed in .venv — run: .venv/bin/pip install formulas")
 
-    r = subprocess.run([str(venv), str(REPO / "toy_models" / "verify_toy_v2.py")],
+    r = subprocess.run([str(venv), str(REPO / "toy_models" / "verify_toy_v3.py")],
                        capture_output=True, text=True, cwd=REPO, timeout=600)
     assert r.returncode == 0, (
         "the toy workbook does not calculate correctly:\n"
