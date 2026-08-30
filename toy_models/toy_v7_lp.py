@@ -369,12 +369,33 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
                     .get("packaging_cost_per_lb", 0.0) for cn, hn in pairs)
     fixed = fixed_wk * N_WEEKS
     wages = float(wage_wk[1:].sum())
+
+    # Interest, POST-SOLVE and off the realised cash curve — exactly how the app does it
+    # (solver.py: interest_cost = interest_rate_apr x mean(borrowed_weekly)). It is NOT in the
+    # objective: the plan is chosen first and the borrowing it implies is priced afterwards.
+    # That is a real simplification — the optimizer has no incentive to shift sales earlier to
+    # borrow less — and it is the app's, so the toy inherits it rather than diverging.
+    week_net = np.zeros(N_WEEKS + 1)
+    for w in range(1, N_WEEKS + 1):
+        rev_w = sum(x[off_i(p_, w)] * defaults(cn, hn)[0]
+                    * CROPS[cn].get("channels", {}).get(hn, {}).get("price_per_lb", 0.0)
+                    for p_, (cn, hn) in enumerate(pairs))
+        pkg_w = sum(x[off_i(p_, w)] * defaults(cn, hn)[0]
+                    * CROPS[cn].get("channels", {}).get(hn, {}).get("packaging_cost_per_lb", 0.0)
+                    for p_, (cn, hn) in enumerate(pairs))
+        grow_w = sum(x[i] * var_week[i, w] for i in range(n_s))
+        week_net[w] = rev_w - pkg_w - grow_w - fixed_wk - wage_wk[w] - overhead * rev_w
+    bank = np.cumsum(week_net[1:]) + op_cash
+    borrowed = np.maximum(0.0, -bank)
+    interest = PAYLOAD.get("interest_rate_apr", 0.0) * float(borrowed.mean())
+    peak_borrow = float(borrowed.max())
     ovh = overhead * revenue
-    cost = growing + packaging + fixed + ovh + wages
+    cost = growing + packaging + fixed + ovh + wages + interest
     planted = {k: v for k, v in acres.items() if v > 1e-6}
     return dict(profit=revenue - cost, revenue=revenue, cost=cost, acres=acres,
                 growing=growing, packaging=packaging, fixed=fixed, overhead=ovh,
                 wages=wages, lab_cap=lab_cap, wage_wk=wage_wk, lab_week=lab_week,
+                interest=interest, peak_borrow=peak_borrow, bank=list(bank),
                 fixed_weekly=fixed_wk, opening_cash=op_cash, credit_line=cred,
                 var_week=var_week,
                 offered=offered, sold=sold, status=res.status, planted=planted,
@@ -385,7 +406,7 @@ if __name__ == "__main__":
     r = solve()
     print(f"OPTIMUM  profit ${r['profit']:,.0f}")
     print(f"   revenue    {r['revenue']:>12,.0f}")
-    for k in ("growing", "packaging", "fixed", "overhead", "wages"):
+    for k in ("growing", "packaging", "fixed", "overhead", "wages", "interest"):
         print(f"   {k:<10} {-r[k]:>12,.0f}")
     print(f"   plants {r['n_planted']} of {r['n_offered']} successions the app offers")
     print("\nacres:")

@@ -466,7 +466,7 @@ RELAX = LP.solve(min_acreage=False)
 for label, val in (("optimum profit", OPT["profit"]), ("optimum revenue", OPT["revenue"]),
                    ("growing cost", OPT["growing"]), ("packaging", OPT["packaging"]),
                    ("fixed cost", OPT["fixed"]), ("overhead", OPT["overhead"]),
-                   ("weekly fixed cost", OPT["fixed_weekly"]), ("wages", OPT["wages"]),
+                   ("weekly fixed cost", OPT["fixed_weekly"]), ("wages", OPT["wages"]), ("interest", OPT["interest"]),
                    ("LP-relaxation profit", RELAX["profit"])):
     report(f"${val:,.0f}" in prose, f"READ ME states the real {label} (${val:,.0f})")
 report(f"{OPT['n_planted']} of {OPT['n_offered']}" in prose,
@@ -495,6 +495,12 @@ report(not _over, "crop hours never exceed the crew at the optimum"
 _tightwks = [w + 1 for w, (u, c_) in enumerate(zip(_lu, _lc)) if c_ > 0 and u >= c_ - 1e-6]
 report(len(_tightwks) > 0, f"C2 actually BINDS ({len(_tightwks)} of 52 weeks) — a slack "
                            f"capacity row would prove nothing")
+_int = float(d_opt[f"B{[r for r in range(1, ws.max_row + 1) if ws.cell(row=r, column=1).value == 'Interest'][0]}"])
+report(abs(_int - OPT["interest"]) < 1.0,
+       f"sheet interest ${_int:,.2f} matches the LP's ${OPT['interest']:,.2f}")
+_pb = float(d_opt[f"B{[r for r in range(1, ws.max_row + 1) if ws.cell(row=r, column=1).value == 'Peak borrowing'][0]}"])
+report(abs(_pb - OPT["peak_borrow"]) < 1.0,
+       f"sheet peak borrowing ${_pb:,.0f} matches the LP's ${OPT['peak_borrow']:,.0f}")
 _cum = row(d_opt, LBL["CASH IN THE BANK"][0])
 _flr = row(d_opt, LBL["floor"][0])
 _bust = [w + 1 for w, (c_, f_) in enumerate(zip(_cum, _flr)) if float(c_) < float(f_) - 1e-6]

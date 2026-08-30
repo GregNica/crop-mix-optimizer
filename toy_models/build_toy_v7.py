@@ -175,7 +175,8 @@ put(r, 3, "m3 — Garlic", font=F_NOTE); r += 2
 put(r, 1, "2 — HOW EACH CROP BEHAVES", font=F_H1); r += 1
 for j, h in enumerate(["Crop", "Yield lb/acre", "Pack-out", "m3 per lb", "Store", "Shelf life wk",
                        "Shrink %/wk", "Seed $/acre", "Min acres if planted", "Harvest weeks",
-                       "$/ac plant wk", "$/ac grow wk", "$/ac harvest wk"]):
+                       "$/ac plant wk", "$/ac grow wk", "$/ac harvest wk",
+                       "hrs/ac plant", "hrs/ac grow", "hrs/ac harvest"]):
     put(r, 1 + j, h, font=F_BOLD, fill=HDR_FILL, border=True)
 r += 1
 ROW_CROP = r
@@ -217,6 +218,11 @@ for name in CROP_NAMES:
         # and section E is the check that distinguishes them.
         put(r, 11 + _j, c.get(f"fert_{_ph}", 0.0) * _fert + c.get(f"fuel_{_ph}", 0.0) * _fuel,
             fill=IN_FILL, fmt="$0.00", border=True)
+        # ⚠️ LABOUR HOURS ARE INPUTS, not literals inside the C2 formula. They were baked in as
+        # `*2`, `*4`, `*50` — numbers the sheet used and could not show, so no one could see WHY
+        # spinach crowds the crew (50 h/acre to pick, against kale's 22) or change it to find out.
+        # Same class as the shelf-life box that read nothing.
+        put(r, 14 + _j, c.get(f"labor_{_ph}", 0.0), fill=IN_FILL, fmt="0.0", border=True)
     crop_row[name] = r; r += 1
 put(r, 1, "'Min acres if planted' is what the plant/don't-plant switch enforces — see section 4.",
     font=F_NOTE); r += 2
@@ -272,7 +278,8 @@ ROW_CREW_END = r - 1
 put(r, 1, "Payroll load %", font=F_BOLD)
 put(r, 2, LP.PAYLOAD.get("payroll_load_pct", 0.0), fill=IN_FILL, fmt="0%", border=True)
 ROW_LOAD = r
-put(r, 3, "employer taxes, workers' comp, benefits — on top of every wage", font=F_NOTE); r += 1
+put(r, 3, "employer taxes, workers' comp, benefits — applied to EVERY wage, salaried included",
+    font=F_NOTE); r += 1
 put(r, 1, "A salary wage is $/YEAR; hourly and seasonal are $/HOUR. 'Field time %' is the share "
           "of paid hours available to the crops —", font=F_NOTE); r += 1
 put(r, 1, "the rest is admin and maintenance. It reduces CAPACITY without reducing the WAGE.",
@@ -358,9 +365,13 @@ for w in range(1, 53):
     # rationed by the capacity row above rather than priced in the objective.
     put(r, wcol(w),
         f'=SUMPRODUCT(($G${ROW_CREW}:$G${ROW_CREW_END}<={w})*($H${ROW_CREW}:$H${ROW_CREW_END}>={w})'
+        # The load is written INSIDE both branches. It was one `*(1+load)` at the very end of a
+        # long formula, after the IF — which reads as though it applies only to the hourly side.
+        # It always applied to both (the app does the same: count x wage x (1+bene) / 52), but a
+        # formula that has to be parsed to be believed is a formula that will be misread.
         f'*{CREWROWS}*IF($C${ROW_CREW}:$C${ROW_CREW_END}="salary",'
-        f'$D${ROW_CREW}:$D${ROW_CREW_END}/52,$D${ROW_CREW}:$D${ROW_CREW_END}'
-        f'*$E${ROW_CREW}:$E${ROW_CREW_END}))*(1+$B${ROW_LOAD})',
+        f'$D${ROW_CREW}:$D${ROW_CREW_END}/52*(1+$B${ROW_LOAD}),'
+        f'$D${ROW_CREW}:$D${ROW_CREW_END}*$E${ROW_CREW}:$E${ROW_CREW_END}*(1+$B${ROW_LOAD})))',
         fmt="#,##0")
 ROW_WAGEWK = r; r += 1
 put(r, 1, "   The wage bill has a SHAPE. Flattening it to an annual average understated the "
@@ -369,9 +380,8 @@ put(r, 1, "   The wage bill has a SHAPE. Flattening it to an annual average unde
 r = week_header(r, "hours")
 lab_lhs = lambda w: "=" + "+".join(
     f'SUMPRODUCT(({CROPCOL}="{n}")*({wl(w)}${ROW_SUCC}:{wl(w)}${ROW_SUCC_END}="{ph}")*{SR})'
-    f'*{crops[n].get("labor_" + key, 0.0)}'
-    for n in CROP_NAMES for ph, key in (("P", "plant"), ("G", "grow"), ("H", "harv"))
-    if crops[n].get("labor_" + key, 0.0))
+    f'*${cl}${crop_row[n]}'
+    for n in CROP_NAMES for ph, cl in (("P", "N"), ("G", "O"), ("H", "P")))
 r, ROW_LABUSED, _ = constraint_triplet(
     r, "CROP HOURS needed", lab_lhs, lambda w: f"{wl(w)}${ROW_LABCAP}", None,
     "   Hours the crops need that week, against what the crew can give. The app's C2 — and on "
@@ -576,7 +586,12 @@ put(r, 3, "cooler + barn depreciation, irrigation, machinery, equipment store �
 put(r, 1, "Overhead, % of revenue", font=F_BOLD)
 put(r, 2, LP.PAYLOAD["overhead_pct_of_revenue"], fill=IN_FILL, fmt="0%", border=True)
 ROW_OVH = r
-put(r, 3, "insurance, admin, utilities — a share of what you sell", font=F_NOTE); r += 2
+put(r, 3, "insurance, admin, utilities — a share of what you sell", font=F_NOTE); r += 1
+put(r, 1, "Interest APR on borrowing", font=F_BOLD)
+put(r, 2, LP.PAYLOAD.get("interest_rate_apr", 0.0), fill=IN_FILL, fmt="0.0%", border=True)
+ROW_APR = r
+put(r, 3, "charged on what the credit line actually carries — reported below, not optimised over",
+    font=F_NOTE); r += 2
 
 r = week_header(r, "$")
 put(r, 1, "Revenue", font=F_BOLD); put(r, 2, "$", font=F_NOTE)
@@ -668,8 +683,25 @@ for _lab, _row in (("Growing cost", R_GROWWK), ("Packaging", R_PKGWK),
     if _lab == "Wages":
         put(r, 3, "committed — owed whether or not the crops need the hours", font=F_NOTE)
     r += 1
+put(r, 1, "Peak borrowing", font=F_BOLD)
+put(r, 2, f"=MAX(0,-MIN({wl(1)}{R_CUM}:{LAST}{R_CUM}))", fmt="$#,##0", font=F_BOLD)
+put(r, 3, "the deepest the credit line is ever drawn", font=F_NOTE)
+ROW_PEAKB = r; r += 1
+put(r, 1, "Interest", font=F_BOLD)
+# SUMPRODUCT, not AVERAGE(IF(...)) — the latter needs array entry (Ctrl+Shift+Enter) and
+# silently returns the wrong thing when someone types it normally. A formula that depends on
+# HOW it was entered has no place on a sheet meant to be edited.
+put(r, 2, f"=$B${ROW_APR}*SUMPRODUCT(({wl(1)}{R_CUM}:{LAST}{R_CUM}<0)"
+          f"*-{wl(1)}{R_CUM}:{LAST}{R_CUM})/52", fmt="$#,##0", font=F_BOLD)
+put(r, 3, "APR x the AVERAGE amount borrowed — the app's own post-solve formula", font=F_NOTE)
+ROW_INT = r; r += 1
+put(r, 1, "   ⚠️ Reported, NOT optimised over. The plan is chosen first and the borrowing it "
+          "implies is priced afterwards,", font=F_NOTE); r += 1
+put(r, 1, "     so the solver has no reason to shift sales earlier to borrow less. That is the "
+          "app's simplification, inherited on purpose.", font=F_NOTE); r += 1
 put(r, 1, "PROFIT  (the objective)", font=F_BOLD, fill=DEC_FILL)
-put(r, 2, f"=B{ROW_REV}-SUM(B{ROW_COST}:B{r-1})", fmt="$#,##0", font=F_BOLD, fill=DEC_FILL)
+put(r, 2, f"=B{ROW_REV}-SUM(B{ROW_COST}:B{ROW_COST+4})-B{ROW_INT}", fmt="$#,##0",
+    font=F_BOLD, fill=DEC_FILL)
 put(r, 3, "<-- MAXIMISE THIS CELL", font=F_BOLD)
 ROW_OBJ = r; r += 1
 put(r, 1, "Plantings chosen", font=F_BOLD)
@@ -756,6 +788,8 @@ NUMS = {
     "{WINTERWK}": f"${_OPT['wage_wk'][1]:,.0f}", "{PEAKWK}": f"${max(_OPT['wage_wk']):,.0f}",
     "{PEAKCAP}": f"{max(_OPT['lab_cap']):,.0f}", "{WINTERCAP}": f"{min(_OPT['lab_cap'][1:]):,.0f}",
     "{V6_PROFIT}": "$1,654,922",
+    "{INTEREST}": f"${_OPT['interest']:,.0f}", "{PEAKB}": f"${_OPT['peak_borrow']:,.0f}",
+    "{INTEREST}": f"${_OPT['interest']:,.0f}", "{PEAKB}": f"${_OPT['peak_borrow']:,.0f}",
     "{MARGIN}": f"{_OPT['profit'] / _OPT['revenue'] * 100:.1f}%",
     "{V5_PROFIT}": "$2,384,231",
     "{N_PLANTED}": str(_OPT["n_planted"]), "{N_OFFERED}": str(_OPT["n_offered"]),
@@ -808,6 +842,23 @@ readme = [
  ("And above that threshold profit is IDENTICAL at every cash level. So cash does not shape the", None),
  ("plan here; it decides whether you may have one. Those are different questions and a single", None),
  ("profit figure hides which one you are asking.", None),
+ ("", None),
+ ("INTEREST IS REPORTED, NOT OPTIMISED OVER", F_H1),
+ ("Peak borrowing {PEAKB}, interest {INTEREST} — APR on the AVERAGE amount the credit line", None),
+ ("carries, which is the app's own post-solve formula.", None),
+ ("", None),
+ ("It sits OUTSIDE the objective deliberately, because that is what the app does: the plan is", None),
+ ("chosen first and the borrowing it implies is priced afterwards. The consequence is worth", None),
+ ("knowing — the solver has no reason to shift sales earlier to borrow less, so interest is a", None),
+ ("REPORT here rather than a lever. On this farm it is trivial ({INTEREST}); on a farm that", None),
+ ("borrows through a long winter it would not be.", None),
+ ("", None),
+ ("INTEREST IS REPORTED, NOT OPTIMISED OVER", F_H1),
+ ("Peak borrowing {PEAKB}, interest {INTEREST} — small here, and the reason is worth knowing.", None),
+ ("The plan is chosen FIRST and the borrowing it implies is priced afterwards, so the solver has", None),
+ ("no reason to shift sales earlier to borrow less. That is the app's own simplification and the", None),
+ ("toy inherits it deliberately rather than diverging: a toy that models cash better than the", None),
+ ("thing it is checking cannot check it.", None),
  ("", None),
  ("WHAT v6 ADDED — real costs, and the cash floor", F_H1),
  ("These are one job, not two. A cash curve is meaningless without costs to spend, and v5's", None),
@@ -899,6 +950,9 @@ readme = [
  ("       fixed        {FIXED}      {FIXWK} a week, owed whether or not you plant", None),
  ("       overhead     {OVH}      a share of revenue", None),
  ("       wages        {WAGES}      committed — owed whether the crops need the hours or not", None),
+ ("       interest     {INTEREST}          APR on what the credit line actually carries", None),
+ ("     peak borrowing {PEAKB} — the deepest the line is ever drawn", None),
+ ("       interest     {INTEREST}          on {PEAKB} of peak borrowing — reported, not optimised over", None),
  ("     {N_PLANTED} of {N_OFFERED} plantings used", F_BOLD),
  ("", None),
  ("Computed by solving the same MILP with scipy.milp — the same HiGHS solver your app runs. A", None),
