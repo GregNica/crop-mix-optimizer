@@ -69,6 +69,10 @@ POOL_C = PatternFill("solid", fgColor="E8F0FE")
 POOL_A = PatternFill("solid", fgColor="FFF0E6")
 CH_FILL = [PatternFill("solid", fgColor="EDF7ED"), PatternFill("solid", fgColor="FDF2F8")]
 DEC_FILL = PatternFill("solid", fgColor="D9EAD3")
+ANNUAL_FILL = PatternFill("solid", fgColor="FCE5CD")   # an annual-cap row reads differently.
+# NOT the input yellow: on this sheet yellow means "you type here", so tinting a FORMULA row
+# with it invites the grower to type into a computed cell. The dead-input guard caught it,
+# which is the guard doing a job it was not written for.
 BIN_FILL = PatternFill("solid", fgColor="C9DAF8")
 THIN = Side(style="thin", color="BFBFBF")
 BOX = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
@@ -280,7 +284,14 @@ for name in CROP_NAMES:
     for hi, hname in enumerate(CH_NAMES):
         pr = pair_row[(name, hname)]
         fill = CH_FILL[hi]
-        put(r, 1, f"{hname} — ceiling this week", font=F_SMALL, fill=fill)
+        # ONE label that is true for BOTH cap types. "weekly ceiling" was a lie on an annual
+        # pair — and the 500,000 it displayed was NOT: under an annual cap there is no weekly
+        # limit at all, so if you had 500,000 lb in store in week 1 you could indeed sell it
+        # that week. The value was right and the heading was wrong, which is the harder version
+        # of this defect to see.
+        is_annual = ws.cell(row=pr, column=3).value == "Annual"
+        put(r, 1, f"{hname} — most you may sell this week", font=F_SMALL,
+            fill=ANNUAL_FILL if is_annual else fill)
         put(r, 2, "lb", font=F_NOTE)
         R_CAP = r
         for w in range(1, 53):
@@ -297,6 +308,11 @@ for name in CROP_NAMES:
             put(r, wcol(w), f'=IF($C${pr}="Annual",$D${pr}-{prior},{weekly})',
                 fmt="#,##0", fill=fill)
         r += 1
+        if is_annual:
+            put(r, 1, f"   ^ {hname} is an ANNUAL cap ({int(ws.cell(row=pr, column=4).value):,} lb "
+                      f"a year), so there is NO weekly limit —", font=F_NOTE); r += 1
+            put(r, 1, "     this row is what is LEFT of the year, and it falls as you sell.",
+                font=F_NOTE); r += 1
         put(r, 1, f"{hname} — OFFERED", font=F_BOLD, fill=DEC_FILL)
         put(r, 2, "lb  <-- SOLVER", font=F_NOTE)
         for w in range(1, 53):

@@ -259,16 +259,16 @@ for tag, ov, pred in [
      {f"D{CROP_ROW['Spinach']}": crops["Spinach"]["crop_size_m3_per_lb"] * 2},
      lambda d: peak(d, "COLD STORE") > base_cold * 1.2),
     ("weekly ceiling Garlic/FM -> 200", {f"D{PAIR_ROW[('Garlic', FM)]}": 200.0},
-     lambda d: total(d, "GARLIC", f"{FM} — ceiling this week") < 200.0 * 52 + 1),
+     lambda d: total(d, "GARLIC", f"{FM} — most you may sell this week") < 200.0 * 52 + 1),
     ("season window  Garlic/FM from wk -> 30", {f"E{PAIR_ROW[('Garlic', FM)]}": 30},
-     lambda d: total(d, "GARLIC", f"{FM} — ceiling this week") <
-               total(d0, "GARLIC", f"{FM} — ceiling this week")),
+     lambda d: total(d, "GARLIC", f"{FM} — most you may sell this week") <
+               total(d0, "GARLIC", f"{FM} — most you may sell this week")),
     # NOT Spinach/Wholesale: its cap runs all 52 weeks, so Weekly and Annual render an identical
     # ceiling row and the test proved nothing. Garlic/FM has a real W22-W35 window.
     # An Annual pair's ceiling is a RUNNING ALLOWANCE now: week 1 shows the whole year's figure
     # and it declines as sales accumulate. Assert on week 1, not the row total.
     ("cap TYPE       Garlic/FM -> Annual", {f"C{PAIR_ROW[('Garlic', FM)]}": "Annual"},
-     lambda d: abs(float(d[f"{col(1)}{BLK['GARLIC'][f'{FM} — ceiling this week']}"])
+     lambda d: abs(float(d[f"{col(1)}{BLK['GARLIC'][f'{FM} — most you may sell this week']}"])
                    - float(ws.cell(row=PAIR_ROW[('Garlic', FM)], column=4).value)) < 1e-6),
     ("price          Garlic/FM -> $99", {f"I{PAIR_ROW[('Garlic', FM)]}": 99.0,
                                          **offered_overrides(OPT["offered"]),
@@ -368,7 +368,7 @@ for n in CROPS:
     for h in CH:
         b = BLK[n.upper()]
         over = [w + 1 for w, (s_, c_) in enumerate(zip(row(d_opt, b[f"{h} — SOLD"]),
-                                                       row(d_opt, b[f"{h} — ceiling this week"])))
+                                                       row(d_opt, b[f"{h} — most you may sell this week"])))
                 if float(s_) > float(c_) + 1e-6]
         report(not over, f"{n}/{h} never sells past its ceiling"
                + (f" (weeks {over[:4]})" if over else ""))
