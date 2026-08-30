@@ -73,9 +73,23 @@ def cap_spec(cn, hn):
     return ("Weekly", float(row[wks[0] - 1]), wks[0], wks[-1]) if wks else ("Weekly", 0.0, 1, N_WEEKS)
 
 
+STORABLE_WEEKS = 4          # below this, unsold product does not survive the trip home
+
+
 def defaults(cn, hn):
+    """Sell-through and returns-to-store for a crop-channel.
+
+    ⚠️ STORABILITY IS SHELF LIFE, NOT THE STORAGE POOL. An earlier version used
+    `not cold_storage` as the proxy and it is backwards for a whole class of crop: ambient
+    means two opposite things. Garlic is ambient because it CURES AND KEEPS (16 weeks) —
+    unsold product goes back in the barn. Basil is ambient because it is CHILLING-SENSITIVE
+    (1 week) — the cooler would damage it, and it still does not survive to next Saturday.
+    The proxy gave basil returns = 1.00, i.e. a free second chance at market it does not have.
+    """
     contract = hn.lower().startswith("wholesale")
-    storable = not CROPS[cn].get("cold_storage", True)
+    shelf = int(CROPS[cn].get("shelf_life_weeks",
+                              CROPS[cn].get("sales_spread_weeks", 1)) or 1)
+    storable = shelf >= STORABLE_WEEKS
     return (1.00 if contract else 0.85, 0.00 if contract else (1.00 if storable else 0.00))
 
 
