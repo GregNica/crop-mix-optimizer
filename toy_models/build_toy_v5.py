@@ -254,6 +254,7 @@ for name in CROP_NAMES:
     pool = "Cold" if crops[name].get("cold_storage", True) else "Ambient"
     put(r, 1, f"{name.upper()}  —  {pool.lower()} store", font=F_H1)
     put(r, 2, "", fill=POOL_C if pool == "Cold" else POOL_A); r += 1
+    R_WK = r                      # the week-number strip this block's SUMIFS reads
     r = week_header(r)
 
     put(r, 1, "Packed out -> INTO the store", font=F_BOLD); put(r, 2, "lb", font=F_NOTE)
@@ -279,13 +280,23 @@ for name in CROP_NAMES:
     for hi, hname in enumerate(CH_NAMES):
         pr = pair_row[(name, hname)]
         fill = CH_FILL[hi]
-        put(r, 1, f"{hname} — weekly ceiling", font=F_SMALL, fill=fill); put(r, 2, "lb", font=F_NOTE)
+        put(r, 1, f"{hname} — ceiling this week", font=F_SMALL, fill=fill)
+        put(r, 2, "lb", font=F_NOTE)
+        R_CAP = r
         for w in range(1, 53):
-            # The week number is a constant per column, so it goes in the formula directly
-            # rather than via a header row — one less cross-reference to keep in step.
+            # WEEKLY pair: the stated figure, inside its season.
+            # ANNUAL pair: what is LEFT of the year's allowance. Writing the whole annual figure
+            # into every week (as this did) reads as a 500,000 lb/week ceiling under a heading
+            # that says weekly, and pushes the real limit onto one separate constraint entry the
+            # reader has to remember to add. A running allowance is truthful AND self-enforcing:
+            #     sold[w] <= annual - sum(sold before w)   for every w
+            # is exactly "the year's total <= annual", and it is linear — no MAX() needed,
+            # because the constraint itself stops the remainder going negative.
             weekly = f"IF(AND({w}>=$E${pr},{w}<=$F${pr}),$D${pr},0)"
-            put(r, wcol(w), f'=IF($C${pr}="Annual",$D${pr},{weekly})', fmt="#,##0", fill=fill)
-        R_CAP = r; r += 1
+            prior = (f"SUM({wl(1)}{R_CAP+2}:{wl(w-1)}{R_CAP+2})" if w > 1 else "0")
+            put(r, wcol(w), f'=IF($C${pr}="Annual",$D${pr}-{prior},{weekly})',
+                fmt="#,##0", fill=fill)
+        r += 1
         put(r, 1, f"{hname} — OFFERED", font=F_BOLD, fill=DEC_FILL)
         put(r, 2, "lb  <-- SOLVER", font=F_NOTE)
         for w in range(1, 53):
@@ -303,7 +314,8 @@ for name in CROP_NAMES:
         for w in range(1, 53):
             put(r, wcol(w), f"=({wl(w)}{R_OFF}-{wl(w)}{R_SOLD})*$H${pr}", fmt="#,##0")
         R_RET = r; r += 1
-        put(r, 1, "   consumed from store", font=F_SMALL); put(r, 2, "lb", font=F_NOTE)
+        put(r, 1, "   leaves the store (offered - returned)", font=F_SMALL)
+        put(r, 2, "lb", font=F_NOTE)
         for w in range(1, 53):
             put(r, wcol(w), f"={wl(w)}{R_OFF}-{wl(w)}{R_RET}", fmt="#,##0")
         consumed_rows.append(r); r += 1
@@ -314,10 +326,31 @@ for name in CROP_NAMES:
         put(r, wcol(w), f"={wl(w)}{R_STORE}" + "".join(f"-{wl(w)}{c}" for c in consumed_rows),
             fmt="#,##0")
     R_CLOSE = r; r += 1
+    put(r, 1, "   ^ subtracts what LEAVES, not what was offered — so 'returned to store' is",
+        font=F_NOTE); r += 1
+    put(r, 1, "     never taken out at all, and shows up as next week's carried in.",
+        font=F_NOTE); r += 1
     for w in range(1, 53):
         ws.cell(row=R_OPEN, column=wcol(w),
                 value=(0 if w == 1 else f"={wl(w-1)}{R_CLOSE}")).number_format = "#,##0"
     ws.cell(row=R_OPEN, column=2, value="lb").font = F_NOTE
+
+    put(r, 1, "Most stock its shelf life allows", font=F_SMALL); put(r, 2, "lb", font=F_NOTE)
+    WKR = f"${wl(1)}${R_WK}:${LAST}${R_WK}"
+    for w in range(1, 53):
+        # C4c: nothing in store is older than its shelf life, so held stock cannot exceed what
+        # arrived in the last L weeks. L counts the harvest week, hence the L-1 window.
+        # A CONSTRAINT now, not the warning row v3/v4 printed — v5 has a solver, so it can be
+        # enforced instead of merely noticed. Linear: the window comes from an INPUT, not a
+        # decision.
+        # SUMIFS against the week strip, so the formula READS $F$<crop> rather than having the
+        # window baked in by the generator. Baked, the shelf-life box was a yellow cell that
+        # changed nothing — which is how the grower found it.
+        put(r, wcol(w),
+            f'=SUMIFS(${wl(1)}${R_PACK}:${LAST}${R_PACK},{WKR},">="&{w}-$F${cr}+2,'
+            f'{WKR},"<="&{w})', fmt="#,##0")
+    R_SHELF = r; r += 1
+    put(r, 1, "   Stock carried out must stay at or below this row.", font=F_NOTE); r += 1
 
     put(r, 1, "ROOM OCCUPANCY", font=F_BOLD); put(r, 2, "m3", font=F_NOTE)
     for w in range(1, 53):
@@ -325,7 +358,7 @@ for name in CROP_NAMES:
             fill=POOL_C if pool == "Cold" else POOL_A)
     R_ROOM = r; r += 2
     crop_block[name] = dict(pack=R_PACK, open=R_OPEN, shrink=R_SHRINK, store=R_STORE,
-                            close=R_CLOSE, room=R_ROOM, pool=pool, ch=ch_rows)
+                            close=R_CLOSE, room=R_ROOM, shelf=R_SHELF, pool=pool, ch=ch_rows)
 
 # --- 6. stores ---
 put(r, 1, "6 — THE TWO STORES", font=F_H1); r += 1
@@ -398,6 +431,11 @@ for n in CROP_NAMES:
 for n in CROP_NAMES:
     recipe.append((f"Constraint — {n} stock never negative",
                    f"${wl(1)}${crop_block[n]['close']}:${LAST}${crop_block[n]['close']}  >=  0", ""))
+for n in CROP_NAMES:
+    recipe.append((f"Constraint — {n} shelf life",
+                   f"${wl(1)}${crop_block[n]['close']}:${LAST}${crop_block[n]['close']}  <=  "
+                   f"${wl(1)}${crop_block[n]['shelf']}:${LAST}${crop_block[n]['shelf']}",
+                   "nothing held longer than it keeps"))
 recipe += [
     ("Constraint — cold store", f"${wl(1)}${pool_rows['Cold']['used']}:"
      f"${LAST}${pool_rows['Cold']['used']}  <=  $B${ROW_COLDCAP}", ""),
@@ -405,8 +443,8 @@ recipe += [
      f"${LAST}${pool_rows['Ambient']['used']}  <=  $B${ROW_AMBCAP}", ""),
     ("Constraint — land", f"${wl(1)}${ROW_LANDUSED}:${LAST}${ROW_LANDUSED}  <=  $B${ROW_LAND}", ""),
 ]
-for row_ in annual_rows:
-    recipe.append(("Constraint — annual cap", f"$B${row_}  <=  $D${row_}", ""))
+# No separate annual-cap entry: the ceiling row is now a RUNNING ALLOWANCE, so the same
+# "sold <= ceiling" range already enforces the yearly total. One fewer entry to forget.
 recipe.append(("Options", "engine = LibreOffice CoinMP Linear Solver",
                "tick 'Assume variables as non-negative'"))
 for label, val, note in recipe:

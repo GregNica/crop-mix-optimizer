@@ -161,6 +161,20 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
                 e[off_i(p, w)] = st
                 add(e, -np.inf, cval if w0 <= w <= w1 else 0.0)
 
+    # C4c — shelf life. Nothing in store may be older than its shelf life, so held stock is
+    # bounded by what arrived in the last L weeks (L counts the harvest week, so the window is
+    # L-1 weeks of arrivals). Linear: the window bounds come from an INPUT, not a decision.
+    for cn in CROP_NAMES:
+        L = int(CROPS[cn].get("shelf_life_weeks",
+                              CROPS[cn].get("sales_spread_weeks", 1)) or 1)
+        if L >= N_WEEKS:
+            continue
+        for w in range(1, N_WEEKS + 1):
+            e = close[cn][w].copy()
+            for t in range(max(1, w - L + 2), w + 1):
+                e -= packed[cn][t]
+            add(e, -np.inf, 0.0)
+
     # storage: opening stock + everything packed out this week, by pool
     for pool, cap in (("Cold", cold_cap), ("Ambient", amb_cap)):
         members = [n for n in CROP_NAMES

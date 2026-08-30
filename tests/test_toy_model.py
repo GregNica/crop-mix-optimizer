@@ -247,7 +247,6 @@ def test_the_inventory_chain_actually_chains(model, crop):
     # Subtracting SOLD instead would silently resurrect the market loss into next week's stock.
     close = model.cell(row=b["Stock carried out"], column=_wc(model, 2)).value
     assert close.startswith(f"={w2}{b['In store this week']}"), close
-    n_consumed = sum(1 for k in b if k == "consumed from store")
     assert close.count(f"-{w2}") >= 1, f"{crop}: carried-out subtracts nothing"
 
 
@@ -469,3 +468,45 @@ def test_the_sheet_actually_calculates_correctly():
         + "\n".join(l for l in r.stdout.splitlines() if "FAIL" in l or "FAILURE" in l)
         + ("\n" + r.stderr[-2000:] if r.stderr.strip() else ""))
     assert "ALL CHECKS PASSED" in r.stdout
+
+
+def _table_header_above(model, row):
+    """The header row above a table row, so a dead input can be named usefully."""
+    for r in range(row - 1, 0, -1):
+        if model.cell(row=r, column=1).value in ("Crop", "Succession"):
+            return r
+    return row
+
+
+def test_no_input_is_wired_to_nothing(model):
+    """Every yellow input must be read by at least one formula.
+
+    The grower found 'Shelf life wk' sitting as a yellow box that NO formula referenced: v5
+    dropped the row that used it and left the input behind, so it looked live and was not. Same
+    class as `storage_loss_frac_per_week` in the app itself — fully implemented in the solver,
+    switched off because nothing sends it. A box you can type in that changes nothing is worse
+    than a missing feature, because it answers a question wrongly instead of not at all.
+    """
+    from openpyxl.utils import get_column_letter
+    blob = "\n".join(c.value for row in model.iter_rows() for c in row
+                      if isinstance(c.value, str) and c.value.startswith("="))
+    dead = []
+    for row in model.iter_rows():
+        for c in row:
+            rgb = str(c.fill.fgColor.rgb) if (c.fill and c.fill.fgColor) else ""
+            if "FFF2CC" not in rgb or c.value is None:
+                continue
+            # ⚠️ A BOUNDED match, not `"F11" in blob`. The substring form matched F11 inside
+            # SUM(E113:F113) and made this whole guard inert — found by mutating it, which is
+            # the only reason it was found at all. A test for dead references that is itself a
+            # dead reference is the exact shape this file keeps catching.
+            col = get_column_letter(c.column)
+            if re.search(rf"(?<![A-Za-z0-9$_]){re.escape(col)}\$?{c.row}(?![0-9])",
+                         blob.replace("$", "")) or \
+               re.search(rf"\${re.escape(col)}\${c.row}(?![0-9])", blob):
+                continue
+            hdr = _table_header_above(model, c.row)
+            dead.append(f"{c.coordinate} = "
+                        f"{model.cell(row=hdr, column=c.column).value!r} for "
+                        f"{model.cell(row=c.row, column=1).value!r}")
+    assert not dead, "yellow input cells that no formula reads: " + "; ".join(dead[:8])
