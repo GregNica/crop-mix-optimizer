@@ -572,6 +572,12 @@ Carry forward:
 - Mutations verified: charging labour per acre (undoing W12) and flattening crew capacity to a
   constant both die, the second on 6 verifier checks as well as its own guard.
 
+⚠️ **Grower's first read of v7: six notes, three real** (`4f87cf7`). Labour hours were baked into
+the C2 formula as literals; the payroll load only LOOKED like it skipped salary (it never did, but
+a formula that must be parsed to be believed will be misread); interest was absent. The other
+three — overtime, solver-chosen labour, storage access space — are answered in `BACKLOG.md` under
+"Grower questions on toy v7", with the storage one filed as **G4**.
+
 **Next: v8 — the labour FLEX layer** (overtime and hired hands, priced separately per W15), which
 is what turns labour from a constraint into a decision. Then the toy has every mechanism the app
 has except water, interest and the wizard.

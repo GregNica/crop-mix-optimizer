@@ -258,6 +258,24 @@ into storage?"* The answer is the second one is real.
 | ⛔ **G2** | **Every shipped crop's shelf life comes from the DEPRECATED `sales_spread_weeks` field.** `shelf_life_weeks` appears exactly once in `index.html` — inside the embedded solver blob — so no UI writes it and all seven crops fall through `c.get("shelf_life_weeks", c.get("sales_spread_weeks", 1))` to the old field. The B.2 migration was deliberately 1:1 ("changes the MECHANISM and not the data"), but a sales WINDOW is not a shelf life, and the honest values were meant to follow. Live values: Spinach 2, Cucumbers 2, Kale 2, Tomatoes 1, Hot Peppers 2, Garlic 16, Basil 1. Garlic's real storage life is 6–8 months (26–35 wk), not 16. ⚠️ Compounding: the 2026-07-28 ruling changed L to COUNT the harvest week and states *"anything relying on the old reading needs its value raised by one"* — these values are unchanged, so every crop authored under the old reading now has one week LESS selling time than intended, and `L=1` (Tomatoes, Basil) means "hold nothing at all". Belongs with the crop-data sweep (Batch 3). | value |
 | ⛔ **G3** | **A long shelf life is still free.** `storage_loss_frac_per_week` defaults to 0 and no shipped crop overrides it, so garlic can be held 16 weeks at zero cost — exactly what SPEC_v3 §3.4 says must not be true before honest shelf lives are entered. G2 cannot be fixed without this, or raising garlic to a truthful 30 weeks makes holding strictly better. Pairs with G1: shrink is the mechanism that should carry the in-store spoilage the tooltip currently hides inside sell-through. | defect |
 
+### Grower questions on toy v7, 2026-08-30 — six notes, three were defects
+
+All six confirmed against the code before being answered. (2)/(4)/(5) fixed in `4f87cf7`; the
+other three are recorded here so their disposition is not lost.
+
+| # | Note | Verdict |
+|---|---|---|
+| 1 | "I don't see where overtime is accounted for" | **Correct, absent by design.** v7 is a FIXED crew: a committed cost and a hard ceiling. Overtime and hired hands are the flex layer — **toy v8**, and in the app they are `overtime_enabled`/`hire_enabled`, priced separately per W15 |
+| 2 | "no input values for the hours needed for each stage of a crop" | ⛔ **REAL DEFECT, fixed.** Hours were baked into the C2 formula as literals (`*2`, `*4`, `*50`) — the sheet used numbers it could not show, so nobody could see why spinach crowds the crew (50 h/acre to pick vs kale's 22) or change it to find out. Same class as the dead shelf-life box. Now three input columns the C2 row reads |
+| 3 | "will the solver choose the optimum labour separately?" | **Yes — toy v8.** Overtime and hired hours become DECISION variables, so the solver buys hours that pay for themselves. The app's What-If already does this and measured **+$110K** |
+| 4 | "salary workers seem exempt from payroll load" | **Not a defect — but the formula deserved the suspicion.** `*(1+load)` sat after the `IF`, so it read as hourly-only. It always applied to both, and the app agrees (`count x wage x (1+bene) / 52`); verified numerically at $4,883.65 either way. Rewritten inside both branches, because **a formula that must be parsed to be believed will be misread** |
+| 5 | "will the model incorporate interest on the credit line?" | ⛔ **REAL GAP, fixed.** Now APR x the AVERAGE amount borrowed, post-solve off the realised cash curve, plus peak borrowing ($384.16 on $46,095, matching the LP exactly). ⚠️ **Deliberately OUTSIDE the objective** — that is the app's own simplification (`solver.py` computes it after the solve), and a toy that models cash better than the thing it checks cannot check it |
+| 6 | "did we agree an input for storage access space — aisles, racks, bins, headroom?" | **No, we never did.** See **G4** below |
+
+| ID | Item | Class |
+|---|---|---|
+| ⛔ **G4** | **NEW 2026-08-30: no usable-space factor on either storage pool, in the app or the toy.** The grower asked whether one had been agreed; it had not. The app's position is that **the capacity you enter IS usable space** — its storage tooltip says to "leave the usual headroom for aisles, pallets and a bad week", and the 275 m³ default was sized so aisles/racking/airflow leave ~1.5x headroom. The research exists under **M9** (USDA NASS: ~82% usable of gross for racked storage) but M9's ruling was to fix the VOLUME DERIVATION, not to add a usable-% input. **Open question, not a defect:** one multiplier on each capacity cell would make the assumption explicit instead of hidden in a tooltip, at the cost of a knob. ⚠️ Complexity test cuts against it — a grower knows their cooler's dimensions, not its packing efficiency. Recommend deciding it WITH M9 rather than separately, since both are about what a cubic metre means | value |
+
 ### Live items added 2026-07-31 — NOT part of the superseded audit above
 
 **X1, U1, U1a, U2 below came out of the grower's own browser pass and the reviews that followed.
