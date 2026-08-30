@@ -253,3 +253,37 @@ def test_the_cold_cap_binds_on_the_number_it_reports(full_params):
         f"was solved against — the row is enforcing a different quantity than the one being "
         f"reported, so the published number cannot size a building"
     )
+
+
+def test_the_sell_through_default_is_defined_once():
+    """The shipped default must not disagree with the fallbacks that stand in for it.
+
+    It was written in THREE places: the input's `value=` attribute, the per-crop placeholder
+    (`?.value || 85`), and the payload builder (`numOr(..., 85)`). Lowering the shipped default
+    moved one and left two saying 85 — a fallback that disagrees with the field it backs up is a
+    silent second default, and the payload builder's copy is on the money path.
+
+    Now one `SELL_THROUGH_DEFAULT_PCT`, and this asserts the input agrees with it.
+    """
+    import re
+    from tests.helpers import REPO
+
+    html = (REPO / "public" / "index.html").read_text(encoding="utf-8")
+
+    m = re.search(r"const SELL_THROUGH_DEFAULT_PCT\s*=\s*(\d+)", html)
+    assert m, "SELL_THROUGH_DEFAULT_PCT is gone — the default has scattered again"
+    const = int(m.group(1))
+
+    m = re.search(r'id="sell_through_pct"[^>]*\bvalue="(\d+)"', html)
+    assert m, "the sell-through input has no value attribute"
+    shipped = int(m.group(1))
+
+    assert shipped == const, (
+        f"the sell-through input ships {shipped}% but SELL_THROUGH_DEFAULT_PCT is {const}% — "
+        f"a blank or missing field would silently get a different farm than the form shows")
+
+    stray = re.findall(r"sell_through_pct'\)\?\.value\s*\|\|\s*(\d+)", html)
+    stray += re.findall(r"numOr\(g\('sell_through_pct'\)\?\.value,\s*(\d+)\)", html)
+    assert not stray, (
+        f"hard-coded sell-through fallbacks still present: {stray} — they must read "
+        f"SELL_THROUGH_DEFAULT_PCT")

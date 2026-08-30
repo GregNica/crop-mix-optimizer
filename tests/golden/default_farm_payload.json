@@ -452,7 +452,7 @@
  "rate_machinery": 1000,
  "rate_property_mortgage_rent": 0,
  "rate_water_storage": 0.0004807692307692308,
- "sell_through_fraction": 0.85,
+ "sell_through_fraction": 1.0,
  "total_land": 80,
  "water_storage_capacity": 270000,
  "well_enabled": true,

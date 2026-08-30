@@ -50,15 +50,40 @@ pytestmark = pytest.mark.skipif(not PAYLOAD.exists(), reason="golden payload mis
 # re-captured to the CENT on 2026-07-30 so the five plan-determined lines can be pinned tightly
 # (see CASH_TIMED_LINES below for why the other two cannot be).
 GOLDEN = {
-    "revenue":          2_134_530.43,
-    "variable_cost":      398_858.03,
+    "revenue":          2_414_713.78,
+    "variable_cost":      450_550.46,
     "fixed_cost":         949_497.22,
-    "overhead_cost":      341_524.87,
-    "interest_cost":        3_103.67,
-    "profit":             428_546.64,
-    "operating_profit":   786_175.17,
+    "overhead_cost":      386_354.21,
+    "interest_cost":        2_399.70,
+    "profit":             612_912.19,
+    "operating_profit": 1_014_666.10,
 }
 # Baseline history — re-pin ONLY with a reason, and record it here.
+#   2026-08-30 (sell-through now defaults to 100%; grower ruling):
+#     revenue 2,134,530 -> 2,414,714 (+13.1%), variable_cost 398,858 -> 450,550,
+#     overhead 341,525 -> 386,354, interest 3,104 -> 2,400, profit 428,547 -> 612,912 (+43.0%).
+#     NET MARGIN 20.1% -> 25.4%. Acres planted 220.6 -> 229.8.
+#
+#     ⚠️ MOVES M1 THE WRONG WAY AND IS STILL THE HONEST CHANGE — the fifth such fix here.
+#     The shipped farm charged a 15% sell-through haircut against EVERY pound, including
+#     741,000 lb of CONTRACT deliveries where a purchase order exists and nothing goes unsold.
+#     The 85% carried no citation, and this project's rule is that a number no stranger can
+#     check does not ship. Removing it does not make the farm more profitable; it stops the
+#     model asserting a loss it cannot evidence.
+#
+#     WHY REVENUE RISES: sell-through scales the SELLABLE pounds an acre delivers, so at 1.0 the
+#     same ground fills more of the demand caps. Costs rise with the extra acres. Interest FALLS,
+#     because peak borrowing drops 112,558 -> 100,062 — less speculative growing to cover a loss
+#     that is no longer assumed.
+#
+#     ⚠️ Peak ambient storage lands on 150.0 m3, exactly its cap. The barn now binds.
+#
+#     What sell-through MEANS was narrowed in the same ruling (DECISIONS E1): the deterministic,
+#     non-recoverable share of what you TAKE TO MARKET that does not convert — display attrition
+#     at a stall, transit damage, a rejected load. NOT grade-out (that is yield), NOT spoilage in
+#     store (that is storage loss), and NOT demand variance: C6 is a hard ceiling, so bringing
+#     extra can only lose on a bad week and never earn on a good one. Per crop x channel is E1,
+#     still to build.
 #   2026-07-31 (W12 — every listed worker is paid whether the crops need them or not):
 #     revenue 1,621,122 -> 2,134,530 (+31.7%), variable_cost 538,865 -> 398,858 (labour left it),
 #     fixed_cost 213,097 -> 949,497 (wages 855,150 entered it), profit 595,931 -> 428,547 (426,560 before the payroll-profile follow-up below).
@@ -766,9 +791,12 @@ class TestValidationRunsOnTheSolverPath:
 # the client stopped reconstructing them from demand x price and started reading the solver's
 # own `v`. These are the numbers under the Revenue line in the exported P&L.
 GOLDEN_CHANNEL_REVENUE = {
-    "Farmers Market": 1_278_660,
-    "Wholesale":        855_870,
+    "Farmers Market": 1_301_600,
+    "Wholesale":      1_113_114,
 }
+# Re-pinned 2026-08-30 with the sell-through default (see GOLDEN's history). Wholesale moves
+# most (+30%): it takes 57% of the farm's pounds, so it wore most of the haircut that was being
+# charged against deliveries made against a purchase order.
 
 
 class TestChannelSalesReachTheClient(object):
@@ -810,7 +838,7 @@ class TestChannelSalesReachTheClient(object):
                 assert len(cp["weekly_lbs"]) == 52, f"{ch}/{crop}"
                 assert abs(sum(cp["weekly_lbs"]) - cp["lbs_sold"]) < 1.0, f"{ch}/{crop}"
 
-    def test_sales_are_below_gross_harvest(self, result, golden_payload):
+    def test_sales_are_below_gross_harvest(self, run_from_js):
         """Sell-through — the single largest error in the reconstruction this replaced.
 
         That code split GROSS harvest across channels, so it reported pounds the farm never
@@ -822,9 +850,17 @@ class TestChannelSalesReachTheClient(object):
         figure. Dividing sales back out by sell-through would make this test true by algebra
         and prove nothing; the first version of it did exactly that.
         """
-        st = golden_payload.get("sell_through_fraction", 1.0)
-        assert st < 1.0, "the golden farm has no shrink — this test would prove nothing"
-        ypa = {c["name"]: c["yield_per_acre"] for c in golden_payload["crops"]}
+        # ⚠️ The SHIPPED farm no longer exercises this: sell-through defaults to 100% from
+        # 2026-08-30, so sold == grown and the assertion would be vacuously true. The mechanism
+        # still exists and still has to be guarded, so this drives its OWN farm at 0.85 instead
+        # of being deleted or left to pass on an equality. A guard whose premise the product
+        # outgrew is not a guard that stopped mattering.
+        params = json.loads(PAYLOAD.read_text())
+        params["sell_through_fraction"] = 0.85
+        result = json.loads(run_from_js(json.dumps(params)))
+        st = params["sell_through_fraction"]
+        assert st < 1.0, "this test needs a farm that loses product between the field and the sale"
+        ypa = {c["name"]: c["yield_per_acre"] for c in params["crops"]}
         grown = sum(s["acres"] * ypa[s["crop"]] for s in result["succession_schedule"])
         sold = sum(d["lbs_sold"] for d in result["channel_sales"].values())
         assert grown > 0
