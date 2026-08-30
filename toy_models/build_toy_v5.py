@@ -56,7 +56,6 @@ wl = lambda w: get_column_letter(wcol(w))
 LAST = get_column_letter(wcol(52))
 C_MAXA = get_column_letter(wcol(52) + 1)   # helper: max acres if planted
 C_MINA = get_column_letter(wcol(52) + 2)   # helper: min acres if planted
-C_LBHW = get_column_letter(wcol(52) + 3)   # helper: lb per harvest week per acre
 
 F_TITLE = Font(bold=True, size=15)
 F_H1 = Font(bold=True, size=12, color="1F4E79")
@@ -88,7 +87,7 @@ ws.column_dimensions["C"].width = 8
 ws.column_dimensions["D"].width = 6
 for w in range(1, 53):
     ws.column_dimensions[wl(w)].width = 7.5
-for c in (C_MAXA, C_MINA, C_LBHW):
+for c in (C_MAXA, C_MINA):
     ws.column_dimensions[c].width = 11
 
 
@@ -168,7 +167,7 @@ put(r, 3, "m3 — Garlic", font=F_NOTE); r += 2
 # --- 2. crops ---
 put(r, 1, "2 — HOW EACH CROP BEHAVES", font=F_H1); r += 1
 for j, h in enumerate(["Crop", "Yield lb/acre", "Pack-out", "m3 per lb", "Store", "Shelf life wk",
-                       "Shrink %/wk", "Growing $/acre", "Min acres if planted"]):
+                       "Shrink %/wk", "Growing $/acre", "Min acres if planted", "Harvest weeks"]):
     put(r, 1 + j, h, font=F_BOLD, fill=HDR_FILL, border=True)
 r += 1
 ROW_CROP = r
@@ -185,6 +184,18 @@ for name in CROP_NAMES:
     put(r, 7, 0.0, fill=IN_FILL, fmt="0.0%", border=True)
     put(r, 8, c["seed_transplant_cost_per_acre"], fill=IN_FILL, fmt="$#,##0", border=True)
     put(r, 9, c.get("min_acreage_if_planted", 0.0), fill=IN_FILL, fmt="0.0", border=True)
+    # Every succession of a crop harvests over the same number of weeks on this data, so
+    # lb-per-harvest-week is a per-CROP scalar and the old 68-row helper column was carrying no
+    # information. ASSERTED rather than assumed: a crop whose successions differ (a wrapped
+    # calendar truncating a harvest window, say) fails the build instead of silently averaging.
+    _nh = {max(1, len(harvest_weeks_of(x, 52))) for x in SUCCS if CROP_NAMES[x["crop"]] == name}
+    assert len(_nh) == 1, (
+        f"{name}: successions harvest over {sorted(_nh)} different week-counts, so lb/harvest-week "
+        f"is NOT a per-crop scalar — restore the per-succession helper column")
+    # Filled in a SECOND PASS below, once the calendar rows exist — the same lesson the ceiling
+    # row taught: do not address a row you have not placed yet. (Written here first, it raised
+    # NameError on ROW_SUCC and the build quietly left the previous file in place.)
+    put(r, 10, 0, fmt="0", border=True)
     crop_row[name] = r; r += 1
 put(r, 1, "'Min acres if planted' is what the plant/don't-plant switch enforces — see section 4.",
     font=F_NOTE); r += 2
@@ -227,7 +238,6 @@ for w in range(1, 53):
     put(r, wcol(w), w, font=F_BOLD, fill=HDR_FILL, align="center")
 put(r, wcol(52) + 1, "max if planted", font=F_SMALL, fill=HDR_FILL)
 put(r, wcol(52) + 2, "min if planted", font=F_SMALL, fill=HDR_FILL)
-put(r, wcol(52) + 3, "lb/harv wk/ac", font=F_SMALL, fill=HDR_FILL)
 ROW_SUCC_HDR = r; r += 1
 ROW_SUCC = r
 PH = {0: "P", 1: "G", 2: "H"}
@@ -247,16 +257,24 @@ for s in SUCCS:
     # C9 / C10 helpers — the plant/don't-plant linkage, as columns the Solver can constrain
     put(r, wcol(52) + 1, f"=D{r}*$B${ROW_LAND}", fmt="0.0", font=F_SMALL)
     put(r, wcol(52) + 2, f"=D{r}*$I${crop_row[cn]}", fmt="0.0", font=F_SMALL)
-    put(r, wcol(52) + 3, f"=$B${crop_row[cn]}/{nharv}", fmt="#,##0", font=F_SMALL)
     succ_rows[s["name"]] = r; r += 1
 ROW_SUCC_END = r - 1
+
+# SECOND PASS — "Harvest weeks" as a FORMULA counting the H's on each crop's first planting,
+# rather than a number the generator knows and the sheet cannot show. It follows the calendar if
+# that changes, and it is not a bare constant sitting among the inputs. Sampling ONE planting is
+# exactly the uniformity asserted above.
+for _n in CROP_NAMES:
+    _first = succ_rows[next(x["name"] for x in SUCCS if CROP_NAMES[x["crop"]] == _n)]
+    put(crop_row[_n], 10, f'=COUNTIF(${wl(1)}${_first}:${LAST}${_first},"H")', fmt="0",
+        border=True)
+
 put(r, 1, "ACRES <= 'max if planted' and ACRES >= 'min if planted' are the app's C9 and C10: you "
           "cannot plant acres without deciding to plant, and if you plant at all you plant a real "
           "block.", font=F_NOTE); r += 2
 
 SR = f"$C${ROW_SUCC}:$C${ROW_SUCC_END}"          # acres column
 CROPCOL = f"$B${ROW_SUCC}:$B${ROW_SUCC_END}"     # crop name column
-LBHW = f"${C_LBHW}${ROW_SUCC}:${C_LBHW}${ROW_SUCC_END}"
 
 # --- 5. land, then per crop ---
 r = week_header(r, "acres")
@@ -277,9 +295,12 @@ for name in CROP_NAMES:
     put(r, 1, "Packed out -> INTO the store", font=F_BOLD); put(r, 2, "lb", font=F_NOTE)
     for w in range(1, 53):
         # One SUMPRODUCT across the whole calendar instead of a row per succession.
+        # acres harvesting this week, times (yield / harvest weeks), times pack-out. The middle
+        # term used to be a 68-row column multiplied elementwise; it is the same number on every
+        # row of a crop, so it factors straight out of the SUMPRODUCT.
         put(r, wcol(w),
             f'=SUMPRODUCT(({CROPCOL}="{name}")*({wl(w)}${ROW_SUCC}:{wl(w)}${ROW_SUCC_END}="H")'
-            f'*{SR}*{LBHW})*$C${cr}', fmt="#,##0")
+            f'*{SR})*$B${cr}/$J${cr}*$C${cr}', fmt="#,##0")
     R_PACK = r; r += 1
 
     put(r, 1, "Stock carried in", font=F_SMALL); put(r, 2, "lb", font=F_NOTE)
