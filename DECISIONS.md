@@ -584,17 +584,70 @@ So the quantity is **channel x storability**, and only a crop-channel cell can h
 solver has a farm-wide default plus a per-CROP override and **no channel dimension at all**
 (`solver.py` Step 3b / C4a), so this is a new axis, not a move.
 
-**The grower's other reframing, also accepted:** *"could it be that demand cap is the demand
-projection, and then sell-through is the variance in that?"* Yes — and it is sharper than anything
-previously written down here. The cap is the planning figure; sell-through is the shortfall
-against it; and it only bites where the remainder cannot be carried forward:
+#### ⚠️ CORRECTION (2026-08-30): I ACCEPTED "SELL-THROUGH IS THE VARIANCE" AND IT IS INCOHERENT
+
+I wrote here that the grower's reframing — *"the demand cap is the demand projection, and
+sell-through is the variance in that"* — was "sharper than anything previously written down."
+**It is wrong, and the model cannot mean it.** Retracted, with the reasoning, because the framing
+had already reached the toy's documentation.
+
+**Why it cannot mean variance. The demand cap is a HARD ceiling** — `solver.py` C6 emits
+`add_row([(v, 1.0)], -inf, cap_w)`. So at a 6,000 lb cap and 0.85 sell-through: to sell 6,000 you
+must offer 7,059 and lose 1,059 — **every week, including the best Saturday of the year, because
+the model will never let you sell 6,001.** That is the entire downside of bringing extra with none
+of the upside. It is not a model of uncertainty; it is a one-sided penalty. Under a genuine
+variance story the whole point is that some weeks demand exceeds the plan and the extra stock
+*earns* — which a fixed right-hand side structurally forbids.
+
+**What the model actually implements is a DISPLAY REQUIREMENT.** A picked-over stall sells less
+than a full one, so moving 6,000 lb needs visibly more than 6,000 lb on the table. That is
+deterministic and it is an INPUT REQUIREMENT, like seed: you need ~7,059 lb of *presence* to
+convert 6,000 lb of *sales*. Coherent, linear, and it belongs exactly where the grower ruled it
+belongs.
+
+**THE DEFENSIBLE DEFINITION, narrowed:**
+
+> **Sell-through** = the deterministic, non-recoverable share of what you take to market that does
+> not convert — display shrink on a stall, damage in transit, a rejected load. **Not uncertainty.**
+
+⚠️ **The app's tooltip is worse than imprecise: it mixes both stories.** "after spoilage,
+grade-outs, returns, and unsold perishables" spans a display requirement, a storage loss, a
+returns process and a variance story. Rewriting it to the narrow definition is part of E1.
 
 | | cap means | sell-through | why |
 |---|---|---|---|
-| Wholesale / contract | a purchase order | ~1.0 | you grow to the order; losses are rejections, a different event |
+| Wholesale / contract | a purchase order | ~1.0 | you deliver the order — there is no table to fill and no unsold portion |
 | CSA | pre-sold shares | ~1.0 | paid before it is planted |
-| Market, perishable | a forecast | < 1.0 | full table, unsold is compost |
-| Market, storable | a forecast | ~1.0 seasonally | unsold goes back in the barn — **delayed, not lost** |
+| Market, perishable | a hard ceiling | < 1.0 | the table must be fuller than the sale; unsold is compost |
+| Market, storable | a hard ceiling | **no physical effect** | everything unsold comes home — measured: at returns = 1.0, `consumed = offered − returned = offered × st = sold`, so it is a pure delay |
+
+**WHERE GENUINE VARIANCE HAS TO GO — and it is not here.** What the variance story describes is
+the **newsvendor problem**: choose *q* before knowing demand *D*, sell `min(q, D)`, and the optimal
+overstock depends on the ratio of margin-lost-by-understocking to cost-eaten-by-overstocking. Three
+things follow that no flat fraction can express: the right overstock differs **by crop and
+channel** (garlic at $6/lb that goes back in the barn should be overstocked heavily; spinach that
+becomes compost barely at all — one number gets both wrong in opposite directions); it should
+**respond to price**; and it needs the cap to **stop being a hard ceiling**, since the upside
+requires demand to sometimes exceed its planning figure.
+
+A deterministic LP with fixed right-hand sides has nowhere to put that. It needs either a
+distribution over demand with a chosen service level, or a deterministic plan stress-tested
+against demand draws. ⚠️ **And the app's existing risk machinery is not that second thing either:
+Monte Carlo re-optimises the crop mix on every draw (backlog W2), so it answers "what would I have
+planted if I had known" rather than "how does this plan hold up in a bad week." There is no
+working home for the variance story today.** It is a Batch 4 RISK question, not a cost-model one.
+
+⚠️ **NAMING IS STILL OPEN, and the grower flagged it first** (*"I'm not sure that we're calling
+this the right thing"*). In retail, "sell-through" means the share of received stock sold in a
+period — which is closer to the variance story we just rejected. Under the narrow definition the
+quantity is a *display/attrition requirement*. Candidate rename: **`market_overage`**, stated the
+way a grower can actually say it — *"I bring about 15% more than I expect to sell"* — rather than
+a fraction they must invert.
+
+⚠️ **If it is renamed that way the arithmetic changes and it is a live trap:** bringing 15% MORE
+than you sell is `offered = 1.15 × sold`, i.e. sell-through `1/1.15 = 0.87` and a loss of **13% of
+what you brought** — not 15%. "Bring 15% more" and "lose 15%" are different numbers. Whichever
+form ships, the label must say which one it is.
 
 **MEASURED SIZE OF THE ERROR.** On the golden farm **57% of pounds move through Wholesale**
 (726,987 lb, 40% of revenue). A farm-wide 0.85 charges a market-stall haircut to every one of
