@@ -452,8 +452,27 @@ Carry forward:
   and Spinach/Wholesale is capped across all 52 weeks, so Weekly and Annual render an identical
   ceiling row and the cap-TYPE test proved nothing.
 
-**Next:** v5 — the cash layer (C13), which is where the absurd profit figure gets disciplined and
-the first thing with no Excel ancestor at all. Then labour.
+⚠️ **THE GROWER FOUND THE TWO BIGGEST GAPS ON FIRST READING, AND BOTH WERE MISSING FROM THE
+"does not carry" LIST** — the section whose entire job is preventing that surprise. Measured
+after the fact:
+- **v4 does not choose WHEN to plant.** The app offers 68 successions for these 3 crops (132
+  across the real 7) and allocates across all of them; v4 offers 5, hand-picked. Freeing it:
+  **$1,094,831 → $2,493,974, +128%** — larger than every missing cost line combined. It plants
+  **42 of 68**, staggered, because spreading harvest is what lets a WEEKLY demand cap be served
+  continuously. **That is succession planting, and a fixed-calendar toy cannot express the thing
+  the practice exists for.**
+- **v4 has no plant/don't-plant binary**, so it is an LP where the app is a MILP (y[i], C9, C10).
+  It plants 0.48-acre slivers: **10 of the 42 fall below the app's own 2-acre minimum**, 12.7
+  acres' worth.
+- The two pull in OPPOSITE directions, so neither is quotable alone. **RULE: when listing what a
+  simplification omits, list what the model DECIDES, not only what it CHARGES.** Every omission I
+  did record was a cost line; both omissions I missed were decision variables.
+
+**Next: v5 = all 68 successions + the y binaries (make it a MILP), THEN the cash layer.** Ordering
+changed by the above — a cash constraint applied to a plan whose calendar is wrong by 128% would
+be disciplining the wrong number. ⚠️ 68 acres + 312 offered + 68 binaries is ~448 cells for
+CoinMP; if Calc struggles, drop to one crop's full calendar rather than reintroducing a hand-picked
+subset.
 
 Original ordering note: ~~demand caps~~ (done
 in v3), then cash (C13, the one with no Excel ancestor at all), then labour (committed vs bought),
