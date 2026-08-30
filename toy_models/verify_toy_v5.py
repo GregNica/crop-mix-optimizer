@@ -156,12 +156,20 @@ def simulate(acres, offered, packout=None, shrink=None, caps=None):
     ret = {(n, h): [0.0] * 53 for n in CROPS for h in CH}
     con = {(n, h): [0.0] * 53 for n in CROPS for h in CH}
     cap = {(n, h): [0.0] * 53 for n in CROPS for h in CH}
+    shelf = {n: [0.0] * 53 for n in CROPS}
     for n in CROPS:
         for w in range(1, 53):
             op[n][w] = close[n][w - 1] if w > 1 else 0.0
             shr[n][w] = op[n][w] * shrink[n]
             store[n][w] = op[n][w] - shr[n][w] + packed[n][w]
             room[n][w] = (op[n][w] + packed[n][w]) * crops[n]["crop_size_m3_per_lb"]
+            # The shelf-life bound, computed independently — it was referenced by the verifier
+            # but never COMPARED, so section E only ever checked the sheet against itself and a
+            # wrong formula would have passed.
+            L = int(crops[n].get("shelf_life_weeks",
+                                 crops[n].get("sales_spread_weeks", 1)) or 1)
+            shelf[n][w] = sum(packed[n][t] * (1.0 - shrink[n]) ** (w - t)
+                              for t in range(max(1, w - L + 2), w + 1))
             left = store[n][w]
             for h in CH:
                 st, rt = LP.defaults(n, h)
@@ -178,7 +186,7 @@ def simulate(acres, offered, packout=None, shrink=None, caps=None):
                 left -= con[(n, h)][w]
             close[n][w] = left
     return dict(gross=gross, packed=packed, opening=op, shr=shr, store=store, close=close,
-                room=room, sold=sold, ret=ret, con=con, cap=cap, land=land,
+                room=room, sold=sold, ret=ret, con=con, cap=cap, shelf=shelf, land=land,
                 cold=[room["Spinach"][w] + room["Kale"][w] for w in range(1, 53)],
                 amb=[room["Garlic"][w] for w in range(1, 53)])
 
@@ -223,6 +231,8 @@ def check_values(tag, overrides, acres, offered, **kw):
                     row(d, b[f"{h} — most you may sell this week"]), s["cap"][(n, h)])
             compare(f"[{tag}] {n}/{h} sold", row(d, b[f"{h} — SOLD"]), s["sold"][(n, h)])
         compare(f"[{tag}] {n} carried out", row(d, b["Stock carried out"]), s["close"][n])
+        compare(f"[{tag}] {n} shelf-life bound",
+                row(d, b["Most stock its shelf life allows"]), s["shelf"][n], 1e-4)
         compare(f"[{tag}] {n} room", row(d, b["ROOM OCCUPANCY"]), s["room"][n], 1e-4)
     compare(f"[{tag}] LAND", row(d, LBL["LAND in the ground"][0]), s["land"])
     compare(f"[{tag}] COLD STORE", row(d, LBL["COLD STORE"][0]), [0] + s["cold"], 1e-4)
@@ -248,6 +258,26 @@ ARB = {(n, h): [(w * 37 % 900) * (1.0 if h.startswith("Farmers") else 2.0)
                 for w in range(52)] for n in CROPS for h in CH}
 ARBA = {k: 0.7 for k in PICKED}
 check_values("arbitrary offered", {**acre_overrides(ARBA), **offered_overrides(ARB)}, ARBA, ARB)
+
+# ⚠️ A STRESSED CONFIGURATION, AND IT IS NOT OPTIONAL. The three configs above all run at the
+# SHIPPED defaults — pack-out 1.00 and shrink 0 — so neither was exercised anywhere, and the
+# shelf-life bound's age-decay was untestable by construction.
+#
+# GARLIC must be the crop carrying the shrink. Decay only bites where a crop has BOTH a long
+# shelf life AND shrink: Spinach and Kale are L=2, so their window is a single week, age is
+# always 0, and (1-shrink)^0 = 1 whatever shrink is. Measured — with shrink only on Kale,
+# deleting the ENTIRE decay term changed nothing and every check still passed.
+#
+# Offering only a trickle is also deliberate: stock has to SIT for age to exist at all.
+STRESS_A = {k: 3.0 for k in PICKED}
+STRESS_OFF = {(n, h): [400.0] * 52 for n in CROPS for h in CH}
+STRESS_PACK = {"Spinach": 0.80, "Kale": 1.00, "Garlic": 0.90}
+STRESS_SHRINK = {"Spinach": 0.0, "Kale": 0.05, "Garlic": 0.02}
+check_values("stressed (pack-out + shrink on a storable)",
+             {**acre_overrides(STRESS_A), **offered_overrides(STRESS_OFF),
+              **{f"C{CROP_ROW[n]}": v for n, v in STRESS_PACK.items()},
+              **{f"G{CROP_ROW[n]}": v for n, v in STRESS_SHRINK.items()}},
+             STRESS_A, STRESS_OFF, packout=STRESS_PACK, shrink=STRESS_SHRINK)
 
 print("\nB. PROPAGATION — the inputs section A cannot cover")
 peak = lambda d, lab, i=0: max(float(x) for x in row(d, LBL[lab][i]) if x is not None)

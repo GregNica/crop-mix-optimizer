@@ -371,9 +371,18 @@ for name in CROP_NAMES:
         # SUMIFS against the week strip, so the formula READS $F$<crop> rather than having the
         # window baked in by the generator. Baked, the shelf-life box was a yellow cell that
         # changed nothing — which is how the grower found it.
+        # DECAYED by age, matching the app's C4c. A pound that arrived k weeks ago is only
+        # (1-shrink)^k of a pound now, so bounding today's shrunken stock against undecayed
+        # arrivals leaves slack that can ONLY be filled by product older than the shelf life —
+        # the single thing this row exists to forbid. The app measured the error at 7.4% of held
+        # stock at 5%/wk and 21% at 15%/wk. SUMIFS cannot weight, so this is SUMPRODUCT.
+        # The exponent is masked to (weeks <= w) so it is never negative — POWER(0, -n) errors
+        # at shrink = 100%, and SUMPRODUCT evaluates every element before the mask is applied.
+        older = f"({WKR}<={w})"
         put(r, wcol(w),
-            f'=SUMIFS(${wl(1)}${R_PACK}:${LAST}${R_PACK},{WKR},">="&{w}-$F${cr}+2,'
-            f'{WKR},"<="&{w})', fmt="#,##0")
+            f'=SUMPRODUCT(({WKR}>={w}-$F${cr}+2)*{older}'
+            f'*${wl(1)}${R_PACK}:${LAST}${R_PACK}'
+            f'*POWER(1-$G${cr},{older}*({w}-{WKR})))', fmt="#,##0")
     R_SHELF = r; r += 1
     put(r, 1, "   Stock carried out must stay at or below this row.", font=F_NOTE); r += 1
 
