@@ -135,8 +135,21 @@ def constraint_triplet(r, label, lhs, cap_ref, fill, note):
     return r, used, head
 
 
+# A BUILD STAMP, because the filename never changes and there has been no way to tell one
+# rebuild from the next. Three separate rounds were spent on a defect that was already fixed on
+# disk while an older copy sat open. Cheap, and it ends that class of confusion.
+import subprocess as _sp, datetime as _dt
+try:
+    _SHA = _sp.run(["git", "-C", str(REPO), "rev-parse", "--short", "HEAD"],
+                   capture_output=True, text=True).stdout.strip() or "unknown"
+except Exception:
+    _SHA = "unknown"
+_BUILT = _dt.datetime.now().strftime("%Y-%m-%d %H:%M")
+
 r = 1
-put(r, 1, "FARM TOY MODEL — v5: the full calendar (a MILP)", font=F_TITLE); r += 1
+put(r, 1, "FARM TOY MODEL — v5: the full calendar (a MILP)", font=F_TITLE)
+put(r, 4, f"BUILT {_BUILT}   (from source at {_SHA})", font=F_NOTE)
+r += 1
 put(r, 1, "YELLOW = you type.  GREEN = the solver writes.  BLUE = the solver's plant/don't-plant "
           "switches.  Read the 'READ ME' sheet first.", font=F_NOTE); r += 2
 
@@ -508,6 +521,9 @@ NUMS = {
 }
 readme = [
  ("Farm toy model — v5: THE FULL CALENDAR", F_TITLE),
+ (f"BUILT {_BUILT}   (from source at commit {_SHA})", F_NOTE),
+ ("If that timestamp is older than the change you are looking for, you have a stale copy —", F_NOTE),
+ ("close the file and re-open it from WSL rather than from a recent-files list.", F_NOTE),
  ("", None),
  ("WHAT v5 ADDS — both of these you spotted missing from v4", F_H1),
  ("", None),
