@@ -1,7 +1,7 @@
 """
 The toy model's numbers must not drift from the app's.
 
-`toy_models/farm_toy_v3_channels_and_demand.xlsx` exists to be an INDEPENDENT check on the app's
+`toy_models/farm_toy_v4_optimizer.xlsx` exists to be an INDEPENDENT check on the app's
 arithmetic — a grower opens it, changes an acre figure and verifies by hand what the solver
 claims. That only works while its crop constants and its planting calendar are the app's.
 Nothing about a spreadsheet fails loudly when a crop's m3/lb changes underneath it; it just
@@ -17,7 +17,7 @@ So this pins two things:
      its harvest week was reported as needing no cooler at all), it is the one thing this toy
      exists to teach, and it is invisible in a rendered spreadsheet — the cells look identical.
 
-Regenerate with:  python3 toy_models/build_toy_v3.py
+Regenerate with:  python3 toy_models/build_toy_v4.py
 """
 import json
 import re
@@ -28,7 +28,7 @@ from tests.helpers import REPO
 
 openpyxl = pytest.importorskip("openpyxl")
 
-WORKBOOK = REPO / "toy_models" / "farm_toy_v3_channels_and_demand.xlsx"
+WORKBOOK = REPO / "toy_models" / "farm_toy_v4_optimizer.xlsx"
 TOY_CROPS = ("Spinach", "Kale", "Garlic")
 PICKED = ["Spinach W10", "Spinach W34", "Kale W12", "Kale W32", "Garlic W47"]
 
@@ -36,7 +36,7 @@ PICKED = ["Spinach W10", "Spinach W34", "Kale W12", "Kale W32", "Garlic W47"]
 @pytest.fixture(scope="module")
 def model():
     if not WORKBOOK.exists():
-        pytest.skip(f"{WORKBOOK.name} not built; run toy_models/build_toy_v3.py")
+        pytest.skip(f"{WORKBOOK.name} not built; run toy_models/build_toy_v4.py")
     return openpyxl.load_workbook(WORKBOOK)["Model"]
 
 
@@ -288,6 +288,38 @@ def test_readme_coordinates_point_at_what_they_claim():
             f"row {row} is not one of the five plantings — the acre range has drifted")
 
 
+def test_offered_is_a_decision_cell_with_no_formula(model):
+    """v4's central change: `offered` is a VARIABLE, not MIN(stock, demand).
+
+    MIN() is not linear, so no linear solver can use it — which is exactly why farm_v2 has no
+    "sold" formula and bounds a decision variable with C6/C6b instead. If a formula ever
+    reappears on these rows the sheet silently stops being solvable, and the Solver would
+    quietly optimise over cells it cannot change.
+    """
+    blocks = _crop_blocks(model)
+    n = 0
+    for crop, seq in blocks.items():
+        for label, r in seq.items():
+            if not label.endswith("— OFFERED"):
+                continue
+            n += 1
+            for w in range(1, 53):
+                v = model.cell(row=r, column=w + 2).value
+                assert not (isinstance(v, str) and v.startswith("=")), (
+                    f"{crop} {label} week {w} holds a FORMULA ({v!r}) — it must be a decision cell")
+    assert n == 6, f"expected 6 OFFERED rows (3 crops x 2 channels), found {n}"
+
+
+def test_no_min_survives_anywhere_in_the_model(model):
+    """A single MIN() makes the whole sheet non-linear and CoinMP will refuse it."""
+    hits = []
+    for row in model.iter_rows():
+        for c in row:
+            if isinstance(c.value, str) and c.value.startswith("=") and "MIN(" in c.value.upper():
+                hits.append(c.coordinate)
+    assert not hits, f"MIN() found at {hits[:5]} — v4 must be linear end to end"
+
+
 def test_sell_through_lives_on_the_crop_channel_row_not_the_crop():
     """Grower ruling, 2026-08-29 (DECISIONS E1).
 
@@ -343,9 +375,12 @@ def test_no_derived_value_is_frozen(model):
         for c in row:
             if not isinstance(c.value, (int, float)) or isinstance(c.value, bool):
                 continue
-            yellow = bool(c.fill and c.fill.fgColor and c.fill.fgColor.rgb
-                          and "FFF2CC" in str(c.fill.fgColor.rgb))
-            if yellow or c.row in week_rows or (c.row in anchors and c.column == 3):
+            rgb = str(c.fill.fgColor.rgb) if (c.fill and c.fill.fgColor) else ""
+            # FFF2CC = an input you type. D9EAD3 = a DECISION cell the solver writes into —
+            # legitimately a bare number, and the only kind of frozen value v4 may contain.
+            if "FFF2CC" in rgb or "D9EAD3" in rgb:
+                continue
+            if c.row in week_rows or (c.row in anchors and c.column == 3):
                 continue
             frozen.append(f"{c.coordinate}={c.value} "
                           f"(row {model.cell(row=c.row, column=1).value!r})")
@@ -355,7 +390,7 @@ def test_no_derived_value_is_frozen(model):
 
 
 def test_the_sheet_actually_calculates_correctly():
-    """Run toy_models/verify_toy_v3.py — it CALCULATES the workbook.
+    """Run toy_models/verify_toy_v4.py — it CALCULATES the workbook.
 
     Everything above reads formulas as text, and text can be well-formed and wrong. This shells
     out to the venv because `formulas` cannot be installed into the system interpreter pytest
@@ -373,7 +408,7 @@ def test_the_sheet_actually_calculates_correctly():
     if probe.returncode != 0:
         pytest.skip("`formulas` not installed in .venv — run: .venv/bin/pip install formulas")
 
-    r = subprocess.run([str(venv), str(REPO / "toy_models" / "verify_toy_v3.py")],
+    r = subprocess.run([str(venv), str(REPO / "toy_models" / "verify_toy_v4.py")],
                        capture_output=True, text=True, cwd=REPO, timeout=600)
     assert r.returncode == 0, (
         "the toy workbook does not calculate correctly:\n"

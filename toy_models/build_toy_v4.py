@@ -1,7 +1,24 @@
 """
-build_toy_v3.py — generates the Channels + Demand toy model workbook.
+build_toy_v4.py — generates the OPTIMIZER toy model workbook.
 
-v3 adds the layer that answers "who is allowed to buy this, and how much?" — and with it the
+v4 SWITCHES THE OPTIMIZER ON. Everything before it was a calculator: you typed the acres and
+I applied a fixed rule for who gets served first. That rule was mine, not the model's, and it
+was doing real work — Wholesale's 30,000 lb/wk cap drained the garlic in two weeks, so Farmers
+Market got 4,000 lb of a 12,000 lb window purely because of the order I chose.
+
+Two changes make it solvable, and both are the lesson:
+
+  1. EVERY MIN() IS GONE. `offered` is no longer computed — it is a DECISION CELL, bounded by
+     constraints instead. MIN() is not linear, so a linear solver cannot use it; the real model
+     has no "sold" formula for exactly this reason. This is that footnote becoming the design.
+  2. THERE IS MONEY. An optimizer needs something to maximise. Prices per crop x channel and a
+     growing cost per acre come from the app; the objective is revenue minus growing cost.
+
+⚠️ NEEDS LIBREOFFICE CALC. 317 decision cells and ~780 constraints against Excel Solver's
+ceiling of 200 and 100. Tools > Solver, engine "LibreOffice CoinMP Linear Solver". The exact
+setup recipe is on the READ ME sheet.
+
+v3 added the layer that answers "who is allowed to buy this, and how much?" — and with it the
 grower's ruling of 2026-08-29 (DECISIONS E1):
 
     SELL-THROUGH IS PER CROP x CHANNEL.
@@ -26,12 +43,13 @@ modelled, because the app has both (C6 and C6b) and they read very differently �
 Farmers Market fills 50% of its annual appetite while sitting at 100% of its weekly ceiling in
 every week it sells.
 
-⚠️ ALLOCATION IS A DECISION, AND THIS SHEET CANNOT MAKE IT. With two channels competing for one
-crop's stock, something must choose who gets served first. A calculator needs a RULE; the real
-model has an OPTIMIZER that chooses by margin. This sheet fills the higher-priced channel first
-and says so. That gap is the strongest argument for switching the solver on, which is v4.
+ALLOCATION IS NOW A RESULT, NOT A RULE. v3 filled the higher-priced channel first because a
+calculator must. Measured, holding acres at 6: that rule earned $344,478 where optimal
+allocation of the same stock earns $469,198 — and it loses while prioritising CORRECTLY,
+because the real choice is not only who to serve but whether to serve anyone this week at all.
+A greedy rule cannot decide to wait.
 
-Output: farm_toy_v3_channels_and_demand.xlsx
+Output: farm_toy_v4_optimizer.xlsx
 """
 import json
 import sys
@@ -39,6 +57,7 @@ import pathlib
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -56,9 +75,8 @@ CROP_NAMES = ["Spinach", "Kale", "Garlic"]
 crops = {c["name"]: c for c in payload["crops"] if c["name"] in CROP_NAMES}
 channels = payload["channels"]
 
-# Fill order: highest price first, which is what a margin-maximising optimizer would do.
-# Farmers Market outprices Wholesale on every crop here (Spinach 2.75 vs 1.00, Garlic 6.00 vs
-# 2.75), so it is served first. STATED, not hidden — see the module docstring.
+# Channel ORDER only decides which sub-block is drawn first; it no longer decides anything about
+# the answer. In v1-v3 this ordering WAS the allocation rule.
 CH_ORDER = sorted(channels, key=lambda ch: -max(
     crops[c].get("channels", {}).get(ch["name"], {}).get("price_per_lb", 0) for c in CROP_NAMES))
 CH_NAMES = [ch["name"] for ch in CH_ORDER]
@@ -114,6 +132,7 @@ HDR_FILL = PatternFill("solid", fgColor="DDEBF7")
 POOL_C = PatternFill("solid", fgColor="E8F0FE")
 POOL_A = PatternFill("solid", fgColor="FFF0E6")
 CH_FILL = [PatternFill("solid", fgColor="EDF7ED"), PatternFill("solid", fgColor="FDF2F8")]
+DEC_FILL = PatternFill("solid", fgColor="D9EAD3")   # green = the solver writes here
 THIN = Side(style="thin", color="BFBFBF")
 BOX = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 
@@ -206,7 +225,7 @@ put(r, 3, "acres", font=F_NOTE); r += 2
 # --- 2. crop settings ---
 put(r, 1, "2 — HOW EACH CROP BEHAVES", font=F_H1); r += 1
 for j, h in enumerate(["Crop", "Yield lb/acre", "Pack-out", "m3 per lb", "Store",
-                       "Shelf life wk", "Shrink %/wk"]):
+                       "Shelf life wk", "Shrink %/wk", "Growing cost $/acre"]):
     put(r, 1 + j, h, font=F_BOLD, fill=HDR_FILL, border=True)
 r += 1
 ROW_CROP = r
@@ -221,6 +240,7 @@ for name in CROP_NAMES:
     put(r, 5, pool, border=True, fill=POOL_C if pool == "Cold" else POOL_A)
     put(r, 6, c.get("shelf_life_weeks", c.get("sales_spread_weeks", 1)), fill=IN_FILL, border=True)
     put(r, 7, 0.0, fill=IN_FILL, fmt="0.0%", border=True)
+    put(r, 8, c["seed_transplant_cost_per_acre"], fill=IN_FILL, fmt="$#,##0", border=True)
     assert crop_row_pending[name] == r, f"reserved row {crop_row_pending[name]} for {name}, wrote {r}"
     crop_row[name] = r
     r += 1
@@ -231,7 +251,7 @@ r += 2
 # --- 3. crop x channel ---
 put(r, 1, "3 — WHO BUYS IT, AND HOW MUCH   (one row per crop x channel)", font=F_H1); r += 1
 for j, h in enumerate(["Crop", "Channel", "Cap type", "Cap lb", "From wk", "To wk",
-                       "Sell-through", "Returns to store"]):
+                       "Sell-through", "Returns to store", "Price $/lb"]):
     put(r, 1 + j, h, font=F_BOLD, fill=HDR_FILL, border=True)
 r += 1
 ROW_PAIR = r
@@ -248,6 +268,8 @@ for ci, cname in enumerate(CROP_NAMES):
         put(r, 6, w1, fill=IN_FILL, border=True)
         put(r, 7, st, fill=IN_FILL, fmt="0.00", border=True)
         put(r, 8, ret, fill=IN_FILL, fmt="0.00", border=True)
+        put(r, 9, crops[cname].get("channels", {}).get(hname, {}).get("price_per_lb", 0.0),
+            fill=IN_FILL, fmt="$0.00", border=True)
         pair_row[(cname, hname)] = r
         r += 1
 put(r, 1, "Cap type 'Weekly' = that many lb every week between From and To. 'Annual' = that many "
@@ -337,21 +359,26 @@ for name in CROP_NAMES:
     for hi, hname in enumerate(CH_NAMES):
         pr = pair_row[(name, hname)]
         fill = CH_FILL[hi]
-        put(r, 1, f"{hname} — demand cap", font=F_SMALL, fill=fill); put(r, 2, "lb", font=F_NOTE)
+        put(r, 1, f"{hname} — weekly ceiling", font=F_SMALL, fill=fill); put(r, 2, "lb", font=F_NOTE)
         R_CAP = r
         for w in range(1, 53):
-            # Weekly: the stated figure inside its season. Annual: the yearly total less what has
-            # already been sold — a running allowance, which is what C6b actually enforces.
-            sold_ref = f"$C${R_CAP+2}:{wl(w-1)}${R_CAP+2}" if w > 1 else None
-            annual = (f"MAX(0,$D${pr}-SUM({sold_ref}))" if sold_ref else f"$D${pr}")
+            # An ANNUAL-cap pair has NO weekly ceiling — the app emits no C6 row for it at all.
+            # Writing the annual figure here keeps one uniform "sold <= ceiling" constraint range
+            # for every pair while never binding weekly; the real limit is the yearly total
+            # constrained separately below, which is exactly C6b.
             weekly = f"IF(AND({wl(w)}${ROW_WEEKNUM}>=$E${pr},{wl(w)}${ROW_WEEKNUM}<=$F${pr}),$D${pr},0)"
-            put(r, wcol(w), f'=IF($C${pr}="Annual",{annual},{weekly})', fmt="#,##0", fill=fill)
+            put(r, wcol(w), f'=IF($C${pr}="Annual",$D${pr},{weekly})', fmt="#,##0", fill=fill)
         r += 1
-        put(r, 1, f"{hname} — offered", font=F_SMALL); put(r, 2, "lb", font=F_NOTE)
+        put(r, 1, f"{hname} — OFFERED", font=F_BOLD, fill=DEC_FILL)
+        put(r, 2, "lb  <-- SOLVER", font=F_NOTE)
         R_OFF = r
         for w in range(1, 53):
-            left = f"{wl(w)}{R_STORE}" + "".join(f"-{wl(w)}{pc}" for pc in prior_consumed)
-            put(r, wcol(w), f'=IF($G${pr}<=0,0,MIN({left},{wl(w)}{R_CAP}/$G${pr}))', fmt="#,##0")
+            # A DECISION CELL. No formula, no MIN(). v1-v3 computed this as
+            # MIN(what is in store, what the buyer will take) — which is not linear, so no linear
+            # solver can use it. The real model does exactly what this row now does: makes the
+            # quantity a variable and lets CONSTRAINTS bound it. That is why farm_v2 has no
+            # "sold" formula anywhere.
+            put(r, wcol(w), 0.0, fmt="#,##0", fill=DEC_FILL)
         r += 1
         put(r, 1, f"{hname} — SOLD", font=F_BOLD, fill=fill); put(r, 2, "lb", font=F_NOTE)
         for w in range(1, 53):
@@ -451,183 +478,281 @@ for name in CROP_NAMES:
     summary(f"{name} — left at year end", f"={LAST}{b['close']}", "#,##0", "lb stranded")
     r += 1
 
+# ---------------------------------------------------------------------------
+# 8 — THE OPTIMIZER: objective, annual totals, and the exact Solver recipe
+# ---------------------------------------------------------------------------
+put(r, 1, "8 — THE OPTIMIZER", font=F_H1); r += 1
+put(r, 1, "Everything below is what LibreOffice's Solver needs. Nothing here is typed by you.",
+    font=F_NOTE); r += 2
+
+put(r, 1, "Revenue", font=F_BOLD)
+rev_terms = "+".join(f"SUM({wl(1)}{crop_block[n]['ch'][h]['sold']}:{LAST}"
+                     f"{crop_block[n]['ch'][h]['sold']})*$I${pair_row[(n,h)]}"
+                     for n in CROP_NAMES for h in CH_NAMES)
+put(r, 2, f"={rev_terms}", fmt="$#,##0", font=F_BOLD)
+put(r, 3, "pounds sold x price, summed over every crop x channel", font=F_NOTE)
+ROW_REV = r; r += 1
+put(r, 1, "Growing cost", font=F_BOLD)
+cost_terms = "+".join(f"$B${m['row']}*$H${crop_row[m['crop']]}" for m in succ_meta)
+put(r, 2, f"={cost_terms}", fmt="$#,##0", font=F_BOLD)
+put(r, 3, "acres x growing cost per acre, for every planting", font=F_NOTE)
+ROW_COST = r; r += 1
+put(r, 1, "PROFIT  (the objective)", font=F_BOLD, fill=DEC_FILL)
+put(r, 2, f"=B{ROW_REV}-B{ROW_COST}", fmt="$#,##0", font=F_BOLD, fill=DEC_FILL)
+put(r, 3, "<-- MAXIMISE THIS CELL", font=F_BOLD)
+ROW_OBJ = r; r += 2
+
+put(r, 1, "Annual caps — total sold vs the year's allowance", font=F_BOLD); r += 1
+annual_rows = []
+for n in CROP_NAMES:
+    for h in CH_NAMES:
+        pr = pair_row[(n, h)]
+        if ws.cell(row=pr, column=3).value != "Annual":
+            continue
+        sold_r = crop_block[n]["ch"][h]["sold"]
+        put(r, 1, f"   {n} / {h} — sold all year", font=F_SMALL)
+        put(r, 2, f"=SUM({wl(1)}{sold_r}:{LAST}{sold_r})", fmt="#,##0")
+        put(r, 3, "<=", align="center", font=F_BOLD)
+        put(r, 4, f"=$D${pr}", fmt="#,##0")
+        put(r, 5, "lb  — this is the app's C6b, the only row an annual-cap pair gets", font=F_NOTE)
+        annual_rows.append(r); r += 1
+if not annual_rows:
+    put(r, 1, "   (none)", font=F_NOTE); r += 1
+r += 1
+
+# --- the recipe, on the sheet so it travels with the file ---
+put(r, 1, "SOLVER SETUP — Tools > Solver", font=F_H1); r += 1
+recipe = [
+    ("Target cell", f"$B${ROW_OBJ}", "set to MAXIMUM"),
+    ("By changing cells", "$B$%d:$B$%d" % (ROW_SUCC, ROW_SUCC + len(succ_meta) - 1),
+     "the acres — one per planting"),
+    ("  ...and", ";".join(f"${wl(1)}${crop_block[n]['ch'][h]['off']}:${LAST}$"
+                          f"{crop_block[n]['ch'][h]['off']}"
+                          for n in CROP_NAMES for h in CH_NAMES),
+     "every OFFERED row (the green cells)"),
+]
+for n in CROP_NAMES:
+    for h in CH_NAMES:
+        cb = crop_block[n]["ch"][h]
+        recipe.append((f"Constraint — {n}/{h} sold <= ceiling",
+                       f"${wl(1)}${cb['sold']}:${LAST}${cb['sold']}  <=  "
+                       f"${wl(1)}${cb['cap']}:${LAST}${cb['cap']}", ""))
+for n in CROP_NAMES:
+    recipe.append((f"Constraint — {n} stock never negative",
+                   f"${wl(1)}${crop_block[n]['close']}:${LAST}${crop_block[n]['close']}  >=  0",
+                   "you cannot sell what you do not have"))
+recipe += [
+    ("Constraint — cold store",
+     f"${wl(1)}${pool_rows['Cold']['used']}:${LAST}${pool_rows['Cold']['used']}  <=  $B${ROW_COLDCAP}", ""),
+    ("Constraint — ambient store",
+     f"${wl(1)}${pool_rows['Ambient']['used']}:${LAST}${pool_rows['Ambient']['used']}  <=  $B${ROW_AMBCAP}", ""),
+    ("Constraint — land",
+     f"${wl(1)}${ROW_LANDUSED}:${LAST}${ROW_LANDUSED}  <=  $B${ROW_LAND}", ""),
+]
+for row_ in annual_rows:
+    recipe.append((f"Constraint — annual cap", f"$B${row_}  <=  $D${row_}", ""))
+recipe.append(("Options", "engine = LibreOffice CoinMP Linear Solver",
+               "tick 'Assume variables as non-negative'"))
+for label, val, note in recipe:
+    put(r, 1, label, font=F_BOLD if label.startswith(("Target", "By changing", "Options")) else F_SMALL)
+    put(r, 2, val, font=F_SMALL)
+    if note: put(r, 6, note, font=F_NOTE)
+    r += 1
+put(r, 1, f"{len(recipe)-1} entries in total — the 780 underlying constraints collapse into ranges.",
+    font=F_NOTE)
+r += 2
+
 # ===========================================================================
 # Numbers the READ ME promises — COMPUTED, never typed.
 #
 # An earlier version wrote them by hand and three shipped 0.1 out from rounding while the prose
 # was being written. Same class as a frozen cell beside a live one: a figure written next to its
-# source instead of derived from it. verify_toy_v3.py section D closes the loop by checking that
+# source instead of derived from it. verify_toy_v4.py section D closes the loop by checking that
 # what this document promises equals what the workbook computes.
 # ===========================================================================
-def _sim(acres=6.0):
-    gross = {n: [0.0] * 53 for n in CROP_NAMES}
-    for m in succ_meta:
-        for w in harvest_weeks_of(m["s"], 52):
-            gross[m["crop"]][w] += acres * crops[m["crop"]]["yield_per_acre"] / m["nharv"]
-    close = {n: [0.0] * 53 for n in CROP_NAMES}
-    room = {n: [0.0] * 53 for n in CROP_NAMES}
-    sold = {(n, h): 0.0 for n in CROP_NAMES for h in CH_NAMES}
-    ml = {(n, h): 0.0 for n in CROP_NAMES for h in CH_NAMES}
-    ret = {(n, h): 0.0 for n in CROP_NAMES for h in CH_NAMES}
-    capsum = {(n, h): 0.0 for n in CROP_NAMES for h in CH_NAMES}
-    for n in CROP_NAMES:
-        for w in range(1, 53):
-            packed = gross[n][w] * PACK_OUT
-            opening = close[n][w - 1] if w > 1 else 0.0
-            in_store = opening + packed
-            room[n][w] = (opening + packed) * crops[n]["crop_size_m3_per_lb"]
-            left = in_store
-            for h in CH_NAMES:
-                ctype, cval, w0, w1 = cap_spec(n, h)
-                st, rt = defaults(n, h)
-                cap = (max(0.0, cval - sold[(n, h)]) if ctype == "Annual"
-                       else (cval if w0 <= w <= w1 else 0.0))
-                capsum[(n, h)] += cap
-                off = 0.0 if st <= 0 else min(left, cap / st)
-                s_ = off * st
-                sold[(n, h)] += s_
-                ml[(n, h)] += (off - s_) * (1 - rt)
-                ret[(n, h)] += (off - s_) * rt
-                left -= off - (off - s_) * rt
-            close[n][w] = left
-    cold = [room["Spinach"][w] + room["Kale"][w] for w in range(1, 53)]
-    amb = [room["Garlic"][w] for w in range(1, 53)]
-    return dict(cold=max(cold), cold_wk=cold.index(max(cold)) + 1, amb=max(amb),
-                amb_wk=amb.index(max(amb)) + 1, sold=sold, ml=ml, ret=ret, capsum=capsum,
-                gross={n: sum(gross[n]) for n in CROP_NAMES}, close=close)
+from toy_v4_lp import solve as _lp_solve, greedy as _lp_greedy   # noqa: E402
 
+# The optimum LibreOffice should find, and the fixed-rule answer it beats. COMPUTED with
+# scipy.milp — the same HiGHS wrapper farm_v2/solver.py uses — so the READ ME cannot promise a
+# number the model does not produce, and the comparison cannot go stale.
+_OPT = _lp_solve()
+_FIX = _lp_solve(fixed_acres=6.0)
+_GRD = _lp_greedy(6.0)
+_land = [0.0] * 53
+for m in succ_meta:
+    for wk in m["s"]["weeks"]:
+        _land[((wk - 1) % 52) + 1] += _OPT["acres"][m["s"]["name"]]
 
-_B = _sim()
-NUMS = {"{PK_COLD}": f"{_B['cold']:.1f}", "{PK_COLD_WK}": str(_B["cold_wk"]),
-        "{PK_AMB}": f"{_B['amb']:.1f}", "{PK_AMB_WK}": str(_B["amb_wk"]),
-        "{CH1}": CH_NAMES[0], "{CH2}": CH_NAMES[1]}
+NUMS = {
+    "{OPT_PROFIT}": f"${_OPT['profit']:,.0f}",
+    "{OPT_REV}": f"${_OPT['revenue']:,.0f}",
+    "{OPT_COST}": f"${_OPT['cost']:,.0f}",
+    "{OPT_LAND}": f"{max(_land[1:]):.1f}",
+    "{GRD_PROFIT}": f"${_GRD['profit']:,.0f}",
+    "{FIX_PROFIT}": f"${_FIX['profit']:,.0f}",
+    "{ALLOC_GAIN}": f"${_FIX['profit'] - _GRD['profit']:,.0f}",
+    "{ALLOC_PCT}": f"{(_FIX['profit'] / _GRD['profit'] - 1) * 100:.0f}%",
+    "{ACRE_GAIN}": f"${_OPT['profit'] - _FIX['profit']:,.0f}",
+    "{CH1}": CH_NAMES[0], "{CH2}": CH_NAMES[1],
+    "{N_DEC}": f"{len(succ_meta) + len(CROP_NAMES) * len(CH_NAMES) * 52:,}",
+}
 for n in CROP_NAMES:
+    NUMS[f"{{{n.upper()}_ACRES}}"] = f"{sum(v for k, v in _OPT['acres'].items() if k.startswith(n)):.1f}"
     for h in CH_NAMES:
         tag = f"{n.upper()}_{'FM' if h.startswith('Farmers') else 'WS'}"
-        NUMS[f"{{{tag}_SOLD}}"] = f"{_B['sold'][(n,h)]:,.0f}"
-        NUMS[f"{{{tag}_ML}}"] = f"{_B['ml'][(n,h)]:,.0f}"
-        NUMS[f"{{{tag}_RET}}"] = f"{_B['ret'][(n,h)]:,.0f}"
-        cs = _B["capsum"][(n, h)]
-        ctype, cval, _, _ = cap_spec(n, h)
-        base = cval if ctype == "Annual" else cs
-        NUMS[f"{{{tag}_FILL}}"] = f"{(_B['sold'][(n,h)]/base if base else 0):.0%}"
+        NUMS[f"{{{tag}_OPT}}"] = f"{_OPT['sold'][(n, h)]:,.0f}"
+        NUMS[f"{{{tag}_GRD}}"] = f"{_GRD['sold'][(n, h)]:,.0f}"
+        NUMS[f"{{{tag}_FIX}}"] = f"{_FIX['sold'][(n, h)]:,.0f}"
 
 GARLIC_PAIR_FM = pair_row[("Garlic", [h for h in CH_NAMES if h.startswith("Farmers")][0])]
 SPIN_PAIR_FM = pair_row[("Spinach", [h for h in CH_NAMES if h.startswith("Farmers")][0])]
 COORDS = {"{ACRES}": f"B{ROW_SUCC}:B{ROW_SUCC+len(succ_meta)-1}",
           "{G_RET}": f"H{GARLIC_PAIR_FM}", "{G_ST}": f"G{GARLIC_PAIR_FM}",
           "{S_ST}": f"G{SPIN_PAIR_FM}", "{S_RET}": f"H{SPIN_PAIR_FM}",
-          "{PAIRS}": f"A{ROW_PAIR}:H{ROW_PAIR+len(pair_row)-1}"}
+          "{PAIRS}": f"A{ROW_PAIR}:I{ROW_PAIR+len(pair_row)-1}",
+          "{G_PRICE}": f"I{GARLIC_PAIR_FM}", "{COLDCAP}": f"B{ROW_COLDCAP}",
+          "{OBJ}": f"B{ROW_OBJ}"}
 
 readme = [
- ("Farm toy model — v3: CHANNELS + DEMAND", F_TITLE),
+ ("Farm toy model — v4: THE OPTIMIZER", F_TITLE),
  ("", None),
- ("WHAT v3 ADDS", F_H1),
- ("Who is allowed to buy this, and how much. Two channels — {CH1} and {CH2} — with the real", None),
- ("demand caps from your app, and your ruling of 29 Aug built in:", None),
+ ("!! THIS ONE NEEDS LIBREOFFICE CALC, NOT EXCEL", F_H1),
+ ("{N_DEC} decision cells and about 780 constraints. Excel's Solver stops at 200 and 100 — over", None),
+ ("by 1.6x and 7.8x. LibreOffice's CoinMP engine has no such ceiling.", None),
+ ("Right-click the file, Open with > LibreOffice Calc. Excel stays your default for everything", None),
+ ("else.", None),
  ("", None),
- ("     SELL-THROUGH IS PER CROP x CHANNEL.", F_BOLD),
+ ("WHAT CHANGED, AND WHY IT IS THE WHOLE POINT", F_H1),
+ ("v1 to v3 were CALCULATORS. You typed the acres and I applied a fixed rule for who gets served", None),
+ ("first: highest price, up to that channel's weekly ceiling, then the next. Every allocation", None),
+ ("number you have seen so far was MY RULE, not the model's answer.", None),
  ("", None),
- ("Section 3 is the new table: one row per crop x channel, holding the demand cap, the season,", None),
- ("the sell-through, and whether unsold product comes home. That is where these belong in the", None),
- ("app too — beside price and packaging on each crop's channel, not on the crop and not on the", None),
- ("channel.", None),
+ ("v4 hands both decisions to a solver: how many acres of each planting, and how many pounds go", None),
+ ("to each channel in each of the 52 weeks.", None),
  ("", None),
- ("WHY IT HAD TO MOVE THERE", F_H1),
- ("A wholesaler orders, you deliver, you invoice. There IS no unsold portion, so sell-through is", None),
- ("1.00 by construction — the losses on that channel are rejections, which are a different event.", None),
- ("A market stall is the opposite: you bring a full display because you cannot sell from an empty", None),
- ("table, so you always offer more than you sell.", None),
+ ("Two things had to change to make that possible.", None),
  ("", None),
- ("And what happens to the remainder depends on the CROP, not the channel:", None),
- ("     Garlic comes home and sells next week.        Returns to store = 1.00", None),
- ("     Spinach has been out of the cooler all day.   Returns to store = 0.00", None),
+ ("1. EVERY MIN() IS GONE. 'Offered' used to be MIN(what is in store, what the buyer will take).", F_BOLD),
+ ("   MIN is not linear, so no linear solver can use it. Those rows are now GREEN — they are", None),
+ ("   decision cells the solver writes into, bounded by constraints instead of by a formula.", None),
+ ("   This is exactly why farm_v2 has no 'sold' formula anywhere: it makes pounds sold a", None),
+ ("   variable and bounds it with C6/C6b. The footnote in the last two READ MEs is now the", None),
+ ("   design.", None),
  ("", None),
- ("So the quantity is channel x storability, and only a crop-channel cell can hold it. That is", None),
- ("your ruling, and this sheet is what it looks like.", None),
+ ("2. THERE IS MONEY NOW. A solver needs something to maximise. Prices per crop x channel and a", F_BOLD),
+ ("   growing cost per acre come from your app. Objective = revenue - growing cost.", None),
  ("", None),
- ("THE CAP IS THE PROJECTION; SELL-THROUGH IS THE VARIANCE BELOW IT", F_H1),
- ("Your framing, and it is the one used here. The cap says what the buyer will take. Sell-through", None),
- ("says how much of that you actually convert. It only bites where the remainder cannot be", None),
- ("carried forward — which is why garlic's 15% is a DELAY and spinach's is a LOSS.", None),
+ ("WHERE THINGS ARE", F_H1),
+ ("  YELLOW cells   things you type: the acre cells ({ACRES}), the crop settings, and the", None),
+ ("                 crop x channel table ({PAIRS}) where sell-through and returns live.", None),
+ ("  GREEN cells    the OFFERED rows and the PROFIT cell ({OBJ}) — the solver writes these.", None),
+ ("                 Do not type in them; whatever you put there is overwritten on the next run.", None),
+ ("  Everything else is a formula.", None),
  ("", None),
- ("Watch it in the summary: at the shipped defaults Garlic sells {GARLIC_FM_SOLD} lb at {CH1},", None),
- ("loses {GARLIC_FM_ML} lb, and returns {GARLIC_FM_RET} lb to the barn. Spinach loses", None),
- ("{SPINACH_FM_ML} lb and returns {SPINACH_FM_RET}.", None),
+ ("WHAT YOU WILL SEE WHEN YOU OPEN IT", F_H1),
+ ("Every OFFERED cell is 0, so nothing sells and the PROFIT cell is negative — it is just the", None),
+ ("growing cost of whatever acres are typed in. That is correct and expected. The sheet is a", None),
+ ("QUESTION until you run the Solver.", None),
  ("", None),
- ("WEEKLY CAPS AND ANNUAL CAPS READ VERY DIFFERENTLY", F_H1),
- ("Both are in section 3, and the app enforces both (C6 weekly, C6b annual).", None),
- ("  - Kale/{CH2} is an ANNUAL cap: 500,000 lb across the year, no weekly ceiling at all.", None),
- ("  - Everything else is WEEKLY, inside a season window.", None),
- ("Garlic/{CH1} is the case that made this subtle in the real app: its weekly cap runs W22-W35", None),
- ("but the garlic is not out of the ground until W30, so seven of the fourteen capped weeks are", None),
- ("unservable. It fills {GARLIC_FM_FILL} of the year's appetite while sitting at its weekly", None),
- ("ceiling in every week it can sell at all. Both numbers are true; they answer different", None),
- ("questions.", None),
+ ("HOW TO RUN IT", F_H1),
+ ("Section 8 of the Model sheet lists every entry, with the exact ranges. In short:", None),
+ ("   Tools > Solver", None),
+ ("   Target cell     the PROFIT cell in section 8, set to MAXIMUM", None),
+ ("   Changing cells  the acres, plus all six green OFFERED rows", None),
+ ("   Constraints     about 15 entries, each a RANGE (the 780 underlying rows collapse into", None),
+ ("                   ranges, so this is a five-minute dialog fill, not 780 of anything)", None),
+ ("   Options         engine = LibreOffice CoinMP Linear Solver", None),
+ ("                   tick 'Assume variables as non-negative'", None),
  ("", None),
- ("!! WHAT THIS SHEET CANNOT DO — AND IT IS THE POINT", F_H1),
- ("Two channels want the same pounds. SOMETHING has to decide who is served first, and a", None),
- ("calculator cannot: it needs a fixed rule. This sheet fills {CH1} first because it pays more.", None),
+ ("WHAT IT SHOULD FIND", F_H1),
+ ("     PROFIT   {OPT_PROFIT}      = revenue {OPT_REV} - growing cost {OPT_COST}", F_BOLD),
+ ("     Acres    Spinach {SPINACH_ACRES}   Kale {KALE_ACRES}   Garlic {GARLIC_ACRES}", None),
+ ("     Peak land in the ground {OPT_LAND} acres", None),
  ("", None),
- ("The real model does not use a rule. It has an OPTIMIZER that weighs margin, demand, storage", F_BOLD),
- ("and every other constraint at once, across all 52 weeks simultaneously.", F_BOLD),
+ ("     sold, lb        {CH1}      {CH2}", None),
+ ("       Spinach       {SPINACH_FM_OPT}          {SPINACH_WS_OPT}", None),
+ ("       Kale          {KALE_FM_OPT}          {KALE_WS_OPT}", None),
+ ("       Garlic        {GARLIC_FM_OPT}          {GARLIC_WS_OPT}", None),
  ("", None),
- ("That gap is the best argument for v4, which switches the solver on. Until then, remember that", None),
- ("every allocation on this sheet is MY rule, not the model's answer.", None),
+ ("These come from solving the SAME model in Python with scipy.milp — the identical HiGHS", None),
+ ("solver your app runs. If CoinMP lands somewhere materially different, one of the two models", None),
+ ("is not the model we think it is, and that is worth knowing. A few dollars apart is just", None),
+ ("tolerances.", None),
  ("", None),
- ("HOW TO USE IT", F_H1),
- ("1. Every YELLOW cell is an input. Nothing else should be typed in.", None),
- ("2. Start with the acre cells ({ACRES}). Change one and watch the whole sheet move.", None),
- ("3. Then go to section 3 — the crop x channel table ({PAIRS}). That is the new part, and it", None),
- ("   is where your ruling lives.", None),
- ("4. Watch the 'room left' rows under LAND, COLD STORE and AMBIENT STORE. Red = over the limit", None),
- ("   in that week, which the app treats as an infeasible plan, not a warning.", None),
+ ("!! WHAT MY FILL RULE WAS COSTING — the reason v4 exists", F_H1),
+ ("Hold the acres at 6 per planting, exactly as in v3, and change NOTHING except who decides", None),
+ ("the allocation:", None),
  ("", None),
- ("CHECK IT WORKED — the numbers you should see on opening", F_H1),
- ("Every planting 6 acres, pack-out 1.00, shrink 0:", None),
- ("     Peak COLD store     {PK_COLD} m3  in week {PK_COLD_WK}", F_BOLD),
- ("     Peak AMBIENT store  {PK_AMB} m3  in week {PK_AMB_WK}", F_BOLD),
- ("     Spinach sold  {SPINACH_FM_SOLD} at {CH1}  +  {SPINACH_WS_SOLD} at {CH2}", None),
- ("     Kale    sold  {KALE_FM_SOLD} at {CH1}  +  {KALE_WS_SOLD} at {CH2}", None),
- ("     Garlic  sold  {GARLIC_FM_SOLD} at {CH1}  +  {GARLIC_WS_SOLD} at {CH2}", None),
- ("If those do not match, tell me — do not work around it.", None),
+ ("     my fixed rule      {GRD_PROFIT}", F_BOLD),
+ ("     the optimizer      {FIX_PROFIT}       +{ALLOC_GAIN}  ({ALLOC_PCT})", F_BOLD),
  ("", None),
- ("THREE THINGS TO TRY", F_H1),
+ ("Same plan, same crops, same stock, same caps. The allocation alone is worth {ALLOC_PCT}.", None),
+ ("", None),
+ ("And here is the part I did not expect. The optimizer sells FEWER total pounds than my rule", F_BOLD),
+ ("and still makes more money.", F_BOLD),
+ ("", None),
+ ("     Garlic at {CH1}     my rule {GARLIC_FM_GRD} lb   ->   optimizer {GARLIC_FM_FIX} lb", None),
+ ("     Kale at {CH1}        my rule {KALE_FM_GRD} lb   ->   optimizer {KALE_FM_FIX} lb", None),
+ ("     Spinach at {CH1}     my rule {SPINACH_FM_GRD} lb   ->   optimizer {SPINACH_FM_FIX} lb", None),
+ ("", None),
+ ("My rule served the expensive channel FIRST, which is the obvious right priority — and it", None),
+ ("still lost, because the real choice is not only WHO to serve. It is whether to serve anyone", None),
+ ("THIS week at all. A greedy rule dumps the surplus into the cheap channel now; the optimizer", None),
+ ("holds it in store and sells it to the expensive one later. No fixed rule can see that,", None),
+ ("because it depends on what happens in weeks that have not arrived yet.", None),
+ ("", None),
+ ("That is what an optimizer buys you, and it is why the app has one.", None),
+ ("", None),
+ ("Then let it choose the acres as well and profit goes to {OPT_PROFIT} — another {ACRE_GAIN}.", None),
+ ("But treat that number with suspicion: with no land rent, no labour, no water and no cash", None),
+ ("limit, growing more is nearly free here. Which is precisely the M1 problem in your real app,", None),
+ ("reproduced in miniature.", None),
+ ("", None),
+ ("THREE THINGS TO TRY — each one, re-solve and watch the PLAN change", F_H1),
+ ("This is the part a calculator could never do. You are not changing an answer now; you are", None),
+ ("changing the QUESTION and getting a different answer back.", None),
  ("", None),
  ("EXPERIMENT 1 — make garlic perishable.  Set Garlic's 'Returns to store' at {CH1} ({G_RET})", F_BOLD),
- ("   from 1.00 to 0.00.", F_BOLD),
- ("   The same 15% that was a delay becomes a loss. Sold falls, market loss appears, and the", None),
- ("   stock that used to come home is gone. Nothing else changed — same cap, same sell-through.", None),
- ("   This is the distinction your ruling turns on, in one cell.", None),
+ ("   from 1.00 to 0.00, then re-run the Solver.", F_BOLD),
+ ("   In v3 this changed some totals. Here it changes the FARM: unsold garlic is no longer", None),
+ ("   recoverable, so offering it at the stall becomes a gamble and the optimizer rebalances", None),
+ ("   how much garlic to plant at all. Compare acres before and after.", None),
  ("", None),
- ("EXPERIMENT 2 — put the wholesale haircut back.  Set every 'Sell-through' in {PAIRS} to 0.85.", F_BOLD),
- ("   That is what the app does today: one number for every channel. Watch the contract channel", None),
- ("   start throwing away product it had a purchase order for.", None),
+ ("EXPERIMENT 2 — take the cooler away.  Set the cold store capacity ({COLDCAP}) to 40 m3 and", F_BOLD),
+ ("   re-solve.", F_BOLD),
+ ("   Watch which crop it abandons. It will not be the least profitable one — it will be the one", None),
+ ("   whose profit per CUBIC METRE OF COOLER is worst. That is a ranking no spreadsheet column", None),
+ ("   shows you, and it is why 'which crop is most profitable' is the wrong question.", None),
  ("", None),
- ("EXPERIMENT 3 — widen garlic's market window.  Change Garlic/{CH1} 'From wk' ({PAIRS}) to 30.", F_BOLD),
- ("   The annual fill jumps even though the weekly cap never moved, because the unservable weeks", None),
- ("   before harvest stop counting against it. Same plan, same buyer — a truer number.", None),
+ ("EXPERIMENT 3 — pay more at the stall.  Raise Garlic's price at {CH1} ({G_PRICE}) and re-solve.", F_BOLD),
+ ("   Nothing happens for a while, then the whole plan jumps. Constraints are cliffs, not slopes:", None),
+ ("   right up until the moment garlic outbids something for the same acre-week, the answer is", None),
+ ("   identical. This is why sensitivity has to be MEASURED and cannot be reasoned about.", None),
  ("", None),
- ("WHAT v3 STILL DOES NOT CARRY", F_H1),
- ("  - No prices, costs or profit. Physical only, still.", None),
- ("  - No optimizer. You type the acres and I fill channels in a fixed order.", None),
- ("  - No cash, labour, water, or diversity limits.", None),
- ("  - Shelf life is a WARNING, not enforced.", None),
- ("  - The app does NOT yet do per-crop-channel sell-through. Your ruling is recorded", None),
- ("    (DECISIONS E1) and this sheet is the prototype; the app change is still to come.", None),
+ ("If a run comes back with everything zero, the Solver did not find a feasible plan — check", None),
+ ("that 'Assume variables as non-negative' is ticked and that the engine is CoinMP.", None),
  ("", None),
- ("!! THE SCALE WARNING", F_H1),
- ("Small models are TIGHT, large ones LOOSE. 3 crops and 5 plantings here against 7 crops and", None),
- ("220 acre-plantings on the real farm. This teaches MECHANISM; the app's capacity_series tells", None),
- ("you which constraint actually binds. Re-measure before concluding anything.", None),
+ ("WHAT v4 STILL DOES NOT CARRY", F_H1),
+ ("  - Costs are seed/transplant per acre ONLY. No labour, water, fuel, packaging, storage or", None),
+ ("    overhead. So the profit figure is far too high, deliberately — v5 adds the cash layer.", None),
+ ("  - No cash-flow constraint, so it can spend money it does not have.", None),
+ ("  - Shelf life is still a WARNING, not enforced.", None),
+ ("  - Three crops and five plantings, against seven and 220 on the real farm.", None),
+ ("", None),
+ ("!! THE SCALE WARNING — it matters more here than anywhere", F_H1),
+ ("Small models are TIGHT, large ones LOOSE. An optimizer's answer is far more scale-sensitive", None),
+ ("than a calculator's: which constraints bind, and therefore which crop wins, can invert", None),
+ ("entirely between 3 crops and 7. Do not read this plan as advice about your farm. Read it as", None),
+ ("a demonstration of what the machinery does.", None),
  ("", None),
  ("HAS THIS SHEET BEEN CHECKED?", F_H1),
- ("Yes. Crop constants, planting dates AND the demand caps are read from the app — the caps come", None),
- ("through its own build_demand_table/build_annual_caps, so the weekly-vs-annual split is the", None),
- ("app's, not my reading of it. The workbook is CALCULATED by a formula engine and compared", None),
- ("cell by cell against an independent model, every input is perturbed to prove it propagates,", None),
- ("and no number is frozen.", None),
- ("     Run it yourself:   .venv/bin/python toy_models/verify_toy_v3.py", None),
+ ("Yes, and v4 adds a check the others could not have. Crop constants, planting dates and demand", None),
+ ("caps are read from the app. The formulas are calculated by an engine and compared cell by", None),
+ ("cell against an independent model. Every input is perturbed to prove it propagates. No number", None),
+ ("is frozen. AND: the same LP is solved with scipy.milp, its answer written into the OFFERED", None),
+ ("cells, and the sheet's own PROFIT cell must reproduce the optimum exactly — which proves the", None),
+ ("spreadsheet and the solver are the same problem.", None),
+ ("     Run it yourself:   .venv/bin/python toy_models/verify_toy_v4.py", None),
 ]
 row_i = 1
 for text, font in readme:
@@ -668,10 +793,15 @@ for n in CROP_NAMES:
             cd.cell(row=rr, column=1 + j, value=val)
         rr += 1
 
-out = REPO / "toy_models" / "farm_toy_v3_channels_and_demand.xlsx"
+out = REPO / "toy_models" / "farm_toy_v4_optimizer.xlsx"
 wb.save(out)
 print(f"wrote {out}")
 print(f"  channels (fill order): {' -> '.join(CH_NAMES)}")
 print(f"  crop x channel rows: {len(pair_row)}   annual-cap pairs: "
       f"{[k for k in pair_row if cap_spec(*k)[0]=='Annual']}")
-print(f"  peak cold {_B['cold']:.1f} m3 wk{_B['cold_wk']}  |  peak ambient {_B['amb']:.1f} m3 wk{_B['amb_wk']}")
+print(f"  LP optimum: profit ${_OPT['profit']:,.0f} "
+      f"(revenue ${_OPT['revenue']:,.0f} - cost ${_OPT['cost']:,.0f})")
+print(f"  fixed fill rule at 6 ac ${_GRD['profit']:,.0f} -> optimal allocation "
+      f"${_FIX['profit']:,.0f}  (+${_FIX['profit']-_GRD['profit']:,.0f})")
+print(f"  decision cells {len(succ_meta) + len(CROP_NAMES)*len(CH_NAMES)*52:,}  "
+      f"| solver recipe entries {len(recipe)-1}")
