@@ -1,8 +1,8 @@
 """
-toy_v7_lp.py — the v5 sheet's model, written as a MILP and solved with scipy.
+toy_v8_lp.py — the v5 sheet's model, written as a MILP and solved with scipy.
 
-Imported by BOTH `build_toy_v7.py` (so the READ ME can promise the optimum LibreOffice should
-find) and `verify_toy_v7.py` (as the oracle the workbook is checked against).
+Imported by BOTH `build_toy_v8.py` (so the READ ME can promise the optimum LibreOffice should
+find) and `verify_toy_v8.py` (as the oracle the workbook is checked against).
 
 WHY THIS EXISTS. v4 is the first version whose answer is not arithmetic — it is a CHOICE, made
 by a solver. So "is the sheet right?" splits in two:
@@ -138,6 +138,32 @@ def labour_arrays():
     return cap, wage
 
 
+def flex_rates(hired_wage_per_hr=20.0, overtime_multiplier=1.5, hire_markup=0.0):
+    """($/hr for an overtime hour, $/hr for a hired hour), per week.
+
+    Overtime is priced from the crew's own HOURLY blend — salaried staff contribute capacity but
+    you cannot pay them overtime, so they are excluded from the RATE while remaining in the
+    capacity (the app's deliberate rate/quantity asymmetry). Hire is priced from an entered
+    market wage: inferring it from internal payroll gave the app three different wrong answers
+    (W17), so it is an input here and the sheet says so.
+    """
+    load = 1.0 + PAYLOAD.get("payroll_load_pct", 0.0)
+    ot = np.zeros(N_WEEKS + 1)
+    for w in range(1, N_WEEKS + 1):
+        paid_hrs = paid_cost = 0.0
+        for e in PAYLOAD.get("employees", []):
+            if e["type"] == "salary" or e["wage"] <= 0:
+                continue
+            if not (e.get("start_week", 1) <= w <= e.get("end_week", N_WEEKS)):
+                continue
+            h = e["count"] * e["hours_per_week"]
+            paid_hrs += h
+            paid_cost += h * e["wage"] * load
+        ot[w] = (paid_cost / paid_hrs * overtime_multiplier) if paid_hrs else 0.0
+    hire = np.full(N_WEEKS + 1, hired_wage_per_hr * load * (1.0 + hire_markup))
+    return ot, hire
+
+
 def weekly_fixed_cost(cold_cap=None, amb_cap=None):
     """Flat $/week the farm owes whatever it plants."""
     p = PAYLOAD
@@ -150,7 +176,9 @@ def weekly_fixed_cost(cold_cap=None, amb_cap=None):
 
 def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
           fixed_acres=None, min_acreage=True, annual_override=None,
-          opening_cash=None, credit_line=None, cash_floor=True):
+          opening_cash=None, credit_line=None, cash_floor=True,
+          flex=True, hired_wage_per_hr=20.0, overtime_multiplier=1.5, hire_markup=0.0,
+          max_overtime_hrs=200.0, max_hire_hrs=400.0):
     """Maximise revenue - growing cost, as a MILP. Returns a dict of the optimum.
 
     `min_acreage=False` drops the binaries and solves the LP relaxation — useful only to show
@@ -165,9 +193,12 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
     pairs = [(c, h) for c in CROP_NAMES for h in CH_NAMES]
     n_off = len(pairs) * N_WEEKS
     n_y = n_s if min_acreage else 0
-    N = n_s + n_off + n_y
+    n_flex = 2 * N_WEEKS if flex else 0
+    N = n_s + n_off + n_y + n_flex
     off_i = lambda p, w: n_s + p * N_WEEKS + (w - 1)
     y_i = lambda i: n_s + n_off + i
+    ot_i = lambda w: n_s + n_off + n_y + (w - 1)
+    hire_i = lambda w: n_s + n_off + n_y + N_WEEKS + (w - 1)
 
     # lb packed out per acre of succession i, in week w
     packed_per_acre = np.zeros((n_s, N_WEEKS + 1))
@@ -204,6 +235,13 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
             lab_week[i, ((wk - 1) % N_WEEKS) + 1] += c.get(
                 f"labor_{['plant', 'grow', 'harv'][ph]}", 0.0)
     lab_cap, wage_wk = labour_arrays()
+    ot_rate, hire_rate = flex_rates(hired_wage_per_hr, overtime_multiplier, hire_markup)
+    if flex:
+        # The app's own refusal: a bought hour with no price is a free hour, and no markup or
+        # multiplier rescues a zero base.
+        if not (ot_rate[1:].min() > 0 and hire_rate[1] > 0):
+            raise RuntimeError("flex enabled but a bought hour prices at $0 — refusing to hand "
+                               "out free labour (the app refuses this too)")
 
     # objective: -(revenue - cost) because milp minimises
     c_obj = np.zeros(N)
@@ -298,7 +336,15 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
         for i in range(n_s):
             if lab_week[i, w]:
                 e[i] = lab_week[i, w]
+        if flex:
+            e[ot_i(w)] = -1.0
+            e[hire_i(w)] = -1.0
         add(e, -np.inf, lab_cap[w])
+
+    if flex:
+        for w in range(1, N_WEEKS + 1):
+            c_obj[ot_i(w)] += ot_rate[w]
+            c_obj[hire_i(w)] += hire_rate[w]
 
     # C13 — the weekly cash floor. Cumulative cash from week 1 to W must never fall below
     # -(opening cash + credit line). Revenue lands in the week of sale, variable costs in the
@@ -318,6 +364,10 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
                        - st * spec.get("packaging_cost_per_lb", 0.0))
                 for w in range(1, W + 1):
                     e[off_i(p, w)] += net
+            if flex:
+                for w in range(1, W + 1):
+                    e[ot_i(w)] -= ot_rate[w]
+                    e[hire_i(w)] -= hire_rate[w]
             add(e, -(op_cash + cred) + W * fixed_wk + wage_wk[1:W + 1].sum(), np.inf)
 
     # land standing in the ground
@@ -343,10 +393,14 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
 
     A = np.vstack(rows)
     lb_v, ub_v = np.zeros(N), np.full(N, np.inf)
+    if flex:
+        for w in range(1, N_WEEKS + 1):
+            ub_v[ot_i(w)] = max_overtime_hrs
+            ub_v[hire_i(w)] = max_hire_hrs
     integrality = np.zeros(N, dtype=int)
     if min_acreage:
-        ub_v[n_s + n_off:] = 1.0
-        integrality[n_s + n_off:] = 1
+        ub_v[n_s + n_off:n_s + n_off + n_y] = 1.0
+        integrality[n_s + n_off:n_s + n_off + n_y] = 1
     if fixed_acres is not None:
         # Pin the acreage to compare ALLOCATION alone against the v3 fill rule — same plan,
         # same stock, only the choice of who gets served differs.
@@ -384,18 +438,26 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
                     * CROPS[cn].get("channels", {}).get(hn, {}).get("packaging_cost_per_lb", 0.0)
                     for p_, (cn, hn) in enumerate(pairs))
         grow_w = sum(x[i] * var_week[i, w] for i in range(n_s))
-        week_net[w] = rev_w - pkg_w - grow_w - fixed_wk - wage_wk[w] - overhead * rev_w
+        flex_w = ((x[ot_i(w)] * ot_rate[w] + x[hire_i(w)] * hire_rate[w]) if flex else 0.0)
+        week_net[w] = (rev_w - pkg_w - grow_w - fixed_wk - wage_wk[w] - overhead * rev_w
+                       - flex_w)
     bank = np.cumsum(week_net[1:]) + op_cash
     borrowed = np.maximum(0.0, -bank)
     interest = PAYLOAD.get("interest_rate_apr", 0.0) * float(borrowed.mean())
     peak_borrow = float(borrowed.max())
     ovh = overhead * revenue
-    cost = growing + packaging + fixed + ovh + wages + interest
+    ot_hours = [float(x[ot_i(w)]) for w in range(1, N_WEEKS + 1)] if flex else [0.0] * N_WEEKS
+    hire_hours = [float(x[hire_i(w)]) for w in range(1, N_WEEKS + 1)] if flex else [0.0] * N_WEEKS
+    ot_cost = sum(h * ot_rate[w + 1] for w, h in enumerate(ot_hours))
+    hire_cost = sum(h * hire_rate[w + 1] for w, h in enumerate(hire_hours))
+    cost = growing + packaging + fixed + ovh + wages + interest + ot_cost + hire_cost
     planted = {k: v for k, v in acres.items() if v > 1e-6}
     return dict(profit=revenue - cost, revenue=revenue, cost=cost, acres=acres,
                 growing=growing, packaging=packaging, fixed=fixed, overhead=ovh,
                 wages=wages, lab_cap=lab_cap, wage_wk=wage_wk, lab_week=lab_week,
                 interest=interest, peak_borrow=peak_borrow, bank=list(bank),
+                ot_cost=ot_cost, hire_cost=hire_cost, ot_hours=ot_hours, hire_hours=hire_hours,
+                ot_rate=list(ot_rate), hire_rate=list(hire_rate),
                 fixed_weekly=fixed_wk, opening_cash=op_cash, credit_line=cred,
                 var_week=var_week,
                 offered=offered, sold=sold, status=res.status, planted=planted,
@@ -406,7 +468,8 @@ if __name__ == "__main__":
     r = solve()
     print(f"OPTIMUM  profit ${r['profit']:,.0f}")
     print(f"   revenue    {r['revenue']:>12,.0f}")
-    for k in ("growing", "packaging", "fixed", "overhead", "wages", "interest"):
+    for k in ("growing", "packaging", "fixed", "overhead", "wages", "interest",
+              "ot_cost", "hire_cost"):
         print(f"   {k:<10} {-r[k]:>12,.0f}")
     print(f"   plants {r['n_planted']} of {r['n_offered']} successions the app offers")
     print("\nacres:")

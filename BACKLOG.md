@@ -261,13 +261,16 @@ into storage?"* The answer is the second one is real.
 ### Grower questions on toy v7, 2026-08-30 — six notes, three were defects
 
 All six confirmed against the code before being answered. (2)/(4)/(5) fixed in `4f87cf7`; the
-other three are recorded here so their disposition is not lost.
+other three are recorded here so their disposition is not lost. ✅ **(1) and (3) are now DELIVERED
+in toy v8** — overtime and hired hours are decision variables with separate rates, and the solver
+buys 6,964 hired hours and zero overtime at the shipped prices, flipping entirely to overtime at a
+$40/hr hired wage. (6) remains open as **G4**.
 
 | # | Note | Verdict |
 |---|---|---|
-| 1 | "I don't see where overtime is accounted for" | **Correct, absent by design.** v7 is a FIXED crew: a committed cost and a hard ceiling. Overtime and hired hands are the flex layer — **toy v8**, and in the app they are `overtime_enabled`/`hire_enabled`, priced separately per W15 |
+| 1 | "I don't see where overtime is accounted for" | ✅ **DELIVERED in v8.** Was: correct, absent by design. v7 is a FIXED crew: a committed cost and a hard ceiling. Overtime and hired hands are the flex layer — **toy v8**, and in the app they are `overtime_enabled`/`hire_enabled`, priced separately per W15 |
 | 2 | "no input values for the hours needed for each stage of a crop" | ⛔ **REAL DEFECT, fixed.** Hours were baked into the C2 formula as literals (`*2`, `*4`, `*50`) — the sheet used numbers it could not show, so nobody could see why spinach crowds the crew (50 h/acre to pick vs kale's 22) or change it to find out. Same class as the dead shelf-life box. Now three input columns the C2 row reads |
-| 3 | "will the solver choose the optimum labour separately?" | **Yes — toy v8.** Overtime and hired hours become DECISION variables, so the solver buys hours that pay for themselves. The app's What-If already does this and measured **+$110K** |
+| 3 | "will the solver choose the optimum labour separately?" | ✅ **DELIVERED in v8.** Overtime and hired hours become DECISION variables, so the solver buys hours that pay for themselves. The app's What-If already does this and measured **+$110K** |
 | 4 | "salary workers seem exempt from payroll load" | **Not a defect — but the formula deserved the suspicion.** `*(1+load)` sat after the `IF`, so it read as hourly-only. It always applied to both, and the app agrees (`count x wage x (1+bene) / 52`); verified numerically at $4,883.65 either way. Rewritten inside both branches, because **a formula that must be parsed to be believed will be misread** |
 | 5 | "will the model incorporate interest on the credit line?" | ⛔ **REAL GAP, fixed.** Now APR x the AVERAGE amount borrowed, post-solve off the realised cash curve, plus peak borrowing ($384.16 on $46,095, matching the LP exactly). ⚠️ **Deliberately OUTSIDE the objective** — that is the app's own simplification (`solver.py` computes it after the solve), and a toy that models cash better than the thing it checks cannot check it |
 | 6 | "did we agree an input for storage access space — aisles, racks, bins, headroom?" | **No, we never did.** See **G4** below |

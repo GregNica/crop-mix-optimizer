@@ -1,7 +1,7 @@
 """
 The toy model's numbers must not drift from the app's.
 
-`toy_models/farm_toy_v7_labour.xlsx` exists to be an INDEPENDENT check on the app's
+`toy_models/farm_toy_v8_flex.xlsx` exists to be an INDEPENDENT check on the app's
 arithmetic — a grower opens it, changes an acre figure and verifies by hand what the solver
 claims. That only works while its crop constants and its planting calendar are the app's.
 Nothing about a spreadsheet fails loudly when a crop's m3/lb changes underneath it; it just
@@ -17,7 +17,7 @@ So this pins two things:
      its harvest week was reported as needing no cooler at all), it is the one thing this toy
      exists to teach, and it is invisible in a rendered spreadsheet — the cells look identical.
 
-Regenerate with:  python3 toy_models/build_toy_v7.py
+Regenerate with:  python3 toy_models/build_toy_v8.py
 """
 import json
 import re
@@ -28,7 +28,7 @@ from tests.helpers import REPO
 
 openpyxl = pytest.importorskip("openpyxl")
 
-WORKBOOK = REPO / "toy_models" / "farm_toy_v7_labour.xlsx"
+WORKBOOK = REPO / "toy_models" / "farm_toy_v8_flex.xlsx"
 TOY_CROPS = ("Spinach", "Kale", "Garlic")
 # v5 carries EVERY succession the app offers. A hand-picked subset is the exact defect it
 # exists to remove, so the list is derived, never typed.
@@ -45,7 +45,7 @@ PICKED = [s["name"] for s in _all_successions()]
 @pytest.fixture(scope="module")
 def model():
     if not WORKBOOK.exists():
-        pytest.skip(f"{WORKBOOK.name} not built; run toy_models/build_toy_v7.py")
+        pytest.skip(f"{WORKBOOK.name} not built; run toy_models/build_toy_v8.py")
     return openpyxl.load_workbook(WORKBOOK)["Model"]
 
 
@@ -195,7 +195,7 @@ def test_the_plant_decision_is_wired_to_a_minimum_acreage(model):
     10 of 42 plantings fell below the app's own 2-acre minimum in the LP relaxation.
     """
     hdr = None
-    for r in range(1, 40):
+    for r in range(1, model.max_row + 1):
         if model.cell(row=r, column=1).value == "Succession":
             hdr = r
             break
@@ -353,7 +353,8 @@ def test_readme_coordinates_point_at_what_they_claim():
     rd, model = wb["READ ME"], wb["Model"]
     text = "\n".join(str(rd.cell(row=r, column=1).value or "") for r in range(1, rd.max_row + 1))
 
-    hdr = next(r for r in range(1, 40) if model.cell(row=r, column=1).value == "Succession")
+    hdr = next(r for r in range(1, model.max_row + 1)
+               if model.cell(row=r, column=1).value == "Succession")
     cols = {model.cell(row=hdr, column=c).value: c
             for c in range(1, model.max_column + 1) if model.cell(row=hdr, column=c).value}
 
@@ -387,7 +388,7 @@ def test_sell_through_lives_on_the_crop_channel_row_not_the_crop():
     wb = openpyxl.load_workbook(WORKBOOK)
     model = wb["Model"]
     crop_hdr = pair_hdr = None
-    for r in range(1, 60):
+    for r in range(1, model.max_row + 1):
         a, b = model.cell(row=r, column=1).value, model.cell(row=r, column=2).value
         if a == "Crop" and b == "Yield lb/acre":
             crop_hdr = r
@@ -448,7 +449,7 @@ def test_no_derived_value_is_frozen(model):
 
 
 def test_the_sheet_actually_calculates_correctly():
-    """Run toy_models/verify_toy_v7.py — it CALCULATES the workbook.
+    """Run toy_models/verify_toy_v8.py — it CALCULATES the workbook.
 
     Everything above reads formulas as text, and text can be well-formed and wrong. This shells
     out to the venv because `formulas` cannot be installed into the system interpreter pytest
@@ -466,7 +467,7 @@ def test_the_sheet_actually_calculates_correctly():
     if probe.returncode != 0:
         pytest.skip("`formulas` not installed in .venv — run: .venv/bin/pip install formulas")
 
-    r = subprocess.run([str(venv), str(REPO / "toy_models" / "verify_toy_v7.py")],
+    r = subprocess.run([str(venv), str(REPO / "toy_models" / "verify_toy_v8.py")],
                        capture_output=True, text=True, cwd=REPO, timeout=600)
     assert r.returncode == 0, (
         "the toy workbook does not calculate correctly:\n"
@@ -620,3 +621,107 @@ def test_crew_capacity_varies_by_week(model):
     for f in (f1, f20):
         assert "SUMPRODUCT" in f and "<=" in f and ">=" in f, (
             f"capacity must test each crew's start/end week, got {f!r}")
+
+
+_REF_RE = re.compile(r"(?<![A-Z0-9])([A-Z]{1,3})\$?(\d+)(?!\d)")
+
+
+def _refs(formula):
+    """Every cell a formula reads, as {(col_letters, row)}.
+
+    Substring matching on formulas is how guards ship inert: "B32" matches inside "B320", and
+    "AH131" fails to match "AH$131". Parse, do not grep.
+    """
+    return {(c, int(r)) for c, r in _REF_RE.findall(str(formula).replace("$", ""))}
+
+
+def test_bought_hours_are_decision_cells_priced_at_their_full_rate(model):
+    """W12b and W15, the two pricing rules the app paid for.
+
+    W12b — bought hours cost their FULL rate, not the premium above base pay. The committed wage
+    bill pays the crew's stated hours; overtime and hire are hours BEYOND it, so charging only
+    the increment leaves the base wage charged nowhere. Measured in the app at 2,080 hired hours
+    costing $0.00 and $965,177 of phantom profit.
+
+    W15 — overtime and hire carry SEPARATE rates. Collapsing them to one makes "hire is cheaper"
+    a fact instead of an assumption, and it is false above about $30/hr here.
+    """
+    rows = _labelled_rows(model)
+    for lab in ("OVERTIME hours", "HIRED hours", "Overtime rate", "Hired rate",
+                "Cost of bought hours", "Hours available"):
+        assert lab in rows, f"the flex layer is missing {lab!r}"
+
+    # the two hour rows are decisions, not formulas
+    for lab in ("OVERTIME hours", "HIRED hours"):
+        for w in (1, 20, 52):
+            v = model.cell(row=rows[lab][0], column=_wc(model, w)).value
+            assert not (isinstance(v, str) and v.startswith("=")), (
+                f"{lab} week {w} holds a formula — the solver must own these cells")
+
+    # SEPARATE rates. ⚠️ Comparing the two formulas as TEXT is inert: aliasing the hired rate to
+    # "=AH409" (the overtime-rate cell) is textually different and numerically identical, which is
+    # exactly the W15 defect. Mutation-tested — the text comparison passed that mutation. Compare
+    # what each formula READS instead.
+    w2 = _wc(model, 20)
+    ot = _refs(model.cell(row=rows["Overtime rate"][0], column=w2).value)
+    hire = _refs(model.cell(row=rows["Hired rate"][0], column=w2).value)
+    mult = ("B", rows["Overtime multiplier"][0])
+    wage = ("B", rows["Hired wage $/hr"][0])
+    assert mult in ot, "the overtime rate does not read the overtime multiplier"
+    assert wage in hire, "the hired rate does not read the hired wage"
+    assert mult not in hire, "the hired rate is priced off the overtime multiplier"
+    assert not any(r == rows["Overtime rate"][0] for _, r in hire), (
+        "the hired rate is aliased to the overtime rate — one price wearing two labels")
+
+    # FULL rate: the cost row multiplies hours by the rate, with no 'minus base' term
+    cost = model.cell(row=rows["Cost of bought hours"][0], column=w2).value
+    assert f"{_wl(model, 20)}{rows['OVERTIME hours'][0]}" in cost
+    assert f"{_wl(model, 20)}{rows['HIRED hours'][0]}" in cost
+    assert "-" not in cost.replace("=", ""), (
+        f"the bought-hour cost has a subtraction in it — charging the premium instead of the "
+        f"full rate is the W12b defect. Got {cost!r}")
+
+
+def test_c2_measures_against_hours_available_not_the_standing_crew(model):
+    """Once hours can be bought, the ceiling is crew PLUS purchases.
+
+    Leaving C2 pointed at the fixed crew makes every bought hour a violation, and the flex layer
+    can never be used — which is the same defect as not having it.
+    """
+    rows = _labelled_rows(model)
+    avail = str(model.cell(row=rows["Hours available"][0],
+                           column=_wc(model, 20)).value).replace("$", "")
+    for lab in ("Crew capacity", "OVERTIME hours", "HIRED hours"):
+        assert f"{_wl(model, 20)}{rows[lab][0]}" in avail, (
+            f"hours-available does not include {lab!r}: {avail!r}")
+    limit = str(model.cell(row=rows["CROP HOURS needed"][0] + 2,
+                           column=_wc(model, 20)).value).replace("$", "")
+    assert f"{_wl(model, 20)}{rows['Hours available'][0]}" in limit, (
+        f"C2's limit row still points at the standing crew, so no bought hour could ever be "
+        f"used. Got {limit!r}")
+
+
+def test_a_bought_hour_with_no_price_is_refused():
+    """The refusal exists; this is what proves it fires.
+
+    A bought hour priced at $0 is a free hour, and free hours buy revenue out of nothing — the
+    W12b defect in its purest form. The sheet cannot catch it on its own: the rate formula is
+    IFERROR(..., 0), so an unpriced hour reads as $0.00 there too and section E's sheet-vs-LP
+    comparison would AGREE. Both sides wrong together is the one thing that comparison cannot
+    see, so the oracle has to refuse outright.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "toy_v8_lp", REPO / "toy_models" / "toy_v8_lp.py")
+    lp = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(lp)
+
+    # no hired wage
+    with pytest.raises(RuntimeError, match="free labour"):
+        lp.solve(flex=True, hired_wage_per_hr=0.0)
+
+    # ⚠️ and the OTHER axis: a zero multiplier prices overtime at $0 while the hired wage is
+    # perfectly healthy. Checking only the hire side would leave this half unguarded.
+    with pytest.raises(RuntimeError, match="free labour"):
+        lp.solve(flex=True, overtime_multiplier=0.0)

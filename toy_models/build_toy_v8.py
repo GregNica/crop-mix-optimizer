@@ -1,5 +1,5 @@
 """
-build_toy_v7.py — generates the LABOUR toy model workbook (a MILP).
+build_toy_v8.py — generates the LABOUR-FLEX toy model workbook (a MILP).
 
 v5 closes the two gaps the grower found in v4, both of which were DECISION VARIABLES rather
 than cost lines:
@@ -13,7 +13,7 @@ than cost lines:
      which is what `farm_v2/solver.py` is — its `integrality` array marks the same y block.
 
 ⚠️ NEEDS LIBREOFFICE CALC, and this one is a real MILP: 68 acres + 68 binaries + 312 offered
-= 448 decision cells. Engine must be CoinMP (it handles integers; the plain linear solver does
++ 104 bought hours = 552 decision cells. Engine must be CoinMP (it handles integers; the plain linear solver does
 not do branch and bound well).
 
 STRUCTURAL CHANGE FROM v4, and it is what makes 68 successions readable: the planting calendar
@@ -39,12 +39,21 @@ from openpyxl.utils import get_column_letter
 from openpyxl.formatting.rule import CellIsRule
 
 from farm_v2.utils.calendar import harvest_weeks_of
-import toy_v7_lp as LP
+import toy_v8_lp as LP
 
 CROP_NAMES = LP.CROP_NAMES
 crops = LP.CROPS
 CH_NAMES = LP.CH_NAMES
 SUCCS = LP.SUCCS
+
+# ⚠️ ONE definition. This count was written out longhand in three places and every one of them
+# still said 448 after v8 added 104 flex cells — the sheet's own description of itself was wrong
+# in the docstring, the READ ME and the build banner at once. Derive it, do not retype it.
+N_OFFER_CELLS = len(CROP_NAMES) * len(CH_NAMES) * 52
+N_FLEX_CELLS = 2 * 52  # overtime hours + hired hours
+N_DEC_CELLS = len(SUCCS) * 2 + N_OFFER_CELLS + N_FLEX_CELLS
+DEC_BREAKDOWN = (f"{len(SUCCS)} acres + {len(SUCCS)} binaries + {N_OFFER_CELLS} offered "
+                 f"+ {N_FLEX_CELLS} bought hours")
 PACK_OUT = 1.00
 COLD_CAP = LP.PAYLOAD["harvest_storage_cap"]
 AMB_CAP = LP.PAYLOAD["ambient_storage_cap"]
@@ -153,7 +162,7 @@ except Exception:
 _BUILT = _dt.datetime.now().strftime("%Y-%m-%d %H:%M")
 
 r = 1
-put(r, 1, "FARM TOY MODEL — v7: labour", font=F_TITLE)
+put(r, 1, "FARM TOY MODEL — v8: buying labour", font=F_TITLE)
 put(r, 4, f"BUILT {_BUILT}   (from source at {_SHA})", font=F_NOTE)
 r += 1
 put(r, 1, "YELLOW = you type.  GREEN = the solver writes.  BLUE = the solver's plant/don't-plant "
@@ -280,6 +289,21 @@ put(r, 2, LP.PAYLOAD.get("payroll_load_pct", 0.0), fill=IN_FILL, fmt="0%", borde
 ROW_LOAD = r
 put(r, 3, "employer taxes, workers' comp, benefits — applied to EVERY wage, salaried included",
     font=F_NOTE); r += 1
+put(r, 1, "Overtime multiplier", font=F_BOLD)
+put(r, 2, 1.5, fill=IN_FILL, fmt="0.00", border=True); ROW_OTMULT = r
+put(r, 3, "your own crew staying late, on top of their blended hourly rate", font=F_NOTE); r += 1
+put(r, 1, "Max overtime hrs/week", font=F_BOLD)
+put(r, 2, 200, fill=IN_FILL, fmt="#,##0", border=True); ROW_OTMAX = r; r += 1
+put(r, 1, "Hired wage $/hr", font=F_BOLD)
+put(r, 2, 20.0, fill=IN_FILL, fmt="$0.00", border=True); ROW_HIREWAGE = r
+put(r, 3, "⚠️ YOUR LOCAL MARKET RATE — a placeholder, not a sourced figure. The app tried "
+          "INFERRING this from internal payroll and got three different wrong answers (W17).",
+    font=F_NOTE); r += 1
+put(r, 1, "Hire markup %", font=F_BOLD)
+put(r, 2, 0.0, fill=IN_FILL, fmt="0%", border=True); ROW_HIREMARK = r
+put(r, 3, "agency fee, recruitment — on top of the wage and its payroll load", font=F_NOTE); r += 1
+put(r, 1, "Max hired hrs/week", font=F_BOLD)
+put(r, 2, 400, fill=IN_FILL, fmt="#,##0", border=True); ROW_HIREMAX = r; r += 1
 put(r, 1, "A salary wage is $/YEAR; hourly and seasonal are $/HOUR. 'Field time %' is the share "
           "of paid hours available to the crops —", font=F_NOTE); r += 1
 put(r, 1, "the rest is admin and maintenance. It reduces CAPACITY without reducing the WAGE.",
@@ -377,15 +401,74 @@ ROW_WAGEWK = r; r += 1
 put(r, 1, "   The wage bill has a SHAPE. Flattening it to an annual average understated the "
           "app's own cash floor by $115,615.", font=F_NOTE); r += 2
 
+# ---- BUYING HOURS. Overtime and hire are DECISION cells: this is the layer that turns labour
+# from a constraint into a choice. ----
+r = week_header(r, "$/hr")
+put(r, 1, "Overtime rate", font=F_SMALL); put(r, 2, "$/hr", font=F_NOTE)
+for w in range(1, 53):
+    # Your own crew's HOURLY blend x the multiplier. Salaried staff give capacity but cannot be
+    # paid overtime, so they are excluded from the RATE while staying in the capacity — the app's
+    # deliberate rate/quantity asymmetry.
+    hourly = (f'($C${ROW_CREW}:$C${ROW_CREW_END}<>"salary")*($D${ROW_CREW}:$D${ROW_CREW_END}>0)'
+              f'*($G${ROW_CREW}:$G${ROW_CREW_END}<={w})*($H${ROW_CREW}:$H${ROW_CREW_END}>={w})'
+              f'*{CREWROWS}*$E${ROW_CREW}:$E${ROW_CREW_END}')
+    put(r, wcol(w),
+        f'=IFERROR(SUMPRODUCT({hourly}*$D${ROW_CREW}:$D${ROW_CREW_END})'
+        f'/SUMPRODUCT({hourly})*(1+$B${ROW_LOAD})*$B${ROW_OTMULT},0)', fmt="$0.00")
+ROW_OTRATE = r; r += 1
+put(r, 1, "Hired rate", font=F_SMALL); put(r, 2, "$/hr", font=F_NOTE)
+for w in range(1, 53):
+    put(r, wcol(w), f"=$B${ROW_HIREWAGE}*(1+$B${ROW_LOAD})*(1+$B${ROW_HIREMARK})", fmt="$0.00")
+ROW_HIRERATE = r; r += 1
+put(r, 1, "OVERTIME hours", font=F_BOLD, fill=DEC_FILL); put(r, 2, "hrs <-- SOLVER", font=F_NOTE)
+for w in range(1, 53):
+    put(r, wcol(w), 0.0, fmt="#,##0", fill=DEC_FILL)
+ROW_OTHRS = r; r += 1
+put(r, 1, "HIRED hours", font=F_BOLD, fill=DEC_FILL); put(r, 2, "hrs <-- SOLVER", font=F_NOTE)
+for w in range(1, 53):
+    put(r, wcol(w), 0.0, fmt="#,##0", fill=DEC_FILL)
+ROW_HIREHRS = r; r += 1
+put(r, 1, "Cost of bought hours", font=F_SMALL); put(r, 2, "$", font=F_NOTE)
+for w in range(1, 53):
+    # ⚠️ THEIR FULL RATE, not the premium above base pay. The committed wage bill pays the crew's
+    # STATED hours; these are hours beyond that, so charging only the increment would leave the
+    # base wage charged nowhere at all. The app measured that defect at 2,080 hired hours costing
+    # $0.00 and $965,177 of phantom profit.
+    put(r, wcol(w), f"={wl(w)}{ROW_OTHRS}*{wl(w)}{ROW_OTRATE}"
+                    f"+{wl(w)}{ROW_HIREHRS}*{wl(w)}{ROW_HIRERATE}", fmt="#,##0")
+ROW_FLEXCOST = r; r += 1
+put(r, 1, "Hours available", font=F_BOLD); put(r, 2, "hrs", font=F_NOTE)
+for w in range(1, 53):
+    put(r, wcol(w), f"={wl(w)}{ROW_LABCAP}+{wl(w)}{ROW_OTHRS}+{wl(w)}{ROW_HIREHRS}", fmt="#,##0")
+ROW_HOURSAVAIL = r; r += 1
+put(r, 1, "   The crew, plus whatever the solver decided to buy. This is what C2 measures "
+          "against now.", font=F_NOTE); r += 2
+
 r = week_header(r, "hours")
 lab_lhs = lambda w: "=" + "+".join(
     f'SUMPRODUCT(({CROPCOL}="{n}")*({wl(w)}${ROW_SUCC}:{wl(w)}${ROW_SUCC_END}="{ph}")*{SR})'
     f'*${cl}${crop_row[n]}'
     for n in CROP_NAMES for ph, cl in (("P", "N"), ("G", "O"), ("H", "P")))
 r, ROW_LABUSED, _ = constraint_triplet(
-    r, "CROP HOURS needed", lab_lhs, lambda w: f"{wl(w)}${ROW_LABCAP}", None,
+    r, "CROP HOURS needed", lab_lhs, lambda w: f"{wl(w)}${ROW_HOURSAVAIL}", None,
     "   Hours the crops need that week, against what the crew can give. The app's C2 — and on "
     "this farm it is the constraint that binds hardest.", fmt="#,##0")
+
+# ⚠️ The two purchase caps go through the SAME machinery as every other bound on this sheet.
+# Naming them only in the Solver recipe leaves the cap cells read by NO formula — invisible to a
+# reader, and invisible to the dead-input guard, which then has to be loosened to excuse them.
+# That is a test bent around a builder shortcut. Every other limit here earns a "room left" row;
+# so do these.
+r += 1
+r = week_header(r, "hours")
+r, ROW_OTUSED, _ = constraint_triplet(
+    r, "OVERTIME bought", lambda w: f"={wl(w)}{ROW_OTHRS}", f"$B${ROW_OTMAX}", None,
+    "   Your own crew, working longer. Capped because a week only holds so many hours.",
+    fmt="#,##0")
+r, ROW_HIREUSED, _ = constraint_triplet(
+    r, "HIRED bought", lambda w: f"={wl(w)}{ROW_HIREHRS}", f"$B${ROW_HIREMAX}", None,
+    "   Hands brought in from outside. Capped by what the local market can supply at short "
+    "notice.", fmt="#,##0")
 
 crop_block = {}
 for name in CROP_NAMES:
@@ -622,10 +705,15 @@ put(r, 1, "  wages", font=F_SMALL); put(r, 2, "$", font=F_NOTE)
 for w in range(1, 53):
     put(r, wcol(w), f"={wl(w)}{ROW_WAGEWK}", fmt="#,##0")
 R_WAGEWK = r; r += 1
+put(r, 1, "  bought hours", font=F_SMALL); put(r, 2, "$", font=F_NOTE)
+for w in range(1, 53):
+    put(r, wcol(w), f"={wl(w)}{ROW_FLEXCOST}", fmt="#,##0")
+R_FLEXWK = r; r += 1
 put(r, 1, "NET CASH this week", font=F_BOLD); put(r, 2, "$", font=F_NOTE)
 for w in range(1, 53):
     put(r, wcol(w), f"={wl(w)}{R_REVWK}-{wl(w)}{R_PKGWK}-{wl(w)}{R_GROWWK}"
-                    f"-{wl(w)}{R_FIXWK}-{wl(w)}{R_OVHWK}-{wl(w)}{R_WAGEWK}", fmt="#,##0")
+                    f"-{wl(w)}{R_FIXWK}-{wl(w)}{R_OVHWK}-{wl(w)}{R_WAGEWK}"
+                    f"-{wl(w)}{R_FLEXWK}", fmt="#,##0")
 R_NETWK = r; r += 2
 
 r = week_header(r, "$")
@@ -672,7 +760,8 @@ put(r, 2, "=" + "+".join(
     f"*$I${pair_row[(n,h)]}" for n in CROP_NAMES for h in CH_NAMES), fmt="$#,##0", font=F_BOLD)
 ROW_REV = r; r += 1
 for _lab, _row in (("Growing cost", R_GROWWK), ("Packaging", R_PKGWK),
-                   ("Fixed cost", R_FIXWK), ("Overhead", R_OVHWK), ("Wages", R_WAGEWK)):
+                   ("Fixed cost", R_FIXWK), ("Overhead", R_OVHWK), ("Wages", R_WAGEWK),
+                   ("Bought hours", R_FLEXWK)):
     put(r, 1, _lab, font=F_BOLD)
     put(r, 2, f"=SUM({wl(1)}{_row}:{LAST}{_row})", fmt="$#,##0", font=F_BOLD)
     if _lab == "Growing cost":
@@ -682,6 +771,9 @@ for _lab, _row in (("Growing cost", R_GROWWK), ("Packaging", R_PKGWK),
         put(r, 3, "owed all 52 weeks whatever you plant", font=F_NOTE)
     if _lab == "Wages":
         put(r, 3, "committed — owed whether or not the crops need the hours", font=F_NOTE)
+    if _lab == "Bought hours":
+        put(r, 3, "overtime and hire, at their FULL rate — not the premium above base pay",
+            font=F_NOTE)
     r += 1
 put(r, 1, "Peak borrowing", font=F_BOLD)
 put(r, 2, f"=MAX(0,-MIN({wl(1)}{R_CUM}:{LAST}{R_CUM}))", fmt="$#,##0", font=F_BOLD)
@@ -700,7 +792,7 @@ put(r, 1, "   ⚠️ Reported, NOT optimised over. The plan is chosen first and 
 put(r, 1, "     so the solver has no reason to shift sales earlier to borrow less. That is the "
           "app's simplification, inherited on purpose.", font=F_NOTE); r += 1
 put(r, 1, "PROFIT  (the objective)", font=F_BOLD, fill=DEC_FILL)
-put(r, 2, f"=B{ROW_REV}-SUM(B{ROW_COST}:B{ROW_COST+4})-B{ROW_INT}", fmt="$#,##0",
+put(r, 2, f"=B{ROW_REV}-SUM(B{ROW_COST}:B{ROW_COST+5})-B{ROW_INT}", fmt="$#,##0",
     font=F_BOLD, fill=DEC_FILL)
 put(r, 3, "<-- MAXIMISE THIS CELL", font=F_BOLD)
 ROW_OBJ = r; r += 1
@@ -757,8 +849,16 @@ recipe += [
     ("Constraint — ambient store", f"${wl(1)}${pool_rows['Ambient']['used']}:"
      f"${LAST}${pool_rows['Ambient']['used']}  <=  $B${ROW_AMBCAP}", ""),
     ("Constraint — land", f"${wl(1)}${ROW_LANDUSED}:${LAST}${ROW_LANDUSED}  <=  $B${ROW_LAND}", ""),
-    ("Constraint — CROP HOURS <= crew", f"${wl(1)}${ROW_LABUSED}:${LAST}${ROW_LABUSED}  <=  "
-     f"${wl(1)}${ROW_LABCAP}:${LAST}${ROW_LABCAP}", "the app's C2"),
+    ("  ...and", f"${wl(1)}${ROW_OTHRS}:${LAST}${ROW_OTHRS};"
+     f"${wl(1)}${ROW_HIREHRS}:${LAST}${ROW_HIREHRS}", "the bought-hour rows"),
+    ("Constraint — CROP HOURS <= available", f"${wl(1)}${ROW_LABUSED}:${LAST}${ROW_LABUSED}  <=  "
+     f"${wl(1)}${ROW_HOURSAVAIL}:${LAST}${ROW_HOURSAVAIL}", "the app's C2, with bought hours"),
+    ("Constraint — overtime cap",
+     f"${wl(1)}${ROW_OTUSED}:${LAST}${ROW_OTUSED};<=;"
+     f"${wl(1)}${ROW_OTUSED + 2}:${LAST}${ROW_OTUSED + 2}", "a week only holds so many hours"),
+    ("Constraint — hire cap",
+     f"${wl(1)}${ROW_HIREUSED}:${LAST}${ROW_HIREUSED};<=;"
+     f"${wl(1)}${ROW_HIREUSED + 2}:${LAST}${ROW_HIREUSED + 2}", "what the local market can supply"),
     ("Constraint — CASH FLOOR", f"${wl(1)}${R_CUM}:${LAST}${R_CUM}  >=  "
      f"${wl(1)}${R_FLOOR}:${LAST}${R_FLOOR}", "the app's C13"),
 ]
@@ -789,26 +889,59 @@ NUMS = {
     "{PEAKCAP}": f"{max(_OPT['lab_cap']):,.0f}", "{WINTERCAP}": f"{min(_OPT['lab_cap'][1:]):,.0f}",
     "{V6_PROFIT}": "$1,654,922",
     "{INTEREST}": f"${_OPT['interest']:,.0f}", "{PEAKB}": f"${_OPT['peak_borrow']:,.0f}",
-    "{INTEREST}": f"${_OPT['interest']:,.0f}", "{PEAKB}": f"${_OPT['peak_borrow']:,.0f}",
+    "{OTCOST}": f"${_OPT['ot_cost']:,.0f}", "{HIRECOST}": f"${_OPT['hire_cost']:,.0f}",
+    "{OTHRS}": f"{sum(_OPT['ot_hours']):,.0f}", "{HIREHRS}": f"{sum(_OPT['hire_hours']):,.0f}",
+    "{OTRATE}": f"${_OPT['ot_rate'][20]:,.2f}", "{HIRERATE}": f"${_OPT['hire_rate'][1]:,.2f}",
+    "{V7_PROFIT}": "$388,786",
     "{MARGIN}": f"{_OPT['profit'] / _OPT['revenue'] * 100:.1f}%",
     "{V5_PROFIT}": "$2,384,231",
     "{N_PLANTED}": str(_OPT["n_planted"]), "{N_OFFERED}": str(_OPT["n_offered"]),
     "{RELAX_PROFIT}": f"${_RELAX['profit']:,.0f}", "{RELAX_N}": str(_RELAX["n_planted"]),
     "{MIN_COST}": f"${_RELAX['profit'] - _OPT['profit']:,.0f}",
     "{V4_PROFIT}": "$1,094,831",
-    "{N_DEC}": f"{len(SUCCS)*2 + len(CROP_NAMES)*len(CH_NAMES)*52:,}",
+    "{N_DEC}": f"{N_DEC_CELLS:,}", "{DEC_BREAKDOWN}": DEC_BREAKDOWN,
     "{N_SUCC}": str(len(SUCCS)),
     "{ACRES_RANGE}": f"C{ROW_SUCC}:C{ROW_SUCC_END}",
     "{BIN_RANGE}": f"D{ROW_SUCC}:D{ROW_SUCC_END}",
     "{OBJ}": f"B{ROW_OBJ}",
 }
 readme = [
- ("Farm toy model — v7: LABOUR", F_TITLE),
+ ("Farm toy model — v8: BUYING LABOUR", F_TITLE),
  (f"BUILT {_BUILT}   (from source at commit {_SHA})", F_NOTE),
  ("If that timestamp is older than the change you are looking for, you have a stale copy —", F_NOTE),
  ("close the file and re-open it from WSL rather than from a recent-files list.", F_NOTE),
  ("", None),
- ("WHAT v7 ADDS — labour, which is TWO things at once", F_H1),
+ ("WHAT v8 ADDS — you can now BUY hours, and the solver decides whether to", F_H1),
+ ("v7 gave you a fixed crew: a committed cost and a hard ceiling. v8 makes labour a DECISION.", None),
+ ("Two green rows — OVERTIME hours and HIRED hours — the solver fills in, and C2 now measures", None),
+ ("crop hours against the crew PLUS whatever it decided to buy.", None),
+ ("", None),
+ ("     profit {V7_PROFIT} -> {PROFIT}        revenue {REV}", F_BOLD),
+ ("     it buys {HIREHRS} hired hours ({HIRECOST}) and {OTHRS} overtime ({OTCOST})", F_BOLD),
+ ("", None),
+ ("Revenue rises again, and for the same reason it fell in v7: hours are what let you PICK. Buy", None),
+ ("more of them and acres that were not worth planting become worth planting.", None),
+ ("", None),
+ ("TWO PRICING RULES THE APP PAID FOR, AND WHY THEY MATTER", F_H1),
+ ("", None),
+ ("1. BOUGHT HOURS COST THEIR FULL RATE, not the premium above base pay.", F_BOLD),
+ ("   The committed wage bill pays the crew's STATED hours. Overtime and hire are hours BEYOND", None),
+ ("   that, so charging only the increment leaves the base wage charged nowhere at all. The app", None),
+ ("   measured that defect at 2,080 hired hours costing $0.00 — $965,177 of phantom profit.", None),
+ ("", None),
+ ("2. OVERTIME AND HIRE ARE PRICED SEPARATELY.", F_BOLD),
+ ("   Overtime {OTRATE}/hr — your crew's blended rate x the multiplier. Hire {HIRERATE}/hr — a", None),
+ ("   market wage you enter, plus payroll load and markup. At these rates hire is cheaper, so", None),
+ ("   the solver buys only hire. That is NOT a fixed truth: raise the hired wage past about $30", None),
+ ("   and it flips entirely to overtime. 'Hire is cheaper' is an assumption, and the app once", None),
+ ("   reported enabling an extra, MORE expensive option as making profit $3,165.71 WORSE — which", None),
+ ("   no correct model can do. It came from guessing the split instead of reading it.", None),
+ ("", None),
+ ("⚠️ The hired wage is a PLACEHOLDER, not a sourced figure. Put your own local rate in. The app", None),
+ ("tried inferring it from internal payroll and got three different wrong answers (W17) — a", None),
+ ("manager-heavy crew inferred $40.60/hr for a field hand.", None),
+ ("", None),
+ ("WHAT v7 ADDED — labour, which is TWO things at once", F_H1),
  ("", None),
  ("1. A COMMITTED COST. Every listed worker is paid for their stated hours whether or not the", F_BOLD),
  ("   crops need them. So there is NO per-acre labour charge anywhere on this sheet — the", None),
@@ -923,7 +1056,7 @@ readme = [
  ("A model with a fixed planting calendar cannot express the thing the practice exists for.", None),
  ("", None),
  ("!! IT NEEDS LIBREOFFICE, AND THIS ONE IS A REAL MILP", F_H1),
- ("{N_DEC} decision cells: {N_SUCC} acres + {N_SUCC} binaries + 312 offered. The engine MUST be", None),
+ ("{N_DEC} decision cells: {DEC_BREAKDOWN}. The engine MUST be", None),
  ("CoinMP — it does branch and bound over the integers. Expect it to take appreciably longer", None),
  ("than v4; integers are what make an optimizer work for its living.", None),
  ("", None),
@@ -951,6 +1084,7 @@ readme = [
  ("       overhead     {OVH}      a share of revenue", None),
  ("       wages        {WAGES}      committed — owed whether the crops need the hours or not", None),
  ("       interest     {INTEREST}          APR on what the credit line actually carries", None),
+ ("       bought hrs   {HIRECOST}      {HIREHRS} hired hours; {OTHRS} overtime", None),
  ("     peak borrowing {PEAKB} — the deepest the line is ever drawn", None),
  ("       interest     {INTEREST}          on {PEAKB} of peak borrowing — reported, not optimised over", None),
  ("     {N_PLANTED} of {N_OFFERED} plantings used", F_BOLD),
@@ -997,14 +1131,19 @@ readme = [
  ("   alone. Now set Garlic's 'Returns to store' to 0.00 and re-solve: the delay becomes a loss", None),
  ("   and the plan changes.", None),
  ("", None),
- ("EXPERIMENT 2 — sack the harvest crew.  Set the Harvest Crew count to 0 and re-solve.", F_BOLD),
+ ("EXPERIMENT 2 — make hiring expensive.  Set 'Hired wage $/hr' to 40 and re-solve.", F_BOLD),
+ ("   Hire becomes dearer than overtime and the plan flips: hired hours go to zero and overtime", None),
+ ("   appears instead. Same work, different supplier, chosen on price. A model that assumed", None),
+ ("   'hire is cheaper' would have got this backwards and never noticed.", None),
+ ("", None),
+ ("EXPERIMENT 3 — sack the harvest crew.  Set the Harvest Crew count to 0 and re-solve.", F_BOLD),
  ("   You save their whole wage bill. Watch what happens to profit anyway: with fewer hours in", None),
  ("   weeks 14-40 the crops that need picking most cannot be picked, and revenue falls further", None),
  ("   than the wages saved. Then try the opposite — double their count — and watch profit rise", None),
  ("   even though payroll rose too. That is the trade a per-acre labour charge cannot express,", None),
  ("   and it is why the app rations hours with a constraint rather than pricing them.", None),
  ("", None),
- ("EXPERIMENT 3 — squeeze the cash.  Set the credit line to 10,000 and opening cash to 10,000,", F_BOLD),
+ ("EXPERIMENT 4 — squeeze the cash.  Set the credit line to 10,000 and opening cash to 10,000,", F_BOLD),
  ("   then re-solve.", F_BOLD),
  ("   Below about $100,000 combined there is no feasible plan at all — see above. Just above", None),
  ("   it, watch WHICH plantings the floor drops: not the least profitable ones, but", None),
@@ -1013,13 +1152,13 @@ readme = [
  ("   a dollar comes back. Cash does not rank crops by margin; it ranks them by TIMING, which no", None),
  ("   column on this sheet shows you.", None),
  ("", None),
- ("EXPERIMENT 4 — drop the minimum acreage.  Set every 'Min acres if planted' in the crop", F_BOLD),
+ ("EXPERIMENT 5 — drop the minimum acreage.  Set every 'Min acres if planted' in the crop", F_BOLD),
  ("   table to 0 and re-solve.", F_BOLD),
  ("   Expect {RELAX_PROFIT} and {RELAX_N} plantings. The extra profit is real but the plan is", None),
  ("   not: it plants fractions of an acre no one would drive a tractor out for. This is what", None),
  ("   the binaries are FOR, and it is why the app carries them.", None),
  ("", None),
- ("EXPERIMENT 5 — take away the cooler.  Set the cold store to 40 m3 and re-solve.", F_BOLD),
+ ("EXPERIMENT 6 — take away the cooler.  Set the cold store to 40 m3 and re-solve.", F_BOLD),
  ("   Watch WHICH WEEKS it abandons, not just which crop. With a full calendar it can retreat", None),
  ("   to a planting pattern that keeps the cooler under its ceiling — an answer v4 could not", None),
  ("   even represent.", None),
@@ -1044,7 +1183,7 @@ readme = [
  ("configurations. Every input is perturbed to prove it propagates. No number is frozen. And the", None),
  ("same MILP is solved with scipy.milp, its answer written into the decision cells, and the", None),
  ("sheet's own PROFIT cell must reproduce the optimum exactly.", None),
- ("     Run it yourself:   .venv/bin/python toy_models/verify_toy_v7.py", None),
+ ("     Run it yourself:   .venv/bin/python toy_models/verify_toy_v8.py", None),
 ]
 row_i = 1
 for text, font in readme:
@@ -1054,10 +1193,9 @@ for text, font in readme:
     if font: c.font = font
     row_i += 1
 
-out = REPO / "toy_models" / "farm_toy_v7_labour.xlsx"
+out = REPO / "toy_models" / "farm_toy_v8_flex.xlsx"
 wb.save(out)
 print(f"wrote {out}")
 print(f"  successions offered : {len(SUCCS)}")
-print(f"  decision cells      : {len(SUCCS)*2 + len(CROP_NAMES)*len(CH_NAMES)*52:,} "
-      f"({len(SUCCS)} acres + {len(SUCCS)} binaries + {len(CROP_NAMES)*len(CH_NAMES)*52} offered)")
+print(f"  decision cells      : {N_DEC_CELLS:,} ({DEC_BREAKDOWN})")
 print(f"  solver recipe entries: {len(recipe)-1}")

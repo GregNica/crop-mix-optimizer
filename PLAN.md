@@ -578,9 +578,65 @@ a formula that must be parsed to be believed will be misread); interest was abse
 three — overtime, solver-chosen labour, storage access space — are answered in `BACKLOG.md` under
 "Grower questions on toy v7", with the storage one filed as **G4**.
 
-**Next: v8 — the labour FLEX layer** (overtime and hired hands, priced separately per W15), which
-is what turns labour from a constraint into a decision. Then the toy has every mechanism the app
-has except water, interest and the wizard.
+⚠️ v7 is **SUPERSEDED by v8** (files deleted; recoverable from git at `5ab7b9f`).
+
+---
+
+**✅ v8 — LABOUR FLEX (hours become a DECISION). DONE 2026-08-30.** `farm_toy_v8_flex.xlsx` +
+`build_toy_v8.py` + `toy_v8_lp.py` + `verify_toy_v8.py`. **Supersedes v7.** Two new green decision
+rows — OVERTIME hours and HIRED hours, per week — each with its own rate row, and C2 now measures
+crop hours against **Hours available** (crew + whatever the solver chose to buy) instead of the
+standing crew.
+
+| | v7 | v8 |
+|---|---:|---:|
+| profit | $388,786 | **$514,774** |
+| revenue | $1,912,071 | **$2,390,515** |
+| bought hours | — | **6,964 hired, 0 overtime** ($174,106) |
+
+⭐ **THE SOLVER BUYS 6,964 HOURS AND ZERO OVERTIME — AND THAT IS A PRICED CHOICE, NOT A DEFAULT.**
+Overtime costs **$37.84/hr** here (the crew's hourly blend × 1.25 payroll load × 1.5 multiplier)
+against **$25.00/hr** hired, so hire wins everywhere. Raise the hired wage from $20 to $40/hr and
+the plan **flips entirely to overtime**. That is W15 demonstrated rather than asserted: collapsing
+the two to a single rate would make "hire is cheaper" a property of the model instead of a
+consequence of the prices, and it is false above roughly $30/hr.
+
+⭐ **The +$125,988 is mostly REVENUE, not saved cost** — $1.91M → $2.39M. v7's C2 ceiling was
+leaving acres unplanted because nobody could pick them; being able to buy hours turns that
+foregone revenue back on, and the plan pays $174k to unlock $478k of it.
+
+Carry forward:
+- **W12b is the guard that matters here: bought hours cost their FULL rate**, not the premium
+  above base pay. The committed wage bill pays the crew's *stated* hours; these are hours beyond
+  it, so charging only the increment leaves the base wage charged nowhere. Mutation-tested — the
+  premium-only form dies.
+- ⚠️ **A GUARD I WROTE FOR W15 SHIPPED INERT, AND ONLY MUTATION FOUND IT.** It asserted the two
+  rate formulas differed *as text*. Aliasing the hired rate to `=AH409` — the overtime-rate cell —
+  is textually different and numerically identical, i.e. exactly the defect, and it sailed
+  through. Rewritten to parse each formula into the set of cells it READS and assert the hired
+  rate reads the hired wage, does not read the overtime multiplier, and does not point at the
+  overtime row. **Six mutations, six caught, after the rewrite.**
+- ⚠️ **`_refs()` now parses formulas instead of grepping them.** Substring matching on cell
+  references is how guards die twice over: `B32` matches inside `B320`, and `AH131` fails to match
+  `AH$131` — the second one broke a brand-new check the moment it ran. Parse, do not grep.
+- ⚠️ **THE DEAD-INPUT GUARD CALLED A LIVE CELL DEAD.** "Max overtime hrs/week" is read *only by
+  the Solver*, as a constraint bound — no formula on the sheet touches it. A formulas-only scan
+  therefore condemns it. The guard now counts the solver-recipe text as a reader. Same family as
+  v7's crew-table false positive: **the guard's model of "used" was narrower than the sheet's.**
+- ⚠️ **Three tests broke purely because five input rows shifted the layout** — a header scan
+  hard-coded `range(1, 40)` and the Succession header moved to row 42. Now scanned to `max_row`.
+  Third instance of the recorded rule: *a position written down is a position that will drift.*
+- ⚠️ A stale verifier check compared crop hours against **Crew capacity**; with flex on, crop
+  hours *should* exceed the standing crew, and it flagged four weeks as violations. Repointed at
+  Hours available. **A check written for the previous version is a check written against the
+  wrong model.**
+- The verifier now proves the flex layer is **not inert**: 23 weeks exceed the standing crew, and
+  C2 still binds in 32 of 52. A slack capacity row would prove nothing.
+
+**Next: the toy now has every mechanism the app has except water (priced at $0 — W10), and the
+wizard.** Interest arrived in v7/v8 (sheet $333.84 = LP $333.84, peak borrowing $46,461).
+
+Original ordering note: ~~demand caps~~ (v3), ~~cash~~ (v6), ~~labour~~ (v7), ~~labour flex~~ (v8).
 
 Original ordering note: ~~demand caps~~ (done
 in v3), then cash (C13, the one with no Excel ancestor at all), then labour (committed vs bought),
