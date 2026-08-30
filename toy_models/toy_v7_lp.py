@@ -1,8 +1,8 @@
 """
-toy_v6_lp.py — the v5 sheet's model, written as a MILP and solved with scipy.
+toy_v7_lp.py — the v5 sheet's model, written as a MILP and solved with scipy.
 
-Imported by BOTH `build_toy_v6.py` (so the READ ME can promise the optimum LibreOffice should
-find) and `verify_toy_v6.py` (as the oracle the workbook is checked against).
+Imported by BOTH `build_toy_v7.py` (so the READ ME can promise the optimum LibreOffice should
+find) and `verify_toy_v7.py` (as the oracle the workbook is checked against).
 
 WHY THIS EXISTS. v4 is the first version whose answer is not arithmetic — it is a CHOICE, made
 by a solver. So "is the sheet right?" splits in two:
@@ -119,6 +119,25 @@ def defaults(cn, hn):
     return (1.00, 0.00 if contract else (1.00 if storable else 0.00))
 
 
+def labour_arrays():
+    """(capacity h/wk, committed $/wk), both 1-indexed to week 52.
+
+    Reproduces the app's own figures exactly — $4,884/wk winter, $24,484/wk at peak, $855,150
+    for the year — which is the check that this crew model is the app's and not a paraphrase.
+    """
+    load = 1.0 + PAYLOAD.get("payroll_load_pct", 0.0)
+    cap = np.zeros(N_WEEKS + 1)
+    wage = np.zeros(N_WEEKS + 1)
+    for e in PAYLOAD.get("employees", []):
+        a, b = e.get("start_week", 1), e.get("end_week", N_WEEKS)
+        per_wk = (e["wage"] / N_WEEKS if e["type"] == "salary"
+                  else e["wage"] * e["hours_per_week"])
+        for w in range(a, b + 1):
+            wage[w] += per_wk * e["count"] * load
+            cap[w] += e["count"] * e["hours_per_week"] * e.get("field_time_pct", 100) / 100.0
+    return cap, wage
+
+
 def weekly_fixed_cost(cold_cap=None, amb_cap=None):
     """Flat $/week the farm owes whatever it plants."""
     p = PAYLOAD
@@ -176,6 +195,15 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
             var_week[i, w] += c.get(f"fuel_{key[ph]}", 0.0) * fuel_rate
 
     overhead = PAYLOAD["overhead_pct_of_revenue"]
+
+    # Crop labour hours per acre, week by week — the C2 left-hand side.
+    lab_week = np.zeros((n_s, N_WEEKS + 1))
+    for i, s_ in enumerate(SUCCS):
+        c = CROPS[CROP_NAMES[s_["crop"]]]
+        for wk, ph in zip(s_["weeks"], s_["phases"]):
+            lab_week[i, ((wk - 1) % N_WEEKS) + 1] += c.get(
+                f"labor_{['plant', 'grow', 'harv'][ph]}", 0.0)
+    lab_cap, wage_wk = labour_arrays()
 
     # objective: -(revenue - cost) because milp minimises
     c_obj = np.zeros(N)
@@ -262,6 +290,16 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
                 e += (opening[cn][w] + packed[cn][w]) * CROPS[cn]["crop_size_m3_per_lb"]
             add(e, -np.inf, cap)
 
+    # C2 — crop hours in a week cannot exceed what the crew can give. Wages do NOT appear
+    # here: they are already owed. That is the W12 point — the marginal crop hour is free and
+    # is rationed by this row instead of priced in the objective.
+    for w in range(1, N_WEEKS + 1):
+        e = np.zeros(N)
+        for i in range(n_s):
+            if lab_week[i, w]:
+                e[i] = lab_week[i, w]
+        add(e, -np.inf, lab_cap[w])
+
     # C13 — the weekly cash floor. Cumulative cash from week 1 to W must never fall below
     # -(opening cash + credit line). Revenue lands in the week of sale, variable costs in the
     # week they are incurred, fixed costs every week.
@@ -280,7 +318,7 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
                        - st * spec.get("packaging_cost_per_lb", 0.0))
                 for w in range(1, W + 1):
                     e[off_i(p, w)] += net
-            add(e, -(op_cash + cred) + W * fixed_wk, np.inf)
+            add(e, -(op_cash + cred) + W * fixed_wk + wage_wk[1:W + 1].sum(), np.inf)
 
     # land standing in the ground
     for w in range(1, N_WEEKS + 1):
@@ -330,11 +368,13 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
     packaging = sum(sold[(cn, hn)] * CROPS[cn].get("channels", {}).get(hn, {})
                     .get("packaging_cost_per_lb", 0.0) for cn, hn in pairs)
     fixed = fixed_wk * N_WEEKS
+    wages = float(wage_wk[1:].sum())
     ovh = overhead * revenue
-    cost = growing + packaging + fixed + ovh
+    cost = growing + packaging + fixed + ovh + wages
     planted = {k: v for k, v in acres.items() if v > 1e-6}
     return dict(profit=revenue - cost, revenue=revenue, cost=cost, acres=acres,
                 growing=growing, packaging=packaging, fixed=fixed, overhead=ovh,
+                wages=wages, lab_cap=lab_cap, wage_wk=wage_wk, lab_week=lab_week,
                 fixed_weekly=fixed_wk, opening_cash=op_cash, credit_line=cred,
                 var_week=var_week,
                 offered=offered, sold=sold, status=res.status, planted=planted,
@@ -345,7 +385,7 @@ if __name__ == "__main__":
     r = solve()
     print(f"OPTIMUM  profit ${r['profit']:,.0f}")
     print(f"   revenue    {r['revenue']:>12,.0f}")
-    for k in ("growing", "packaging", "fixed", "overhead"):
+    for k in ("growing", "packaging", "fixed", "overhead", "wages"):
         print(f"   {k:<10} {-r[k]:>12,.0f}")
     print(f"   plants {r['n_planted']} of {r['n_offered']} successions the app offers")
     print("\nacres:")

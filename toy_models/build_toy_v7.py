@@ -1,5 +1,5 @@
 """
-build_toy_v6.py — generates the CASH toy model workbook (a MILP).
+build_toy_v7.py — generates the LABOUR toy model workbook (a MILP).
 
 v5 closes the two gaps the grower found in v4, both of which were DECISION VARIABLES rather
 than cost lines:
@@ -39,7 +39,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.formatting.rule import CellIsRule
 
 from farm_v2.utils.calendar import harvest_weeks_of
-import toy_v6_lp as LP
+import toy_v7_lp as LP
 
 CROP_NAMES = LP.CROP_NAMES
 crops = LP.CROPS
@@ -110,10 +110,16 @@ def week_header(r, note=""):
     return r + 1
 
 
-def constraint_triplet(r, label, lhs, cap_ref, fill, note):
+def constraint_triplet(r, label, lhs, cap_ref, fill, note, fmt="0.0"):
+    """cap_ref may be a fixed cell ("$B$5") or a callable w -> reference.
+
+    Labour is the first limit on this sheet that VARIES BY WEEK — the crew changes size as the
+    seasonal crews come and go — so a single capacity cell cannot express it.
+    """
+    _cap = cap_ref if callable(cap_ref) else (lambda w: cap_ref)
     put(r, 1, label, font=F_BOLD, fill=fill); put(r, 2, "used", font=F_NOTE)
     for w in range(1, 53):
-        put(r, wcol(w), lhs(w), fmt="0.0", fill=fill)
+        put(r, wcol(w), lhs(w), fmt=fmt, fill=fill)
     used = r; r += 1
     put(r, 1, "", font=F_BOLD)
     for w in range(1, 53):
@@ -121,14 +127,14 @@ def constraint_triplet(r, label, lhs, cap_ref, fill, note):
     r += 1
     put(r, 1, "  limit", font=F_BOLD); put(r, 2, "cap", font=F_NOTE)
     for w in range(1, 53):
-        put(r, wcol(w), f"={cap_ref}", fmt="0.0")
+        put(r, wcol(w), f"={_cap(w)}", fmt=fmt)
     r += 1
     put(r, 1, "  room left", font=F_SMALL)
     for w in range(1, 53):
-        put(r, wcol(w), f"={cap_ref}-{wl(w)}{used}", fmt="0.0")
+        put(r, wcol(w), f"={_cap(w)}-{wl(w)}{used}", fmt=fmt)
     head = r; r += 1
     put(r, 1, note, font=F_NOTE); r += 2
-    for rng, op, f in ((head, "lessThan", ["0"]), (used, "greaterThan", [cap_ref])):
+    for rng, op, f in ((head, "lessThan", ["0"]), (used, "greaterThan", [_cap(1)])):
         ws.conditional_formatting.add(f"{wl(1)}{rng}:{LAST}{rng}", CellIsRule(
             operator=op, formula=f, fill=PatternFill("solid", fgColor="FFC7CE"),
             font=Font(color="9C0006", bold=True)))
@@ -147,7 +153,7 @@ except Exception:
 _BUILT = _dt.datetime.now().strftime("%Y-%m-%d %H:%M")
 
 r = 1
-put(r, 1, "FARM TOY MODEL — v6: real costs and the cash floor", font=F_TITLE)
+put(r, 1, "FARM TOY MODEL — v7: labour", font=F_TITLE)
 put(r, 4, f"BUILT {_BUILT}   (from source at {_SHA})", font=F_NOTE)
 r += 1
 put(r, 1, "YELLOW = you type.  GREEN = the solver writes.  BLUE = the solver's plant/don't-plant "
@@ -245,6 +251,33 @@ for cname in CROP_NAMES:
         pair_row[(cname, hname)] = r; r += 1
 r += 1
 
+# --- 3b. the crew ---
+put(r, 1, "3b — THE CREW", font=F_H1); r += 1
+for j, h in enumerate(["Position", "Count", "Type", "Wage", "Hours/wk", "Field time %",
+                       "From wk", "To wk"]):
+    put(r, 1 + j, h, font=F_BOLD, fill=HDR_FILL, border=True)
+r += 1
+ROW_CREW = r
+for e in LP.PAYLOAD.get("employees", []):
+    put(r, 1, e["position"], border=True)
+    put(r, 2, e["count"], fill=IN_FILL, fmt="0", border=True)
+    put(r, 3, e["type"], border=True)
+    put(r, 4, e["wage"], fill=IN_FILL, fmt="$#,##0", border=True)
+    put(r, 5, e["hours_per_week"], fill=IN_FILL, fmt="0", border=True)
+    put(r, 6, e.get("field_time_pct", 100), fill=IN_FILL, fmt="0", border=True)
+    put(r, 7, e.get("start_week", 1), fill=IN_FILL, fmt="0", border=True)
+    put(r, 8, e.get("end_week", 52), fill=IN_FILL, fmt="0", border=True)
+    r += 1
+ROW_CREW_END = r - 1
+put(r, 1, "Payroll load %", font=F_BOLD)
+put(r, 2, LP.PAYLOAD.get("payroll_load_pct", 0.0), fill=IN_FILL, fmt="0%", border=True)
+ROW_LOAD = r
+put(r, 3, "employer taxes, workers' comp, benefits — on top of every wage", font=F_NOTE); r += 1
+put(r, 1, "A salary wage is $/YEAR; hourly and seasonal are $/HOUR. 'Field time %' is the share "
+          "of paid hours available to the crops —", font=F_NOTE); r += 1
+put(r, 1, "the rest is admin and maintenance. It reduces CAPACITY without reducing the WAGE.",
+    font=F_NOTE); r += 2
+
 # --- 4. the planting calendar: EVERY succession the app offers ---
 put(r, 1, f"4 — THE PLANTING CALENDAR   ({len(SUCCS)} possible plantings — the solver picks)",
     font=F_H1); r += 1
@@ -306,6 +339,43 @@ land_lhs = lambda w: (f"=SUMPRODUCT(({wl(w)}${ROW_SUCC}:{wl(w)}${ROW_SUCC_END}<>
 r, ROW_LANDUSED, _ = constraint_triplet(
     r, "LAND in the ground", land_lhs, f"$B${ROW_LAND}", None,
     "   Acres standing that week, summed across every planting the solver chose.")
+
+# ---- LABOUR: what the crops need against what the crew can give (the app's C2) ----
+r = week_header(r, "hours")
+CREWROWS = f"$B${ROW_CREW}:$B${ROW_CREW_END}"
+put(r, 1, "Crew capacity", font=F_BOLD); put(r, 2, "hrs", font=F_NOTE)
+for w in range(1, 53):
+    # every crew whose window covers this week: count x hours x field-time share
+    put(r, wcol(w),
+        f'=SUMPRODUCT(($G${ROW_CREW}:$G${ROW_CREW_END}<={w})*($H${ROW_CREW}:$H${ROW_CREW_END}>={w})'
+        f'*{CREWROWS}*$E${ROW_CREW}:$E${ROW_CREW_END}*$F${ROW_CREW}:$F${ROW_CREW_END}/100)',
+        fmt="#,##0")
+ROW_LABCAP = r; r += 1
+put(r, 1, "Wage bill this week", font=F_BOLD); put(r, 2, "$", font=F_NOTE)
+for w in range(1, 53):
+    # ⚠️ OWED WHETHER OR NOT THE CROPS NEED THEM (the app's W12). This is why no crop carries a
+    # per-acre labour charge anywhere on the sheet: the marginal crop hour is FREE, and it is
+    # rationed by the capacity row above rather than priced in the objective.
+    put(r, wcol(w),
+        f'=SUMPRODUCT(($G${ROW_CREW}:$G${ROW_CREW_END}<={w})*($H${ROW_CREW}:$H${ROW_CREW_END}>={w})'
+        f'*{CREWROWS}*IF($C${ROW_CREW}:$C${ROW_CREW_END}="salary",'
+        f'$D${ROW_CREW}:$D${ROW_CREW_END}/52,$D${ROW_CREW}:$D${ROW_CREW_END}'
+        f'*$E${ROW_CREW}:$E${ROW_CREW_END}))*(1+$B${ROW_LOAD})',
+        fmt="#,##0")
+ROW_WAGEWK = r; r += 1
+put(r, 1, "   The wage bill has a SHAPE. Flattening it to an annual average understated the "
+          "app's own cash floor by $115,615.", font=F_NOTE); r += 2
+
+r = week_header(r, "hours")
+lab_lhs = lambda w: "=" + "+".join(
+    f'SUMPRODUCT(({CROPCOL}="{n}")*({wl(w)}${ROW_SUCC}:{wl(w)}${ROW_SUCC_END}="{ph}")*{SR})'
+    f'*{crops[n].get("labor_" + key, 0.0)}'
+    for n in CROP_NAMES for ph, key in (("P", "plant"), ("G", "grow"), ("H", "harv"))
+    if crops[n].get("labor_" + key, 0.0))
+r, ROW_LABUSED, _ = constraint_triplet(
+    r, "CROP HOURS needed", lab_lhs, lambda w: f"{wl(w)}${ROW_LABCAP}", None,
+    "   Hours the crops need that week, against what the crew can give. The app's C2 — and on "
+    "this farm it is the constraint that binds hardest.", fmt="#,##0")
 
 crop_block = {}
 for name in CROP_NAMES:
@@ -533,10 +603,14 @@ put(r, 1, "  overhead", font=F_SMALL); put(r, 2, "$", font=F_NOTE)
 for w in range(1, 53):
     put(r, wcol(w), f"={wl(w)}{R_REVWK}*$B${ROW_OVH}", fmt="#,##0")
 R_OVHWK = r; r += 1
+put(r, 1, "  wages", font=F_SMALL); put(r, 2, "$", font=F_NOTE)
+for w in range(1, 53):
+    put(r, wcol(w), f"={wl(w)}{ROW_WAGEWK}", fmt="#,##0")
+R_WAGEWK = r; r += 1
 put(r, 1, "NET CASH this week", font=F_BOLD); put(r, 2, "$", font=F_NOTE)
 for w in range(1, 53):
     put(r, wcol(w), f"={wl(w)}{R_REVWK}-{wl(w)}{R_PKGWK}-{wl(w)}{R_GROWWK}"
-                    f"-{wl(w)}{R_FIXWK}-{wl(w)}{R_OVHWK}", fmt="#,##0")
+                    f"-{wl(w)}{R_FIXWK}-{wl(w)}{R_OVHWK}-{wl(w)}{R_WAGEWK}", fmt="#,##0")
 R_NETWK = r; r += 2
 
 r = week_header(r, "$")
@@ -583,7 +657,7 @@ put(r, 2, "=" + "+".join(
     f"*$I${pair_row[(n,h)]}" for n in CROP_NAMES for h in CH_NAMES), fmt="$#,##0", font=F_BOLD)
 ROW_REV = r; r += 1
 for _lab, _row in (("Growing cost", R_GROWWK), ("Packaging", R_PKGWK),
-                   ("Fixed cost", R_FIXWK), ("Overhead", R_OVHWK)):
+                   ("Fixed cost", R_FIXWK), ("Overhead", R_OVHWK), ("Wages", R_WAGEWK)):
     put(r, 1, _lab, font=F_BOLD)
     put(r, 2, f"=SUM({wl(1)}{_row}:{LAST}{_row})", fmt="$#,##0", font=F_BOLD)
     if _lab == "Growing cost":
@@ -591,6 +665,8 @@ for _lab, _row in (("Growing cost", R_GROWWK), ("Packaging", R_PKGWK),
         ROW_COST = r
     if _lab == "Fixed cost":
         put(r, 3, "owed all 52 weeks whatever you plant", font=F_NOTE)
+    if _lab == "Wages":
+        put(r, 3, "committed — owed whether or not the crops need the hours", font=F_NOTE)
     r += 1
 put(r, 1, "PROFIT  (the objective)", font=F_BOLD, fill=DEC_FILL)
 put(r, 2, f"=B{ROW_REV}-SUM(B{ROW_COST}:B{r-1})", fmt="$#,##0", font=F_BOLD, fill=DEC_FILL)
@@ -649,6 +725,8 @@ recipe += [
     ("Constraint — ambient store", f"${wl(1)}${pool_rows['Ambient']['used']}:"
      f"${LAST}${pool_rows['Ambient']['used']}  <=  $B${ROW_AMBCAP}", ""),
     ("Constraint — land", f"${wl(1)}${ROW_LANDUSED}:${LAST}${ROW_LANDUSED}  <=  $B${ROW_LAND}", ""),
+    ("Constraint — CROP HOURS <= crew", f"${wl(1)}${ROW_LABUSED}:${LAST}${ROW_LABUSED}  <=  "
+     f"${wl(1)}${ROW_LABCAP}:${LAST}${ROW_LABCAP}", "the app's C2"),
     ("Constraint — CASH FLOOR", f"${wl(1)}${R_CUM}:${LAST}${R_CUM}  >=  "
      f"${wl(1)}${R_FLOOR}:${LAST}${R_FLOOR}", "the app's C13"),
 ]
@@ -674,6 +752,10 @@ NUMS = {
     "{GROW}": f"${_OPT['growing']:,.0f}", "{PKG}": f"${_OPT['packaging']:,.0f}",
     "{FIXED}": f"${_OPT['fixed']:,.0f}", "{OVH}": f"${_OPT['overhead']:,.0f}",
     "{FIXWK}": f"${_OPT['fixed_weekly']:,.0f}",
+    "{WAGES}": f"${_OPT['wages']:,.0f}",
+    "{WINTERWK}": f"${_OPT['wage_wk'][1]:,.0f}", "{PEAKWK}": f"${max(_OPT['wage_wk']):,.0f}",
+    "{PEAKCAP}": f"{max(_OPT['lab_cap']):,.0f}", "{WINTERCAP}": f"{min(_OPT['lab_cap'][1:]):,.0f}",
+    "{V6_PROFIT}": "$1,654,922",
     "{MARGIN}": f"{_OPT['profit'] / _OPT['revenue'] * 100:.1f}%",
     "{V5_PROFIT}": "$2,384,231",
     "{N_PLANTED}": str(_OPT["n_planted"]), "{N_OFFERED}": str(_OPT["n_offered"]),
@@ -687,12 +769,47 @@ NUMS = {
     "{OBJ}": f"B{ROW_OBJ}",
 }
 readme = [
- ("Farm toy model — v6: REAL COSTS AND THE CASH FLOOR", F_TITLE),
+ ("Farm toy model — v7: LABOUR", F_TITLE),
  (f"BUILT {_BUILT}   (from source at commit {_SHA})", F_NOTE),
  ("If that timestamp is older than the change you are looking for, you have a stale copy —", F_NOTE),
  ("close the file and re-open it from WSL rather than from a recent-files list.", F_NOTE),
  ("", None),
- ("WHAT v6 ADDS — real costs, and the cash floor", F_H1),
+ ("WHAT v7 ADDS — labour, which is TWO things at once", F_H1),
+ ("", None),
+ ("1. A COMMITTED COST. Every listed worker is paid for their stated hours whether or not the", F_BOLD),
+ ("   crops need them. So there is NO per-acre labour charge anywhere on this sheet — the", None),
+ ("   marginal crop hour is FREE, and it is rationed by capacity instead of priced. That is the", None),
+ ("   app's W12, and it is the single largest correction the real model has ever made.", None),
+ ("", None),
+ ("2. A CAPACITY LIMIT. Crop hours in a week cannot exceed what the crew can give. The app's", F_BOLD),
+ ("   C2 — and on this farm it is the constraint that binds hardest, in 22 of 52 weeks.", None),
+ ("", None),
+ ("AND THE WAGE BILL HAS A SHAPE", F_H1),
+ ("     winter {WINTERWK}/wk        peak {PEAKWK}/wk        {WAGES} for the year", F_BOLD),
+ ("     crew capacity {WINTERCAP} hrs/wk in winter, {PEAKCAP} at peak", F_BOLD),
+ ("Flattening that to an annual average understated the app's own cash floor by $115,615, which", None),
+ ("is why it is modelled week by week here rather than as one number.", None),
+ ("", None),
+ ("WHAT IT DOES TO THE ANSWER", F_H1),
+ ("     profit {V6_PROFIT} -> {PROFIT}        net margin {MARGIN}", F_BOLD),
+ ("Revenue falls too — {REV} against v6's $2,558,846 — and that is the important half. Labour", None),
+ ("does not merely TAX the plan, it RESHAPES it: the crew cannot pick everything the ground", None),
+ ("could grow, so acres the land would happily carry are simply not worth planting.", None),
+ ("", None),
+ ("Net margin {MARGIN} is finally in the same postcode as a real diversified-veg farm (5-15%),", None),
+ ("having read 64.7% in v6. Labour was most of the gap.", None),
+ ("", None),
+ ("!! THE FINDING WORTH TAKING AWAY", F_H1),
+ ("Committed wages create a MINIMUM CASH REQUIREMENT that no plan can avoid. This farm owes", None),
+ ("$4,884 a week from January with nothing to sell until spring — $56,676 goes out before a", None),
+ ("dollar comes in. Measured: below roughly $80,000-$100,000 of opening cash plus credit, there", None),
+ ("is NO feasible plan at all. Not a worse plan — none.", None),
+ ("", None),
+ ("And above that threshold profit is IDENTICAL at every cash level. So cash does not shape the", None),
+ ("plan here; it decides whether you may have one. Those are different questions and a single", None),
+ ("profit figure hides which one you are asking.", None),
+ ("", None),
+ ("WHAT v6 ADDED — real costs, and the cash floor", F_H1),
  ("These are one job, not two. A cash curve is meaningless without costs to spend, and v5's", None),
  ("profit was absurd precisely because seed was the only cost it charged.", None),
  ("", None),
@@ -781,6 +898,7 @@ readme = [
  ("       packaging    {PKG}      per lb sold, in the week of sale", None),
  ("       fixed        {FIXED}      {FIXWK} a week, owed whether or not you plant", None),
  ("       overhead     {OVH}      a share of revenue", None),
+ ("       wages        {WAGES}      committed — owed whether the crops need the hours or not", None),
  ("     {N_PLANTED} of {N_OFFERED} plantings used", F_BOLD),
  ("", None),
  ("Computed by solving the same MILP with scipy.milp — the same HiGHS solver your app runs. A", None),
@@ -825,21 +943,29 @@ readme = [
  ("   alone. Now set Garlic's 'Returns to store' to 0.00 and re-solve: the delay becomes a loss", None),
  ("   and the plan changes.", None),
  ("", None),
- ("EXPERIMENT 2 — squeeze the cash.  Set the credit line to 10,000 and opening cash to 10,000,", F_BOLD),
+ ("EXPERIMENT 2 — sack the harvest crew.  Set the Harvest Crew count to 0 and re-solve.", F_BOLD),
+ ("   You save their whole wage bill. Watch what happens to profit anyway: with fewer hours in", None),
+ ("   weeks 14-40 the crops that need picking most cannot be picked, and revenue falls further", None),
+ ("   than the wages saved. Then try the opposite — double their count — and watch profit rise", None),
+ ("   even though payroll rose too. That is the trade a per-acre labour charge cannot express,", None),
+ ("   and it is why the app rations hours with a constraint rather than pricing them.", None),
+ ("", None),
+ ("EXPERIMENT 3 — squeeze the cash.  Set the credit line to 10,000 and opening cash to 10,000,", F_BOLD),
  ("   then re-solve.", F_BOLD),
- ("   Now the floor bites. Watch WHICH plantings it drops: not the least profitable ones, but", None),
+ ("   Below about $100,000 combined there is no feasible plan at all — see above. Just above", None),
+ ("   it, watch WHICH plantings the floor drops: not the least profitable ones, but", None),
  ("   the ones whose costs land earliest relative to their revenue. Garlic goes in around week", None),
  ("   47 and is not sold until week 30 of the following year — nine months of money out before", None),
  ("   a dollar comes back. Cash does not rank crops by margin; it ranks them by TIMING, which no", None),
  ("   column on this sheet shows you.", None),
  ("", None),
- ("EXPERIMENT 3 — drop the minimum acreage.  Set every 'Min acres if planted' in the crop", F_BOLD),
+ ("EXPERIMENT 4 — drop the minimum acreage.  Set every 'Min acres if planted' in the crop", F_BOLD),
  ("   table to 0 and re-solve.", F_BOLD),
  ("   Expect {RELAX_PROFIT} and {RELAX_N} plantings. The extra profit is real but the plan is", None),
  ("   not: it plants fractions of an acre no one would drive a tractor out for. This is what", None),
  ("   the binaries are FOR, and it is why the app carries them.", None),
  ("", None),
- ("EXPERIMENT 4 — take away the cooler.  Set the cold store to 40 m3 and re-solve.", F_BOLD),
+ ("EXPERIMENT 5 — take away the cooler.  Set the cold store to 40 m3 and re-solve.", F_BOLD),
  ("   Watch WHICH WEEKS it abandons, not just which crop. With a full calendar it can retreat", None),
  ("   to a planting pattern that keeps the cooler under its ceiling — an answer v4 could not", None),
  ("   even represent.", None),
@@ -864,7 +990,7 @@ readme = [
  ("configurations. Every input is perturbed to prove it propagates. No number is frozen. And the", None),
  ("same MILP is solved with scipy.milp, its answer written into the decision cells, and the", None),
  ("sheet's own PROFIT cell must reproduce the optimum exactly.", None),
- ("     Run it yourself:   .venv/bin/python toy_models/verify_toy_v6.py", None),
+ ("     Run it yourself:   .venv/bin/python toy_models/verify_toy_v7.py", None),
 ]
 row_i = 1
 for text, font in readme:
@@ -874,7 +1000,7 @@ for text, font in readme:
     if font: c.font = font
     row_i += 1
 
-out = REPO / "toy_models" / "farm_toy_v6_cash.xlsx"
+out = REPO / "toy_models" / "farm_toy_v7_labour.xlsx"
 wb.save(out)
 print(f"wrote {out}")
 print(f"  successions offered : {len(SUCCS)}")

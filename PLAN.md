@@ -501,7 +501,7 @@ Carry forward:
 - Mutations verified: shipping only 5 successions (the exact v4 defect) is caught by **two**
   independent guards; a decorative min-acreage helper by a third.
 
-**✅ v6 — REAL COSTS AND THE CASH FLOOR. DONE 2026-08-30.** `farm_toy_v6_cash.xlsx` +
+**✅ v6 — REAL COSTS AND THE CASH FLOOR. DONE 2026-08-30. SUPERSEDED by v7** (files deleted).** `farm_toy_v6_cash.xlsx` +
 `build_toy_v6.py` + `toy_v6_lp.py` + `verify_toy_v6.py`. **Supersedes v5.** Costs are now TIMED —
 seed in the planting week, fertiliser and fuel every week in the ground at that phase's rate,
 packaging per lb in the week of sale — plus weekly fixed cost and overhead, and the app's C13
@@ -533,9 +533,48 @@ Carry forward:
   v5, harmless while every caller named the three crops, and surfaced the moment a test iterated
   blocks instead of naming them. **Now requires the first token to be a crop.**
 
-**Next: v7 — labour.** Committed weekly wages with a seasonal crew profile (the W12 shape: the
-shipped farm owes $4,884/wk in winter and $24,484/wk once the crews start, and flattening it
-understated the cash floor by $115,615). That is what makes v6's cash curve real.
+**✅ v7 — LABOUR. DONE 2026-08-30.** `farm_toy_v7_labour.xlsx` + `build_toy_v7.py` +
+`toy_v7_lp.py` + `verify_toy_v7.py`. **Supersedes v6.** The crew roster is the app's own (1
+manager, 2 operators, 12 seasonal field crew wk 10-42, 8 harvest crew wk 14-40, 25% payroll
+load), and it reproduces the app's documented figures **exactly** — $4,884/wk winter, $24,484/wk
+peak, **$855,150** for the year. That equality is the check that this is the app's crew model and
+not a paraphrase.
+
+Labour is **two things at once**, which is the lesson: a **committed cost** (W12 — no per-acre
+labour charge anywhere; the marginal crop hour is free) and a **capacity limit** (C2).
+
+| | v6 | v7 |
+|---|---:|---:|
+| profit | $1,654,922 | **$389,170** |
+| revenue | $2,558,846 | **$1,912,071** |
+| net margin | 64.7% | **20.4%** |
+
+⭐ **Revenue FALLS, and that is the important half.** Labour does not merely tax the plan, it
+RESHAPES it — C2 binds in **22 of 52 weeks**, peak crop hours land exactly on the 908 h/wk
+ceiling, and acres the land would happily carry are not worth planting because nobody can pick
+them. Net margin finally lands in the same postcode as a real diversified-veg farm.
+
+⭐ **COMMITTED WAGES CREATE A MINIMUM CASH REQUIREMENT NO PLAN CAN AVOID.** $4,884/wk from January
+with nothing to sell until spring = **$56,676 out before a dollar comes in**. Measured: below
+roughly **$80–100k** of opening cash plus credit there is **NO feasible plan at all** — not a
+worse one, none. And above that threshold profit is IDENTICAL at every cash level. **Cash decides
+whether you may have a plan; it does not shape the one you get.** Those are different questions
+and a single profit figure hides which is being asked.
+
+Carry forward:
+- ⚠️ The tight-cash verification case from v6 ($10k+$10k) became INFEASIBLE — correctly. Retuned
+  to $50k+$50k, the tightest level that still solves, where the deepest position lands at
+  −$48,099 against a −$50,000 floor.
+- ⚠️ **The dead-input guard fired a FALSE POSITIVE** on the crew table: those cells are read only
+  as RANGES (`$B$27:$B$30`), and the guard matched individual references only, so every row
+  between the corners looked dead. Now it checks range containment. **Naming a false defect is as
+  damaging as missing a real one — it teaches you to ignore the guard.**
+- Mutations verified: charging labour per acre (undoing W12) and flattening crew capacity to a
+  constant both die, the second on 6 verifier checks as well as its own guard.
+
+**Next: v8 — the labour FLEX layer** (overtime and hired hands, priced separately per W15), which
+is what turns labour from a constraint into a decision. Then the toy has every mechanism the app
+has except water, interest and the wizard.
 
 Original ordering note: ~~demand caps~~ (done
 in v3), then cash (C13, the one with no Excel ancestor at all), then labour (committed vs bought),

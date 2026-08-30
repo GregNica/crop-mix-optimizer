@@ -1,7 +1,7 @@
 """
 The toy model's numbers must not drift from the app's.
 
-`toy_models/farm_toy_v6_cash.xlsx` exists to be an INDEPENDENT check on the app's
+`toy_models/farm_toy_v7_labour.xlsx` exists to be an INDEPENDENT check on the app's
 arithmetic — a grower opens it, changes an acre figure and verifies by hand what the solver
 claims. That only works while its crop constants and its planting calendar are the app's.
 Nothing about a spreadsheet fails loudly when a crop's m3/lb changes underneath it; it just
@@ -17,7 +17,7 @@ So this pins two things:
      its harvest week was reported as needing no cooler at all), it is the one thing this toy
      exists to teach, and it is invisible in a rendered spreadsheet — the cells look identical.
 
-Regenerate with:  python3 toy_models/build_toy_v6.py
+Regenerate with:  python3 toy_models/build_toy_v7.py
 """
 import json
 import re
@@ -28,7 +28,7 @@ from tests.helpers import REPO
 
 openpyxl = pytest.importorskip("openpyxl")
 
-WORKBOOK = REPO / "toy_models" / "farm_toy_v6_cash.xlsx"
+WORKBOOK = REPO / "toy_models" / "farm_toy_v7_labour.xlsx"
 TOY_CROPS = ("Spinach", "Kale", "Garlic")
 # v5 carries EVERY succession the app offers. A hand-picked subset is the exact defect it
 # exists to remove, so the list is derived, never typed.
@@ -45,7 +45,7 @@ PICKED = [s["name"] for s in _all_successions()]
 @pytest.fixture(scope="module")
 def model():
     if not WORKBOOK.exists():
-        pytest.skip(f"{WORKBOOK.name} not built; run toy_models/build_toy_v6.py")
+        pytest.skip(f"{WORKBOOK.name} not built; run toy_models/build_toy_v7.py")
     return openpyxl.load_workbook(WORKBOOK)["Model"]
 
 
@@ -448,7 +448,7 @@ def test_no_derived_value_is_frozen(model):
 
 
 def test_the_sheet_actually_calculates_correctly():
-    """Run toy_models/verify_toy_v6.py — it CALCULATES the workbook.
+    """Run toy_models/verify_toy_v7.py — it CALCULATES the workbook.
 
     Everything above reads formulas as text, and text can be well-formed and wrong. This shells
     out to the venv because `formulas` cannot be installed into the system interpreter pytest
@@ -466,7 +466,7 @@ def test_the_sheet_actually_calculates_correctly():
     if probe.returncode != 0:
         pytest.skip("`formulas` not installed in .venv — run: .venv/bin/pip install formulas")
 
-    r = subprocess.run([str(venv), str(REPO / "toy_models" / "verify_toy_v6.py")],
+    r = subprocess.run([str(venv), str(REPO / "toy_models" / "verify_toy_v7.py")],
                        capture_output=True, text=True, cwd=REPO, timeout=600)
     assert r.returncode == 0, (
         "the toy workbook does not calculate correctly:\n"
@@ -495,6 +495,10 @@ def test_no_input_is_wired_to_nothing(model):
     from openpyxl.utils import get_column_letter
     blob = "\n".join(c.value for row in model.iter_rows() for c in row
                       if isinstance(c.value, str) and c.value.startswith("="))
+    from openpyxl.utils import column_index_from_string
+    _ranges = [(column_index_from_string(a), int(b), column_index_from_string(cc), int(d))
+               for a, b, cc, d in re.findall(
+                   r"\$?([A-Z]{1,2})\$?(\d+):\$?([A-Z]{1,2})\$?(\d+)", blob)]
     dead = []
     for row in model.iter_rows():
         for c in row:
@@ -509,6 +513,13 @@ def test_no_input_is_wired_to_nothing(model):
             if re.search(rf"(?<![A-Za-z0-9$_]){re.escape(col)}\$?{c.row}(?![0-9])",
                          blob.replace("$", "")) or \
                re.search(rf"\${re.escape(col)}\${c.row}(?![0-9])", blob):
+                continue
+            # ...and a cell can also be read as part of a RANGE, which names only its corners.
+            # The crew table is the first input block referenced purely as $B$27:$B$30, so every
+            # row between the corners looked dead. Naming a false defect is as damaging as
+            # missing a real one — it teaches you to ignore the guard.
+            if any(c1 <= c.column <= c2 and r1 <= c.row <= r2
+                   for c1, r1, c2, r2 in _ranges):
                 continue
             hdr = _table_header_above(model, c.row)
             dead.append(f"{c.coordinate} = "
@@ -566,3 +577,46 @@ def test_costs_land_in_the_week_they_are_paid(model):
         sold_rows = [seq[k] for k in seq if k.endswith("— SOLD")]
         assert any(f"{_wl(model, 20)}{r}" in pkg for r in sold_rows), (
             f"{crop}: packaging is not charged on the pounds SOLD that week")
+
+
+def test_labour_is_committed_not_charged_per_acre(model):
+    """W12, the app's largest single correction, reproduced as a structural guard.
+
+    Every listed worker is paid for their stated hours whether or not the crops need them, so
+    wages are a WEEKLY row and no crop carries a per-acre labour charge. If a labour cost ever
+    appears inside a crop's growing-cost formula, the marginal crop hour stops being free and
+    the model is back to the thing W12 fixed.
+    """
+    rows = _labelled_rows(model)
+    for lab in ("Crew capacity", "Wage bill this week", "CROP HOURS needed"):
+        assert lab in rows, f"the labour section is missing {lab!r}"
+
+    # the wage bill must read the crew table, not a typed number
+    w2 = _wl(model, 2)
+    wage = model.cell(row=rows["Wage bill this week"][0], column=_wc(model, 2)).value
+    assert "SUMPRODUCT" in wage and "52" in wage, (
+        f"the wage bill must be computed from the crew (salary/52 vs hourly x hours), got {wage!r}")
+
+    # and no crop's growing cost may include labour
+    for crop, seq in _crop_blocks(model).items():
+        f = model.cell(row=seq["Growing cost this week"], column=_wc(model, 20)).value
+        assert "labor" not in f.lower(), (
+            f"{crop}: a labour term has appeared in the per-acre growing cost — wages are "
+            f"committed (W12), so the marginal crop hour must stay free")
+
+
+def test_crew_capacity_varies_by_week(model):
+    """The seasonal crews come and go, so a single capacity number cannot express it.
+
+    Flattening the wage profile understated the app's own cash floor by $115,615; the capacity
+    side has the same shape and the same trap.
+    """
+    rows = _labelled_rows(model)
+    cap = rows["Crew capacity"][0]
+    f1 = model.cell(row=cap, column=_wc(model, 1)).value
+    f20 = model.cell(row=cap, column=_wc(model, 20)).value
+    assert f1 != f20, "crew capacity is identical in week 1 and week 20 — the seasonal windows "\
+                      "are not being read"
+    for f in (f1, f20):
+        assert "SUMPRODUCT" in f and "<=" in f and ">=" in f, (
+            f"capacity must test each crew's start/end week, got {f!r}")

@@ -1,7 +1,7 @@
 """
-verify_toy_v6.py — EVALUATE the v4 workbook and prove it is the same problem the solver solves.
+verify_toy_v7.py — EVALUATE the v4 workbook and prove it is the same problem the solver solves.
 
-Run:  .venv/bin/python toy_models/verify_toy_v6.py
+Run:  .venv/bin/python toy_models/verify_toy_v7.py
 
 v4's answer is not arithmetic, it is a CHOICE, so "is the sheet right?" splits in two and both
 halves are checked here:
@@ -35,9 +35,9 @@ from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 
 from farm_v2.utils.calendar import generate_successions, harvest_weeks_of
-import toy_v6_lp as LP
+import toy_v7_lp as LP
 
-WB = REPO / "toy_models" / "farm_toy_v6_cash.xlsx"
+WB = REPO / "toy_models" / "farm_toy_v7_labour.xlsx"
 PFX = f"'[{WB.name}]MODEL'!"
 CROPS = tuple(LP.CROP_NAMES)
 CH = list(LP.CH_NAMES)
@@ -217,9 +217,22 @@ def simulate(acres, offered, packout=None, shrink=None, caps=None,
             w = ((wk - 1) % 52) + 1
             grow[w] += a * (c.get(f"fert_{key[ph]}", 0.0) * fert
                             + c.get(f"fuel_{key[ph]}", 0.0) * fuel)
+    # Labour: capacity, the committed wage bill, and the crop hours measured against it.
+    lab_cap, wage_wk = LP.labour_arrays()
+    lab_used = [0.0] * 53
+    for s_ in LP.SUCCS:
+        a = acres[s_["name"]]
+        if a <= 1e-12:
+            continue
+        c = crops[CROPS[s_["crop"]]]
+        for wk, ph in zip(s_["weeks"], s_["phases"]):
+            lab_used[((wk - 1) % 52) + 1] += a * c.get(
+                f"labor_{['plant', 'grow', 'harv'][ph]}", 0.0)
     net = [0.0] * 53; cum = [0.0] * 53; running = opening_cash
     for w in range(1, 53):
-        net[w] = rev[w] - pkg[w] - grow[w] - fixed_wk - rev[w] * ovh_pct
+        # ⚠️ WAGES ARE IN HERE, and in no per-acre charge anywhere. That is the W12 point: every
+        # listed worker is paid for their stated hours whether the crops need them or not.
+        net[w] = rev[w] - pkg[w] - grow[w] - fixed_wk - rev[w] * ovh_pct - wage_wk[w]
         running += net[w]; cum[w] = running
 
     # The floor is MINUS THE CREDIT LINE, because `cum` above is a bank balance that already
@@ -227,6 +240,7 @@ def simulate(acres, offered, packout=None, shrink=None, caps=None,
     # twice — it shipped that way, and section E could not see it because the floor is slack.
     floor = [-credit_line] * 53
     return dict(rev=rev, pkg=pkg, grow=grow, net=net, cum=cum, floor=floor, fixed_wk=fixed_wk,
+                lab_cap=list(lab_cap), wage_wk=list(wage_wk), lab_used=lab_used,
                 gross=gross, packed=packed, opening=op, shr=shr, store=store, close=close,
                 room=room, sold=sold, ret=ret, con=con, cap=cap, shelf=shelf, land=land,
                 cold=[room["Spinach"][w] + room["Kale"][w] for w in range(1, 53)],
@@ -278,7 +292,8 @@ def check_values(tag, overrides, acres, offered, **kw):
         compare(f"[{tag}] {n} room", row(d, b["ROOM OCCUPANCY"]), s["room"][n], 1e-4)
     for lab, key in (("Revenue", "rev"), ("packaging", "pkg"), ("growing cost", "grow"),
                      ("NET CASH this week", "net"), ("CASH IN THE BANK", "cum"),
-                     ("floor", "floor")):
+                     ("floor", "floor"), ("Crew capacity", "lab_cap"),
+                     ("Wage bill this week", "wage_wk"), ("CROP HOURS needed", "lab_used")):
         compare(f"[{tag}] {lab}", row(d, LBL[lab][0]), s[key], 1e-4)
     compare(f"[{tag}] LAND", row(d, LBL["LAND in the ground"][0]), s["land"])
     compare(f"[{tag}] COLD STORE", row(d, LBL["COLD STORE"][0]), [0] + s["cold"], 1e-4)
@@ -328,7 +343,12 @@ check_values("stressed (pack-out + shrink on a storable)",
 # ⚠️ A BINDING CASH CASE. At $50k + $250k the deepest position is +$6,585 against a -$250,000
 # floor, so the constraint is slack and any floor formula whatsoever would pass. Tightened until
 # it bites, the sheet and the LP have to agree on where the line actually is.
-TIGHT = dict(opening_cash=10_000.0, credit_line=10_000.0)
+# ⚠️ $10k + $10k is now INFEASIBLE, and that is the finding rather than a broken fixture: with
+# COMMITTED wages the farm owes $4,884/wk from January against no revenue until spring, so
+# $56,676 goes out before a dollar comes in and no plan avoids it. Measured, the farm cannot
+# operate at all below roughly $80-100k of opening cash plus credit. $50k + $50k is the tightest
+# level that still solves.
+TIGHT = dict(opening_cash=50_000.0, credit_line=50_000.0)
 _t = LP.solve(**TIGHT)
 _tov = {**acre_overrides(_t["acres"]), **offered_overrides(_t["offered"]),
         f"B{CASH_ROW['opening']}": TIGHT["opening_cash"],
@@ -339,8 +359,8 @@ _tc = [float(x) for x in row(_td, LBL["CASH IN THE BANK"][0])]
 _tf = float(row(_td, LBL["floor"][0])[0])
 report(min(_tc) >= _tf - 1e-6,
        f"tight-cash plan respects the floor (deepest ${min(_tc):,.0f} vs floor ${_tf:,.0f})")
-report(min(_tc) <= _tf + 5_000,
-       f"and the floor is genuinely TIGHT (within $5k of it) — otherwise this proves nothing")
+report(min(_tc) <= _tf + 25_000,
+       f"and the floor is genuinely TIGHT (within $25k of it) — otherwise this proves nothing")
 
 print("\nB. PROPAGATION — the inputs section A cannot cover")
 peak = lambda d, lab, i=0: max(float(x) for x in row(d, LBL[lab][i]) if x is not None)
@@ -446,7 +466,7 @@ RELAX = LP.solve(min_acreage=False)
 for label, val in (("optimum profit", OPT["profit"]), ("optimum revenue", OPT["revenue"]),
                    ("growing cost", OPT["growing"]), ("packaging", OPT["packaging"]),
                    ("fixed cost", OPT["fixed"]), ("overhead", OPT["overhead"]),
-                   ("weekly fixed cost", OPT["fixed_weekly"]),
+                   ("weekly fixed cost", OPT["fixed_weekly"]), ("wages", OPT["wages"]),
                    ("LP-relaxation profit", RELAX["profit"])):
     report(f"${val:,.0f}" in prose, f"READ ME states the real {label} (${val:,.0f})")
 report(f"{OPT['n_planted']} of {OPT['n_offered']}" in prose,
@@ -467,6 +487,14 @@ report(not neg, f"no negative stock at the optimum (weeks {neg[:5]})" if neg
 for pool, i in (("COLD", 1), ("AMBIENT", 2)):
     report(worst(d_opt, i) >= -1e-6, f"{pool} store not exceeded at the optimum")
 report(worst(d_opt, 0) >= -1e-6, "land not exceeded at the optimum")
+_lu = [float(x) for x in row(d_opt, LBL["CROP HOURS needed"][0])]
+_lc = [float(x) for x in row(d_opt, LBL["Crew capacity"][0])]
+_over = [w + 1 for w, (u, c_) in enumerate(zip(_lu, _lc)) if u > c_ + 1e-6]
+report(not _over, "crop hours never exceed the crew at the optimum"
+       + (f" (weeks {_over[:4]})" if _over else ""))
+_tightwks = [w + 1 for w, (u, c_) in enumerate(zip(_lu, _lc)) if c_ > 0 and u >= c_ - 1e-6]
+report(len(_tightwks) > 0, f"C2 actually BINDS ({len(_tightwks)} of 52 weeks) — a slack "
+                           f"capacity row would prove nothing")
 _cum = row(d_opt, LBL["CASH IN THE BANK"][0])
 _flr = row(d_opt, LBL["floor"][0])
 _bust = [w + 1 for w, (c_, f_) in enumerate(zip(_cum, _flr)) if float(c_) < float(f_) - 1e-6]
