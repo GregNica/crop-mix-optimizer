@@ -104,7 +104,7 @@ def defaults(cn, hn):
 
 
 def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
-          fixed_acres=None, min_acreage=True):
+          fixed_acres=None, min_acreage=True, annual_override=None):
     """Maximise revenue - growing cost, as a MILP. Returns a dict of the optimum.
 
     `min_acreage=False` drops the binaries and solves the LP relaxation — useful only to show
@@ -173,6 +173,8 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
     # sold <= weekly ceiling  (an Annual pair gets no weekly row — same as the app)
     for p, (cn, hn) in enumerate(pairs):
         ctype, cval, w0, w1 = cap_spec(cn, hn)
+        if annual_override and (cn, hn) in annual_override:
+            ctype, cval = "Annual", float(annual_override[(cn, hn)])
         st, _ = defaults(cn, hn)
         if ctype == "Annual":
             e = np.zeros(N)

@@ -133,7 +133,7 @@ def row(d, r):
     return [d.get(f"{col(w)}{r}") for w in range(1, 53)]
 
 
-def simulate(acres, offered, packout=None, shrink=None):
+def simulate(acres, offered, packout=None, shrink=None, caps=None):
     """The v4 flow. `offered` is GIVEN — nothing is decided here."""
     packout = packout or {n: 1.00 for n in CROPS}
     shrink = shrink or {n: 0.0 for n in CROPS}
@@ -155,6 +155,7 @@ def simulate(acres, offered, packout=None, shrink=None):
     sold = {(n, h): [0.0] * 53 for n in CROPS for h in CH}
     ret = {(n, h): [0.0] * 53 for n in CROPS for h in CH}
     con = {(n, h): [0.0] * 53 for n in CROPS for h in CH}
+    cap = {(n, h): [0.0] * 53 for n in CROPS for h in CH}
     for n in CROPS:
         for w in range(1, 53):
             op[n][w] = close[n][w - 1] if w > 1 else 0.0
@@ -164,6 +165,12 @@ def simulate(acres, offered, packout=None, shrink=None):
             left = store[n][w]
             for h in CH:
                 st, rt = LP.defaults(n, h)
+                # The ceiling row, computed independently. It was compared against NOTHING —
+                # so the annual running-allowance form (and the weekly season window) had no
+                # test at all, on a sheet whose whole point is that its numbers are checkable.
+                ctype, cval, w0, w1 = (caps or {}).get((n, h), LP.cap_spec(n, h))
+                cap[(n, h)][w] = (cval - sum(sold[(n, h)][1:w]) if ctype == "Annual"
+                                  else (cval if w0 <= w <= w1 else 0.0))
                 o = offered[(n, h)][w - 1]
                 sold[(n, h)][w] = o * st
                 ret[(n, h)][w] = (o - o * st) * rt
@@ -171,7 +178,7 @@ def simulate(acres, offered, packout=None, shrink=None):
                 left -= con[(n, h)][w]
             close[n][w] = left
     return dict(gross=gross, packed=packed, opening=op, shr=shr, store=store, close=close,
-                room=room, sold=sold, ret=ret, con=con, land=land,
+                room=room, sold=sold, ret=ret, con=con, cap=cap, land=land,
                 cold=[room["Spinach"][w] + room["Kale"][w] for w in range(1, 53)],
                 amb=[room["Garlic"][w] for w in range(1, 53)])
 
@@ -212,6 +219,8 @@ def check_values(tag, overrides, acres, offered, **kw):
         compare(f"[{tag}] {n} packed", row(d, b["Packed out -> INTO the store"]), s["packed"][n])
         compare(f"[{tag}] {n} in store", row(d, b["In store this week"]), s["store"][n])
         for h in CH:
+            compare(f"[{tag}] {n}/{h} ceiling",
+                    row(d, b[f"{h} — most you may sell this week"]), s["cap"][(n, h)])
             compare(f"[{tag}] {n}/{h} sold", row(d, b[f"{h} — SOLD"]), s["sold"][(n, h)])
         compare(f"[{tag}] {n} carried out", row(d, b["Stock carried out"]), s["close"][n])
         compare(f"[{tag}] {n} room", row(d, b["ROOM OCCUPANCY"]), s["room"][n], 1e-4)

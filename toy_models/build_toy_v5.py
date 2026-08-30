@@ -294,6 +294,11 @@ for name in CROP_NAMES:
             fill=ANNUAL_FILL if is_annual else fill)
         put(r, 2, "lb", font=F_NOTE)
         R_CAP = r
+        # ⚠️ FORMULAS FILLED IN A SECOND PASS, once R_SOLD is known. They used to be written
+        # here against `R_CAP + 2`, guessing where SOLD would land — and then the annual note
+        # rows were inserted between the two, so the guess pointed at a blank line, the running
+        # allowance summed nothing, and the ceiling never declined. Inert for two commits while
+        # looking right. Never address a row you have not placed yet.
         for w in range(1, 53):
             # WEEKLY pair: the stated figure, inside its season.
             # ANNUAL pair: what is LEFT of the year's allowance. Writing the whole annual figure
@@ -303,10 +308,7 @@ for name in CROP_NAMES:
             #     sold[w] <= annual - sum(sold before w)   for every w
             # is exactly "the year's total <= annual", and it is linear — no MAX() needed,
             # because the constraint itself stops the remainder going negative.
-            weekly = f"IF(AND({w}>=$E${pr},{w}<=$F${pr}),$D${pr},0)"
-            prior = (f"SUM({wl(1)}{R_CAP+2}:{wl(w-1)}{R_CAP+2})" if w > 1 else "0")
-            put(r, wcol(w), f'=IF($C${pr}="Annual",$D${pr}-{prior},{weekly})',
-                fmt="#,##0", fill=fill)
+            put(r, wcol(w), 0, fmt="#,##0", fill=fill)     # placeholder; filled below
         r += 1
         if is_annual:
             put(r, 1, f"   ^ {hname} is an ANNUAL cap ({int(ws.cell(row=pr, column=4).value):,} lb "
@@ -335,6 +337,13 @@ for name in CROP_NAMES:
         for w in range(1, 53):
             put(r, wcol(w), f"={wl(w)}{R_OFF}-{wl(w)}{R_RET}", fmt="#,##0")
         consumed_rows.append(r); r += 1
+
+        # SECOND PASS — now R_SOLD is a fact rather than an offset guess.
+        for w in range(1, 53):
+            weekly = f"IF(AND({w}>=$E${pr},{w}<=$F${pr}),$D${pr},0)"
+            prior = (f"SUM({wl(1)}{R_SOLD}:{wl(w-1)}{R_SOLD})" if w > 1 else "0")
+            put(R_CAP, wcol(w), f'=IF($C${pr}="Annual",$D${pr}-{prior},{weekly})',
+                fmt="#,##0", fill=ANNUAL_FILL if is_annual else fill)
         ch_rows[hname] = dict(cap=R_CAP, off=R_OFF, sold=R_SOLD, ml=R_ML, ret=R_RET, con=r - 1)
 
     put(r, 1, "Stock carried out", font=F_BOLD); put(r, 2, "lb", font=F_NOTE)
