@@ -550,14 +550,24 @@ for w in range(1, 53):
 r += 1
 put(r, 1, "  floor", font=F_BOLD); put(r, 2, "$", font=F_NOTE)
 for w in range(1, 53):
-    put(r, wcol(w), f"=-($B${ROW_OPCASH}+$B${ROW_CREDIT})", fmt="#,##0")
+    # ⚠️ MINUS THE CREDIT LINE, not minus (opening + credit). The row above is a BANK BALANCE
+    # and already starts from opening cash, so flooring it at -(opening+credit) counted the
+    # opening balance twice and allowed the farm $50,000 more overdraft than it has.
+    # The app is consistent the other way: its C13 constrains cumulative NET FLOW, which does
+    # NOT include opening cash, so -(opening+credit) is right there. Two coherent conventions;
+    # this sheet had one of each.
+    put(r, wcol(w), f"=-$B${ROW_CREDIT}", fmt="#,##0")
 R_FLOOR = r; r += 1
 put(r, 1, "  headroom", font=F_SMALL)
 for w in range(1, 53):
     put(r, wcol(w), f"={wl(w)}{R_CUM}-{wl(w)}{R_FLOOR}", fmt="#,##0")
 R_HEAD = r; r += 1
 put(r, 1, "   This is the app's C13. Cash may go NEGATIVE — that is the credit line being "
-          "drawn — but never below the floor.", font=F_NOTE); r += 1
+          "drawn — but never below the floor, which is the line fully drawn.", font=F_NOTE); r += 1
+put(r, 1, "   The app states the same rule the other way round: it constrains cumulative NET "
+          "FLOW (which excludes", font=F_NOTE); r += 1
+put(r, 1, "   opening cash) against -(opening + credit). Both are the same constraint; mixing "
+          "them double-counts the opening balance.", font=F_NOTE); r += 1
 put(r, 1, "   ⚠️ It barely binds here, because the biggest weekly outgoing a real farm has is "
           "PAYROLL, and labour is v7. Do not read this curve as realistic yet.", font=F_NOTE)
 r += 2

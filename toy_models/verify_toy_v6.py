@@ -101,6 +101,13 @@ for r in range(1, ws.max_row + 1):
         CAP_ROW["ambient"] = r
     if a == "Land you have":
         CAP_ROW["land"] = r
+CASH_ROW = {}
+for r in range(1, ws.max_row + 1):
+    a = ws.cell(row=r, column=1).value
+    if a == "Opening cash": CASH_ROW["opening"] = r
+    if a == "Credit line": CASH_ROW["credit"] = r
+assert set(CASH_ROW) == {"opening", "credit"}, f"cash inputs not found: {CASH_ROW}"
+
 SUCC_ROW = {}
 for r in range(1, ws.max_row + 1):
     a, b = ws.cell(row=r, column=1).value, ws.cell(row=r, column=2).value
@@ -215,7 +222,11 @@ def simulate(acres, offered, packout=None, shrink=None, caps=None,
         net[w] = rev[w] - pkg[w] - grow[w] - fixed_wk - rev[w] * ovh_pct
         running += net[w]; cum[w] = running
 
-    return dict(rev=rev, pkg=pkg, grow=grow, net=net, cum=cum, fixed_wk=fixed_wk,
+    # The floor is MINUS THE CREDIT LINE, because `cum` above is a bank balance that already
+    # starts from opening cash. Flooring a balance at -(opening+credit) counts the opening
+    # twice — it shipped that way, and section E could not see it because the floor is slack.
+    floor = [-credit_line] * 53
+    return dict(rev=rev, pkg=pkg, grow=grow, net=net, cum=cum, floor=floor, fixed_wk=fixed_wk,
                 gross=gross, packed=packed, opening=op, shr=shr, store=store, close=close,
                 room=room, sold=sold, ret=ret, con=con, cap=cap, shelf=shelf, land=land,
                 cold=[room["Spinach"][w] + room["Kale"][w] for w in range(1, 53)],
@@ -266,7 +277,8 @@ def check_values(tag, overrides, acres, offered, **kw):
                 row(d, b["Most stock its shelf life allows"]), s["shelf"][n], 1e-4)
         compare(f"[{tag}] {n} room", row(d, b["ROOM OCCUPANCY"]), s["room"][n], 1e-4)
     for lab, key in (("Revenue", "rev"), ("packaging", "pkg"), ("growing cost", "grow"),
-                     ("NET CASH this week", "net"), ("CASH IN THE BANK", "cum")):
+                     ("NET CASH this week", "net"), ("CASH IN THE BANK", "cum"),
+                     ("floor", "floor")):
         compare(f"[{tag}] {lab}", row(d, LBL[lab][0]), s[key], 1e-4)
     compare(f"[{tag}] LAND", row(d, LBL["LAND in the ground"][0]), s["land"])
     compare(f"[{tag}] COLD STORE", row(d, LBL["COLD STORE"][0]), [0] + s["cold"], 1e-4)
@@ -313,18 +325,29 @@ check_values("stressed (pack-out + shrink on a storable)",
               **{f"G{CROP_ROW[n]}": v for n, v in STRESS_SHRINK.items()}},
              STRESS_A, STRESS_OFF, packout=STRESS_PACK, shrink=STRESS_SHRINK)
 
+# ⚠️ A BINDING CASH CASE. At $50k + $250k the deepest position is +$6,585 against a -$250,000
+# floor, so the constraint is slack and any floor formula whatsoever would pass. Tightened until
+# it bites, the sheet and the LP have to agree on where the line actually is.
+TIGHT = dict(opening_cash=10_000.0, credit_line=10_000.0)
+_t = LP.solve(**TIGHT)
+_tov = {**acre_overrides(_t["acres"]), **offered_overrides(_t["offered"]),
+        f"B{CASH_ROW['opening']}": TIGHT["opening_cash"],
+        f"B{CASH_ROW['credit']}": TIGHT["credit_line"]}
+_td = check_values("tight cash (the floor BINDS)", _tov, _t["acres"], _t["offered"],
+                   opening_cash=TIGHT["opening_cash"], credit_line=TIGHT["credit_line"])
+_tc = [float(x) for x in row(_td, LBL["CASH IN THE BANK"][0])]
+_tf = float(row(_td, LBL["floor"][0])[0])
+report(min(_tc) >= _tf - 1e-6,
+       f"tight-cash plan respects the floor (deepest ${min(_tc):,.0f} vs floor ${_tf:,.0f})")
+report(min(_tc) <= _tf + 5_000,
+       f"and the floor is genuinely TIGHT (within $5k of it) — otherwise this proves nothing")
+
 print("\nB. PROPAGATION — the inputs section A cannot cover")
 peak = lambda d, lab, i=0: max(float(x) for x in row(d, LBL[lab][i]) if x is not None)
 total = lambda d, c, r_: sum(float(x) for x in row(d, BLK[c][r_]) if x is not None)
 worst = lambda d, i: min(float(x) for x in row(d, LBL["room left"][i]) if x is not None)
 FM = [h for h in CH if h.startswith("Farmers")][0]
 WS_ = [h for h in CH if h.lower().startswith("wholesale")][0]
-CASH_ROW = {}
-for r in range(1, ws.max_row + 1):
-    a = ws.cell(row=r, column=1).value
-    if a == "Opening cash": CASH_ROW["opening"] = r
-    if a == "Credit line": CASH_ROW["credit"] = r
-assert set(CASH_ROW) == {"opening", "credit"}, f"cash inputs not found: {CASH_ROW}"
 base_cold = peak(d0, "COLD STORE")
 
 BASE_ACRES = acre_overrides(A6)     # v5 ships empty; every run must plant something first

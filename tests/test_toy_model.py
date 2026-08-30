@@ -532,9 +532,20 @@ def test_the_cash_floor_exists_and_is_wired(model):
     assert f"{w1}{rows['CASH IN THE BANK'][0]}" in cum, (
         f"cash-in-the-bank must carry LAST week's balance forward, got {cum!r}")
     assert f"{w2}{rows['NET CASH this week'][0]}" in cum, "it must add this week's net cash"
+    # ⚠️ THE FLOOR IS MINUS THE CREDIT LINE, and must NOT also subtract opening cash.
+    # The row above is a bank BALANCE that already starts from opening cash, so a floor of
+    # -(opening + credit) counts the opening twice and hands the farm an overdraft it does not
+    # have — it shipped that way, at $50,000 too permissive.
+    # The app is consistent the other way round: its C13 floors cumulative NET FLOW, which
+    # excludes opening cash, at -(opening + credit). Either convention is right; mixing them is
+    # not. (The first version of this test asserted the buggy form, so the guard would have
+    # locked the defect in.)
     floor = model.cell(row=rows["floor"][0], column=_wc(model, 2)).value
-    assert f"$B${rows['Opening cash'][0]}" in floor and f"$B${rows['Credit line'][0]}" in floor, (
-        f"the floor must READ the opening-cash and credit-line cells, got {floor!r}")
+    assert f"$B${rows['Credit line'][0]}" in floor, (
+        f"the floor must READ the credit-line cell, got {floor!r}")
+    assert f"$B${rows['Opening cash'][0]}" not in floor, (
+        f"the floor also subtracts opening cash, which the balance row already includes — "
+        f"that double-counts it. Got {floor!r}")
 
 
 def test_costs_land_in_the_week_they_are_paid(model):
