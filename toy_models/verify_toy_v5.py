@@ -1,7 +1,7 @@
 """
-verify_toy_v4.py — EVALUATE the v4 workbook and prove it is the same problem the solver solves.
+verify_toy_v5.py — EVALUATE the v4 workbook and prove it is the same problem the solver solves.
 
-Run:  .venv/bin/python toy_models/verify_toy_v4.py
+Run:  .venv/bin/python toy_models/verify_toy_v5.py
 
 v4's answer is not arithmetic, it is a CHOICE, so "is the sheet right?" splits in two and both
 halves are checked here:
@@ -12,7 +12,7 @@ halves are checked here:
   B. PROPAGATION the inputs section A cannot cover.
   C. NO FROZEN   every number is a formula, a declared input, or a decision cell.
   D. READ ME     the prose promises what the model produces.
-  E. SAME PROBLEM  ⭐ solve the LP with scipy.milp (the HiGHS wrapper farm_v2 itself uses),
+  E. SAME PROBLEM  ⭐ solve the MILP with scipy.milp (the HiGHS wrapper farm_v2 itself uses),
                 write that solution into the sheet's decision cells, and require the sheet's own
                 PROFIT cell to reproduce the optimum. THIS is the check that matters: it proves
                 the spreadsheet and the optimizer are the same model, so when LibreOffice's
@@ -35,13 +35,13 @@ from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 
 from farm_v2.utils.calendar import generate_successions, harvest_weeks_of
-import toy_v4_lp as LP
+import toy_v5_lp as LP
 
-WB = REPO / "toy_models" / "farm_toy_v4_optimizer.xlsx"
+WB = REPO / "toy_models" / "farm_toy_v5_full_calendar.xlsx"
 PFX = f"'[{WB.name}]MODEL'!"
 CROPS = tuple(LP.CROP_NAMES)
 CH = list(LP.CH_NAMES)
-PICKED = LP.PICKED
+PICKED = [s["name"] for s in LP.SUCCS]
 CELL_RE = re.compile(rf"'\[{re.escape(WB.name)}\]MODEL'!([A-Z]+\d+)$")
 
 ws = load_workbook(WB)["Model"]
@@ -82,7 +82,7 @@ def crop_blocks():
 
 
 LBL, BLK = labels(), crop_blocks()
-col = lambda w: get_column_letter(w + 2)
+col = lambda w: get_column_letter(w + 4)
 xl = formulas.ExcelModel().loads(str(WB)).finish()
 
 PAIR_ROW, CROP_ROW, CAP_ROW = {}, {}, {}
@@ -92,14 +92,22 @@ for r in range(1, ws.max_row + 1):
         PAIR_ROW[(a, b)] = r
     if a in CROPS and b == crops[a]["yield_per_acre"]:
         CROP_ROW[a] = r
-    if isinstance(a, str) and a.endswith("capacity"):
-        CAP_ROW["cold" if "Cold" in a else "ambient"] = r
+    if isinstance(a, str) and a.startswith("Cold store"):
+        CAP_ROW["cold"] = r
+    if isinstance(a, str) and a.startswith("Ambient store"):
+        CAP_ROW["ambient"] = r
+    if a == "Land you have":
+        CAP_ROW["land"] = r
 SUCC_ROW = {}
 for r in range(1, ws.max_row + 1):
-    if ws.cell(row=r, column=1).value in PICKED and ws.cell(row=r, column=3).value in CROPS:
-        SUCC_ROW[ws.cell(row=r, column=1).value] = r
+    a, b = ws.cell(row=r, column=1).value, ws.cell(row=r, column=2).value
+    if isinstance(a, str) and b in CROPS and isinstance(ws.cell(row=r, column=3).value, (int, float)):
+        SUCC_ROW[a] = r
 OBJ_ROW = LBL["PROFIT  (the objective)"][0]
-assert len(PAIR_ROW) == 6 and len(CROP_ROW) == 3 and len(SUCC_ROW) == 5, "sheet layout not found"
+assert len(PAIR_ROW) == 6 and len(CROP_ROW) == 3, "sheet layout not found"
+assert len(SUCC_ROW) == len(LP.SUCCS), (
+    f"found {len(SUCC_ROW)} succession rows, the app offers {len(LP.SUCCS)} — v5 must carry ALL "
+    f"of them; a hand-picked subset is the exact defect v5 exists to remove")
 
 
 def calc(overrides=None):
@@ -186,8 +194,14 @@ def offered_overrides(offered):
     return ov
 
 
-def acre_overrides(acres):
-    return {f"B{SUCC_ROW[k]}": float(v) for k, v in acres.items()}
+def acre_overrides(acres, binaries=True):
+    """Acres in column C, and the plant/don't-plant binary in D beside it."""
+    ov = {}
+    for k, v in acres.items():
+        ov[f"C{SUCC_ROW[k]}"] = float(v)
+        if binaries:
+            ov[f"D{SUCC_ROW[k]}"] = 1 if v > 1e-9 else 0
+    return ov
 
 
 def check_values(tag, overrides, acres, offered, **kw):
@@ -208,9 +222,13 @@ def check_values(tag, overrides, acres, offered, **kw):
 
 
 print("A. VALUES — the sheet's formulas against an independent simulator")
-A6 = {k: 6.0 for k in PICKED}
+# 1 acre on each of 68 plantings = 68 acres, inside the 80 available. Six each would
+# be 408 and the comparison would only ever run on a wildly infeasible plan.
+A6 = {k: 1.0 for k in PICKED}
 ZERO = {(n, h): [0.0] * 52 for n in CROPS for h in CH}
-d0 = check_values("as shipped (nothing offered)", None, A6, ZERO)
+# NOT "as shipped": v5 ships with every acre at 0 because acres are now DECISION cells. The
+# baseline has to be written in, or every comparison runs against an empty farm.
+d0 = check_values("1 acre each, nothing offered", acre_overrides(A6), A6, ZERO)
 
 OPT = LP.solve()
 check_values("at the LP optimum", {**acre_overrides(OPT["acres"]), **offered_overrides(OPT["offered"])},
@@ -219,7 +237,7 @@ check_values("at the LP optimum", {**acre_overrides(OPT["acres"]), **offered_ove
 # An arbitrary FEASIBLE-ish set, so the comparison is not only ever exercised at a vertex.
 ARB = {(n, h): [(w * 37 % 900) * (1.0 if h.startswith("Farmers") else 2.0)
                 for w in range(52)] for n in CROPS for h in CH}
-ARBA = {k: 9.0 for k in PICKED}
+ARBA = {k: 0.7 for k in PICKED}
 check_values("arbitrary offered", {**acre_overrides(ARBA), **offered_overrides(ARB)}, ARBA, ARB)
 
 print("\nB. PROPAGATION — the inputs section A cannot cover")
@@ -230,6 +248,7 @@ FM = [h for h in CH if h.startswith("Farmers")][0]
 WS_ = [h for h in CH if h.lower().startswith("wholesale")][0]
 base_cold = peak(d0, "COLD STORE")
 
+BASE_ACRES = acre_overrides(A6)     # v5 ships empty; every run must plant something first
 for tag, ov, pred in [
     # On SPINACH's own room row, not the pool: the cold pool is dominated by Kale, so a
     # Spinach-only change cannot move it far and the pool-level threshold was measuring nothing.
@@ -258,10 +277,10 @@ for tag, ov, pred in [
      lambda d: float(d[f"B{OBJ_ROW}"]) < OPT["profit"] * 0.5),
     ("cold cap       -> 50", {f"B{CAP_ROW['cold']}": 50.0}, lambda d: worst(d, 1) < 0),
     ("ambient cap    -> 20", {f"B{CAP_ROW['ambient']}": 20.0}, lambda d: worst(d, 2) < 0),
-    ("land           -> 10", {"B12": 10.0}, lambda d: worst(d, 0) < 0),
+    ("land           -> 10", {f"B{CAP_ROW['land']}": 10.0}, lambda d: worst(d, 0) < 0),
 ]:
     try:
-        ok = pred(calc(ov))
+        ok = pred(calc({**BASE_ACRES, **ov}))
     except AssertionError as e:
         ok, tag = False, f"{tag}  [{e}]"
     except Exception as e:
@@ -269,7 +288,8 @@ for tag, ov, pred in [
     report(ok, tag)
 
 print("\nC. NO FROZEN DERIVED VALUES")
-week_rows = {r for r in range(1, ws.max_row + 1) if ws.cell(row=r, column=1).value == "Week"}
+week_rows = {r for r in range(1, ws.max_row + 1)
+             if ws.cell(row=r, column=1).value in ("Week", "Succession")}
 anchors = {r for r in range(1, ws.max_row + 1)
            if str(ws.cell(row=r, column=1).value).strip() == "Stock carried in"}
 dec_rows = {BLK[n.upper()][f"{h} — OFFERED"] for n in CROPS for h in CH}
@@ -279,9 +299,9 @@ for line in ws.iter_rows():
         if not isinstance(c.value, (int, float)) or isinstance(c.value, bool):
             continue
         rgb = str(c.fill.fgColor.rgb) if (c.fill and c.fill.fgColor) else ""
-        if "FFF2CC" in rgb or "D9EAD3" in rgb:          # input, or decision cell
+        if "FFF2CC" in rgb or "D9EAD3" in rgb or "C9DAF8" in rgb:   # input, decision, binary
             continue
-        if c.row in week_rows or (c.row in anchors and c.column == 3) or c.row in dec_rows:
+        if c.row in week_rows or (c.row in anchors and c.column == 5) or c.row in dec_rows:
             continue
         frozen.append(f"{c.coordinate}={c.value} (row {ws.cell(row=c.row, column=1).value!r})")
 report(not frozen, "every number is a formula, an input, or a decision cell"
@@ -290,14 +310,15 @@ report(not frozen, "every number is a formula, an input, or a decision cell"
 print("\nD. THE READ ME PROMISES WHAT THE MODEL PRODUCES")
 rd = load_workbook(WB)["READ ME"]
 prose = "\n".join(str(rd.cell(row=r, column=1).value or "") for r in range(1, rd.max_row + 1))
-GRD = LP.greedy(6.0)
-FIX = LP.solve(fixed_acres=6.0)
+RELAX = LP.solve(min_acreage=False)
 for label, val in (("optimum profit", OPT["profit"]), ("optimum revenue", OPT["revenue"]),
-                   ("growing cost", OPT["cost"]), ("greedy-rule profit", GRD["profit"]),
-                   ("optimal-allocation profit", FIX["profit"])):
+                   ("growing cost", OPT["cost"]),
+                   ("LP-relaxation profit", RELAX["profit"])):
     report(f"${val:,.0f}" in prose, f"READ ME states the real {label} (${val:,.0f})")
-for (n, h), v in OPT["sold"].items():
-    report(f"{v:,.0f}" in prose, f"READ ME states {n}/{h} at the optimum ({v:,.0f} lb)")
+report(f"{OPT['n_planted']} of {OPT['n_offered']}" in prose,
+       f"READ ME states how many successions are planted ({OPT['n_planted']} of {OPT['n_offered']})")
+report(f"{RELAX['n_planted']}" in prose,
+       f"READ ME states the relaxation's planting count ({RELAX['n_planted']})")
 
 print("\nE. THE SHEET AND THE SOLVER ARE THE SAME PROBLEM")
 d_opt = calc({**acre_overrides(OPT["acres"]), **offered_overrides(OPT["offered"])})

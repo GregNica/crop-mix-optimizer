@@ -1,7 +1,7 @@
 """
 The toy model's numbers must not drift from the app's.
 
-`toy_models/farm_toy_v4_optimizer.xlsx` exists to be an INDEPENDENT check on the app's
+`toy_models/farm_toy_v5_full_calendar.xlsx` exists to be an INDEPENDENT check on the app's
 arithmetic — a grower opens it, changes an acre figure and verifies by hand what the solver
 claims. That only works while its crop constants and its planting calendar are the app's.
 Nothing about a spreadsheet fails loudly when a crop's m3/lb changes underneath it; it just
@@ -17,7 +17,7 @@ So this pins two things:
      its harvest week was reported as needing no cooler at all), it is the one thing this toy
      exists to teach, and it is invisible in a rendered spreadsheet — the cells look identical.
 
-Regenerate with:  python3 toy_models/build_toy_v4.py
+Regenerate with:  python3 toy_models/build_toy_v5.py
 """
 import json
 import re
@@ -28,21 +28,55 @@ from tests.helpers import REPO
 
 openpyxl = pytest.importorskip("openpyxl")
 
-WORKBOOK = REPO / "toy_models" / "farm_toy_v4_optimizer.xlsx"
+WORKBOOK = REPO / "toy_models" / "farm_toy_v5_full_calendar.xlsx"
 TOY_CROPS = ("Spinach", "Kale", "Garlic")
-PICKED = ["Spinach W10", "Spinach W34", "Kale W12", "Kale W32", "Garlic W47"]
+# v5 carries EVERY succession the app offers. A hand-picked subset is the exact defect it
+# exists to remove, so the list is derived, never typed.
+def _all_successions():
+    import json
+    from farm_v2.utils.calendar import generate_successions
+    p = json.load(open(REPO / "tests" / "golden" / "default_farm_payload.json"))
+    return generate_successions([c for c in p["crops"] if c["name"] in TOY_CROPS], 2024)
+
+
+PICKED = [s["name"] for s in _all_successions()]
 
 
 @pytest.fixture(scope="module")
 def model():
     if not WORKBOOK.exists():
-        pytest.skip(f"{WORKBOOK.name} not built; run toy_models/build_toy_v4.py")
+        pytest.skip(f"{WORKBOOK.name} not built; run toy_models/build_toy_v5.py")
     return openpyxl.load_workbook(WORKBOOK)["Model"]
 
 
 @pytest.fixture(scope="module")
 def payload():
     return json.load(open(REPO / "tests" / "golden" / "default_farm_payload.json"))
+
+
+def _week_cols(ws):
+    """(column of week 1, column of week 52), DERIVED from a week-header strip.
+
+    v5 moved the grid from column C to E to make room for the two per-succession decision cells.
+    Every test that hard-coded 'D' for week 2 broke at once — so the offset is read off the
+    sheet now and the next move costs nothing.
+    """
+    for r in range(1, ws.max_row + 1):
+        if ws.cell(row=r, column=1).value in ("Week", "Succession"):
+            c1 = next((c for c in range(2, 12) if ws.cell(row=r, column=c).value == 1), None)
+            if c1 and ws.cell(row=r, column=c1 + 51).value == 52:
+                return c1, c1 + 51
+    raise AssertionError("no week-number strip found")
+
+
+def _wc(ws, w):
+    """Column INDEX of week w."""
+    return _week_cols(ws)[0] + w - 1
+
+
+def _wl(ws, w):
+    """Column LETTER of week w."""
+    return openpyxl.utils.get_column_letter(_wc(ws, w))
 
 
 def _labelled_rows(ws):
@@ -98,27 +132,80 @@ def test_crop_constants_match_the_app(model, payload):
 def test_farm_constants_match_the_app(model, payload):
     rows = _labelled_rows(model)
     caps = {
-        "Cold store (cooler) capacity": payload["harvest_storage_cap"],
-        "Ambient store (barn) capacity": payload["ambient_storage_cap"],
+        "Cold store (cooler)": payload["harvest_storage_cap"],
+        "Ambient store (barn)": payload["ambient_storage_cap"],
     }
     for label, want in caps.items():
         r = rows[label][0]
         assert model.cell(row=r, column=2).value == want, f"{label} has drifted from the payload"
 
 
-def test_planting_calendar_matches_the_apps_generator(model, payload):
-    """The harvest weeks printed beside each planting are the ones the app would generate."""
-    from farm_v2.utils.calendar import generate_successions, harvest_weeks_of
+def test_every_succession_the_app_offers_is_on_the_sheet(model):
+    """v5's reason for existing: the solver must choose WHEN to plant.
 
-    crops = [c for c in payload["crops"] if c["name"] in TOY_CROPS]
-    gen = {s["name"]: s for s in generate_successions(crops, 2024)}
-    rows = _labelled_rows(model)
-    for name in PICKED:
-        assert name in gen, f"{name} is no longer a succession the app generates"
-        want = ", ".join("W%d" % w for w in harvest_weeks_of(gen[name], 52))
-        r = rows[name][0]                      # first occurrence = the input table
-        got = model.cell(row=r, column=4).value
-        assert got == want, f"{name}: harvest weeks drifted — sheet says {got!r}, app says {want!r}"
+    The grower found v4 carrying five hand-picked plantings where the app offers 68 — and
+    measured, freeing that was worth +128% of profit, more than every missing cost line
+    combined. A subset here silently reintroduces it, and the sheet would still look right.
+    """
+    rows = {}
+    for r in range(1, model.max_row + 1):
+        a, b = model.cell(row=r, column=1).value, model.cell(row=r, column=2).value
+        if isinstance(a, str) and b in TOY_CROPS and isinstance(
+                model.cell(row=r, column=3).value, (int, float)):
+            rows[a] = r
+    missing = [n for n in PICKED if n not in rows]
+    assert not missing, (
+        f"{len(missing)} of {len(PICKED)} successions the app offers are absent from the "
+        f"calendar (e.g. {missing[:4]}) — the solver cannot choose a week it is not shown")
+    extra = [n for n in rows if n not in PICKED]
+    assert not extra, f"sheet carries successions the app does not generate: {extra[:4]}"
+
+
+def test_the_phase_pattern_matches_the_apps_generator(model):
+    """Each planting's P/G/H row must be the calendar the app would build for that start week."""
+    from farm_v2.utils.calendar import harvest_weeks_of
+    succ = {x["name"]: x for x in _all_successions()}
+    checked = 0
+    for r in range(1, model.max_row + 1):
+        name = model.cell(row=r, column=1).value
+        if name not in succ:
+            continue
+        want = {((wk - 1) % 52) + 1: "PGH"[ph]
+                for wk, ph in zip(succ[name]["weeks"], succ[name]["phases"])}
+        for w in range(1, 53):
+            got = model.cell(row=r, column=w + 4).value
+            assert (got or None) == want.get(w), (
+                f"{name} week {w}: sheet {got!r}, app {want.get(w)!r}")
+        assert sum(1 for w in range(1, 53)
+                   if model.cell(row=r, column=w + 4).value == "H") == len(
+            harvest_weeks_of(succ[name], 52))
+        checked += 1
+    assert checked == len(PICKED), f"only checked {checked} of {len(PICKED)} plantings"
+
+
+def test_the_plant_decision_is_wired_to_a_minimum_acreage(model):
+    """C9 and C10: acres <= land x y, and acres >= min_acres x y.
+
+    Without these the binary is decorative and the solver plants a third of an acre — measured,
+    10 of 42 plantings fell below the app's own 2-acre minimum in the LP relaxation.
+    """
+    hdr = None
+    for r in range(1, 40):
+        if model.cell(row=r, column=1).value == "Succession":
+            hdr = r
+            break
+    assert hdr, "calendar header not found"
+    cols = {model.cell(row=hdr, column=c).value: c
+            for c in range(1, model.max_column + 1)
+            if model.cell(row=hdr, column=c).value}
+    for want in ("ACRES", "PLANT?", "max if planted", "min if planted"):
+        assert want in cols, f"{want!r} column missing — the plant decision is not wired"
+    r = hdr + 1
+    fmax = model.cell(row=r, column=cols["max if planted"]).value
+    fmin = model.cell(row=r, column=cols["min if planted"]).value
+    dcol = model.cell(row=r, column=cols["PLANT?"]).coordinate[0]
+    assert f"{dcol}{r}" in fmax and "*" in fmax, f"C9 helper does not multiply the binary: {fmax!r}"
+    assert f"{dcol}{r}" in fmin and "*" in fmin, f"C10 helper does not multiply the binary: {fmin!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -134,12 +221,13 @@ def test_room_occupancy_measures_throughput_not_what_sleeps_there(model, crop):
     lower bound. The two formulas render identically in the sheet.
     """
     b = _crop_blocks(model)[crop]
-    f = model.cell(row=b["ROOM OCCUPANCY"], column=4).value      # week 2
-    assert f"D{b['Stock carried in']}" in f, f"{crop}: ROOM does not read stock carried in"
-    assert f"D{b['Packed out -> INTO the store']}" in f, (
+    w2 = _wl(model, 2)
+    f = model.cell(row=b["ROOM OCCUPANCY"], column=_wc(model, 2)).value
+    assert f"{w2}{b['Stock carried in']}" in f, f"{crop}: ROOM does not read stock carried in"
+    assert f"{w2}{b['Packed out -> INTO the store']}" in f, (
         f"{crop}: ROOM does not read what was PACKED OUT this week. It must not read the GROSS "
         f"harvest either — field cull never entered the room (G1/E1).")
-    assert f"D{b['Harvested (gross)']}" not in f, (
+    assert "Harvested (gross)" not in b or f"{w2}{b['Harvested (gross)']}" not in f, (
         f"{crop}: ROOM reads GROSS harvest, so field cull is occupying a cooler it never saw")
     assert f"D{b['Stock carried out']}" not in f, (
         f"{crop}: ROOM reads stock carried OUT — this is the lower-bound defect, "
@@ -149,24 +237,26 @@ def test_room_occupancy_measures_throughput_not_what_sleeps_there(model, crop):
 @pytest.mark.parametrize("crop", ["SPINACH", "KALE", "GARLIC"])
 def test_the_inventory_chain_actually_chains(model, crop):
     b = _crop_blocks(model)[crop]
-    assert model.cell(row=b["Stock carried in"], column=4).value == f"=C{b['Stock carried out']}"
-    assert model.cell(row=b["In store this week"], column=4).value == (
-        f"=D{b['Stock carried in']}-D{b['lost to shrink']}+D{b['Packed out -> INTO the store']}")
+    w1, w2 = _wl(model, 1), _wl(model, 2)
+    assert model.cell(row=b["Stock carried in"], column=_wc(model, 2)).value == \
+        f"={w1}{b['Stock carried out']}"
+    assert model.cell(row=b["In store this week"], column=_wc(model, 2)).value == (
+        f"={w2}{b['Stock carried in']}-{w2}{b['lost to shrink']}"
+        f"+{w2}{b['Packed out -> INTO the store']}")
     # Carried out subtracts each channel's CONSUMED, which is offered minus what came home.
     # Subtracting SOLD instead would silently resurrect the market loss into next week's stock.
-    close = model.cell(row=b["Stock carried out"], column=4).value
-    assert close.startswith(f"=D{b['In store this week']}"), close
+    close = model.cell(row=b["Stock carried out"], column=_wc(model, 2)).value
+    assert close.startswith(f"={w2}{b['In store this week']}"), close
     n_consumed = sum(1 for k in b if k == "consumed from store")
-    assert close.count("-D") >= 1, f"{crop}: carried-out subtracts nothing"
-    assert f"-D{b['Sold']}" not in close if "Sold" in b else True
+    assert close.count(f"-{w2}") >= 1, f"{crop}: carried-out subtracts nothing"
 
 
 def test_each_pool_sums_its_own_crops_only(model):
     """The 'grouped on the wrong column' trap: a pool row that silently totals the wrong set."""
     b = _crop_blocks(model)
     rows = _labelled_rows(model)
-    cold = model.cell(row=rows["COLD STORE"][0], column=4).value
-    amb = model.cell(row=rows["AMBIENT STORE"][0], column=4).value
+    cold = model.cell(row=rows["COLD STORE"][0], column=_wc(model, 2)).value
+    amb = model.cell(row=rows["AMBIENT STORE"][0], column=_wc(model, 2)).value
     sp, ka, ga = (str(b[c]["ROOM OCCUPANCY"]) for c in ("SPINACH", "KALE", "GARLIC"))
     assert sp in cold and ka in cold and ga not in cold, "cold pool is not Spinach + Kale"
     assert ga in amb and sp not in amb and ka not in amb, "ambient pool is not Garlic alone"
@@ -208,8 +298,8 @@ def test_week_numbers_are_repeated_at_every_band(model):
     """With no frozen rows, each band carries its own week strip or the grid is unreadable."""
     strips = [r for r in range(1, model.max_row + 1)
               if model.cell(row=r, column=1).value == "Week"
-              and model.cell(row=r, column=3).value == 1
-              and model.cell(row=r, column=54).value == 52]
+              and model.cell(row=r, column=_wc(model, 1)).value == 1
+              and model.cell(row=r, column=_wc(model, 52)).value == 52]
     assert len(strips) >= 6, f"only {len(strips)} week strips; every band needs one"
     gaps = [b - a for a, b in zip(strips, strips[1:])]
     assert max(gaps) < 30, f"a {max(gaps)}-row gap between week strips — too far to read against"
@@ -225,8 +315,9 @@ def test_every_constraint_reads_as_an_inequality(model):
     for label in ("LAND in the ground", "COLD STORE", "AMBIENT STORE"):
         assert label in rows, f"{label} band is missing"
         top = rows[label][0]
-        assert model.cell(row=top + 1, column=3).value == "<=", f"{label}: no '<=' row beneath it"
-        limit = model.cell(row=top + 2, column=3).value
+        assert model.cell(row=top + 1, column=_wc(model, 1)).value == "<=", \
+            f"{label}: no '<=' row beneath it"
+        limit = model.cell(row=top + 2, column=_wc(model, 1)).value
         assert isinstance(limit, str) and limit.startswith("="), (
             f"{label}: the limit row must REFERENCE the input cell, not restate its number — "
             f"got {limit!r}")
@@ -241,83 +332,44 @@ def test_land_band_measures_standing_acres_not_the_annual_sum(model):
     one acre actually reserved. A commitment is a quantity of ground, not of activity.
     """
     rows = _labelled_rows(model)
-    f = model.cell(row=rows["LAND in the ground"][0], column=4).value
-    assert f.count("IF(") == 5, f"land row should test all five plantings, got {f!r}"
-    assert 'D' in f and '<>""' in f, "land row should read the phase strip for that WEEK"
+    f = model.cell(row=rows["LAND in the ground"][0], column=_wc(model, 2)).value
+    assert "SUMPRODUCT" in f, f"land row should sum across the whole calendar, got {f!r}"
+    assert '<>""' in f, "land row should read the phase strip for that WEEK, not an annual total"
 
 
 def test_readme_coordinates_point_at_what_they_claim():
-    """Every cell the instructions name must hold what the sentence says it holds.
+    """Every range the instructions name must actually cover what the sentence says.
 
-    v1 shipped "set Garlic's shrink (G17)" hard-coded; a row was added, everything shifted, and
-    G17 became KALE's shrink. The generator now derives these, and this asserts the derivation.
-    v3 moves the interesting cells onto the crop x channel table, which is the grower's ruling.
+    v1 shipped "set Garlic's shrink (G17)" hard-coded; a row was added and G17 became KALE's.
+    The generator derives these now, and this asserts the derivation. In v5 the interesting
+    ones are RANGES over the calendar, and a range that silently covers 5 rows instead of 68
+    is the v4 defect wearing a different hat.
     """
     wb = openpyxl.load_workbook(WORKBOOK)
     rd, model = wb["READ ME"], wb["Model"]
     text = "\n".join(str(rd.cell(row=r, column=1).value or "") for r in range(1, rd.max_row + 1))
 
-    # locate the crop x channel table
-    hdr = None
-    for r in range(1, 60):
-        if (model.cell(row=r, column=1).value == "Crop"
-                and model.cell(row=r, column=2).value == "Channel"):
-            hdr = r
-            break
-    assert hdr, "crop x channel table header not found"
-    cols = {model.cell(row=hdr, column=c).value: c for c in range(1, 10)}
-    for want in ("Sell-through", "Returns to store", "Cap type", "Cap lb", "From wk"):
-        assert want in cols, f"{want!r} column missing from the crop x channel table"
+    hdr = next(r for r in range(1, 40) if model.cell(row=r, column=1).value == "Succession")
+    cols = {model.cell(row=hdr, column=c).value: c
+            for c in range(1, model.max_column + 1) if model.cell(row=hdr, column=c).value}
 
-    m = re.search(r"'Returns to store' at [^(]*\(([A-Z]+\d+)\)", text)
-    assert m, "the READ ME no longer names a cell for Returns to store"
-    cell = model[m.group(1)]
-    assert model.cell(row=cell.row, column=1).value == "Garlic", (
-        f"READ ME says {m.group(1)} is Garlic's returns, but that row is "
-        f"{model.cell(row=cell.row, column=1).value!r}")
-    assert cell.column == cols["Returns to store"], (
-        f"READ ME says {m.group(1)} is Returns to store, but that column is "
-        f"{model.cell(row=hdr, column=cell.column).value!r}")
+    ranges = re.findall(r"\(?([A-Z]{1,2})(\d+):([A-Z]{1,2})(\d+)\)?", text)
+    named = {(a, int(b), c, int(d)) for a, b, c, d in ranges}
+    assert named, "the READ ME names no ranges at all"
 
-    m = re.search(r"acre cells[\s\S]{0,60}?\(([A-Z]+\d+):([A-Z]+\d+)\)", text)
-    assert m, "the READ ME no longer names the acre input range"
-    first, last = model[m.group(1)], model[m.group(2)]
-    assert last.row - first.row + 1 == len(PICKED), "acre range does not cover all five plantings"
-    for row in range(first.row, last.row + 1):
-        assert model.cell(row=row, column=1).value in PICKED, (
-            f"row {row} is not one of the five plantings — the acre range has drifted")
-
-
-def test_offered_is_a_decision_cell_with_no_formula(model):
-    """v4's central change: `offered` is a VARIABLE, not MIN(stock, demand).
-
-    MIN() is not linear, so no linear solver can use it — which is exactly why farm_v2 has no
-    "sold" formula and bounds a decision variable with C6/C6b instead. If a formula ever
-    reappears on these rows the sheet silently stops being solvable, and the Solver would
-    quietly optimise over cells it cannot change.
-    """
-    blocks = _crop_blocks(model)
-    n = 0
-    for crop, seq in blocks.items():
-        for label, r in seq.items():
-            if not label.endswith("— OFFERED"):
-                continue
-            n += 1
-            for w in range(1, 53):
-                v = model.cell(row=r, column=w + 2).value
-                assert not (isinstance(v, str) and v.startswith("=")), (
-                    f"{crop} {label} week {w} holds a FORMULA ({v!r}) — it must be a decision cell")
-    assert n == 6, f"expected 6 OFFERED rows (3 crops x 2 channels), found {n}"
-
-
-def test_no_min_survives_anywhere_in_the_model(model):
-    """A single MIN() makes the whole sheet non-linear and CoinMP will refuse it."""
-    hits = []
-    for row in model.iter_rows():
-        for c in row:
-            if isinstance(c.value, str) and c.value.startswith("=") and "MIN(" in c.value.upper():
-                hits.append(c.coordinate)
-    assert not hits, f"MIN() found at {hits[:5]} — v4 must be linear end to end"
+    acres_letter = openpyxl.utils.get_column_letter(cols["ACRES"])
+    bin_letter = openpyxl.utils.get_column_letter(cols["PLANT?"])
+    for letter, what in ((acres_letter, "ACRES"), (bin_letter, "PLANT?")):
+        hits = [r for r in named if r[0] == letter and r[2] == letter]
+        assert hits, f"the READ ME never names the {what} range (column {letter})"
+        top, bot = min(h[1] for h in hits), max(h[3] for h in hits)
+        rows = bot - top + 1
+        assert rows == len(PICKED), (
+            f"the READ ME's {what} range {letter}{top}:{letter}{bot} covers {rows} rows, but the "
+            f"app offers {len(PICKED)} successions — a partial range silently recreates v4's "
+            f"hand-picked-calendar defect")
+        assert model.cell(row=top, column=1).value in PICKED
+        assert model.cell(row=bot, column=1).value in PICKED
 
 
 def test_sell_through_lives_on_the_crop_channel_row_not_the_crop():
@@ -367,7 +419,7 @@ def test_no_derived_value_is_frozen(model):
     grower fails here, including whatever the next layer adds.
     """
     week_rows = {r for r in range(1, model.max_row + 1)
-                 if model.cell(row=r, column=1).value == "Week"}
+                 if model.cell(row=r, column=1).value in ("Week", "Succession")}
     anchors = {r for r in range(1, model.max_row + 1)
                if str(model.cell(row=r, column=1).value).strip() == "Stock carried in"}
     frozen = []
@@ -378,9 +430,11 @@ def test_no_derived_value_is_frozen(model):
             rgb = str(c.fill.fgColor.rgb) if (c.fill and c.fill.fgColor) else ""
             # FFF2CC = an input you type. D9EAD3 = a DECISION cell the solver writes into —
             # legitimately a bare number, and the only kind of frozen value v4 may contain.
-            if "FFF2CC" in rgb or "D9EAD3" in rgb:
+            # FFF2CC = typed input. D9EAD3 = a continuous decision cell. C9DAF8 = a BINARY
+            # decision cell. All three are legitimately bare numbers.
+            if "FFF2CC" in rgb or "D9EAD3" in rgb or "C9DAF8" in rgb:
                 continue
-            if c.row in week_rows or (c.row in anchors and c.column == 3):
+            if c.row in week_rows or (c.row in anchors and c.column == _wc(model, 1)):
                 continue
             frozen.append(f"{c.coordinate}={c.value} "
                           f"(row {model.cell(row=c.row, column=1).value!r})")
@@ -390,7 +444,7 @@ def test_no_derived_value_is_frozen(model):
 
 
 def test_the_sheet_actually_calculates_correctly():
-    """Run toy_models/verify_toy_v4.py — it CALCULATES the workbook.
+    """Run toy_models/verify_toy_v5.py — it CALCULATES the workbook.
 
     Everything above reads formulas as text, and text can be well-formed and wrong. This shells
     out to the venv because `formulas` cannot be installed into the system interpreter pytest
@@ -408,7 +462,7 @@ def test_the_sheet_actually_calculates_correctly():
     if probe.returncode != 0:
         pytest.skip("`formulas` not installed in .venv — run: .venv/bin/pip install formulas")
 
-    r = subprocess.run([str(venv), str(REPO / "toy_models" / "verify_toy_v4.py")],
+    r = subprocess.run([str(venv), str(REPO / "toy_models" / "verify_toy_v5.py")],
                        capture_output=True, text=True, cwd=REPO, timeout=600)
     assert r.returncode == 0, (
         "the toy workbook does not calculate correctly:\n"

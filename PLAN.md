@@ -416,7 +416,7 @@ Carry forward:
   Three mutations verified to die: returns ignored (22 failures), sell-through ignored on the sale
   (37), annual cap not deducting prior sales (5).
 
-**✅ v4 — THE OPTIMIZER. DONE 2026-08-30.** `toy_models/farm_toy_v4_optimizer.xlsx` +
+**✅ v4 — THE OPTIMIZER. DONE 2026-08-30. SUPERSEDED by v5** (files deleted; git `c35d74b`).** `toy_models/farm_toy_v4_optimizer.xlsx` +
 `build_toy_v4.py` + `toy_v4_lp.py` + `verify_toy_v4.py`. **Supersedes v3; v3's files are deleted.**
 **The first version that needs LibreOffice** — 317 decision cells and ~780 constraints against
 Excel Solver's 200/100 ceiling. Setup recipe is on the Model sheet (16 entries; the 780 rows
@@ -468,11 +468,41 @@ after the fact:
   simplification omits, list what the model DECIDES, not only what it CHARGES.** Every omission I
   did record was a cost line; both omissions I missed were decision variables.
 
-**Next: v5 = all 68 successions + the y binaries (make it a MILP), THEN the cash layer.** Ordering
-changed by the above — a cash constraint applied to a plan whose calendar is wrong by 128% would
-be disciplining the wrong number. ⚠️ 68 acres + 312 offered + 68 binaries is ~448 cells for
-CoinMP; if Calc struggles, drop to one crop's full calendar rather than reintroducing a hand-picked
-subset.
+**✅ v5 — THE FULL CALENDAR (a MILP). DONE 2026-08-30.** `farm_toy_v5_full_calendar.xlsx` +
+`build_toy_v5.py` + `toy_v5_lp.py` + `verify_toy_v5.py`. **Supersedes v4; v4's files are deleted.**
+All **68** successions on the sheet, plus a binary per planting wired to acres by the app's own
+**C9/C10** — so it now decides *when* to plant and *whether* to plant, not just how much.
+**448 decision cells** (68 acres + 68 binaries + 312 offered), 19 recipe entries, CoinMP required.
+
+**The two changes measured, and they pull opposite ways:**
+
+| | profit | plantings |
+|---|---|---|
+| v4, five hand-picked | $1,094,831 | 5 |
+| v5 without minimum acreage (LP relaxation) | $2,493,974 | 42 |
+| **v5 as it ships (MILP)** | **$2,490,411** | **29** |
+
+Choosing the weeks more than doubles profit; the minimum-acreage rule then costs only **$3,563**
+while removing 13 sliver plantings. **A fixed calendar understates, a missing minimum overstates
+— which is exactly why the app is a MILP and not an LP.**
+
+Carry forward:
+- **29 of 68, staggered** — that is succession planting, and the sheet now shows *why* it pays:
+  spreading harvest is what lets a WEEKLY demand cap be served continuously instead of one big
+  harvest hitting the ceiling. **A fixed-calendar model cannot express the thing the practice
+  exists for.**
+- **Structural: one row per succession, not two.** The per-crop harvest is a `SUMPRODUCT` across
+  the calendar table rather than a stack of per-succession rows — 136 rows became 68, and the
+  verifier got *faster* (57s → 23s) despite 13× the successions.
+- ⚠️ **Week columns moved C→E** to make room for the two per-succession decision cells, and
+  every test that hard-coded `D` for week 2 broke at once. They now **derive** the offset from a
+  week-header strip (`_week_cols`), so the next move costs nothing. **Same lesson as the READ ME
+  coordinates: a position written down is a position that will drift.**
+- Mutations verified: shipping only 5 successions (the exact v4 defect) is caught by **two**
+  independent guards; a decorative min-acreage helper by a third.
+
+**Next: v6 = the cash layer (C13)**, which is where the $2.49M gets disciplined — costs are still
+seed/transplant per acre only. Then labour.
 
 Original ordering note: ~~demand caps~~ (done
 in v3), then cash (C13, the one with no Excel ancestor at all), then labour (committed vs bought),

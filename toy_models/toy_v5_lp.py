@@ -1,8 +1,8 @@
 """
-toy_v4_lp.py — the v4 sheet's model, written as an LP and solved with scipy.
+toy_v5_lp.py — the v5 sheet's model, written as a MILP and solved with scipy.
 
-Imported by BOTH `build_toy_v4.py` (so the READ ME can promise the optimum LibreOffice should
-find) and `verify_toy_v4.py` (as the oracle the workbook is checked against).
+Imported by BOTH `build_toy_v5.py` (so the READ ME can promise the optimum LibreOffice should
+find) and `verify_toy_v5.py` (as the oracle the workbook is checked against).
 
 WHY THIS EXISTS. v4 is the first version whose answer is not arithmetic — it is a CHOICE, made
 by a solver. So "is the sheet right?" splits in two:
@@ -16,6 +16,17 @@ by a solver. So "is the sheet right?" splits in two:
 
 If LibreOffice's CoinMP finds a different optimum than HiGHS finds here, one of the two models
 is not the model we think it is — which is the only question that matters about v4.
+
+v5 ADDS THE TWO THINGS THE GROWER FOUND MISSING FROM v4:
+
+  * EVERY succession the app's calendar generator offers, not five hand-picked ones. Choosing
+    WHEN to plant is part of what the real solver decides, and freeing it was worth +128%.
+  * BINARY plant / do-not-plant variables with a minimum acreage (the app's C9 and C10), which
+    is what stops the optimizer planting a third of an acre. This makes it a MILP, exactly as
+    `farm_v2/solver.py` is — `integrality` there marks the same y block.
+
+Those two pull in opposite directions: the full calendar raises profit, the minimum acreage
+lowers it. Neither is meaningful alone.
 """
 from __future__ import annotations
 
@@ -33,7 +44,8 @@ from farm_v2.utils.calendar import generate_successions, harvest_weeks_of
 from farm_v2.utils.demand import build_demand_table, build_annual_caps
 
 CROP_NAMES = ["Spinach", "Kale", "Garlic"]
-PICKED = ["Spinach W10", "Spinach W34", "Kale W12", "Kale W32", "Garlic W47"]
+# v5 offers EVERY legal start week, exactly as generate_successions does for the app.
+PICKED = None
 N_WEEKS = 52
 
 
@@ -43,8 +55,7 @@ def load():
     ch_order = sorted(payload["channels"], key=lambda ch: -max(
         crops[c].get("channels", {}).get(ch["name"], {}).get("price_per_lb", 0)
         for c in CROP_NAMES))
-    succ = {s["name"]: s for s in generate_successions(list(crops.values()), 2024)}
-    return payload, crops, ch_order, [succ[n] for n in PICKED]
+    return payload, crops, ch_order, generate_successions(list(crops.values()), 2024)
 
 
 PAYLOAD, CROPS, CH_ORDER, SUCCS = load()
@@ -69,8 +80,12 @@ def defaults(cn, hn):
 
 
 def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
-          fixed_acres=None):
-    """Maximise revenue - growing cost. Returns a dict of the optimum."""
+          fixed_acres=None, min_acreage=True):
+    """Maximise revenue - growing cost, as a MILP. Returns a dict of the optimum.
+
+    `min_acreage=False` drops the binaries and solves the LP relaxation — useful only to show
+    what the minimum-acreage rule costs, never as an answer.
+    """
     shrink = shrink or {n: 0.0 for n in CROP_NAMES}
     land = PAYLOAD["total_land"] if land is None else land
     cold_cap = PAYLOAD["harvest_storage_cap"] if cold_cap is None else cold_cap
@@ -79,8 +94,10 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
     n_s = len(SUCCS)
     pairs = [(c, h) for c in CROP_NAMES for h in CH_NAMES]
     n_off = len(pairs) * N_WEEKS
-    N = n_s + n_off
+    n_y = n_s if min_acreage else 0
+    N = n_s + n_off + n_y
     off_i = lambda p, w: n_s + p * N_WEEKS + (w - 1)
+    y_i = lambda i: n_s + n_off + i
 
     # lb packed out per acre of succession i, in week w
     packed_per_acre = np.zeros((n_s, N_WEEKS + 1))
@@ -162,15 +179,32 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
                 e[i] = 1.0
         add(e, -np.inf, land)
 
+    # C9 / C10 — the plant / do-not-plant decision, exactly as farm_v2 states it:
+    #     x_i <= land x y_i        (cannot plant acres without deciding to plant)
+    #     x_i >= min_acres x y_i   (if you plant it at all, you plant a real block)
+    # Without these the LP happily plants a third of an acre, which no farm does.
+    if min_acreage:
+        for i, s_ in enumerate(SUCCS):
+            cn = CROP_NAMES[s_["crop"]]
+            mn = float(CROPS[cn].get("min_acreage_if_planted", 0.0) or 0.0)
+            e = np.zeros(N); e[i] = 1.0; e[y_i(i)] = -land
+            add(e, -np.inf, 0.0)
+            e = np.zeros(N); e[i] = 1.0; e[y_i(i)] = -mn
+            add(e, 0.0, np.inf)
+
     A = np.vstack(rows)
     lb_v, ub_v = np.zeros(N), np.full(N, np.inf)
+    integrality = np.zeros(N, dtype=int)
+    if min_acreage:
+        ub_v[n_s + n_off:] = 1.0
+        integrality[n_s + n_off:] = 1
     if fixed_acres is not None:
         # Pin the acreage to compare ALLOCATION alone against the v3 fill rule — same plan,
         # same stock, only the choice of who gets served differs.
         for i, s_ in enumerate(SUCCS):
             lb_v[i] = ub_v[i] = float(fixed_acres)
-    res = milp(c=c_obj, constraints=LinearConstraint(A, lo, hi),
-               bounds=Bounds(lb_v, ub_v), options={"disp": False})
+    res = milp(c=c_obj, constraints=LinearConstraint(A, lo, hi), integrality=integrality,
+               bounds=Bounds(lb_v, ub_v), options={"disp": False, "time_limit": 300})
     if not res.success:
         raise RuntimeError(f"LP did not solve: {res.message}")
 
@@ -184,52 +218,19 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
     cost = sum(acres[SUCCS[i]["name"]] *
                CROPS[CROP_NAMES[SUCCS[i]["crop"]]]["seed_transplant_cost_per_acre"]
                for i in range(n_s))
+    planted = {k: v for k, v in acres.items() if v > 1e-6}
     return dict(profit=revenue - cost, revenue=revenue, cost=cost, acres=acres,
-                offered=offered, sold=sold, status=res.status)
-
-
-def greedy(acres=6.0, pack_out=1.00):
-    """The v1-v3 fill rule, reproduced so the comparison is COMPUTED, not typed.
-
-    Serve the highest-priced channel first, up to its weekly ceiling, then the next, then carry
-    whatever is left. It is a perfectly sensible rule and it still loses badly — not because it
-    prioritises wrongly, but because it cannot decide to WAIT. Surplus goes to the cheap channel
-    this week instead of being held for the expensive one next week.
-    """
-    close = {n: 0.0 for n in CROP_NAMES}
-    sold = {(c, h): 0.0 for c in CROP_NAMES for h in CH_NAMES}
-    for w in range(1, N_WEEKS + 1):
-        for cn in CROP_NAMES:
-            packed = 0.0
-            for s in SUCCS:
-                if CROP_NAMES[s["crop"]] != cn:
-                    continue
-                hw = harvest_weeks_of(s, N_WEEKS)
-                if w in hw:
-                    packed += acres * CROPS[cn]["yield_per_acre"] / max(1, len(hw)) * pack_out
-            left = close[cn] + packed
-            for hn in CH_NAMES:
-                ctype, cval, w0, w1 = cap_spec(cn, hn)
-                st, ret = defaults(cn, hn)
-                cap = cval if (ctype == "Annual" or w0 <= w <= w1) else 0.0
-                if ctype == "Annual":
-                    cap = max(0.0, cval - sold[(cn, hn)])
-                off = 0.0 if st <= 0 else min(left, cap / st)
-                sold[(cn, hn)] += off * st
-                left -= off - (off - off * st) * ret
-            close[cn] = left
-    rev = sum(sold[(c, h)] * CROPS[c].get("channels", {}).get(h, {}).get("price_per_lb", 0.0)
-              for c in CROP_NAMES for h in CH_NAMES)
-    cost = sum(acres * CROPS[CROP_NAMES[s["crop"]]]["seed_transplant_cost_per_acre"] for s in SUCCS)
-    return dict(sold=sold, revenue=rev, cost=cost, profit=rev - cost)
+                offered=offered, sold=sold, status=res.status, planted=planted,
+                n_planted=len(planted), n_offered=len(SUCCS))
 
 
 if __name__ == "__main__":
     r = solve()
     print(f"OPTIMUM  profit ${r['profit']:,.0f}  (revenue ${r['revenue']:,.0f} "
           f"- growing cost ${r['cost']:,.0f})")
+    print(f"   plants {r['n_planted']} of {r['n_offered']} successions the app offers")
     print("\nacres:")
-    for k, v in r["acres"].items():
+    for k, v in sorted(r["planted"].items(), key=lambda kv: -kv[1]):
         print(f"   {k:<14} {v:7.2f}")
     print("\nsold, lb:")
     for (cn, hn), v in sorted(r["sold"].items(), key=lambda kv: -kv[1]):
