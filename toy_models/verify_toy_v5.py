@@ -277,6 +277,22 @@ for tag, ov, pred in [
     ("growing cost   Garlic -> $99,999/ac", {f"H{CROP_ROW['Garlic']}": 99999.0,
                                              **acre_overrides(OPT["acres"])},
      lambda d: float(d[f"B{OBJ_ROW}"]) < OPT["profit"] * 0.5),
+    # ⚠️ SELL-THROUGH AND RETURNS SHIP INERT (both effectively off at 1.00 / no offering), so
+    # nothing exercised them until these were added — a mechanism that exists, is documented,
+    # and is tested by nothing because the DEFAULT makes it invisible. These three are exactly
+    # what the READ ME's Experiment 1 promises, so they must hold or the instructions are wrong.
+    # Offered pounds are written in first: with nothing offered there is nothing to lose.
+    ("SELL-THROUGH   Spinach/FM 1.00 -> 0.85 (perishable: a LOSS)",
+     {**offered_overrides(OPT["offered"]), f"G{PAIR_ROW[('Spinach', FM)]}": 0.85},
+     lambda d: total(d, "SPINACH", "market loss (gone)") > 0),
+    ("SELL-THROUGH   Garlic/FM 1.00 -> 0.85 (storable: a DELAY, not a loss)",
+     {**offered_overrides(OPT["offered"]), f"G{PAIR_ROW[('Garlic', FM)]}": 0.85},
+     lambda d: total(d, "GARLIC", "market loss (gone)") == 0
+               and total(d, "GARLIC", "returned to store") > 0),
+    ("RETURNS        Garlic/FM 1.00 -> 0.00 (the delay becomes a loss)",
+     {**offered_overrides(OPT["offered"]), f"G{PAIR_ROW[('Garlic', FM)]}": 0.85,
+      f"H{PAIR_ROW[('Garlic', FM)]}": 0.00},
+     lambda d: total(d, "GARLIC", "market loss (gone)") > 0),
     # Shelf life is a live INPUT again (it was a dead yellow box until the grower found it).
     ("shelf life     Spinach 2 -> 1", {f"F{CROP_ROW['Spinach']}": 1},
      lambda d: total(d, "SPINACH", "Most stock its shelf life allows") <

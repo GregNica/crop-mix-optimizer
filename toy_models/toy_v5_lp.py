@@ -85,12 +85,22 @@ def defaults(cn, hn):
     unsold product goes back in the barn. Basil is ambient because it is CHILLING-SENSITIVE
     (1 week) — the cooler would damage it, and it still does not survive to next Saturday.
     The proxy gave basil returns = 1.00, i.e. a free second chance at market it does not have.
+
+    ⚠️ SELL-THROUGH DEFAULTS TO 1.00 EVERYWHERE, matching the app since 2026-08-30. The 85% it
+    used to carry on stall channels had no citation, and this project does not ship numbers a
+    stranger cannot check. It also meant the toy asserted a loss on channels where a purchase
+    order exists and nothing goes unsold.
+
+    The returns rule is kept because it decides what a LOWERED sell-through does — turn one down
+    and a storable crop's unsold product comes home while a perishable's is destroyed. That is
+    the distinction the grower's ruling turns on, and it must still be right when the mechanism
+    is switched on.
     """
     contract = hn.lower().startswith("wholesale")
     shelf = int(CROPS[cn].get("shelf_life_weeks",
                               CROPS[cn].get("sales_spread_weeks", 1)) or 1)
     storable = shelf >= STORABLE_WEEKS
-    return (1.00 if contract else 0.85, 0.00 if contract else (1.00 if storable else 0.00))
+    return (1.00, 0.00 if contract else (1.00 if storable else 0.00))
 
 
 def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
