@@ -468,7 +468,7 @@ after the fact:
   simplification omits, list what the model DECIDES, not only what it CHARGES.** Every omission I
   did record was a cost line; both omissions I missed were decision variables.
 
-**✅ v5 — THE FULL CALENDAR (a MILP). DONE 2026-08-30.** `farm_toy_v5_full_calendar.xlsx` +
+**✅ v5 — THE FULL CALENDAR (a MILP). DONE 2026-08-30. SUPERSEDED by v6** (files deleted).** `farm_toy_v5_full_calendar.xlsx` +
 `build_toy_v5.py` + `toy_v5_lp.py` + `verify_toy_v5.py`. **Supersedes v4; v4's files are deleted.**
 All **68** successions on the sheet, plus a binary per planting wired to acres by the app's own
 **C9/C10** — so it now decides *when* to plant and *whether* to plant, not just how much.
@@ -501,8 +501,41 @@ Carry forward:
 - Mutations verified: shipping only 5 successions (the exact v4 defect) is caught by **two**
   independent guards; a decorative min-acreage helper by a third.
 
-**Next: v6 = the cash layer (C13)**, which is where the $2.49M gets disciplined — costs are still
-seed/transplant per acre only. Then labour.
+**✅ v6 — REAL COSTS AND THE CASH FLOOR. DONE 2026-08-30.** `farm_toy_v6_cash.xlsx` +
+`build_toy_v6.py` + `toy_v6_lp.py` + `verify_toy_v6.py`. **Supersedes v5.** Costs are now TIMED —
+seed in the planting week, fertiliser and fuel every week in the ground at that phase's rate,
+packaging per lb in the week of sale — plus weekly fixed cost and overhead, and the app's C13
+cash floor over a cumulative cash row.
+
+| | v5 | v6 |
+|---|---|---|
+| profit | $2,384,231 | **$1,654,922** |
+| net margin | — | **64.7%** |
+| growing / packaging / fixed / overhead | seed only | 217,302 / 203,693 / 73,514 / 409,415 |
+
+⚠️ **THE CASH FLOOR BARELY BINDS, AND THE SHEET SAYS SO.** Measured: at $50k opening + $250k
+credit the deepest cash position is **+$6,585** against a floor of −$300,000 — headroom of
+$306,585. It only bites near $10k + $10k. **Because labour is missing**: wages are ~90% of fixed
+cost on the real farm ($855,150/yr against the $73,514 this sheet charges). The mechanism is real
+and verified; the farm it checks is not paying anybody yet. **That is v7, and it is what makes
+cash mean anything.**
+
+Carry forward:
+- **Water is deliberately absent from the cost stack** — the app prices on-farm water at $0
+  (backlog W10). Inventing a price in the toy would make it disagree with the thing it checks.
+- ⚠️ **The whole cash section shipped compared against NOTHING** until it was caught in the same
+  session — the third time (ceiling row, shelf-life row, now the money rows). **A new block of
+  rows needs its comparison in the same commit**, not the next one.
+- ⚠️ **Rounding the stored phase costs to cents moved profit $2.38** off the LP on a $1.65M
+  objective. Store full precision, format for display. Section E is the check that tells "the
+  same model" from "nearly the same model", and $2.38 is enough to fail it.
+- ⚠️ `_crop_blocks` matched the recipe's "Constraint — cold store" as a crop block — latent since
+  v5, harmless while every caller named the three crops, and surfaced the moment a test iterated
+  blocks instead of naming them. **Now requires the first token to be a crop.**
+
+**Next: v7 — labour.** Committed weekly wages with a seasonal crew profile (the W12 shape: the
+shipped farm owes $4,884/wk in winter and $24,484/wk once the crews start, and flattening it
+understated the cash floor by $115,615). That is what makes v6's cash curve real.
 
 Original ordering note: ~~demand caps~~ (done
 in v3), then cash (C13, the one with no Excel ancestor at all), then labour (committed vs bought),

@@ -1,7 +1,7 @@
 """
 The toy model's numbers must not drift from the app's.
 
-`toy_models/farm_toy_v5_full_calendar.xlsx` exists to be an INDEPENDENT check on the app's
+`toy_models/farm_toy_v6_cash.xlsx` exists to be an INDEPENDENT check on the app's
 arithmetic — a grower opens it, changes an acre figure and verifies by hand what the solver
 claims. That only works while its crop constants and its planting calendar are the app's.
 Nothing about a spreadsheet fails loudly when a crop's m3/lb changes underneath it; it just
@@ -17,7 +17,7 @@ So this pins two things:
      its harvest week was reported as needing no cooler at all), it is the one thing this toy
      exists to teach, and it is invisible in a rendered spreadsheet — the cells look identical.
 
-Regenerate with:  python3 toy_models/build_toy_v5.py
+Regenerate with:  python3 toy_models/build_toy_v6.py
 """
 import json
 import re
@@ -28,7 +28,7 @@ from tests.helpers import REPO
 
 openpyxl = pytest.importorskip("openpyxl")
 
-WORKBOOK = REPO / "toy_models" / "farm_toy_v5_full_calendar.xlsx"
+WORKBOOK = REPO / "toy_models" / "farm_toy_v6_cash.xlsx"
 TOY_CROPS = ("Spinach", "Kale", "Garlic")
 # v5 carries EVERY succession the app offers. A hand-picked subset is the exact defect it
 # exists to remove, so the list is derived, never typed.
@@ -45,7 +45,7 @@ PICKED = [s["name"] for s in _all_successions()]
 @pytest.fixture(scope="module")
 def model():
     if not WORKBOOK.exists():
-        pytest.skip(f"{WORKBOOK.name} not built; run toy_models/build_toy_v5.py")
+        pytest.skip(f"{WORKBOOK.name} not built; run toy_models/build_toy_v6.py")
     return openpyxl.load_workbook(WORKBOOK)["Model"]
 
 
@@ -95,10 +95,15 @@ def _crop_blocks(ws):
     reads the NEXT crop's rows under this crop's names, so every comparison is wrong while every
     lookup succeeds. Measured while building v2: the second presented as twelve real defects.
     """
+    # ⚠️ The first token must be a CROP. "…endswith('store')" alone also matched the solver
+    # recipe's "Constraint — cold store" and "Constraint — ambient store", which collapsed into
+    # a bogus "Constraint" block. Latent since v5 — harmless while every caller named the three
+    # crops explicitly, and it surfaced the moment a test iterated the blocks instead.
     heads = [r for r in range(1, ws.max_row + 1)
              if isinstance(ws.cell(row=r, column=1).value, str)
              and "—" in ws.cell(row=r, column=1).value
-             and ws.cell(row=r, column=1).value.endswith("store")]
+             and ws.cell(row=r, column=1).value.endswith("store")
+             and ws.cell(row=r, column=1).value.split(" ")[0].title() in TOY_CROPS]
     blocks = {}
     for i, r in enumerate(heads):
         stop = heads[i + 1] if i + 1 < len(heads) else ws.max_row + 1
@@ -443,7 +448,7 @@ def test_no_derived_value_is_frozen(model):
 
 
 def test_the_sheet_actually_calculates_correctly():
-    """Run toy_models/verify_toy_v5.py — it CALCULATES the workbook.
+    """Run toy_models/verify_toy_v6.py — it CALCULATES the workbook.
 
     Everything above reads formulas as text, and text can be well-formed and wrong. This shells
     out to the venv because `formulas` cannot be installed into the system interpreter pytest
@@ -461,7 +466,7 @@ def test_the_sheet_actually_calculates_correctly():
     if probe.returncode != 0:
         pytest.skip("`formulas` not installed in .venv — run: .venv/bin/pip install formulas")
 
-    r = subprocess.run([str(venv), str(REPO / "toy_models" / "verify_toy_v5.py")],
+    r = subprocess.run([str(venv), str(REPO / "toy_models" / "verify_toy_v6.py")],
                        capture_output=True, text=True, cwd=REPO, timeout=600)
     assert r.returncode == 0, (
         "the toy workbook does not calculate correctly:\n"
@@ -510,3 +515,43 @@ def test_no_input_is_wired_to_nothing(model):
                         f"{model.cell(row=hdr, column=c.column).value!r} for "
                         f"{model.cell(row=c.row, column=1).value!r}")
     assert not dead, "yellow input cells that no formula reads: " + "; ".join(dead[:8])
+
+
+def test_the_cash_floor_exists_and_is_wired(model):
+    """v6's reason for existing: cumulative cash, and a floor it may not fall through.
+
+    The floor must REFERENCE the opening-cash and credit-line inputs, not restate their sum —
+    a floor that is a typed number silently stops tracking the two boxes above it.
+    """
+    rows = _labelled_rows(model)
+    for lab in ("Opening cash", "Credit line", "CASH IN THE BANK", "floor", "NET CASH this week"):
+        assert lab in rows, f"the cash section is missing {lab!r}"
+    w2 = _wl(model, 2)
+    cum = model.cell(row=rows["CASH IN THE BANK"][0], column=_wc(model, 2)).value
+    w1 = _wl(model, 1)
+    assert f"{w1}{rows['CASH IN THE BANK'][0]}" in cum, (
+        f"cash-in-the-bank must carry LAST week's balance forward, got {cum!r}")
+    assert f"{w2}{rows['NET CASH this week'][0]}" in cum, "it must add this week's net cash"
+    floor = model.cell(row=rows["floor"][0], column=_wc(model, 2)).value
+    assert f"$B${rows['Opening cash'][0]}" in floor and f"$B${rows['Credit line'][0]}" in floor, (
+        f"the floor must READ the opening-cash and credit-line cells, got {floor!r}")
+
+
+def test_costs_land_in_the_week_they_are_paid(model):
+    """Seed at the planting week, phase costs while in the ground, packaging at the sale.
+
+    A cash floor built on costs charged in the wrong week is worse than no cash floor, because
+    it looks like a solvency check and is not one.
+    """
+    blocks = _crop_blocks(model)
+    for crop, seq in blocks.items():
+        assert "Growing cost this week" in seq, f"{crop}: no weekly growing-cost row"
+        assert "Packaging this week" in seq, f"{crop}: no weekly packaging row"
+        f = model.cell(row=seq["Growing cost this week"], column=_wc(model, 20)).value
+        assert '="P"' in f or '"P"' in f, f"{crop}: growing cost ignores the planting phase"
+        assert '"G"' in f and '"H"' in f, f"{crop}: growing cost ignores grow/harvest phases"
+        assert "MATCH" in f or "starts" in f.lower() or "=" in f, f"{crop}: seed timing missing"
+        pkg = model.cell(row=seq["Packaging this week"], column=_wc(model, 20)).value
+        sold_rows = [seq[k] for k in seq if k.endswith("— SOLD")]
+        assert any(f"{_wl(model, 20)}{r}" in pkg for r in sold_rows), (
+            f"{crop}: packaging is not charged on the pounds SOLD that week")

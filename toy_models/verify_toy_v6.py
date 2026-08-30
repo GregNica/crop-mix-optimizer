@@ -1,7 +1,7 @@
 """
-verify_toy_v5.py — EVALUATE the v4 workbook and prove it is the same problem the solver solves.
+verify_toy_v6.py — EVALUATE the v4 workbook and prove it is the same problem the solver solves.
 
-Run:  .venv/bin/python toy_models/verify_toy_v5.py
+Run:  .venv/bin/python toy_models/verify_toy_v6.py
 
 v4's answer is not arithmetic, it is a CHOICE, so "is the sheet right?" splits in two and both
 halves are checked here:
@@ -35,9 +35,9 @@ from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 
 from farm_v2.utils.calendar import generate_successions, harvest_weeks_of
-import toy_v5_lp as LP
+import toy_v6_lp as LP
 
-WB = REPO / "toy_models" / "farm_toy_v5_full_calendar.xlsx"
+WB = REPO / "toy_models" / "farm_toy_v6_cash.xlsx"
 PFX = f"'[{WB.name}]MODEL'!"
 CROPS = tuple(LP.CROP_NAMES)
 CH = list(LP.CH_NAMES)
@@ -65,10 +65,13 @@ def labels():
 
 
 def crop_blocks():
+    # The first token must be a CROP — "endswith('store')" alone also caught the recipe's
+    # "Constraint — cold store" lines and made a bogus block out of them.
     heads = [r for r in range(1, ws.max_row + 1)
              if isinstance(ws.cell(row=r, column=1).value, str)
              and "—" in ws.cell(row=r, column=1).value
-             and ws.cell(row=r, column=1).value.endswith("store")]
+             and ws.cell(row=r, column=1).value.endswith("store")
+             and ws.cell(row=r, column=1).value.split(" ")[0].title() in CROPS]
     out = {}
     for i, r in enumerate(heads):
         stop = heads[i + 1] if i + 1 < len(heads) else ws.max_row + 1
@@ -133,7 +136,8 @@ def row(d, r):
     return [d.get(f"{col(w)}{r}") for w in range(1, 53)]
 
 
-def simulate(acres, offered, packout=None, shrink=None, caps=None):
+def simulate(acres, offered, packout=None, shrink=None, caps=None,
+             opening_cash=50_000.0, credit_line=250_000.0):
     """The v4 flow. `offered` is GIVEN — nothing is decided here."""
     packout = packout or {n: 1.00 for n in CROPS}
     shrink = shrink or {n: 0.0 for n in CROPS}
@@ -185,7 +189,34 @@ def simulate(acres, offered, packout=None, shrink=None, caps=None):
                 con[(n, h)][w] = o - ret[(n, h)][w]
                 left -= con[(n, h)][w]
             close[n][w] = left
-    return dict(gross=gross, packed=packed, opening=op, shr=shr, store=store, close=close,
+    # ---- money, week by week. Built independently of the sheet, which is the point: the whole
+    # cash section was added in one commit and compared against NOTHING, the exact gap that has
+    # bitten the ceiling row and the shelf-life row already.
+    fert, fuel = LP.PAYLOAD["cost_fert_per_lb"], LP.PAYLOAD["cost_fuel_per_L"]
+    ovh_pct = LP.PAYLOAD["overhead_pct_of_revenue"]
+    fixed_wk = LP.weekly_fixed_cost()
+    rev = [0.0] * 53; pkg = [0.0] * 53; grow = [0.0] * 53
+    for n in CROPS:
+        for h in CH:
+            spec = crops[n].get("channels", {}).get(h, {})
+            for w in range(1, 53):
+                rev[w] += sold[(n, h)][w] * spec.get("price_per_lb", 0.0)
+                pkg[w] += sold[(n, h)][w] * spec.get("packaging_cost_per_lb", 0.0)
+    key = ["plant", "grow", "harv"]
+    for s_ in LP.SUCCS:
+        cn = CROPS[s_["crop"]]; c = crops[cn]; a = acres[s_["name"]]
+        grow[((s_["weeks"][0] - 1) % 52) + 1] += a * c["seed_transplant_cost_per_acre"]
+        for wk, ph in zip(s_["weeks"], s_["phases"]):
+            w = ((wk - 1) % 52) + 1
+            grow[w] += a * (c.get(f"fert_{key[ph]}", 0.0) * fert
+                            + c.get(f"fuel_{key[ph]}", 0.0) * fuel)
+    net = [0.0] * 53; cum = [0.0] * 53; running = opening_cash
+    for w in range(1, 53):
+        net[w] = rev[w] - pkg[w] - grow[w] - fixed_wk - rev[w] * ovh_pct
+        running += net[w]; cum[w] = running
+
+    return dict(rev=rev, pkg=pkg, grow=grow, net=net, cum=cum, fixed_wk=fixed_wk,
+                gross=gross, packed=packed, opening=op, shr=shr, store=store, close=close,
                 room=room, sold=sold, ret=ret, con=con, cap=cap, shelf=shelf, land=land,
                 cold=[room["Spinach"][w] + room["Kale"][w] for w in range(1, 53)],
                 amb=[room["Garlic"][w] for w in range(1, 53)])
@@ -234,6 +265,9 @@ def check_values(tag, overrides, acres, offered, **kw):
         compare(f"[{tag}] {n} shelf-life bound",
                 row(d, b["Most stock its shelf life allows"]), s["shelf"][n], 1e-4)
         compare(f"[{tag}] {n} room", row(d, b["ROOM OCCUPANCY"]), s["room"][n], 1e-4)
+    for lab, key in (("Revenue", "rev"), ("packaging", "pkg"), ("growing cost", "grow"),
+                     ("NET CASH this week", "net"), ("CASH IN THE BANK", "cum")):
+        compare(f"[{tag}] {lab}", row(d, LBL[lab][0]), s[key], 1e-4)
     compare(f"[{tag}] LAND", row(d, LBL["LAND in the ground"][0]), s["land"])
     compare(f"[{tag}] COLD STORE", row(d, LBL["COLD STORE"][0]), [0] + s["cold"], 1e-4)
     compare(f"[{tag}] AMBIENT STORE", row(d, LBL["AMBIENT STORE"][0]), [0] + s["amb"], 1e-4)
@@ -285,6 +319,12 @@ total = lambda d, c, r_: sum(float(x) for x in row(d, BLK[c][r_]) if x is not No
 worst = lambda d, i: min(float(x) for x in row(d, LBL["room left"][i]) if x is not None)
 FM = [h for h in CH if h.startswith("Farmers")][0]
 WS_ = [h for h in CH if h.lower().startswith("wholesale")][0]
+CASH_ROW = {}
+for r in range(1, ws.max_row + 1):
+    a = ws.cell(row=r, column=1).value
+    if a == "Opening cash": CASH_ROW["opening"] = r
+    if a == "Credit line": CASH_ROW["credit"] = r
+assert set(CASH_ROW) == {"opening", "credit"}, f"cash inputs not found: {CASH_ROW}"
 base_cold = peak(d0, "COLD STORE")
 
 BASE_ACRES = acre_overrides(A6)     # v5 ships empty; every run must plant something first
@@ -336,6 +376,12 @@ for tag, ov, pred in [
     ("shelf life     Spinach 2 -> 1", {f"F{CROP_ROW['Spinach']}": 1},
      lambda d: total(d, "SPINACH", "Most stock its shelf life allows") <
                total(d0, "SPINACH", "Most stock its shelf life allows")),
+    ("opening cash   -> 5,000", {f"B{CASH_ROW['opening']}": 5000.0},
+     lambda d: float(d[f"{col(1)}{LBL['CASH IN THE BANK'][0]}"])
+               < float(d0[f"{col(1)}{LBL['CASH IN THE BANK'][0]}"])),
+    ("credit line    -> 1,000", {f"B{CASH_ROW['credit']}": 1000.0},
+     lambda d: float(d[f"{col(1)}{LBL["floor"][0]}"])
+               > float(d0[f"{col(1)}{LBL["floor"][0]}"])),
     ("cold cap       -> 50", {f"B{CAP_ROW['cold']}": 50.0}, lambda d: worst(d, 1) < 0),
     ("ambient cap    -> 20", {f"B{CAP_ROW['ambient']}": 20.0}, lambda d: worst(d, 2) < 0),
     ("land           -> 10", {f"B{CAP_ROW['land']}": 10.0}, lambda d: worst(d, 0) < 0),
@@ -372,8 +418,12 @@ print("\nD. THE READ ME PROMISES WHAT THE MODEL PRODUCES")
 rd = load_workbook(WB)["READ ME"]
 prose = "\n".join(str(rd.cell(row=r, column=1).value or "") for r in range(1, rd.max_row + 1))
 RELAX = LP.solve(min_acreage=False)
+# Every line of the cost stack, not just a total — the prose now itemises it, and an itemised
+# claim that is not itemised-checked is the P&L defect this project already fixed once (W4).
 for label, val in (("optimum profit", OPT["profit"]), ("optimum revenue", OPT["revenue"]),
-                   ("growing cost", OPT["cost"]),
+                   ("growing cost", OPT["growing"]), ("packaging", OPT["packaging"]),
+                   ("fixed cost", OPT["fixed"]), ("overhead", OPT["overhead"]),
+                   ("weekly fixed cost", OPT["fixed_weekly"]),
                    ("LP-relaxation profit", RELAX["profit"])):
     report(f"${val:,.0f}" in prose, f"READ ME states the real {label} (${val:,.0f})")
 report(f"{OPT['n_planted']} of {OPT['n_offered']}" in prose,
@@ -394,6 +444,14 @@ report(not neg, f"no negative stock at the optimum (weeks {neg[:5]})" if neg
 for pool, i in (("COLD", 1), ("AMBIENT", 2)):
     report(worst(d_opt, i) >= -1e-6, f"{pool} store not exceeded at the optimum")
 report(worst(d_opt, 0) >= -1e-6, "land not exceeded at the optimum")
+_cum = row(d_opt, LBL["CASH IN THE BANK"][0])
+_flr = row(d_opt, LBL["floor"][0])
+_bust = [w + 1 for w, (c_, f_) in enumerate(zip(_cum, _flr)) if float(c_) < float(f_) - 1e-6]
+report(not _bust, "cash never falls through the floor at the optimum"
+       + (f" (weeks {_bust[:4]})" if _bust else ""))
+_low = min(float(x) for x in _cum)
+print(f"       deepest cash position: ${_low:,.0f}  "
+      f"(floor ${float(_flr[0]):,.0f}) — headroom ${_low - float(_flr[0]):,.0f}")
 for n in CROPS:
     b = BLK[n.upper()]
     over = [w + 1 for w, (held, allowed) in enumerate(

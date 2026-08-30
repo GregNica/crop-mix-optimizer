@@ -1,5 +1,5 @@
 """
-build_toy_v5.py — generates the FULL-CALENDAR toy model workbook (a MILP).
+build_toy_v6.py — generates the CASH toy model workbook (a MILP).
 
 v5 closes the two gaps the grower found in v4, both of which were DECISION VARIABLES rather
 than cost lines:
@@ -39,7 +39,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.formatting.rule import CellIsRule
 
 from farm_v2.utils.calendar import harvest_weeks_of
-import toy_v5_lp as LP
+import toy_v6_lp as LP
 
 CROP_NAMES = LP.CROP_NAMES
 crops = LP.CROPS
@@ -56,6 +56,7 @@ wl = lambda w: get_column_letter(wcol(w))
 LAST = get_column_letter(wcol(52))
 C_MAXA = get_column_letter(wcol(52) + 1)   # helper: max acres if planted
 C_MINA = get_column_letter(wcol(52) + 2)   # helper: min acres if planted
+C_START = get_column_letter(wcol(52) + 3)  # helper: the week seed is paid
 
 F_TITLE = Font(bold=True, size=15)
 F_H1 = Font(bold=True, size=12, color="1F4E79")
@@ -87,7 +88,7 @@ ws.column_dimensions["C"].width = 8
 ws.column_dimensions["D"].width = 6
 for w in range(1, 53):
     ws.column_dimensions[wl(w)].width = 7.5
-for c in (C_MAXA, C_MINA):
+for c in (C_MAXA, C_MINA, C_START):
     ws.column_dimensions[c].width = 11
 
 
@@ -146,7 +147,7 @@ except Exception:
 _BUILT = _dt.datetime.now().strftime("%Y-%m-%d %H:%M")
 
 r = 1
-put(r, 1, "FARM TOY MODEL — v5: the full calendar (a MILP)", font=F_TITLE)
+put(r, 1, "FARM TOY MODEL — v6: real costs and the cash floor", font=F_TITLE)
 put(r, 4, f"BUILT {_BUILT}   (from source at {_SHA})", font=F_NOTE)
 r += 1
 put(r, 1, "YELLOW = you type.  GREEN = the solver writes.  BLUE = the solver's plant/don't-plant "
@@ -167,7 +168,8 @@ put(r, 3, "m3 — Garlic", font=F_NOTE); r += 2
 # --- 2. crops ---
 put(r, 1, "2 — HOW EACH CROP BEHAVES", font=F_H1); r += 1
 for j, h in enumerate(["Crop", "Yield lb/acre", "Pack-out", "m3 per lb", "Store", "Shelf life wk",
-                       "Shrink %/wk", "Growing $/acre", "Min acres if planted", "Harvest weeks"]):
+                       "Shrink %/wk", "Seed $/acre", "Min acres if planted", "Harvest weeks",
+                       "$/ac plant wk", "$/ac grow wk", "$/ac harvest wk"]):
     put(r, 1 + j, h, font=F_BOLD, fill=HDR_FILL, border=True)
 r += 1
 ROW_CROP = r
@@ -196,6 +198,19 @@ for name in CROP_NAMES:
     # row taught: do not address a row you have not placed yet. (Written here first, it raised
     # NameError on ROW_SUCC and the build quietly left the previous file in place.)
     put(r, 10, 0, fmt="0", border=True)
+    # Fertiliser and fuel, per acre for each week the crop is in that phase — the app's own
+    # rates x its own prices. This is what makes cash TIMING honest: a grow week and a harvest
+    # week cost different amounts, and they fall in different weeks.
+    # ⚠️ WATER IS ABSENT ON PURPOSE. The app prices on-farm water at $0 (backlog W10), so
+    # inventing a price here would make the toy disagree with the thing it exists to check.
+    _fert, _fuel = LP.PAYLOAD["cost_fert_per_lb"], LP.PAYLOAD["cost_fuel_per_L"]
+    for _j, _ph in enumerate(("plant", "grow", "harv")):
+        # FULL precision stored, two decimals DISPLAYED. Rounding the stored value to cents
+        # put the sheet $2.38 away from the LP on a $1.65M objective — small, but it is the
+        # difference between "these are the same model" and "these are nearly the same model",
+        # and section E is the check that distinguishes them.
+        put(r, 11 + _j, c.get(f"fert_{_ph}", 0.0) * _fert + c.get(f"fuel_{_ph}", 0.0) * _fuel,
+            fill=IN_FILL, fmt="$0.00", border=True)
     crop_row[name] = r; r += 1
 put(r, 1, "'Min acres if planted' is what the plant/don't-plant switch enforces — see section 4.",
     font=F_NOTE); r += 2
@@ -203,7 +218,8 @@ put(r, 1, "'Min acres if planted' is what the plant/don't-plant switch enforces 
 # --- 3. crop x channel ---
 put(r, 1, "3 — WHO BUYS IT   (one row per crop x channel — the grower's ruling)", font=F_H1); r += 1
 for j, h in enumerate(["Crop", "Channel", "Cap type", "Cap lb", "From wk", "To wk",
-                       "Sell-through", "Returns to store", "Price $/lb"]):
+                       "Sell-through", "Returns to store", "Price $/lb",
+                       "Packaging $/lb"]):
     put(r, 1 + j, h, font=F_BOLD, fill=HDR_FILL, border=True)
 r += 1
 ROW_PAIR = r
@@ -222,6 +238,10 @@ for cname in CROP_NAMES:
         put(r, 8, ret, fill=IN_FILL, fmt="0.00", border=True)
         put(r, 9, crops[cname].get("channels", {}).get(hname, {}).get("price_per_lb", 0.0),
             fill=IN_FILL, fmt="$0.00", border=True)
+        # Packaging is charged per pound SOLD, not per acre — so it lands in the week of sale,
+        # which is why it belongs on this row and not in the crop table.
+        put(r, 10, crops[cname].get("channels", {}).get(hname, {})
+            .get("packaging_cost_per_lb", 0.0), fill=IN_FILL, fmt="$0.00", border=True)
         pair_row[(cname, hname)] = r; r += 1
 r += 1
 
@@ -238,6 +258,7 @@ for w in range(1, 53):
     put(r, wcol(w), w, font=F_BOLD, fill=HDR_FILL, align="center")
 put(r, wcol(52) + 1, "max if planted", font=F_SMALL, fill=HDR_FILL)
 put(r, wcol(52) + 2, "min if planted", font=F_SMALL, fill=HDR_FILL)
+put(r, wcol(52) + 3, "starts wk", font=F_SMALL, fill=HDR_FILL)
 ROW_SUCC_HDR = r; r += 1
 ROW_SUCC = r
 PH = {0: "P", 1: "G", 2: "H"}
@@ -257,6 +278,9 @@ for s in SUCCS:
     # C9 / C10 helpers — the plant/don't-plant linkage, as columns the Solver can constrain
     put(r, wcol(52) + 1, f"=D{r}*$B${ROW_LAND}", fmt="0.0", font=F_SMALL)
     put(r, wcol(52) + 2, f"=D{r}*$I${crop_row[cn]}", fmt="0.0", font=F_SMALL)
+    # The week seed is paid for. Genuinely per-succession — unlike the lb/harvest-week column
+    # v5 retired, this differs from row to row and no per-crop scalar can carry it.
+    put(r, wcol(52) + 3, f'=MATCH("P",${wl(1)}{r}:${LAST}{r},0)', fmt="0", font=F_SMALL)
     succ_rows[s["name"]] = r; r += 1
 ROW_SUCC_END = r - 1
 
@@ -420,13 +444,35 @@ for name in CROP_NAMES:
     R_SHELF = r; r += 1
     put(r, 1, "   Stock carried out must stay at or below this row.", font=F_NOTE); r += 1
 
+    # ---- what this crop costs, week by week ----
+    put(r, 1, "Growing cost this week", font=F_SMALL); put(r, 2, "$", font=F_NOTE)
+    SUCCRANGE = f"${wl(1)}${ROW_SUCC}:${LAST}${ROW_SUCC_END}"
+    for w in range(1, 53):
+        col = f"{wl(w)}${ROW_SUCC}:{wl(w)}${ROW_SUCC_END}"
+        # acres in each phase this week x that phase's $/acre, plus seed on any planting that
+        # STARTS this week. Three phases and a start test, all off the same calendar.
+        parts = "+".join(
+            f'SUMPRODUCT(({CROPCOL}="{name}")*({col}="{ph}")*{SR})*${cl}${cr}'
+            for ph, cl in (("P", "K"), ("G", "L"), ("H", "M")))
+        seed = (f'SUMPRODUCT(({CROPCOL}="{name}")*'
+                f'(${C_START}${ROW_SUCC}:${C_START}${ROW_SUCC_END}={w})*{SR})*$H${cr}')
+        put(r, wcol(w), f"={parts}+{seed}", fmt="#,##0")
+    R_GROW = r; r += 1
+    put(r, 1, "Packaging this week", font=F_SMALL); put(r, 2, "$", font=F_NOTE)
+    for w in range(1, 53):
+        put(r, wcol(w), "=" + "+".join(
+            f"{wl(w)}{ch_rows[h]['sold']}*$J${pair_row[(name, h)]}" for h in CH_NAMES),
+            fmt="#,##0")
+    R_PKG = r; r += 1
+
     put(r, 1, "ROOM OCCUPANCY", font=F_BOLD); put(r, 2, "m3", font=F_NOTE)
     for w in range(1, 53):
         put(r, wcol(w), f"=({wl(w)}{R_OPEN}+{wl(w)}{R_PACK})*$D${cr}", fmt="0.0",
             fill=POOL_C if pool == "Cold" else POOL_A)
     R_ROOM = r; r += 2
     crop_block[name] = dict(pack=R_PACK, open=R_OPEN, shrink=R_SHRINK, store=R_STORE,
-                            close=R_CLOSE, room=R_ROOM, shelf=R_SHELF, pool=pool, ch=ch_rows)
+                            close=R_CLOSE, room=R_ROOM, shelf=R_SHELF, pool=pool, ch=ch_rows,
+                            grow=R_GROW, pkg=R_PKG)
 
 # --- 6. stores ---
 put(r, 1, "6 — THE TWO STORES", font=F_H1); r += 1
@@ -439,22 +485,105 @@ for pool, cap_row, fill in (("Cold", ROW_COLDCAP, POOL_C), ("Ambient", ROW_AMBCA
                                        f"   Holds {', '.join(members)}.")
     pool_rows[pool] = dict(used=used, head=head, cap=cap_row)
 
-# --- 7. the optimizer ---
-put(r, 1, "7 — THE OPTIMIZER", font=F_H1); r += 1
+# --- 7. money, week by week, and the cash floor ---
+put(r, 1, "7 — CASH, WEEK BY WEEK", font=F_H1); r += 1
+put(r, 1, "Opening cash", font=F_BOLD)
+put(r, 2, 50000, fill=IN_FILL, fmt="$#,##0", border=True); ROW_OPCASH = r
+put(r, 3, "what is in the bank on 1 January", font=F_NOTE); r += 1
+put(r, 1, "Credit line", font=F_BOLD)
+put(r, 2, 250000, fill=IN_FILL, fmt="$#,##0", border=True); ROW_CREDIT = r
+put(r, 3, "how far below zero you may go", font=F_NOTE); r += 1
+put(r, 1, "Fixed cost per week", font=F_BOLD)
+put(r, 2, f"=$B${ROW_COLDCAP}*{LP.PAYLOAD['rate_harvest_storage']}"
+          f"+$B${ROW_AMBCAP}*{LP.PAYLOAD['rate_ambient_storage']}"
+          f"+$B${ROW_LAND}*{LP.PAYLOAD['rate_irrigation']}"
+          f"+{LP.PAYLOAD['rate_machinery']}"
+          f"+{LP.PAYLOAD['equip_storage']}*{LP.PAYLOAD['rate_equip_storage']}",
+    fmt="$#,##0", font=F_BOLD)
+ROW_FIXWK = r
+put(r, 3, "cooler + barn depreciation, irrigation, machinery, equipment store — owed every "
+          "week whether or not you plant", font=F_NOTE); r += 1
+put(r, 1, "Overhead, % of revenue", font=F_BOLD)
+put(r, 2, LP.PAYLOAD["overhead_pct_of_revenue"], fill=IN_FILL, fmt="0%", border=True)
+ROW_OVH = r
+put(r, 3, "insurance, admin, utilities — a share of what you sell", font=F_NOTE); r += 2
+
+r = week_header(r, "$")
+put(r, 1, "Revenue", font=F_BOLD); put(r, 2, "$", font=F_NOTE)
+for w in range(1, 53):
+    put(r, wcol(w), "=" + "+".join(
+        f"{wl(w)}{crop_block[n]['ch'][h]['sold']}*$I${pair_row[(n, h)]}"
+        for n in CROP_NAMES for h in CH_NAMES), fmt="#,##0")
+R_REVWK = r; r += 1
+put(r, 1, "  packaging", font=F_SMALL); put(r, 2, "$", font=F_NOTE)
+for w in range(1, 53):
+    put(r, wcol(w), "=" + "+".join(f"{wl(w)}{crop_block[n]['pkg']}" for n in CROP_NAMES),
+        fmt="#,##0")
+R_PKGWK = r; r += 1
+put(r, 1, "  growing cost", font=F_SMALL); put(r, 2, "$", font=F_NOTE)
+for w in range(1, 53):
+    put(r, wcol(w), "=" + "+".join(f"{wl(w)}{crop_block[n]['grow']}" for n in CROP_NAMES),
+        fmt="#,##0")
+R_GROWWK = r; r += 1
+put(r, 1, "  fixed cost", font=F_SMALL); put(r, 2, "$", font=F_NOTE)
+for w in range(1, 53):
+    put(r, wcol(w), f"=$B${ROW_FIXWK}", fmt="#,##0")
+R_FIXWK = r; r += 1
+put(r, 1, "  overhead", font=F_SMALL); put(r, 2, "$", font=F_NOTE)
+for w in range(1, 53):
+    put(r, wcol(w), f"={wl(w)}{R_REVWK}*$B${ROW_OVH}", fmt="#,##0")
+R_OVHWK = r; r += 1
+put(r, 1, "NET CASH this week", font=F_BOLD); put(r, 2, "$", font=F_NOTE)
+for w in range(1, 53):
+    put(r, wcol(w), f"={wl(w)}{R_REVWK}-{wl(w)}{R_PKGWK}-{wl(w)}{R_GROWWK}"
+                    f"-{wl(w)}{R_FIXWK}-{wl(w)}{R_OVHWK}", fmt="#,##0")
+R_NETWK = r; r += 2
+
+r = week_header(r, "$")
+put(r, 1, "CASH IN THE BANK", font=F_BOLD, fill=DEC_FILL); put(r, 2, "$", font=F_NOTE)
+for w in range(1, 53):
+    prev = f"{wl(w-1)}{r}" if w > 1 else f"$B${ROW_OPCASH}"
+    put(r, wcol(w), f"={prev}+{wl(w)}{R_NETWK}", fmt="#,##0", fill=DEC_FILL)
+R_CUM = r; r += 1
+for w in range(1, 53):
+    put(r, wcol(w), ">=", align="center", font=F_BOLD)
+r += 1
+put(r, 1, "  floor", font=F_BOLD); put(r, 2, "$", font=F_NOTE)
+for w in range(1, 53):
+    put(r, wcol(w), f"=-($B${ROW_OPCASH}+$B${ROW_CREDIT})", fmt="#,##0")
+R_FLOOR = r; r += 1
+put(r, 1, "  headroom", font=F_SMALL)
+for w in range(1, 53):
+    put(r, wcol(w), f"={wl(w)}{R_CUM}-{wl(w)}{R_FLOOR}", fmt="#,##0")
+R_HEAD = r; r += 1
+put(r, 1, "   This is the app's C13. Cash may go NEGATIVE — that is the credit line being "
+          "drawn — but never below the floor.", font=F_NOTE); r += 1
+put(r, 1, "   ⚠️ It barely binds here, because the biggest weekly outgoing a real farm has is "
+          "PAYROLL, and labour is v7. Do not read this curve as realistic yet.", font=F_NOTE)
+r += 2
+ws.conditional_formatting.add(f"{wl(1)}{R_HEAD}:{LAST}{R_HEAD}", CellIsRule(
+    operator="lessThan", formula=["0"], fill=PatternFill("solid", fgColor="FFC7CE"),
+    font=Font(color="9C0006", bold=True)))
+
+# --- 8. the objective ---
+put(r, 1, "8 — THE OPTIMIZER", font=F_H1); r += 1
 put(r, 1, "Revenue", font=F_BOLD)
 put(r, 2, "=" + "+".join(
     f"SUM({wl(1)}{crop_block[n]['ch'][h]['sold']}:{LAST}{crop_block[n]['ch'][h]['sold']})"
     f"*$I${pair_row[(n,h)]}" for n in CROP_NAMES for h in CH_NAMES), fmt="$#,##0", font=F_BOLD)
 ROW_REV = r; r += 1
-put(r, 1, "Growing cost", font=F_BOLD)
-put(r, 2, f"=SUMPRODUCT({SR},"
-          f"({CROPCOL}=\"{CROP_NAMES[0]}\")*$H${crop_row[CROP_NAMES[0]]}"
-          + "".join(f"+({CROPCOL}=\"{n}\")*$H${crop_row[n]}" for n in CROP_NAMES[1:]) + ")",
-    fmt="$#,##0", font=F_BOLD)
-put(r, 3, "acres x $/acre, across every planting", font=F_NOTE)
-ROW_COST = r; r += 1
+for _lab, _row in (("Growing cost", R_GROWWK), ("Packaging", R_PKGWK),
+                   ("Fixed cost", R_FIXWK), ("Overhead", R_OVHWK)):
+    put(r, 1, _lab, font=F_BOLD)
+    put(r, 2, f"=SUM({wl(1)}{_row}:{LAST}{_row})", fmt="$#,##0", font=F_BOLD)
+    if _lab == "Growing cost":
+        put(r, 3, "seed at planting + fertiliser and fuel every week in the ground", font=F_NOTE)
+        ROW_COST = r
+    if _lab == "Fixed cost":
+        put(r, 3, "owed all 52 weeks whatever you plant", font=F_NOTE)
+    r += 1
 put(r, 1, "PROFIT  (the objective)", font=F_BOLD, fill=DEC_FILL)
-put(r, 2, f"=B{ROW_REV}-B{ROW_COST}", fmt="$#,##0", font=F_BOLD, fill=DEC_FILL)
+put(r, 2, f"=B{ROW_REV}-SUM(B{ROW_COST}:B{r-1})", fmt="$#,##0", font=F_BOLD, fill=DEC_FILL)
 put(r, 3, "<-- MAXIMISE THIS CELL", font=F_BOLD)
 ROW_OBJ = r; r += 1
 put(r, 1, "Plantings chosen", font=F_BOLD)
@@ -510,6 +639,8 @@ recipe += [
     ("Constraint — ambient store", f"${wl(1)}${pool_rows['Ambient']['used']}:"
      f"${LAST}${pool_rows['Ambient']['used']}  <=  $B${ROW_AMBCAP}", ""),
     ("Constraint — land", f"${wl(1)}${ROW_LANDUSED}:${LAST}${ROW_LANDUSED}  <=  $B${ROW_LAND}", ""),
+    ("Constraint — CASH FLOOR", f"${wl(1)}${R_CUM}:${LAST}${R_CUM}  >=  "
+     f"${wl(1)}${R_FLOOR}:${LAST}${R_FLOOR}", "the app's C13"),
 ]
 # No separate annual-cap entry: the ceiling row is now a RUNNING ALLOWANCE, so the same
 # "sold <= ceiling" range already enforces the yearly total. One fewer entry to forget.
@@ -530,6 +661,11 @@ _RELAX = LP.solve(min_acreage=False)
 NUMS = {
     "{PROFIT}": f"${_OPT['profit']:,.0f}", "{REV}": f"${_OPT['revenue']:,.0f}",
     "{COST}": f"${_OPT['cost']:,.0f}",
+    "{GROW}": f"${_OPT['growing']:,.0f}", "{PKG}": f"${_OPT['packaging']:,.0f}",
+    "{FIXED}": f"${_OPT['fixed']:,.0f}", "{OVH}": f"${_OPT['overhead']:,.0f}",
+    "{FIXWK}": f"${_OPT['fixed_weekly']:,.0f}",
+    "{MARGIN}": f"{_OPT['profit'] / _OPT['revenue'] * 100:.1f}%",
+    "{V5_PROFIT}": "$2,384,231",
     "{N_PLANTED}": str(_OPT["n_planted"]), "{N_OFFERED}": str(_OPT["n_offered"]),
     "{RELAX_PROFIT}": f"${_RELAX['profit']:,.0f}", "{RELAX_N}": str(_RELAX["n_planted"]),
     "{MIN_COST}": f"${_RELAX['profit'] - _OPT['profit']:,.0f}",
@@ -541,12 +677,38 @@ NUMS = {
     "{OBJ}": f"B{ROW_OBJ}",
 }
 readme = [
- ("Farm toy model — v5: THE FULL CALENDAR", F_TITLE),
+ ("Farm toy model — v6: REAL COSTS AND THE CASH FLOOR", F_TITLE),
  (f"BUILT {_BUILT}   (from source at commit {_SHA})", F_NOTE),
  ("If that timestamp is older than the change you are looking for, you have a stale copy —", F_NOTE),
  ("close the file and re-open it from WSL rather than from a recent-files list.", F_NOTE),
  ("", None),
- ("WHAT v5 ADDS — both of these you spotted missing from v4", F_H1),
+ ("WHAT v6 ADDS — real costs, and the cash floor", F_H1),
+ ("These are one job, not two. A cash curve is meaningless without costs to spend, and v5's", None),
+ ("profit was absurd precisely because seed was the only cost it charged.", None),
+ ("", None),
+ ("  TIMED variable costs   seed in the PLANTING week; fertiliser and fuel every week in the", None),
+ ("                         ground at that phase's rate; packaging per lb in the week of SALE.", None),
+ ("                         Timing is the whole point — a cash floor cannot be honest if the", None),
+ ("                         costs land in the wrong week.", None),
+ ("  FIXED costs            cooler and barn depreciation, irrigation, machinery, equipment", None),
+ ("                         store: {FIXWK} a week, owed whether or not you plant anything.", None),
+ ("  OVERHEAD               a share of revenue, exactly as the app internalises it.", None),
+ ("  CASH FLOOR             cumulative cash may go negative — that is the credit line being", None),
+ ("                         drawn — but never below -(opening cash + credit line). The app's C13.", None),
+ ("", None),
+ ("Profit falls {V5_PROFIT} -> {PROFIT} once those are charged.", F_BOLD),
+ ("", None),
+ ("!! AND IT IS STILL ABSURD: net margin {MARGIN}, against 5-15% for real diversified veg.", F_H1),
+ ("Because LABOUR IS NOT HERE. On the real farm wages are about 90% of fixed cost — the app's", None),
+ ("own demo pays $855,150 a year against the {FIXED} of fixed cost this sheet charges. So:", None),
+ ("", None),
+ ("     THE CASH FLOOR BARELY BINDS, AND YOU SHOULD NOT TRUST THIS CURVE YET.", F_BOLD),
+ ("", None),
+ ("Measured: at 50,000 opening and a 250,000 credit line the floor never touches. It only bites", None),
+ ("at about 10,000 + 10,000. The mechanism is real and checked; the farm it is checking is not", None),
+ ("yet paying anybody. Labour is v7, and it is what makes cash mean something.", None),
+ ("", None),
+ ("WHAT v5 ADDED — both of these you spotted missing from v4", F_H1),
  ("", None),
  ("1. IT CHOOSES WHEN TO PLANT.", F_BOLD),
  ("   All {N_SUCC} plantings the app's calendar generator offers are on the sheet, one row per legal", None),
@@ -603,7 +765,12 @@ readme = [
  ("   Options: engine = LibreOffice CoinMP Linear Solver; tick non-negative", None),
  ("", None),
  ("WHAT IT SHOULD FIND", F_H1),
- ("     PROFIT   {PROFIT}      = revenue {REV} - growing cost {COST}", F_BOLD),
+ ("     PROFIT   {PROFIT}       net margin {MARGIN}", F_BOLD),
+ ("       revenue      {REV}", None),
+ ("       growing      {GROW}      seed at planting + fertiliser and fuel in the ground", None),
+ ("       packaging    {PKG}      per lb sold, in the week of sale", None),
+ ("       fixed        {FIXED}      {FIXWK} a week, owed whether or not you plant", None),
+ ("       overhead     {OVH}      a share of revenue", None),
  ("     {N_PLANTED} of {N_OFFERED} plantings used", F_BOLD),
  ("", None),
  ("Computed by solving the same MILP with scipy.milp — the same HiGHS solver your app runs. A", None),
@@ -648,13 +815,21 @@ readme = [
  ("   alone. Now set Garlic's 'Returns to store' to 0.00 and re-solve: the delay becomes a loss", None),
  ("   and the plan changes.", None),
  ("", None),
- ("EXPERIMENT 2 — drop the minimum acreage.  Set every 'Min acres if planted' in the crop", F_BOLD),
+ ("EXPERIMENT 2 — squeeze the cash.  Set the credit line to 10,000 and opening cash to 10,000,", F_BOLD),
+ ("   then re-solve.", F_BOLD),
+ ("   Now the floor bites. Watch WHICH plantings it drops: not the least profitable ones, but", None),
+ ("   the ones whose costs land earliest relative to their revenue. Garlic goes in around week", None),
+ ("   47 and is not sold until week 30 of the following year — nine months of money out before", None),
+ ("   a dollar comes back. Cash does not rank crops by margin; it ranks them by TIMING, which no", None),
+ ("   column on this sheet shows you.", None),
+ ("", None),
+ ("EXPERIMENT 3 — drop the minimum acreage.  Set every 'Min acres if planted' in the crop", F_BOLD),
  ("   table to 0 and re-solve.", F_BOLD),
  ("   Expect {RELAX_PROFIT} and {RELAX_N} plantings. The extra profit is real but the plan is", None),
  ("   not: it plants fractions of an acre no one would drive a tractor out for. This is what", None),
  ("   the binaries are FOR, and it is why the app carries them.", None),
  ("", None),
- ("EXPERIMENT 3 — take away the cooler.  Set the cold store to 40 m3 and re-solve.", F_BOLD),
+ ("EXPERIMENT 4 — take away the cooler.  Set the cold store to 40 m3 and re-solve.", F_BOLD),
  ("   Watch WHICH WEEKS it abandons, not just which crop. With a full calendar it can retreat", None),
  ("   to a planting pattern that keeps the cooler under its ceiling — an answer v4 could not", None),
  ("   even represent.", None),
@@ -679,7 +854,7 @@ readme = [
  ("configurations. Every input is perturbed to prove it propagates. No number is frozen. And the", None),
  ("same MILP is solved with scipy.milp, its answer written into the decision cells, and the", None),
  ("sheet's own PROFIT cell must reproduce the optimum exactly.", None),
- ("     Run it yourself:   .venv/bin/python toy_models/verify_toy_v5.py", None),
+ ("     Run it yourself:   .venv/bin/python toy_models/verify_toy_v6.py", None),
 ]
 row_i = 1
 for text, font in readme:
@@ -689,7 +864,7 @@ for text, font in readme:
     if font: c.font = font
     row_i += 1
 
-out = REPO / "toy_models" / "farm_toy_v5_full_calendar.xlsx"
+out = REPO / "toy_models" / "farm_toy_v6_cash.xlsx"
 wb.save(out)
 print(f"wrote {out}")
 print(f"  successions offered : {len(SUCCS)}")

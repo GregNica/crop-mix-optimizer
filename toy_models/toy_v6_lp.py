@@ -1,8 +1,8 @@
 """
-toy_v5_lp.py — the v5 sheet's model, written as a MILP and solved with scipy.
+toy_v6_lp.py — the v5 sheet's model, written as a MILP and solved with scipy.
 
-Imported by BOTH `build_toy_v5.py` (so the READ ME can promise the optimum LibreOffice should
-find) and `verify_toy_v5.py` (as the oracle the workbook is checked against).
+Imported by BOTH `build_toy_v6.py` (so the READ ME can promise the optimum LibreOffice should
+find) and `verify_toy_v6.py` (as the oracle the workbook is checked against).
 
 WHY THIS EXISTS. v4 is the first version whose answer is not arithmetic — it is a CHOICE, made
 by a solver. So "is the sheet right?" splits in two:
@@ -27,6 +27,22 @@ v5 ADDS THE TWO THINGS THE GROWER FOUND MISSING FROM v4:
 
 Those two pull in opposite directions: the full calendar raises profit, the minimum acreage
 lowers it. Neither is meaningful alone.
+
+v6 ADDS REAL COSTS AND THE CASH FLOOR, and the two are one job: a cash curve is meaningless
+without costs to spend, and v5's profit was absurd precisely because seed was the only cost.
+
+  TIMED variable costs   seed at the PLANTING week; fertiliser and fuel every week in the
+                         ground, at the rate for that phase; packaging per lb in the week of
+                         SALE. Timing is the point — a cash floor cannot be honest if costs
+                         land in the wrong week.
+  FIXED costs            cooler and barn depreciation, irrigation, machinery: charged every
+                         week whether or not anything is planted.
+  OVERHEAD               a share of revenue, internalised in the objective as the app does it.
+  CASH FLOOR (C13)       cumulative cash must never fall below -(opening cash + credit line).
+
+DEFERRED, and named so the omissions are not silent: labour (committed-cost machinery, v7),
+water (the app prices on-farm water at $0 — backlog W10, not a toy simplification), and
+interest on borrowing (post-solve in the app).
 """
 from __future__ import annotations
 
@@ -103,8 +119,19 @@ def defaults(cn, hn):
     return (1.00, 0.00 if contract else (1.00 if storable else 0.00))
 
 
+def weekly_fixed_cost(cold_cap=None, amb_cap=None):
+    """Flat $/week the farm owes whatever it plants."""
+    p = PAYLOAD
+    cold = p["harvest_storage_cap"] if cold_cap is None else cold_cap
+    amb = p["ambient_storage_cap"] if amb_cap is None else amb_cap
+    return (cold * p["rate_harvest_storage"] + amb * p["rate_ambient_storage"]
+            + p["total_land"] * p["rate_irrigation"] + p["rate_machinery"]
+            + p["equip_storage"] * p["rate_equip_storage"])
+
+
 def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
-          fixed_acres=None, min_acreage=True, annual_override=None):
+          fixed_acres=None, min_acreage=True, annual_override=None,
+          opening_cash=None, credit_line=None, cash_floor=True):
     """Maximise revenue - growing cost, as a MILP. Returns a dict of the optimum.
 
     `min_acreage=False` drops the binaries and solves the LP relaxation — useful only to show
@@ -131,15 +158,39 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
         for w in hw:
             packed_per_acre[i, w] += CROPS[cn]["yield_per_acre"] / max(1, len(hw)) * pack_out
 
+    # ---- per-acre cost of a succession, WEEK BY WEEK (this is what cash timing needs) ----
+    # seed at the planting week; fertiliser and fuel every week in the ground at that phase's
+    # rate. Water is deliberately absent: the app prices on-farm water at $0 (backlog W10), and
+    # inventing a price here would make the toy disagree with the thing it is checking.
+    fert_rate, fuel_rate = PAYLOAD["cost_fert_per_lb"], PAYLOAD["cost_fuel_per_L"]
+    var_week = np.zeros((n_s, N_WEEKS + 1))
+    for i, s_ in enumerate(SUCCS):
+        c = CROPS[CROP_NAMES[s_["crop"]]]
+        first = s_["weeks"][0]
+        if 1 <= ((first - 1) % N_WEEKS) + 1 <= N_WEEKS:
+            var_week[i, ((first - 1) % N_WEEKS) + 1] += c["seed_transplant_cost_per_acre"]
+        key = ["plant", "grow", "harv"]
+        for wk, ph in zip(s_["weeks"], s_["phases"]):
+            w = ((wk - 1) % N_WEEKS) + 1
+            var_week[i, w] += c.get(f"fert_{key[ph]}", 0.0) * fert_rate
+            var_week[i, w] += c.get(f"fuel_{key[ph]}", 0.0) * fuel_rate
+
+    overhead = PAYLOAD["overhead_pct_of_revenue"]
+
     # objective: -(revenue - cost) because milp minimises
     c_obj = np.zeros(N)
-    for i, s in enumerate(SUCCS):
-        c_obj[i] += CROPS[CROP_NAMES[s["crop"]]]["seed_transplant_cost_per_acre"]
+    for i, s_ in enumerate(SUCCS):
+        c_obj[i] += var_week[i, 1:].sum()
     for p, (cn, hn) in enumerate(pairs):
         st, _ = defaults(cn, hn)
-        price = CROPS[cn].get("channels", {}).get(hn, {}).get("price_per_lb", 0.0)
+        spec = CROPS[cn].get("channels", {}).get(hn, {})
+        price = spec.get("price_per_lb", 0.0)
+        pkg = spec.get("packaging_cost_per_lb", 0.0)
+        # per lb OFFERED: st of it sells at price, all of it carries packaging, and overhead is
+        # a share of revenue — the same net-of-everything price the app puts in its objective.
+        net = st * price * (1.0 - overhead) - st * pkg
         for w in range(1, N_WEEKS + 1):
-            c_obj[off_i(p, w)] -= st * price
+            c_obj[off_i(p, w)] -= net
 
     rows, lo, hi = [], [], []
 
@@ -211,6 +262,26 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
                 e += (opening[cn][w] + packed[cn][w]) * CROPS[cn]["crop_size_m3_per_lb"]
             add(e, -np.inf, cap)
 
+    # C13 — the weekly cash floor. Cumulative cash from week 1 to W must never fall below
+    # -(opening cash + credit line). Revenue lands in the week of sale, variable costs in the
+    # week they are incurred, fixed costs every week.
+    fixed_wk = weekly_fixed_cost(cold_cap, amb_cap)
+    op_cash = PAYLOAD.get("opening_cash", 50_000.0) if opening_cash is None else opening_cash
+    cred = PAYLOAD.get("credit_line", 250_000.0) if credit_line is None else credit_line
+    if cash_floor:
+        for W in range(1, N_WEEKS + 1):
+            e = np.zeros(N)
+            for i in range(n_s):
+                e[i] -= var_week[i, 1:W + 1].sum()
+            for p, (cn, hn) in enumerate(pairs):
+                st, _ = defaults(cn, hn)
+                spec = CROPS[cn].get("channels", {}).get(hn, {})
+                net = (st * spec.get("price_per_lb", 0.0) * (1.0 - overhead)
+                       - st * spec.get("packaging_cost_per_lb", 0.0))
+                for w in range(1, W + 1):
+                    e[off_i(p, w)] += net
+            add(e, -(op_cash + cred) + W * fixed_wk, np.inf)
+
     # land standing in the ground
     for w in range(1, N_WEEKS + 1):
         e = np.zeros(N)
@@ -255,19 +326,27 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
     sold = {k: sum(v) * defaults(*k)[0] for k, v in offered.items()}
     revenue = sum(sold[(cn, hn)] * CROPS[cn].get("channels", {}).get(hn, {}).get("price_per_lb", 0.0)
                   for cn, hn in pairs)
-    cost = sum(acres[SUCCS[i]["name"]] *
-               CROPS[CROP_NAMES[SUCCS[i]["crop"]]]["seed_transplant_cost_per_acre"]
-               for i in range(n_s))
+    growing = sum(x[i] * var_week[i, 1:].sum() for i in range(n_s))
+    packaging = sum(sold[(cn, hn)] * CROPS[cn].get("channels", {}).get(hn, {})
+                    .get("packaging_cost_per_lb", 0.0) for cn, hn in pairs)
+    fixed = fixed_wk * N_WEEKS
+    ovh = overhead * revenue
+    cost = growing + packaging + fixed + ovh
     planted = {k: v for k, v in acres.items() if v > 1e-6}
     return dict(profit=revenue - cost, revenue=revenue, cost=cost, acres=acres,
+                growing=growing, packaging=packaging, fixed=fixed, overhead=ovh,
+                fixed_weekly=fixed_wk, opening_cash=op_cash, credit_line=cred,
+                var_week=var_week,
                 offered=offered, sold=sold, status=res.status, planted=planted,
                 n_planted=len(planted), n_offered=len(SUCCS))
 
 
 if __name__ == "__main__":
     r = solve()
-    print(f"OPTIMUM  profit ${r['profit']:,.0f}  (revenue ${r['revenue']:,.0f} "
-          f"- growing cost ${r['cost']:,.0f})")
+    print(f"OPTIMUM  profit ${r['profit']:,.0f}")
+    print(f"   revenue    {r['revenue']:>12,.0f}")
+    for k in ("growing", "packaging", "fixed", "overhead"):
+        print(f"   {k:<10} {-r[k]:>12,.0f}")
     print(f"   plants {r['n_planted']} of {r['n_offered']} successions the app offers")
     print("\nacres:")
     for k, v in sorted(r["planted"].items(), key=lambda kv: -kv[1]):
