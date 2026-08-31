@@ -1,7 +1,7 @@
 """
-verify_toy_v9.py — EVALUATE the v4 workbook and prove it is the same problem the solver solves.
+verify_toy_v10.py — EVALUATE the v4 workbook and prove it is the same problem the solver solves.
 
-Run:  .venv/bin/python toy_models/verify_toy_v9.py
+Run:  .venv/bin/python toy_models/verify_toy_v10.py
 
 v4's answer is not arithmetic, it is a CHOICE, so "is the sheet right?" splits in two and both
 halves are checked here:
@@ -35,9 +35,9 @@ from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 
 from farm_v2.utils.calendar import generate_successions, harvest_weeks_of
-import toy_v9_lp as LP
+import toy_v10_lp as LP
 
-WB = REPO / "toy_models" / "farm_toy_v9_labour.xlsx"
+WB = REPO / "toy_models" / "farm_toy_v10_labour.xlsx"
 PFX = f"'[{WB.name}]MODEL'!"
 CROPS = tuple(LP.CROP_NAMES)
 CH = list(LP.CH_NAMES)
@@ -222,11 +222,19 @@ def simulate(acres, offered, packout=None, shrink=None, caps=None,
     # v9's ladder, computed here in the SAME ORDER the sheet builds it, so a row that is
     # wrong on the sheet cannot be masked by a simulator that took a shortcut to the answer.
     lab_cap, wage_wk, hourly_field, hourly_heads = LP.labour_arrays()
+    # ⚠️ THE POSITION ROWS ARE COMPARED INDIVIDUALLY, not only through their sum. A sum can be
+    # right while two rows are wrong in opposite directions, and splitting by position is the
+    # whole of v10 — checking only CREW CAPACITY would leave the change itself unverified.
+    pos = LP.positions()
+    pos_field = {q["name"]: list(q["field_h"]) for q in pos}
+    pos_cost = {q["name"]: list(q["cost"]) for q in pos}
     ot_rate = LP.overtime_rate()
     adv = adv or {}
     adv_lo = int(adv.get("start", 43)); adv_hi = int(adv.get("end", 49))
     adv_h = float(adv.get("hours", 40.0)); adv_fp = float(adv.get("field_pct", 100.0))
     adv_wage = float(adv.get("wage", 20.0))
+    adv_prod = float(adv.get("productivity_pct", 70.0))
+    adv_head = float(adv.get("cost_per_head", 800.0))
     load = 1.0 + LP.PAYLOAD.get("payroll_load_pct", 0.0)
     adv_cost_wk = adv_h * adv_wage * load
     allowance = float(adv.get("allowance", 1.25))
@@ -239,9 +247,12 @@ def simulate(acres, offered, packout=None, shrink=None, caps=None,
     for w in range(1, 53):
         ot_cost[w] = ot_hours[w - 1] * ot_rate[w]
         inwin = adv_lo <= w <= adv_hi
-        adv_hrs[w] = adv_crew * adv_h * adv_fp / 100.0 if inwin else 0.0
-        # ⚠️ COMMITTED: charged every week of the window whether the hours are used or not.
-        adv_wage_wk[w] = adv_crew * adv_cost_wk if inwin else 0.0
+        # ⚠️ x PRODUCTIVITY — the hours the crops actually get out of a bought hour.
+        adv_hrs[w] = (adv_crew * adv_h * adv_fp / 100.0 * adv_prod / 100.0) if inwin else 0.0
+        # ⚠️ COMMITTED: charged every week of the window whether the hours are used or not,
+        # plus the per-head cost once, in the first week of the window.
+        adv_wage_wk[w] = (adv_crew * adv_cost_wk if inwin else 0.0) + (
+            adv_crew * adv_head if w == adv_lo else 0.0)
         avail[w] = lab_cap[w] + ot_hours[w - 1] + adv_hrs[w]
     lab_used = [0.0] * 53
     for s_ in LP.SUCCS:
@@ -268,11 +279,24 @@ def simulate(acres, offered, packout=None, shrink=None, caps=None,
                 lab_cap=list(lab_cap), wage_wk=list(wage_wk), lab_used=lab_used,
                 avail=avail, ot_cost=ot_cost, ot_rate=list(ot_rate), ot_cap=ot_cap,
                 hourly_field=list(hourly_field), hourly_heads=list(hourly_heads),
+                pos_field=pos_field, pos_cost=pos_cost,
                 adv_hrs=adv_hrs, adv_wage_wk=adv_wage_wk,
                 gross=gross, packed=packed, opening=op, shr=shr, store=store, close=close,
                 room=room, sold=sold, ret=ret, con=con, cap=cap, shelf=shelf, land=land,
                 cold=[room["Spinach"][w] + room["Kale"][w] for w in range(1, 53)],
                 amb=[room["Garlic"][w] for w in range(1, 53)])
+
+
+def _pos_row(name, after_label, before_label):
+    """The row for position `name` between two block headers — never by ordinal."""
+    lo = LBL[after_label][0]
+    hi = LBL[before_label][0]
+    hits = [r for r in range(lo, hi)
+            if str(ws.cell(row=r, column=1).value or "").strip() == name.strip()]
+    assert len(hits) == 1, (
+        f"expected exactly one {name!r} row between {after_label!r} and {before_label!r}, "
+        f"found {hits}")
+    return hits[0]
 
 
 def compare(tag, got, want, tol=1e-5):
@@ -291,7 +315,7 @@ def flex_overrides(ot_hours, adv_crew):
     crew is a single scalar in column B — that IS the L1 change, expressed as a fixture.
     """
     ov = {}
-    r = LBL["9  OVERTIME hours"][0]
+    r = LBL["OVERTIME hours"][0]
     for w in range(1, 53):
         ov[f"{col(w)}{r}"] = float(ot_hours[w - 1])
     ov[f"B{LBL['PEOPLE TO HIRE'][0]}"] = float(adv_crew)
@@ -339,18 +363,27 @@ def check_values(tag, overrides, acres, offered, **kw):
     for lab, key in (("Revenue", "rev"), ("packaging", "pkg"), ("growing cost", "grow"),
                      ("NET CASH this week", "net"), ("CASH IN THE BANK", "cum"),
                      ("floor", "floor"),
-                     ("1  Hourly headcount", "hourly_heads"),
-                     ("3  Hourly FIELD hours", "hourly_field"),
-                     ("5  CREW CAPACITY", "lab_cap"),
-                     ("7  Overtime rate", "ot_rate"),
-                     ("8  Overtime CAP", "ot_cap"),
-                     ("10 Advisory crew hours", "adv_hrs"),
-                     ("11 HOURS AVAILABLE", "avail"),
-                     ("12 Wage bill this week", "wage_wk"),
-                     ("13 Advisory wage this week", "adv_wage_wk"),
-                     ("14 Overtime cost this week", "ot_cost"),
+                     ("Hourly field hours", "hourly_field"),
+                     ("CREW CAPACITY", "lab_cap"),
+                     ("Overtime CAP", "ot_cap"),
+                     ("Proposed hire hours", "adv_hrs"),
+                     ("HOURS AVAILABLE", "avail"),
+                     ("Wage bill this week", "wage_wk"),
+                     ("Proposed hire cost this week", "adv_wage_wk"),
+                     ("Overtime cost this week", "ot_cost"),
                      ("CROP HOURS needed", "lab_used")):
         compare(f"[{tag}] {lab}", row(d, LBL[lab][0]), s[key], 1e-4)
+    # ⚠️ LOCATED BETWEEN THEIR BLOCK HEADERS, not by an index into the label list. Each
+    # position name appears THREE times in column A — the crew table, block A's hours row and
+    # block D's cost row — so `LBL[name][1]` would be an ordinal into a list whose order
+    # depends on layout. That is the "a position written down is a position that will drift"
+    # trap this toy has now hit four times; addressing by the surrounding headers cannot drift.
+    for nm, series in s["pos_field"].items():
+        compare(f"[{tag}] position hours: {nm}",
+                row(d, _pos_row(nm, "A — WHO IS ON, WEEK BY WEEK", "CREW CAPACITY")), series)
+    for nm, series in s["pos_cost"].items():
+        compare(f"[{tag}] position cost: {nm}",
+                row(d, _pos_row(nm, "D — WHAT IT COSTS", "Wage bill this week")), series)
     compare(f"[{tag}] LAND", row(d, LBL["LAND in the ground"][0]), s["land"])
     compare(f"[{tag}] COLD STORE", row(d, LBL["COLD STORE"][0]), [0] + s["cold"], 1e-4)
     compare(f"[{tag}] AMBIENT STORE", row(d, LBL["AMBIENT STORE"][0]), [0] + s["amb"], 1e-4)
@@ -568,8 +601,8 @@ _lu = [float(x) for x in row(d_opt, LBL["CROP HOURS needed"][0])]
 # ⚠️ Measured against HOURS AVAILABLE, not the fixed crew. With flex on, crop hours SHOULD
 # exceed the standing crew — that is the whole point of buying hours — and this check flagged
 # weeks 8/9/11/12 until it was pointed at the right row. A stale ceiling reads as a defect.
-_lc = [float(x) for x in row(d_opt, LBL["11 HOURS AVAILABLE"][0])]
-_crew = [float(x) for x in row(d_opt, LBL["5  CREW CAPACITY"][0])]
+_lc = [float(x) for x in row(d_opt, LBL["HOURS AVAILABLE"][0])]
+_crew = [float(x) for x in row(d_opt, LBL["CREW CAPACITY"][0])]
 _over = [w + 1 for w, (u, c_) in enumerate(zip(_lu, _lc)) if u > c_ + 1e-6]
 report(not _over, "crop hours never exceed the hours AVAILABLE at the optimum"
        + (f" (weeks {_over[:4]})" if _over else ""))
@@ -587,8 +620,8 @@ report(len(_tightwks) > 0, f"C2 actually BINDS ({len(_tightwks)} of 52 weeks) �
 # proves the sheet and the LP agree on what a plan is WORTH; on its own it says nothing about
 # whether the plan is FEASIBLE against a limit the sheet draws. That is v5's "the ceiling row
 # was compared against nothing" in a new place.
-_oth = [float(x) for x in row(d_opt, LBL["9  OVERTIME hours"][0])]
-_otc = [float(x) for x in row(d_opt, LBL["8  Overtime CAP"][0])]
+_oth = [float(x) for x in row(d_opt, LBL["OVERTIME hours"][0])]
+_otc = [float(x) for x in row(d_opt, LBL["Overtime CAP"][0])]
 _otover = [w + 1 for w, (h, c_) in enumerate(zip(_oth, _otc)) if h > c_ + 1e-6]
 report(not _otover, "overtime never exceeds its DERIVED weekly cap at the optimum"
        + (f" (weeks {_otover[:4]}: "

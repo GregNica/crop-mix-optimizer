@@ -1,8 +1,8 @@
 """
-toy_v9_lp.py — the v5 sheet's model, written as a MILP and solved with scipy.
+toy_v10_lp.py — the v5 sheet's model, written as a MILP and solved with scipy.
 
-Imported by BOTH `build_toy_v9.py` (so the READ ME can promise the optimum LibreOffice should
-find) and `verify_toy_v9.py` (as the oracle the workbook is checked against).
+Imported by BOTH `build_toy_v10.py` (so the READ ME can promise the optimum LibreOffice should
+find) and `verify_toy_v10.py` (as the oracle the workbook is checked against).
 
 WHY THIS EXISTS. v4 is the first version whose answer is not arithmetic — it is a CHOICE, made
 by a solver. So "is the sheet right?" splits in two:
@@ -152,6 +152,44 @@ def defaults(cn, hn):
     return (1.00, 0.00 if contract else (1.00 if storable else 0.00))
 
 
+def positions():
+    """One entry per roster row, with its own weekly hours and its own weekly cost.
+
+    ⚠️ v10, and it is the grower's design. v9 answered "how many hours this week" with a
+    five-factor SUMPRODUCT mask — `(on this week) x (not salary) x (paid) x count x hours` —
+    recomputed inside every row that needed it. Splitting BY POSITION makes each row a plain
+    `IF(in window, count x hours x field%, 0)`, the aggregates become SUMs of named rows, and
+    the blended wage becomes a ratio of rows already on the sheet. The mask disappears.
+
+    It also gives the labour calendar for free: per-position weekly hours IS deliverable D9.
+
+    The honest cost: this is O(number of roster rows) where the mask was O(1). Four positions
+    is a clear win; a farm with twenty roles would want the aggregate form back.
+    """
+    load = 1.0 + PAYLOAD.get("payroll_load_pct", 0.0)
+    out = []
+    for e in PAYLOAD.get("employees", []):
+        a, b = e.get("start_week", 1), e.get("end_week", N_WEEKS)
+        salaried = e["type"] == "salary"
+        # contracted hours are what the WAGE is paid for; field hours are what the CROPS get.
+        # field% reduces capacity without reducing the wage — that asymmetry is the whole
+        # reason both numbers have to exist.
+        contract = e["count"] * e["hours_per_week"]
+        field = contract * e.get("field_time_pct", 100) / 100.0
+        per_wk = (e["wage"] / N_WEEKS * e["count"] * load if salaried
+                  else e["wage"] * e["hours_per_week"] * e["count"] * load)
+        f_h = np.zeros(N_WEEKS + 1); c_h = np.zeros(N_WEEKS + 1); cost = np.zeros(N_WEEKS + 1)
+        heads = np.zeros(N_WEEKS + 1)
+        for w in range(a, b + 1):
+            f_h[w] = field; c_h[w] = contract; cost[w] = per_wk; heads[w] = e["count"]
+        out.append(dict(name=e["position"], type=e["type"], wage=float(e["wage"]),
+                        salaried=salaried, paid=e["wage"] > 0,
+                        hourly=(not salaried) and e["wage"] > 0,
+                        field_h=f_h, contract_h=c_h, cost=cost, heads=heads,
+                        start=a, end=b))
+    return out
+
+
 def labour_arrays():
     """(capacity h/wk, committed $/wk, HOURLY field h/wk, hourly headcount), 1-indexed to 52.
 
@@ -164,24 +202,20 @@ def labour_arrays():
     the overtime cap had nothing to derive itself from and became a typed constant, which is
     L2's defect. Publishing it here is most of L2's fix.
     """
-    load = 1.0 + PAYLOAD.get("payroll_load_pct", 0.0)
-    cap = np.zeros(N_WEEKS + 1)
-    wage = np.zeros(N_WEEKS + 1)
-    hourly_field = np.zeros(N_WEEKS + 1)
-    hourly_heads = np.zeros(N_WEEKS + 1)
-    for e in PAYLOAD.get("employees", []):
-        a, b = e.get("start_week", 1), e.get("end_week", N_WEEKS)
-        per_wk = (e["wage"] / N_WEEKS if e["type"] == "salary"
-                  else e["wage"] * e["hours_per_week"])
-        field = e["count"] * e["hours_per_week"] * e.get("field_time_pct", 100) / 100.0
-        for w in range(a, b + 1):
-            wage[w] += per_wk * e["count"] * load
-            cap[w] += field
-            # Salaried staff give capacity but cannot be paid overtime — out of the CAP for
-            # the same reason they are out of the RATE. An unpaid role is out of both.
-            if e["type"] != "salary" and e["wage"] > 0:
-                hourly_field[w] += field
-                hourly_heads[w] += e["count"]
+    # ⚠️ SUMS OF THE POSITION ROWS, not a second walk over the roster. v9 derived these here
+    # AND inside overtime_rate() AND on the sheet, three times from the same source — which is
+    # how the sheet and the LP can drift while every test passes.
+    pos = positions()
+    z = lambda: np.zeros(N_WEEKS + 1)
+    cap, wage, hourly_field, hourly_heads = z(), z(), z(), z()
+    for p_ in pos:
+        cap += p_["field_h"]
+        wage += p_["cost"]
+        # Salaried staff give capacity but cannot be paid overtime — out of the CAP for the
+        # same reason they are out of the RATE. An unpaid role is out of both.
+        if p_["hourly"]:
+            hourly_field += p_["field_h"]
+            hourly_heads += p_["heads"]
     return cap, wage, hourly_field, hourly_heads
 
 
@@ -200,17 +234,22 @@ def overtime_rate(overtime_multiplier=1.5):
     """
     load = 1.0 + PAYLOAD.get("payroll_load_pct", 0.0)
     ot = np.zeros(N_WEEKS + 1)
+    hourly = [p_ for p_ in positions() if p_["hourly"]]
     for w in range(1, N_WEEKS + 1):
-        paid_hrs = paid_cost = 0.0
-        for e in PAYLOAD.get("employees", []):
-            if e["type"] == "salary" or e["wage"] <= 0:
-                continue
-            if not (e.get("start_week", 1) <= w <= e.get("end_week", N_WEEKS)):
-                continue
-            h = e["count"] * e["hours_per_week"]
-            paid_hrs += h
-            paid_cost += h * e["wage"] * load
-        ot[w] = (paid_cost / paid_hrs * overtime_multiplier) if paid_hrs else 0.0
+        # ⚠️ WEIGHTED BY FIELD HOURS, matching `farm_v2/utils/labor.py`, which builds this blend
+        # from `count x hrs x field%`. v9 here weighted by CONTRACTED hours instead — a real
+        # divergence between the toy and the thing it checks, measured at **0.27%** on this
+        # roster ($37.84 vs $37.74 in week 20) and zero in any week where one hourly role is
+        # alone. It only grows if a large hourly group has low field time.
+        #
+        # Aligned to the app rather than left to differ, because a toy that quietly computes a
+        # different number cannot be a check on anything. ⚠️ But contracted-weighting is
+        # arguably the more defensible of the two — the wage is paid per contracted hour, and
+        # field% reduces what the CROPS get, not what the payslip covers. Which one is right is
+        # a real question and it is filed, not settled here.
+        hrs = sum(p_["field_h"][w] for p_ in hourly)
+        cost = sum(p_["field_h"][w] * p_["wage"] * load for p_ in hourly)
+        ot[w] = (cost / hrs * overtime_multiplier) if hrs else 0.0
     return ot
 
 
@@ -229,7 +268,8 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
           opening_cash=None, credit_line=None, cash_floor=True,
           flex=True, overtime_multiplier=1.5, overtime_allowance=1.25,
           advisory=True, adv_start=43, adv_end=49, adv_hours_per_week=40.0,
-          adv_wage=20.0, adv_field_pct=100.0, max_adv_crew=20):
+          adv_wage=20.0, adv_field_pct=100.0, max_adv_crew=20,
+          adv_productivity_pct=70.0, adv_cost_per_head=800.0):
     """Maximise revenue - growing cost, as a MILP. Returns a dict of the optimum.
 
     `min_acreage=False` drops the binaries and solves the LP relaxation — useful only to show
@@ -256,9 +296,23 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
     # window is stated ONCE and never re-derived — v8's labour bugs were all a quantity
     # recomputed in a second place.
     adv_weeks = [w for w in range(int(adv_start), int(adv_end) + 1) if 1 <= w <= N_WEEKS]
-    adv_field_h = adv_hours_per_week * adv_field_pct / 100.0            # h/wk per person
+    # ⚠️ PRODUCTIVITY (v10). Until now a bought hour was worth exactly as much crop work as a
+    # trained crew hour, which made the hire unbeatable: $25.00/hr all-in against overtime at
+    # $37.84-48.75, so the solver took every head on offer. A green seasonal picker is not as
+    # fast as your harvest crew, and the two prices meet at about 65% — so this single factor
+    # decides the whole hire-vs-overtime answer and the model had no opinion on it.
+    #
+    # It multiplies the HOURS, not the wage: you pay for the hours you booked and get less crop
+    # work out of them. Pricing it as a wage discount is the same arithmetic and the wrong
+    # story — the payslip is not what changes.
+    adv_field_h = (adv_hours_per_week * adv_field_pct / 100.0
+                   * max(0.0, adv_productivity_pct) / 100.0)            # effective h/wk each
     adv_cost_wk = adv_hours_per_week * adv_wage * (
         1.0 + PAYLOAD.get("payroll_load_pct", 0.0))                     # $/wk per person
+    # ⚠️ PER-HEAD COST (v10). Recruitment, onboarding, transport — per PERSON, once, not per
+    # hour. It is what makes 18 casual hires cost more than 4 regardless of hours worked, and
+    # it is why H-2A (~$10,000/worker of non-wage cost) is not an 80-acre instrument.
+    adv_head_cost = max(0.0, float(adv_cost_per_head))
 
     # lb packed out per acre of succession i, in week w
     packed_per_acre = np.zeros((n_s, N_WEEKS + 1))
@@ -424,7 +478,7 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
             c_obj[ot_i(w)] += ot_rate[w]
     if advisory:
         # COMMITTED: the whole window is charged the moment the crew exists.
-        c_obj[adv_i] += adv_cost_wk * len(adv_weeks)
+        c_obj[adv_i] += adv_cost_wk * len(adv_weeks) + adv_head_cost
 
     # C13 — the weekly cash floor. Cumulative cash from week 1 to W must never fall below
     # -(opening cash + credit line). Revenue lands in the week of sale, variable costs in the
@@ -450,6 +504,9 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
             if advisory:
                 # Wages leave the bank every week of the window, like the standing crew's.
                 e[adv_i] -= adv_cost_wk * len([w for w in adv_weeks if w <= W])
+                # the per-head cost lands up front — that is when you recruit and move people
+                if adv_weeks and W >= adv_weeks[0]:
+                    e[adv_i] -= adv_head_cost
             add(e, -(op_cash + cred) + W * fixed_wk + wage_wk[1:W + 1].sum(), np.inf)
 
     # land standing in the ground
@@ -526,6 +583,8 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
         grow_w = sum(x[i] * var_week[i, w] for i in range(n_s))
         flex_w = (x[ot_i(w)] * ot_rate[w] if flex else 0.0)
         flex_w += (x[adv_i] * adv_cost_wk if (advisory and w in adv_weeks) else 0.0)
+        if advisory and adv_weeks and w == adv_weeks[0]:
+            flex_w += x[adv_i] * adv_head_cost
         week_net[w] = (rev_w - pkg_w - grow_w - fixed_wk - wage_wk[w] - overhead * rev_w
                        - flex_w)
     bank = np.cumsum(week_net[1:]) + op_cash
@@ -536,7 +595,7 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
     ot_hours = [float(x[ot_i(w)]) for w in range(1, N_WEEKS + 1)] if flex else [0.0] * N_WEEKS
     ot_cost = sum(h * ot_rate[w + 1] for w, h in enumerate(ot_hours))
     adv_crew = float(x[adv_i]) if advisory else 0.0
-    adv_cost = adv_crew * adv_cost_wk * len(adv_weeks)
+    adv_cost = adv_crew * (adv_cost_wk * len(adv_weeks) + adv_head_cost)
     # The hours the advised crew GIVES, and the hours the plan actually USES from them. They
     # differ, and the gap is the point: a committed block is paid whole. v8 could not show this
     # at all, because a spot hour that was not needed was simply never bought.
@@ -572,6 +631,11 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
                 hourly_heads=list(hourly_heads),
                 adv_crew=adv_crew, adv_cost=adv_cost, adv_hours_given=adv_hours_given,
                 adv_weeks=adv_weeks, adv_field_h=adv_field_h, adv_cost_wk=adv_cost_wk,
+                adv_head_cost=adv_head_cost, adv_productivity_pct=adv_productivity_pct,
+                positions=[dict(name=q["name"], hourly=q["hourly"], wage=q["wage"],
+                                field_h=list(q["field_h"]), contract_h=list(q["contract_h"]),
+                                cost=list(q["cost"]), heads=list(q["heads"]))
+                           for q in positions()],
                 fixed_weekly=fixed_wk, opening_cash=op_cash, credit_line=cred,
                 var_week=var_week,
                 offered=offered, sold=sold, status=res.status, planted=planted,
