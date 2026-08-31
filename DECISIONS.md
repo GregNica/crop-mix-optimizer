@@ -779,3 +779,70 @@ rent series** (row-crop averages badly understate intensive veg ground), **no na
 for greenhouse or retail space**, and the 2025 Maryland/Delaware custom-rate survey **dropped
 vegetable-specific lines** (bed-forming, plastic-laying, transplanting) for lack of responses. Where
 this file cites a vegetable figure it is inference from adjacent data, not a published series.
+
+---
+
+## Appendix — commissioned research: seasonal farm labour (2026-08-31)
+
+Commissioned for **GROUP F / L1** after the grower asked how hiring migrant harvesters and
+seasonal pickers actually works — contracts, lead time and cost. **The headline finding is that no
+path is a spot market**, which is what condemns the per-week hire variable.
+
+**Path A — H-2A (formal guest-worker programme).**
+
+| step | lead time before start |
+|---|---|
+| Job order (ETA-790) to the State Workforce Agency | **60–75 days** |
+| DOL application (ETA-9142A) via FLAG | 45 days |
+| Complete file for a certification decision | 30 days |
+| Workers may enter the US | 3 days |
+
+An emergency filing path exists under 45 days. Wages moved to a **two-tier skill-based AEWR** on
+2025-10-02, replacing the single statewide rate: FY2026 Skill Level I averages **$12.31/hr**
+nationally and Level II **$16.07/hr**, updated rates effective 2026-08-03, with wide state spread
+(California L-II $18.60, Oregon $15.13) and some states up 21%.
+
+**Non-wage cost dominates: ~$10,000/worker minimum (USDA).** Housing **$9,000–13,000/worker** is
+the largest line; inbound transport $400–650; subsistence $16.78/day without receipts (to $68 with);
+agent fees $1,500–3,500/application plus $100–250/worker recruitment; filing fees ≥$1,350.
+
+⭐ **The three-fourths guarantee** — the employer must *offer* at least 75% of the workdays' hours
+in the contract period (10 weeks x 40 h = 400 h → guarantee 300 h) or pay them regardless. Breach
+means back wages, civil penalties and 1–5 year debarment. **This is a minimum-commitment
+constraint written into federal regulation, and it is the mechanism the model has no
+representation of.**
+
+**Path B — local direct hire** (what an ~80-acre diversified veg farm actually does). Recruit
+**8–10 weeks** ahead; experienced seasonal workers book their season months in advance. Average
+hired farmworker wage **$18.13/hr** (ERS, 2024); NASS gross **$19.52/hr** (April 2025 reference
+week). Demand spikes at spring planting (Apr–May) and harvest (Aug–Oct). Availability is not
+assured — Purdue survey respondents reporting "some or a lot of difficulty" hiring rose from ~30%
+(2020) to ~66% (2021).
+
+**Path C — farm labour contractor.** The FLC assembles crews of 30–40 and is the workers'
+employer, so payroll tax, comp and benefits sit with them; the farm pays a billing rate above the
+wage. ⚠️ **No ag-specific markup figure was found.** The 1.2–1.5x commonly quoted is from general
+contracting, not agriculture — treat it as an order of magnitude, not a sourced number. If this
+path becomes load-bearing, source it properly first.
+
+**Ruling implied for the app (recommendation, not yet the grower's):** do **not** model H-2A. At
+80 diversified acres the ~$10k/worker non-wage floor and 75-day lead rule it out; it is a
+large-monoculture instrument. One sentence in the assumptions box, not a feature. **Do** change
+the shape of the hire decision to a committed block — which `employees[]` already expresses.
+
+⚠️ **Scale caveat.** Programme-level figures (AEWR, ¾ guarantee, the $10k floor) are firm and
+sourced. The FLC markup is not. The 8–10 week domestic lead time is trade-press guidance rather
+than a survey statistic — directionally reliable, not a number to compute against.
+
+**Sources.** DOL processing times <https://flag.dol.gov/processingtimes> · farmers.gov H-2A
+<https://www.farmers.gov/working-with-us/h2a-visa-program> · DOL AEWR data
+<https://www.flag.dol.gov/wage-data/adverse-effect-wage-rates> · Cornell Agricultural Workforce
+Development, new AEWR methodology
+<https://agworkforce.cals.cornell.edu/2025/10/10/major-h-2a-wage-changes-overview-of-new-aewr-methodology/>
+· CRS IF12408 <https://www.congress.gov/crs-product/IF12408> · DOL WHD Fact Sheet 26E, three-fourths
+guarantee <https://www.dol.gov/agencies/whd/fact-sheets/26e-job-hours-three-fourths-guarantee-H-2A>
+· AFBF Market Intel, H-2A application costs
+<https://www.fb.org/market-intel/snail-mail-and-government-bills-h-2a-application-costs> · USA Farm
+Labor cost breakdown <https://www.usafarmlabor.com/blog/detailed-breakdown-of-h2a-visa-program-costs>
+· USDA ERS Farm Labor <https://www.ers.usda.gov/topics/farm-economy/farm-labor> · USDA NASS Farm
+Labor <https://esmis.nal.usda.gov/sites/default/release-files/x920fw89s/0v839z45n/gt54nm405/fmla0525.pdf>
