@@ -709,6 +709,166 @@ it unblocks E2.
 
 ---
 
+## GROUP F — The labour flexibility layer (grower feedback, 2026-08-31; awaiting ruling)
+
+Three notes from the grower reading toy v8 and the labour section. All three were measured before
+anything was written here. **They share one root cause and the fixes interlock, so they are one
+project, in the order F3 → F2 → F1.**
+
+### F1 · L1 — delete the hire DECISION; hiring becomes a roster RECOMMENDATION
+
+**Grower:** *"Get rid of the hire decision and keep it as either insert planned labor and optimize
+for that, or optimize for ideal labor based on set roles, or a hybrid… if a user optimizes for
+ideal labor they can then go back and insert that as seasonal workers. Conflating them confuses
+the findings."*
+
+**The grower is right, and the model already contains the better representation.** Three lines of
+evidence:
+
+**(a) The per-week hire variable produces a plan no farm could execute.** Measured, golden farm,
+hire on at $19/hr, cap 400 h/wk: 21 non-zero weeks in blocks of 2/2/2/3/12, nine on/off
+transitions across the year, and **week 39 buys 2 hours** while week 42 buys 12 and week 43 buys
+400. There is no minimum engagement, no lead time and no block length — labour is a perfectly
+divisible spot commodity.
+
+**(b) No real seasonal-labour path is a spot market** (commissioned research, 2026-08-31; sources
+in the appendix). H-2A needs the job order **60–75 days** ahead, the DOL application 45 days, and
+carries a **three-fourths guarantee** — the employer must *offer* at least 75% of the contract
+period's hours or pay them regardless. Non-wage cost is **~$10,000/worker** (USDA), housing alone
+$9–13k. The domestic route wants **8–10 weeks** of lead and books out months ahead. Every path is
+a *committed block decided before the season*.
+
+**(c) `employees[]` is already exactly that block.** Each row carries
+`count / wage / hours_per_week / field_time_pct / start_week / end_week / type`. The hire variable
+is a **second, worse representation of a thing the model already models correctly** — and W12's
+committed-cost treatment of the roster is precisely the ¾ guarantee's economics (you pay for the
+block whether the crops need it or not).
+
+**PROPOSAL — two modes, one vocabulary:**
+
+| mode | labour is | output |
+|---|---|---|
+| **Plan** (default) | the roster; C2 is a hard constraint; no hire variable | the crop plan |
+| **Advisory** | capacity relaxed | the answer stated **as proposed roster rows** — "add 10 seasonal @ 40 h/wk, weeks 43–49" |
+
+The round trip is the point: the recommendation is expressed in the same units as the input, so
+the grower pastes it into the roster and re-solves in plan mode. That is the grower's own
+"optimize for ideal labor, then insert it as seasonal workers", and it is why conflating the two
+confuses the findings — today one solve answers two different questions at once.
+
+⚠️ **Overtime does NOT move.** It is genuinely a within-plan flex: your existing crew staying
+late, no lead time, no roster row. It stays a decision variable. This splits a conflated pair
+correctly rather than deleting both.
+
+**Consequence:** removes `hire_enabled`, `max_hire_hrs_per_week`, `hired_wage_per_hr`,
+`hire_wage_markup` and 52 decision variables from the money path. **W15's hire-vs-overtime pricing
+question and W17's wage inference both DISSOLVE** — a hired hand's wage is typed on a roster row
+like every other wage, so there is nothing left to infer.
+
+**Open question for the grower:** does advisory mode fit blocks automatically (integer decision,
+real work) or just report the weekly shape and let the grower draw the block? **Recommend the
+cheap version first** — it is arguably more honest, since the block choice depends on who is
+actually available locally, which the model does not know.
+
+### F2 · L2 — the overtime cap must be DERIVED from the roster, and today it is a live defect
+
+**Grower:** *"max overtime should be a formula calculation with an input multiplier based on
+allowed overtime wages (for example, allowed 125% would be 50 hrs x number of hourly workers)."*
+
+**Confirmed as a DEFECT, not only an ergonomics point.** `max_overtime_hrs_per_week` is a scalar
+broadcast flat across all 52 weeks (`solver.py` ~958–959), while `labor_capacity` varies weekly
+with the seasonal roster.
+
+**Measured, golden farm, shipped default 200 h/wk, hire off:**
+- **15 of 52 weeks let the cap exceed the entire crew's regular hours.** Weeks 1–8 and 49–52 have
+  108 crew hours and permit 200 overtime hours — **185%**.
+- **And the solver takes it.** Week 44 buys **191 OT hours against 299 crew hours (64%)**; week 47
+  149/257 (58%); week 43 114/222 (51%). Six weeks breach a 125% rule. A 64% overtime rate is a
+  66-hour week for every person on the crew.
+- ⭐ **No flat number can encode the rule.** Crew hours swing **108 → 616** across the year, so a
+  cap tight enough for winter strangles summer and one sized for summer permits 185% in winter.
+  Measured: even at a flat cap of **50 h/wk**, two weeks still breach 125%.
+
+**PROPOSAL:** replace the hours box with an **allowed-overtime multiplier** (default 1.25) and
+derive, per week, from HOURLY roles only:
+
+    ot_cap[w] = (allowed_multiplier - 1) x hourly_regular_hours[w]
+
+Salaried staff give capacity but cannot be paid overtime — the toy already encodes that asymmetry
+in the RATE and should encode it in the CAP the same way.
+
+⚠️ **The quantity this needs already exists and is thrown away.** `labor.py` computes
+`hourly_weighted_hours[w]` (~lines 157/218), uses it once as the denominator of the wage blend
+(~line 226), and **does not return it**. Publishing it is most of the fix — see F3.
+
+**Passes the complexity test better than what ships:** "how much overtime will you allow?" is a
+policy a grower states; "max overtime hours per week" is a number they must derive from their own
+roster, and if they get it wrong nothing tells them.
+
+⚠️ **Unguarded today.** `tests/test_labor_flex.py` has 15 tests and none compares the overtime cap
+against that week's crew size.
+
+### F3 · L3 — the labour section is disorganised, and F1/F2 are symptoms of it
+
+**Grower:** *"the whole labor section does not flow well in the solver… I don't understand the
+formula, but I can not imagine how overtime rate requires that dense of a formula, or
+overtime/hired hours are decision variables that are then just copied down to the constraint rows
+which is added complexity and realestate, or why can't this section flow more like the crop
+sections where its a series of rows that logically build on each other."*
+
+**Right about the sheet; half right about the code — and the half that is wrong is the
+interesting half.**
+
+The toy's overtime rate is one cell per week carrying a five-factor mask recomputed inline —
+`(type<>"salary") x (wage>0) x (start<=w) x (end>=w) x count x hours` inside a SUMPRODUCT ratio,
+then x load x multiplier. That mask answers *"who is on the payroll in week w, hourly, and paid"*
+— a question the capacity row already answers. **It is dense because an intermediate quantity was
+never given a row.**
+
+The **code is better structured than the sheet**: `labor.py` does build `labor_capacity`,
+`committed_weekly_wages`, `hourly_weighted_wages` and `hourly_weighted_hours` as named weekly
+arrays. But it **under-publishes** — six keys come back and the one F2 needs is not among them. So
+the disorganisation is real in the sheet, and it surfaces in the code as *a derivable quantity
+replaced by a typed constant*, which is F2's defect exactly.
+
+⚠️ **Corroborating evidence, produced by this very analysis.** `weekly_labor_supply` is 52-long
+and 0-indexed while `overtime_hours_weekly` is 53-long and 1-indexed — **in the same result
+dict**. The first measurement of F2 misaligned them by one and invented a false finding (a week
+with zero crew permitted 200 overtime hours). It was caught only by checking array lengths.
+**A section a reader cannot follow is a section that produces wrong readings, and it produced one
+in the hands of the person writing the analysis.** That is the grower's point, demonstrated
+rather than conceded.
+
+**PROPOSAL — restructure the labour block, sheet AND code, as a build-up of named rows/arrays:**
+
+1. headcount present in week w — hourly and salaried, split
+2. regular field hours in week w — per class
+3. blended hourly wage in week w
+4. overtime rate = (3) x (1 + load) x multiplier
+5. **overtime cap = (allowed_mult − 1) x (2, hourly)**  ← F2 falls out for free
+6. hours available = capacity + overtime
+7. C2 measures against (6)
+
+Each row reads only the one above it. The dense formula disappears because its parts have names.
+**F2 is not a separate fix — it is what F3 produces.**
+
+### Sequencing and the re-pin
+
+**ORDER: F3 → F2 → F1.** F3 publishes the arrays; F2 is then a one-line cap; F1 is the semantics
+change. One semantics change at a time (guardrail 11).
+
+⚠️ **The golden farm will NOT move, and that is the trap, not the reassurance.**
+`tests/golden/default_farm_payload.json` has no `labor_flex_enabled`, so it defaults OFF and the
+entire flex path is outside the pinned baseline. F1 and F2 can be built, shipped and re-pinned
+with the golden numbers unchanged. **This is the documented "defaulting a feature off leaves it
+unguarded" trap, third instance.** Requirement: a **flex-ON golden fixture added in the same
+commit** as F2, so the cap has a baseline that can fail.
+
+For reference, on a farm with both levers on at shipped caps: profit $723,659 with hire,
+**$684,980 without** (−$38,679), against $612,912 with flex off entirely.
+
+---
+
 ## Rulings on the audit's three open questions (2026-07-31, all resolved)
 
 **M9 — volume basis: proceed with the recommended scope.** `STRATEGY.md`'s "volume/pack basis"
