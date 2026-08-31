@@ -1,7 +1,7 @@
 """
-verify_toy_v8.py — EVALUATE the v4 workbook and prove it is the same problem the solver solves.
+verify_toy_v9.py — EVALUATE the v4 workbook and prove it is the same problem the solver solves.
 
-Run:  .venv/bin/python toy_models/verify_toy_v8.py
+Run:  .venv/bin/python toy_models/verify_toy_v9.py
 
 v4's answer is not arithmetic, it is a CHOICE, so "is the sheet right?" splits in two and both
 halves are checked here:
@@ -35,9 +35,9 @@ from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 
 from farm_v2.utils.calendar import generate_successions, harvest_weeks_of
-import toy_v8_lp as LP
+import toy_v9_lp as LP
 
-WB = REPO / "toy_models" / "farm_toy_v8_flex.xlsx"
+WB = REPO / "toy_models" / "farm_toy_v9_labour.xlsx"
 PFX = f"'[{WB.name}]MODEL'!"
 CROPS = tuple(LP.CROP_NAMES)
 CH = list(LP.CH_NAMES)
@@ -145,7 +145,7 @@ def row(d, r):
 
 def simulate(acres, offered, packout=None, shrink=None, caps=None,
              opening_cash=50_000.0, credit_line=250_000.0,
-             ot_hours=None, hire_hours=None):
+             ot_hours=None, adv_crew=0.0, adv=None):
     """The v4 flow. `offered` is GIVEN — nothing is decided here."""
     packout = packout or {n: 1.00 for n in CROPS}
     shrink = shrink or {n: 0.0 for n in CROPS}
@@ -219,15 +219,30 @@ def simulate(acres, offered, packout=None, shrink=None, caps=None,
             grow[w] += a * (c.get(f"fert_{key[ph]}", 0.0) * fert
                             + c.get(f"fuel_{key[ph]}", 0.0) * fuel)
     # Labour: capacity, the committed wage bill, and the crop hours measured against it.
-    lab_cap, wage_wk = LP.labour_arrays()
-    ot_rate, hire_rate = LP.flex_rates()
+    # v9's ladder, computed here in the SAME ORDER the sheet builds it, so a row that is
+    # wrong on the sheet cannot be masked by a simulator that took a shortcut to the answer.
+    lab_cap, wage_wk, hourly_field, hourly_heads = LP.labour_arrays()
+    ot_rate = LP.overtime_rate()
+    adv = adv or {}
+    adv_lo = int(adv.get("start", 43)); adv_hi = int(adv.get("end", 49))
+    adv_h = float(adv.get("hours", 40.0)); adv_fp = float(adv.get("field_pct", 100.0))
+    adv_wage = float(adv.get("wage", 20.0))
+    load = 1.0 + LP.PAYLOAD.get("payroll_load_pct", 0.0)
+    adv_cost_wk = adv_h * adv_wage * load
+    allowance = float(adv.get("allowance", 1.25))
+    ot_cap = [max(0.0, allowance - 1.0) * hourly_field[w] for w in range(53)]
     ot_hours = ot_hours or [0.0] * 52
-    hire_hours = hire_hours or [0.0] * 52
-    flex_cost = [0.0] * 53
+    ot_cost = [0.0] * 53
+    adv_hrs = [0.0] * 53
+    adv_wage_wk = [0.0] * 53
     avail = [0.0] * 53
     for w in range(1, 53):
-        flex_cost[w] = ot_hours[w - 1] * ot_rate[w] + hire_hours[w - 1] * hire_rate[w]
-        avail[w] = lab_cap[w] + ot_hours[w - 1] + hire_hours[w - 1]
+        ot_cost[w] = ot_hours[w - 1] * ot_rate[w]
+        inwin = adv_lo <= w <= adv_hi
+        adv_hrs[w] = adv_crew * adv_h * adv_fp / 100.0 if inwin else 0.0
+        # ⚠️ COMMITTED: charged every week of the window whether the hours are used or not.
+        adv_wage_wk[w] = adv_crew * adv_cost_wk if inwin else 0.0
+        avail[w] = lab_cap[w] + ot_hours[w - 1] + adv_hrs[w]
     lab_used = [0.0] * 53
     for s_ in LP.SUCCS:
         a = acres[s_["name"]]
@@ -242,7 +257,7 @@ def simulate(acres, offered, packout=None, shrink=None, caps=None,
         # ⚠️ WAGES ARE IN HERE, and in no per-acre charge anywhere. That is the W12 point: every
         # listed worker is paid for their stated hours whether the crops need them or not.
         net[w] = (rev[w] - pkg[w] - grow[w] - fixed_wk - rev[w] * ovh_pct - wage_wk[w]
-                  - flex_cost[w])
+                  - ot_cost[w] - adv_wage_wk[w])
         running += net[w]; cum[w] = running
 
     # The floor is MINUS THE CREDIT LINE, because `cum` above is a bank balance that already
@@ -251,8 +266,9 @@ def simulate(acres, offered, packout=None, shrink=None, caps=None,
     floor = [-credit_line] * 53
     return dict(rev=rev, pkg=pkg, grow=grow, net=net, cum=cum, floor=floor, fixed_wk=fixed_wk,
                 lab_cap=list(lab_cap), wage_wk=list(wage_wk), lab_used=lab_used,
-                flex_cost=flex_cost, avail=avail,
-                ot_rate=list(ot_rate), hire_rate=list(hire_rate),
+                avail=avail, ot_cost=ot_cost, ot_rate=list(ot_rate), ot_cap=ot_cap,
+                hourly_field=list(hourly_field), hourly_heads=list(hourly_heads),
+                adv_hrs=adv_hrs, adv_wage_wk=adv_wage_wk,
                 gross=gross, packed=packed, opening=op, shr=shr, store=store, close=close,
                 room=room, sold=sold, ret=ret, con=con, cap=cap, shelf=shelf, land=land,
                 cold=[room["Spinach"][w] + room["Kale"][w] for w in range(1, 53)],
@@ -268,13 +284,17 @@ def compare(tag, got, want, tol=1e-5):
            f"({len(bad)} weeks)"))
 
 
-def flex_overrides(ot_hours, hire_hours):
-    """The two bought-hour rows are DECISION cells, like `offered` — written in, not computed."""
+def flex_overrides(ot_hours, adv_crew):
+    """The decision cells of the labour layer, written in rather than computed.
+
+    v9: 52 overtime cells and ONE headcount, where v8 had 104 bought-hour cells. The advisory
+    crew is a single scalar in column B — that IS the L1 change, expressed as a fixture.
+    """
     ov = {}
-    for lab, series in (("OVERTIME hours", ot_hours), ("HIRED hours", hire_hours)):
-        r = LBL[lab][0]
-        for w in range(1, 53):
-            ov[f"{col(w)}{r}"] = float(series[w - 1])
+    r = LBL["9  OVERTIME hours"][0]
+    for w in range(1, 53):
+        ov[f"{col(w)}{r}"] = float(ot_hours[w - 1])
+    ov[f"B{LBL['PEOPLE TO HIRE'][0]}"] = float(adv_crew)
     return ov
 
 
@@ -312,12 +332,24 @@ def check_values(tag, overrides, acres, offered, **kw):
         compare(f"[{tag}] {n} shelf-life bound",
                 row(d, b["Most stock its shelf life allows"]), s["shelf"][n], 1e-4)
         compare(f"[{tag}] {n} room", row(d, b["ROOM OCCUPANCY"]), s["room"][n], 1e-4)
+    # ⚠️ EVERY RUNG OF THE LADDER IS COMPARED, not just the ones that feed money. v8 checked
+    # capacity and the two rates and skipped everything between them, which is how an
+    # intermediate row can be wrong while the total looks right. The point of naming the rows
+    # was to make them checkable; this is that half of the bargain.
     for lab, key in (("Revenue", "rev"), ("packaging", "pkg"), ("growing cost", "grow"),
                      ("NET CASH this week", "net"), ("CASH IN THE BANK", "cum"),
-                     ("floor", "floor"), ("Crew capacity", "lab_cap"),
-                     ("Wage bill this week", "wage_wk"), ("CROP HOURS needed", "lab_used"),
-                     ("Cost of bought hours", "flex_cost"), ("Hours available", "avail"),
-                     ("Overtime rate", "ot_rate"), ("Hired rate", "hire_rate")):
+                     ("floor", "floor"),
+                     ("1  Hourly headcount", "hourly_heads"),
+                     ("3  Hourly FIELD hours", "hourly_field"),
+                     ("5  CREW CAPACITY", "lab_cap"),
+                     ("7  Overtime rate", "ot_rate"),
+                     ("8  Overtime CAP", "ot_cap"),
+                     ("10 Advisory crew hours", "adv_hrs"),
+                     ("11 HOURS AVAILABLE", "avail"),
+                     ("12 Wage bill this week", "wage_wk"),
+                     ("13 Advisory wage this week", "adv_wage_wk"),
+                     ("14 Overtime cost this week", "ot_cost"),
+                     ("CROP HOURS needed", "lab_used")):
         compare(f"[{tag}] {lab}", row(d, LBL[lab][0]), s[key], 1e-4)
     compare(f"[{tag}] LAND", row(d, LBL["LAND in the ground"][0]), s["land"])
     compare(f"[{tag}] COLD STORE", row(d, LBL["COLD STORE"][0]), [0] + s["cold"], 1e-4)
@@ -337,9 +369,9 @@ d0 = check_values("1 acre each, nothing offered", acre_overrides(A6), A6, ZERO)
 OPT = LP.solve()
 check_values("at the LP optimum",
              {**acre_overrides(OPT["acres"]), **offered_overrides(OPT["offered"]),
-              **flex_overrides(OPT["ot_hours"], OPT["hire_hours"])},
+              **flex_overrides(OPT["ot_hours"], OPT["adv_crew"])},
              OPT["acres"], OPT["offered"],
-             ot_hours=OPT["ot_hours"], hire_hours=OPT["hire_hours"])
+             ot_hours=OPT["ot_hours"], adv_crew=OPT["adv_crew"])
 
 # An arbitrary FEASIBLE-ish set, so the comparison is not only ever exercised at a vertex.
 ARB = {(n, h): [(w * 37 % 900) * (1.0 if h.startswith("Farmers") else 2.0)
@@ -378,12 +410,12 @@ check_values("stressed (pack-out + shrink on a storable)",
 TIGHT = dict(opening_cash=50_000.0, credit_line=50_000.0)
 _t = LP.solve(**TIGHT)
 _tov = {**acre_overrides(_t["acres"]), **offered_overrides(_t["offered"]),
-        **flex_overrides(_t["ot_hours"], _t["hire_hours"]),
+        **flex_overrides(_t["ot_hours"], _t["adv_crew"]),
         f"B{CASH_ROW['opening']}": TIGHT["opening_cash"],
         f"B{CASH_ROW['credit']}": TIGHT["credit_line"]}
 _td = check_values("tight cash (the floor BINDS)", _tov, _t["acres"], _t["offered"],
                    opening_cash=TIGHT["opening_cash"], credit_line=TIGHT["credit_line"],
-                   ot_hours=_t["ot_hours"], hire_hours=_t["hire_hours"])
+                   ot_hours=_t["ot_hours"], adv_crew=_t["adv_crew"])
 _tc = [float(x) for x in row(_td, LBL["CASH IN THE BANK"][0])]
 _tf = float(row(_td, LBL["floor"][0])[0])
 report(min(_tc) >= _tf - 1e-6,
@@ -509,7 +541,7 @@ for label, val in (("optimum profit", OPT["profit"]), ("optimum revenue", OPT["r
                    ("growing cost", OPT["growing"]), ("packaging", OPT["packaging"]),
                    ("fixed cost", OPT["fixed"]), ("overhead", OPT["overhead"]),
                    ("weekly fixed cost", OPT["fixed_weekly"]), ("wages", OPT["wages"]),
-                   ("hired-hour cost", OPT["hire_cost"]), ("interest", OPT["interest"]),
+                   ("advisory crew cost", OPT["adv_cost"]), ("interest", OPT["interest"]),
                    ("LP-relaxation profit", RELAX["profit"])):
     report(f"${val:,.0f}" in prose, f"READ ME states the real {label} (${val:,.0f})")
 report(f"{OPT['n_planted']} of {OPT['n_offered']}" in prose,
@@ -519,7 +551,7 @@ report(f"{RELAX['n_planted']}" in prose,
 
 print("\nE. THE SHEET AND THE SOLVER ARE THE SAME PROBLEM")
 d_opt = calc({**acre_overrides(OPT["acres"]), **offered_overrides(OPT["offered"]),
-              **flex_overrides(OPT["ot_hours"], OPT["hire_hours"])})
+              **flex_overrides(OPT["ot_hours"], OPT["adv_crew"])})
 sheet_profit = float(d_opt[f"B{OBJ_ROW}"])
 report(abs(sheet_profit - OPT["profit"]) < 1.0,
        f"sheet PROFIT at the LP optimum = ${sheet_profit:,.2f} vs LP ${OPT['profit']:,.2f}")
@@ -536,8 +568,8 @@ _lu = [float(x) for x in row(d_opt, LBL["CROP HOURS needed"][0])]
 # ⚠️ Measured against HOURS AVAILABLE, not the fixed crew. With flex on, crop hours SHOULD
 # exceed the standing crew — that is the whole point of buying hours — and this check flagged
 # weeks 8/9/11/12 until it was pointed at the right row. A stale ceiling reads as a defect.
-_lc = [float(x) for x in row(d_opt, LBL["Hours available"][0])]
-_crew = [float(x) for x in row(d_opt, LBL["Crew capacity"][0])]
+_lc = [float(x) for x in row(d_opt, LBL["11 HOURS AVAILABLE"][0])]
+_crew = [float(x) for x in row(d_opt, LBL["5  CREW CAPACITY"][0])]
 _over = [w + 1 for w, (u, c_) in enumerate(zip(_lu, _lc)) if u > c_ + 1e-6]
 report(not _over, "crop hours never exceed the hours AVAILABLE at the optimum"
        + (f" (weeks {_over[:4]})" if _over else ""))
@@ -547,6 +579,61 @@ report(len(_bought) > 0, f"and bought hours are genuinely USED ({len(_bought)} w
 _tightwks = [w + 1 for w, (u, c_) in enumerate(zip(_lu, _lc)) if c_ > 0 and u >= c_ - 1e-6]
 report(len(_tightwks) > 0, f"C2 actually BINDS ({len(_tightwks)} of 52 weeks) — a slack "
                            f"capacity row would prove nothing")
+
+# ⚠️ THE OVERTIME CAP MUST BE CHECKED ON THE SHEET'S OWN ROWS, and this check exists because a
+# mutation walked through everything else. Deleting the cap CONSTRAINT from the LP leaves the
+# sheet-vs-LP profit comparison perfectly happy: the LP hands over a plan with too much
+# overtime, the sheet prices that plan correctly, and the two agree to the cent. Section E
+# proves the sheet and the LP agree on what a plan is WORTH; on its own it says nothing about
+# whether the plan is FEASIBLE against a limit the sheet draws. That is v5's "the ceiling row
+# was compared against nothing" in a new place.
+_oth = [float(x) for x in row(d_opt, LBL["9  OVERTIME hours"][0])]
+_otc = [float(x) for x in row(d_opt, LBL["8  Overtime CAP"][0])]
+_otover = [w + 1 for w, (h, c_) in enumerate(zip(_oth, _otc)) if h > c_ + 1e-6]
+report(not _otover, "overtime never exceeds its DERIVED weekly cap at the optimum"
+       + (f" (weeks {_otover[:4]}: "
+          f"{_oth[_otover[0]-1]:.0f} hrs against a {_otc[_otover[0]-1]:.0f} hr cap)"
+          if _otover else ""))
+_otbind = [w + 1 for w, (h, c_) in enumerate(zip(_oth, _otc)) if c_ > 0 and h >= c_ - 1e-6]
+report(len(_otbind) > 0, f"and the overtime cap actually BINDS ({len(_otbind)} weeks) — a cap "
+                         f"nothing ever reaches proves nothing")
+# ⚠️ THE ZERO CASE NEEDS A ROSTER THAT CAN PRODUCE ONE. This farm keeps two year-round hourly
+# Equipment Operators, so its hourly crew never empties (minimum 72 field hours) and asserting
+# "some week has no hourly crew" FAILED on a correct model — a guard demanding a condition the
+# fixture cannot produce, which is as damaging as missing a defect because it teaches you to
+# ignore the guard. So the zero case is tested where it exists: strip the year-round hourly
+# roles and the cap must collapse to nothing in the weeks the seasonal crews are away.
+# One call. It walks the whole roster, and it was being made three times in six lines.
+_hf_shipped = LP.labour_arrays()[2]
+_shipped_zero = [w for w in range(1, 53) if _hf_shipped[w] <= 1e-9]
+report(not _shipped_zero,
+       f"this farm's hourly crew never empties (min {min(_hf_shipped[1:]):.0f} field hrs) — so "
+       f"the zero case is tested below, on a roster that can produce one")
+_saved = LP.PAYLOAD["employees"]
+try:
+    LP.PAYLOAD["employees"] = [e for e in _saved
+                               if e["type"] == "salary" or e.get("end_week", 52) < 52
+                               or e.get("start_week", 1) > 1]
+    _hf2 = LP.labour_arrays()[2]
+    _cap2 = [max(0.0, 1.25 - 1.0) * _hf2[w] for w in range(53)]
+    _quiet = [w for w in range(1, 53) if _hf2[w] <= 1e-9]
+    report(len(_quiet) > 0 and all(_cap2[w] <= 1e-9 for w in _quiet),
+           f"with no year-round hourly crew the overtime cap is ZERO in all {len(_quiet)} "
+           f"unstaffed weeks — you cannot work overtime on people who are not there, and v8's "
+           f"flat 200 said you could")
+    _busy2 = [w for w in range(1, 53) if _hf2[w] > 0]
+    report(bool(_busy2) and all(abs(_cap2[w] - 0.25 * _hf2[w]) < 1e-9 for w in _busy2),
+           f"and it is exactly 25% of the hourly crew in the {len(_busy2)} staffed weeks")
+finally:
+    LP.PAYLOAD["employees"] = _saved
+
+# ⚠️ AND THE LP MUST HAVE OPTIMISED THE OBJECTIVE IT REPORTS. The other survivor: pricing the
+# advisory crew for one week in c_obj while the report prices the whole window makes the solver
+# choose on numbers nothing else uses. Both the sheet and the report then price that plan
+# correctly and agree — the plan is simply the wrong one, chosen against invisible prices.
+report(abs(OPT["obj_value"] - OPT["obj_from_parts"]) < 1.0,
+       f"the LP maximised the objective it reports (${OPT['obj_value']:,.2f} vs parts "
+       f"${OPT['obj_from_parts']:,.2f})")
 _int = float(d_opt[f"B{[r for r in range(1, ws.max_row + 1) if ws.cell(row=r, column=1).value == 'Interest'][0]}"])
 report(abs(_int - OPT["interest"]) < 1.0,
        f"sheet interest ${_int:,.2f} matches the LP's ${OPT['interest']:,.2f}")

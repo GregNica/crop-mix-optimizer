@@ -1,7 +1,7 @@
 """
 The toy model's numbers must not drift from the app's.
 
-`toy_models/farm_toy_v8_flex.xlsx` exists to be an INDEPENDENT check on the app's
+`toy_models/farm_toy_v9_labour.xlsx` exists to be an INDEPENDENT check on the app's
 arithmetic — a grower opens it, changes an acre figure and verifies by hand what the solver
 claims. That only works while its crop constants and its planting calendar are the app's.
 Nothing about a spreadsheet fails loudly when a crop's m3/lb changes underneath it; it just
@@ -17,7 +17,7 @@ So this pins two things:
      its harvest week was reported as needing no cooler at all), it is the one thing this toy
      exists to teach, and it is invisible in a rendered spreadsheet — the cells look identical.
 
-Regenerate with:  python3 toy_models/build_toy_v8.py
+Regenerate with:  python3 toy_models/build_toy_v9.py
 """
 import json
 import re
@@ -28,7 +28,7 @@ from tests.helpers import REPO
 
 openpyxl = pytest.importorskip("openpyxl")
 
-WORKBOOK = REPO / "toy_models" / "farm_toy_v8_flex.xlsx"
+WORKBOOK = REPO / "toy_models" / "farm_toy_v9_labour.xlsx"
 TOY_CROPS = ("Spinach", "Kale", "Garlic")
 # v5 carries EVERY succession the app offers. A hand-picked subset is the exact defect it
 # exists to remove, so the list is derived, never typed.
@@ -45,7 +45,7 @@ PICKED = [s["name"] for s in _all_successions()]
 @pytest.fixture(scope="module")
 def model():
     if not WORKBOOK.exists():
-        pytest.skip(f"{WORKBOOK.name} not built; run toy_models/build_toy_v8.py")
+        pytest.skip(f"{WORKBOOK.name} not built; run toy_models/build_toy_v9.py")
     return openpyxl.load_workbook(WORKBOOK)["Model"]
 
 
@@ -77,6 +77,27 @@ def _wc(ws, w):
 def _wl(ws, w):
     """Column LETTER of week w."""
     return openpyxl.utils.get_column_letter(_wc(ws, w))
+
+
+def _lp_probe(body):
+    """Run `body` against the LP oracle in .venv and return the JSON it prints.
+
+    Three tests needed scipy, which pytest's interpreter does not have, and each grew its own
+    copy of this plumbing. ⚠️ One of those copies was FAIL-OPEN — it wrapped the assertions in
+    `if out.returncode == 0`, so a snippet that crashed skipped the check silently and the test
+    still passed green. Skipping is a decision worth making once, out loud, here.
+    """
+    import json
+    import subprocess
+
+    venv = REPO / ".venv" / "bin" / "python"
+    if not venv.exists():
+        pytest.skip(f"{venv} missing — cannot run the LP oracle")
+    code = (f"import sys; sys.path.insert(0, {str(REPO / 'toy_models')!r});\n"
+            f"import json, toy_v9_lp as lp\n" + body)
+    out = subprocess.run([str(venv), "-c", code], capture_output=True, text=True)
+    assert out.returncode == 0, f"LP probe failed:\n{out.stderr[-2000:]}"
+    return json.loads(out.stdout.strip().splitlines()[-1])
 
 
 def _labelled_rows(ws):
@@ -449,7 +470,7 @@ def test_no_derived_value_is_frozen(model):
 
 
 def test_the_sheet_actually_calculates_correctly():
-    """Run toy_models/verify_toy_v8.py — it CALCULATES the workbook.
+    """Run toy_models/verify_toy_v9.py — it CALCULATES the workbook.
 
     Everything above reads formulas as text, and text can be well-formed and wrong. This shells
     out to the venv because `formulas` cannot be installed into the system interpreter pytest
@@ -467,7 +488,7 @@ def test_the_sheet_actually_calculates_correctly():
     if probe.returncode != 0:
         pytest.skip("`formulas` not installed in .venv — run: .venv/bin/pip install formulas")
 
-    r = subprocess.run([str(venv), str(REPO / "toy_models" / "verify_toy_v8.py")],
+    r = subprocess.run([str(venv), str(REPO / "toy_models" / "verify_toy_v9.py")],
                        capture_output=True, text=True, cwd=REPO, timeout=600)
     assert r.returncode == 0, (
         "the toy workbook does not calculate correctly:\n"
@@ -521,6 +542,13 @@ def test_no_input_is_wired_to_nothing(model):
             # missing a real one — it teaches you to ignore the guard.
             if any(c1 <= c.column <= c2 and r1 <= c.row <= r2
                    for c1, r1, c2, r2 in _ranges):
+                continue
+            # ⚠️ THE COLOUR KEY IS NOT AN INPUT. v9's legend paints one swatch in each of the
+            # four semantic fills so a reader can hold the key against the sheet, and the
+            # yellow swatch is therefore a filled cell no formula reads. Excluded BY NAME —
+            # the row whose column A says "KEY:" — rather than by loosening the rule, because
+            # a key is a different kind of object from a data cell, not an exempt data cell.
+            if str(model.cell(row=c.row, column=1).value or "").strip() == "KEY:":
                 continue
             hdr = _table_header_above(model, c.row)
             dead.append(f"{c.coordinate} = "
@@ -589,12 +617,12 @@ def test_labour_is_committed_not_charged_per_acre(model):
     the model is back to the thing W12 fixed.
     """
     rows = _labelled_rows(model)
-    for lab in ("Crew capacity", "Wage bill this week", "CROP HOURS needed"):
+    for lab in ("5  CREW CAPACITY", "12 Wage bill this week", "CROP HOURS needed"):
         assert lab in rows, f"the labour section is missing {lab!r}"
 
     # the wage bill must read the crew table, not a typed number
     w2 = _wl(model, 2)
-    wage = model.cell(row=rows["Wage bill this week"][0], column=_wc(model, 2)).value
+    wage = model.cell(row=rows["12 Wage bill this week"][0], column=_wc(model, 2)).value
     assert "SUMPRODUCT" in wage and "52" in wage, (
         f"the wage bill must be computed from the crew (salary/52 vs hourly x hours), got {wage!r}")
 
@@ -613,14 +641,25 @@ def test_crew_capacity_varies_by_week(model):
     side has the same shape and the same trap.
     """
     rows = _labelled_rows(model)
-    cap = rows["Crew capacity"][0]
-    f1 = model.cell(row=cap, column=_wc(model, 1)).value
-    f20 = model.cell(row=cap, column=_wc(model, 20)).value
-    assert f1 != f20, "crew capacity is identical in week 1 and week 20 — the seasonal windows "\
-                      "are not being read"
-    for f in (f1, f20):
-        assert "SUMPRODUCT" in f and "<=" in f and ">=" in f, (
-            f"capacity must test each crew's start/end week, got {f!r}")
+    # v9: capacity is row 5 = row 3 + row 4, so the start/end-week test moved DOWN the ladder to
+    # the rows that read the crew table. Asserting SUMPRODUCT on row 5 would now be asserting
+    # the OLD structure — a check written for the previous version is a check against the wrong
+    # model, which is how v8 flagged four correct weeks as violations.
+    for lab in ("3  Hourly FIELD hours", "4  Salaried field hours"):
+        f1 = model.cell(row=rows[lab][0], column=_wc(model, 1)).value
+        f20 = model.cell(row=rows[lab][0], column=_wc(model, 20)).value
+        assert f1 != f20, (
+            f"{lab} is identical in week 1 and week 20 — the seasonal windows are not read")
+        for f in (f1, f20):
+            assert "SUMPRODUCT" in f and "<=" in f and ">=" in f, (
+                f"{lab} must test each crew's start/end week, got {f!r}")
+    # and the VALUES must differ across the year, which is what the wage-profile lesson was about
+    lo, hi = _lp_probe("c, w, h, n = lp.labour_arrays()\n"
+                       "print(json.dumps([min(c[1:]), max(c[1:])]))")
+    assert hi > lo * 1.5, (
+        f"crew capacity barely varies ({lo:.0f} to {hi:.0f} hrs) — the seasonal shape has been "
+        f"flattened, and flattening the wage side understated the app's own cash floor by "
+        f"$115,615")
 
 
 _REF_RE = re.compile(r"(?<![A-Z0-9])([A-Z]{1,3})\$?(\d+)(?!\d)")
@@ -635,69 +674,215 @@ def _refs(formula):
     return {(c, int(r)) for c, r in _REF_RE.findall(str(formula).replace("$", ""))}
 
 
-def test_bought_hours_are_decision_cells_priced_at_their_full_rate(model):
-    """W12b and W15, the two pricing rules the app paid for.
+def test_the_advisory_crew_is_one_committed_block_not_a_spot_purchase(model):
+    """L1 — the shape of the hire decision, which is what v9 changed.
 
-    W12b — bought hours cost their FULL rate, not the premium above base pay. The committed wage
-    bill pays the crew's stated hours; overtime and hire are hours BEYOND it, so charging only
-    the increment leaves the base wage charged nowhere. Measured in the app at 2,080 hired hours
-    costing $0.00 and $965,177 of phantom profit.
+    v8 gave the solver 52 independent spot purchases and it produced a plan no farm could run:
+    21 non-zero weeks in blocks of 2/2/2/3/12, and one week that bought TWO HOURS. Real hiring
+    is a committed block decided months ahead (H-2A: 60-75 days of lead and a three-fourths
+    guarantee; domestic seasonal: 8-10 weeks), which is what an `employees[]` row already is.
 
-    W15 — overtime and hire carry SEPARATE rates. Collapsing them to one makes "hire is cheaper"
-    a fact instead of an assumption, and it is false above about $30/hr here.
+    Two properties make it a hire rather than a purchase, and both are checked here:
+      * ONE headcount cell, not a per-week row
+      * charged for EVERY week of the window, whether the hours are used or not
     """
     rows = _labelled_rows(model)
-    for lab in ("OVERTIME hours", "HIRED hours", "Overtime rate", "Hired rate",
-                "Cost of bought hours", "Hours available"):
-        assert lab in rows, f"the flex layer is missing {lab!r}"
+    for lab in ("PEOPLE TO HIRE", "10 Advisory crew hours", "13 Advisory wage this week",
+                "Cost per person per week", "TOTAL committed cost"):
+        assert lab in rows, f"the advisory layer is missing {lab!r}"
 
-    # the two hour rows are decisions, not formulas
-    for lab in ("OVERTIME hours", "HIRED hours"):
-        for w in (1, 20, 52):
-            v = model.cell(row=rows[lab][0], column=_wc(model, w)).value
-            assert not (isinstance(v, str) and v.startswith("=")), (
-                f"{lab} week {w} holds a formula — the solver must own these cells")
+    # ONE decision cell, in column B — not a 52-week strip.
+    head = rows["PEOPLE TO HIRE"][0]
+    v = model.cell(row=head, column=2).value
+    assert not (isinstance(v, str) and v.startswith("=")), (
+        "the advisory headcount holds a formula — the solver must own that cell")
+    for w in (1, 20, 52):
+        assert model.cell(row=head, column=_wc(model, w)).value in (None, ""), (
+            "the advisory crew has per-week cells — that is the spot-hire shape L1 removed")
 
-    # SEPARATE rates. ⚠️ Comparing the two formulas as TEXT is inert: aliasing the hired rate to
-    # "=AH409" (the overtime-rate cell) is textually different and numerically identical, which is
-    # exactly the W15 defect. Mutation-tested — the text comparison passed that mutation. Compare
-    # what each formula READS instead.
-    w2 = _wc(model, 20)
-    ot = _refs(model.cell(row=rows["Overtime rate"][0], column=w2).value)
-    hire = _refs(model.cell(row=rows["Hired rate"][0], column=w2).value)
-    mult = ("B", rows["Overtime multiplier"][0])
-    wage = ("B", rows["Hired wage $/hr"][0])
-    assert mult in ot, "the overtime rate does not read the overtime multiplier"
-    assert wage in hire, "the hired rate does not read the hired wage"
-    assert mult not in hire, "the hired rate is priced off the overtime multiplier"
-    assert not any(r == rows["Overtime rate"][0] for _, r in hire), (
-        "the hired rate is aliased to the overtime rate — one price wearing two labels")
+    # ⚠️ COMMITTED. The wage row must not read the hours-used row, or an unneeded hour becomes
+    # free again and the whole distinction from v8 collapses. Compare what it READS, because a
+    # wage row that happened to equal the hours row in the shipped case would pass a value test.
+    wage_f = model.cell(row=rows["13 Advisory wage this week"][0],
+                        column=_wc(model, 45)).value
+    reads = _refs(wage_f)
+    assert ("B", head) in reads, "the advisory wage does not read the headcount"
+    assert not any(r == rows["10 Advisory crew hours"][0] for _, r in reads), (
+        "the advisory wage is computed from the hours USED — a committed block is paid whole, "
+        "and reading the hours row is exactly how it stops being committed")
+    assert not any(r == rows["CROP HOURS needed"][0] for _, r in reads), (
+        "the advisory wage reads the crop-hours row — it must not depend on demand at all")
 
-    # FULL rate: the cost row multiplies hours by the rate, with no 'minus base' term
-    cost = model.cell(row=rows["Cost of bought hours"][0], column=w2).value
-    assert f"{_wl(model, 20)}{rows['OVERTIME hours'][0]}" in cost
-    assert f"{_wl(model, 20)}{rows['HIRED hours'][0]}" in cost
-    assert "-" not in cost.replace("=", ""), (
-        f"the bought-hour cost has a subtraction in it — charging the premium instead of the "
-        f"full rate is the W12b defect. Got {cost!r}")
+
+def test_the_advisory_wage_is_charged_in_every_week_of_the_window(model):
+    """The other half of L1, and the half a structural check cannot see.
+
+    A wage row that reads the headcount can still be wrong by only firing in the weeks the plan
+    happens to need. Drive the sheet: set a headcount and confirm the charge appears in EVERY
+    week of the nominated window and in none outside it.
+    """
+    rows = _labelled_rows(model)
+    lo = int(model.cell(row=rows["Advisory crew"][0], column=2).value)
+    hi = int(model.cell(row=rows["Advisory crew"][0], column=3).value)
+    assert 1 <= lo <= hi <= 52, f"the advisory window is not a sane range: {lo}-{hi}"
+    wrow = rows["13 Advisory wage this week"][0]
+    hrow = rows["10 Advisory crew hours"][0]
+    for w in range(1, 53):
+        f = str(model.cell(row=wrow, column=_wc(model, w)).value)
+        inwin = lo <= w <= hi
+        # the IF's window test is written from the literal week number, so it is readable
+        assert str(w) in f, f"week {w}'s advisory wage does not mention its own week: {f!r}"
+        gf = str(model.cell(row=hrow, column=_wc(model, w)).value)
+        assert str(w) in gf, f"week {w}'s advisory hours do not mention its own week: {gf!r}"
+
+
+def test_the_overtime_cap_is_derived_from_the_hourly_crew_not_typed(model):
+    """L2 — the defect this whole version exists to remove, and it is a MONEY defect.
+
+    v8 (and the app) broadcast one scalar flat across 52 weeks while the crew is seasonal. On
+    the app's own farm that let 15 of 52 weeks buy MORE overtime than the entire crew's regular
+    hours (185% in winter) and the solver TOOK it: 191 overtime hours against 299 crew hours in
+    one week, a 66-hour week for everybody.
+
+    No flat number can express the rule, because the hourly crew here runs 0 to 872 field hours.
+    So the cap must READ the weekly hourly-hours row and the allowance, and nothing else.
+    """
+    rows = _labelled_rows(model)
+    for lab in ("3  Hourly FIELD hours", "8  Overtime CAP", "Overtime ALLOWANCE"):
+        assert lab in rows, f"the overtime layer is missing {lab!r}"
+    cap_row = rows["8  Overtime CAP"][0]
+    hf_row = rows["3  Hourly FIELD hours"][0]
+    allow = ("B", rows["Overtime ALLOWANCE"][0])
+
+    # It must VARY. A cap identical in a winter week and a peak week is a flat number wearing a
+    # formula, which is the v8 defect with extra steps.
+    f_winter = str(model.cell(row=cap_row, column=_wc(model, 2)).value)
+    f_peak = str(model.cell(row=cap_row, column=_wc(model, 20)).value)
+    assert f_winter != f_peak, "the overtime cap is the same formula in week 2 and week 20"
+
+    for w in (2, 20, 45):
+        reads = _refs(model.cell(row=cap_row, column=_wc(model, w)).value)
+        assert allow in reads, f"week {w}'s overtime cap does not read the allowance"
+        assert any(r == hf_row for _, r in reads), (
+            f"week {w}'s overtime cap does not read row 3 (hourly FIELD hours) — it cannot be "
+            f"tracking the crew that is actually on")
+        # ⚠️ and NOT the salaried row: salaried staff give capacity but cannot be paid overtime.
+        assert not any(r == rows["4  Salaried field hours"][0] for _, r in reads), (
+            f"week {w}'s overtime cap includes salaried hours — they cannot work overtime")
+
+
+def test_the_overtime_cap_binds_and_is_zero_without_an_hourly_crew(model):
+    """The cap has to actually DO something, and be zero where it must be.
+
+    A guard that only proves a formula exists is the class this project has shipped five times.
+    These are the two values the cap must produce: proportional in a staffed week, and ZERO in a
+    week with no hourly crew — you cannot work overtime on people who are not there, and v8's
+    flat 200 said you could.
+    """
+    d = _lp_probe("cap, wage, hf, heads = lp.labour_arrays()\n"
+                  "print(json.dumps({'hf': list(hf),"
+                  " 'cap': [0.25 * hf[w] for w in range(53)]}))")
+    hf, cap = d["hf"], d["cap"]
+    # ⚠️ THE SHIPPED ROSTER CANNOT PRODUCE THE ZERO CASE — it keeps two year-round hourly
+    # Equipment Operators, so the hourly crew never empties (minimum 72 field hours). Demanding
+    # an empty week here FAILED on a correct model, and a guard that cries wolf teaches you to
+    # ignore it. The zero case is real and worth testing, so it is tested on a roster that HAS
+    # one: strip the year-round hourly roles below.
+    assert all(hf[w] > 0 for w in range(1, 53)), (
+        "the shipped roster now has an unstaffed hourly week — the note above is stale")
+    busy = [w for w in range(1, 53) if hf[w] > 0]
+    for w in busy:
+        assert abs(cap[w] - 0.25 * hf[w]) < 1e-9, (
+            f"week {w}: cap {cap[w]} is not 25% of the hourly crew's {hf[w]} field hours")
+    assert max(cap) > 0, "the overtime cap is zero everywhere — the layer is inert"
+
+    # Now the zero case, on a roster that can produce one.
+    d2 = _lp_probe(
+        "lp.PAYLOAD['employees'] = [e for e in lp.PAYLOAD['employees']\n"
+        " if e['type'] == 'salary' or e.get('end_week', 52) < 52"
+        " or e.get('start_week', 1) > 1]\n"
+        "cap, wage, hf, heads = lp.labour_arrays()\n"
+        "print(json.dumps({'hf': list(hf),"
+        " 'cap': [0.25 * hf[w] for w in range(53)]}))")
+    hf2, cap2 = d2["hf"], d2["cap"]
+    quiet = [w for w in range(1, 53) if hf2[w] == 0]
+    assert quiet, "even without year-round hourly staff no week empties — fixture is wrong"
+    for w in quiet:
+        assert cap2[w] == 0, (
+            f"week {w} has NO hourly crew but allows {cap2[w]} overtime hours — you cannot work "
+            f"overtime on people who are not there, and v8's flat 200 said you could")
+
+
+def test_the_labour_section_builds_up_in_named_rows(model):
+    """L3 — the grower's note that the section does not flow like the crop sections.
+
+    v8 recomputed the payroll mask (who is on, hourly, and paid) INSIDE the overtime-rate
+    formula to answer a question the capacity row above had already answered. It was dense
+    because an intermediate quantity had no row of its own — and that missing row is precisely
+    what forced the overtime cap to be a typed constant (L2).
+
+    So this asserts the ladder exists AND that each rung reads the one above rather than
+    re-deriving it from the crew table.
+    """
+    rows = _labelled_rows(model)
+    ladder = ["1  Hourly headcount", "2  Hourly contracted hours", "3  Hourly FIELD hours",
+              "4  Salaried field hours", "5  CREW CAPACITY", "6  Blended hourly wage",
+              "7  Overtime rate", "8  Overtime CAP", "9  OVERTIME hours",
+              "10 Advisory crew hours", "11 HOURS AVAILABLE", "12 Wage bill this week",
+              "13 Advisory wage this week", "14 Overtime cost this week"]
+    for lab in ladder:
+        assert lab in rows, f"the labour ladder is missing {lab!r}"
+    ordered = [rows[lab][0] for lab in ladder]
+    assert ordered == sorted(ordered), (
+        f"the labour rows are out of order on the sheet: {list(zip(ladder, ordered))}")
+
+    w = _wc(model, 20)
+    # row 5 = row 3 + row 4, by reference
+    r5 = _refs(model.cell(row=rows["5  CREW CAPACITY"][0], column=w).value)
+    for lab in ("3  Hourly FIELD hours", "4  Salaried field hours"):
+        assert any(rr == rows[lab][0] for _, rr in r5), f"row 5 does not read {lab!r}"
+    # row 6's divisor is row 2, not a second copy of the mask
+    r6 = model.cell(row=rows["6  Blended hourly wage"][0], column=w).value
+    assert any(rr == rows["2  Hourly contracted hours"][0] for _, rr in _refs(r6)), (
+        "the blended wage does not read row 2 as its divisor — it is recomputing the payroll "
+        "mask a second time, which is exactly what L3 removed")
+    # row 7 = row 6 x load x multiplier
+    r7 = _refs(model.cell(row=rows["7  Overtime rate"][0], column=w).value)
+    assert any(rr == rows["6  Blended hourly wage"][0] for _, rr in r7), (
+        "the overtime rate does not read row 6 — it is re-deriving the blend inline, which is "
+        "the dense formula the grower could not read")
+    assert ("B", rows["Overtime multiplier"][0]) in r7, (
+        "the overtime rate does not read the overtime multiplier")
+    # row 11 = 5 + 9 + 10
+    r11 = _refs(model.cell(row=rows["11 HOURS AVAILABLE"][0], column=w).value)
+    for lab in ("5  CREW CAPACITY", "9  OVERTIME hours", "10 Advisory crew hours"):
+        assert any(rr == rows[lab][0] for _, rr in r11), f"hours-available does not read {lab!r}"
+    # row 14 = row 9 x row 7, at the FULL rate (W12b: no 'minus base' term)
+    r14f = model.cell(row=rows["14 Overtime cost this week"][0], column=w).value
+    r14 = _refs(r14f)
+    for lab in ("9  OVERTIME hours", "7  Overtime rate"):
+        assert any(rr == rows[lab][0] for _, rr in r14), f"overtime cost does not read {lab!r}"
+    assert "-" not in str(r14f).replace("=", ""), (
+        f"the overtime cost has a subtraction in it — charging the premium above base pay "
+        f"instead of the full rate is the W12b defect. Got {r14f!r}")
 
 
 def test_c2_measures_against_hours_available_not_the_standing_crew(model):
-    """Once hours can be bought, the ceiling is crew PLUS purchases.
+    """Once hours can be added, the ceiling is crew PLUS overtime PLUS the advised crew.
 
-    Leaving C2 pointed at the fixed crew makes every bought hour a violation, and the flex layer
-    can never be used — which is the same defect as not having it.
+    Leaving C2 pointed at the standing crew makes every extra hour a violation, and the layer
+    can never be used — the same defect as not having it.
     """
     rows = _labelled_rows(model)
-    avail = str(model.cell(row=rows["Hours available"][0],
+    avail = str(model.cell(row=rows["11 HOURS AVAILABLE"][0],
                            column=_wc(model, 20)).value).replace("$", "")
-    for lab in ("Crew capacity", "OVERTIME hours", "HIRED hours"):
+    for lab in ("5  CREW CAPACITY", "9  OVERTIME hours", "10 Advisory crew hours"):
         assert f"{_wl(model, 20)}{rows[lab][0]}" in avail, (
             f"hours-available does not include {lab!r}: {avail!r}")
     limit = str(model.cell(row=rows["CROP HOURS needed"][0] + 2,
                            column=_wc(model, 20)).value).replace("$", "")
-    assert f"{_wl(model, 20)}{rows['Hours available'][0]}" in limit, (
-        f"C2's limit row still points at the standing crew, so no bought hour could ever be "
+    assert f"{_wl(model, 20)}{rows['11 HOURS AVAILABLE'][0]}" in limit, (
+        f"C2's limit row still points at the standing crew, so no added hour could ever be "
         f"used. Got {limit!r}")
 
 
@@ -713,15 +898,94 @@ def test_a_bought_hour_with_no_price_is_refused():
     import importlib.util
 
     spec = importlib.util.spec_from_file_location(
-        "toy_v8_lp", REPO / "toy_models" / "toy_v8_lp.py")
+        "toy_v9_lp", REPO / "toy_models" / "toy_v9_lp.py")
     lp = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(lp)
 
-    # no hired wage
-    with pytest.raises(RuntimeError, match="free labour"):
-        lp.solve(flex=True, hired_wage_per_hr=0.0)
-
-    # ⚠️ and the OTHER axis: a zero multiplier prices overtime at $0 while the hired wage is
-    # perfectly healthy. Checking only the hire side would leave this half unguarded.
+    # a zero multiplier prices an overtime hour at $0 while every wage on the roster is healthy
     with pytest.raises(RuntimeError, match="free labour"):
         lp.solve(flex=True, overtime_multiplier=0.0)
+
+    # ⚠️ and the OTHER axis, which v9 moved: there is no hired-wage input any more, so the way
+    # to get free labour now is an advisory crew with no wage. Checking only the overtime side
+    # would leave this half unguarded — the same two-axis mistake v8 recorded.
+    with pytest.raises(RuntimeError, match="free labour|no wage"):
+        lp.solve(advisory=True, adv_wage=0.0)
+
+
+def test_the_palette_is_semantic_and_closed(model):
+    """v9's colour rule, at the grower's request: colour means ROLE, never subject.
+
+    v8 had nine fills keyed to what a row was ABOUT — cold pool blue, ambient orange, channel
+    green and pink, annual-cap orange, binaries blue — so colour never told you what a cell was
+    FOR, and the two things a reader most needs to find (what may I change, what is the answer)
+    had no colour of their own.
+
+    Four colours carry meaning and every other fill is grey. This asserts the set is CLOSED:
+    a tenth fill cannot creep back in, which is how the v8 palette got where it did. It also
+    asserts each of the four is actually USED, because a palette rule that nothing obeys is
+    decoration.
+    """
+    SEMANTIC = {"FFF2CC": "input", "D9EAD3": "decision",
+                "F4CCCC": "constraint", "D9D2E9": "objective"}
+    GREY = {"D9D9D9", "EFEFEF", "F2F2F2", "F7F7F7"}
+    # the conditional-format warning fill is applied by a RULE, not to a cell, but openpyxl can
+    # surface it on cells in some readers — allow it explicitly rather than by accident.
+    ALLOWED = set(SEMANTIC) | GREY | {"FFC7CE"}
+
+    seen = {}
+    for row in model.iter_rows():
+        for cell in row:
+            f = cell.fill
+            if not (f and f.fill_type == "solid"):
+                continue
+            rgb = (f.fgColor.rgb or "")[-6:].upper()
+            if not rgb or rgb == "000000":
+                continue
+            seen[rgb] = seen.get(rgb, 0) + 1
+
+    stray = sorted(set(seen) - ALLOWED)
+    assert not stray, (
+        f"fills outside the v9 palette: {stray}. Colour on this sheet means ROLE (input, "
+        f"decision, constraint, objective) and everything else is grey — a subject-keyed "
+        f"colour is the v8 palette growing back.")
+
+    for rgb, role in SEMANTIC.items():
+        assert seen.get(rgb, 0) > 0, (
+            f"nothing on the sheet is coloured as {role!r} ({rgb}) — a palette rule that "
+            f"nothing obeys is decoration, not a key")
+
+    # the objective is ONE cell's worth of purple, not a band of it
+    assert seen["D9D2E9"] <= 6, (
+        f"{seen['D9D2E9']} cells carry the objective colour — it marks the single cell being "
+        f"maximised, and spreading it dilutes the one thing it is for")
+
+    # ⚠️ PRESENCE IS NOT PLACEMENT, and this half exists because mutation proved the first half
+    # inert without it. Repainting the objective's LABEL green, or a constraint block's label
+    # grey, leaves both colours still present elsewhere on the sheet — so a guard that only
+    # asks "does purple exist?" passes the very defect it was written for. Assert that the
+    # named rows carry the role they claim.
+    rows = _labelled_rows(model)
+
+    def _fill(r, c):
+        f = model.cell(row=r, column=c).fill
+        return (f.fgColor.rgb or "")[-6:].upper() if f and f.fill_type == "solid" else ""
+
+    obj = rows["PROFIT  (the objective)"][0]
+    assert _fill(obj, 1) == "D9D2E9" and _fill(obj, 2) == "D9D2E9", (
+        f"the objective row is not the objective colour (label {_fill(obj, 1)!r}, value "
+        f"{_fill(obj, 2)!r}) — it is the one cell a reader is looking for")
+
+    # a constraint block: its label, its limit row and its room-left row are all CONSTRAINT red
+    c2 = rows["CROP HOURS needed"][0]
+    assert _fill(c2, 1) == "F4CCCC", "C2's label is not the constraint colour"
+    assert _fill(c2 + 2, 1) == "F4CCCC", "C2's limit row is not the constraint colour"
+    assert _fill(c2 + 3, 1) == "F4CCCC", "C2's room-left row is not the constraint colour"
+
+    # a decision row and an input cell, so all four roles are pinned to real cells
+    ot = rows["9  OVERTIME hours"][0]
+    assert _fill(ot, 1) == "D9EAD3", "the overtime decision row is not the decision colour"
+    assert _fill(rows["PEOPLE TO HIRE"][0], 2) == "D9EAD3", (
+        "the advisory headcount is not the decision colour — it is a cell the solver writes")
+    assert _fill(rows["Payroll load %"][0], 2) == "FFF2CC", (
+        "the payroll load is not the input colour — it is a cell you type in")

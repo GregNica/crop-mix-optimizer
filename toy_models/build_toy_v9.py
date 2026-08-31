@@ -1,5 +1,5 @@
 """
-build_toy_v8.py — generates the LABOUR-FLEX toy model workbook (a MILP).
+build_toy_v9.py — generates the REBUILT-LABOUR toy model workbook (a MILP).
 
 v5 closes the two gaps the grower found in v4, both of which were DECISION VARIABLES rather
 than cost lines:
@@ -39,7 +39,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.formatting.rule import CellIsRule
 
 from farm_v2.utils.calendar import harvest_weeks_of
-import toy_v8_lp as LP
+import toy_v9_lp as LP
 
 CROP_NAMES = LP.CROP_NAMES
 crops = LP.CROPS
@@ -50,10 +50,11 @@ SUCCS = LP.SUCCS
 # still said 448 after v8 added 104 flex cells — the sheet's own description of itself was wrong
 # in the docstring, the READ ME and the build banner at once. Derive it, do not retype it.
 N_OFFER_CELLS = len(CROP_NAMES) * len(CH_NAMES) * 52
-N_FLEX_CELLS = 2 * 52  # overtime hours + hired hours
+# v9: 52 spot-hire cells became ONE advisory headcount, so the model got smaller.
+N_FLEX_CELLS = 52 + 1  # overtime hours (52 weeks) + the advisory crew size (one integer)
 N_DEC_CELLS = len(SUCCS) * 2 + N_OFFER_CELLS + N_FLEX_CELLS
 DEC_BREAKDOWN = (f"{len(SUCCS)} acres + {len(SUCCS)} binaries + {N_OFFER_CELLS} offered "
-                 f"+ {N_FLEX_CELLS} bought hours")
+                 f"+ 52 overtime + 1 advisory headcount")
 PACK_OUT = 1.00
 COLD_CAP = LP.PAYLOAD["harvest_storage_cap"]
 AMB_CAP = LP.PAYLOAD["ambient_storage_cap"]
@@ -67,22 +68,60 @@ C_MAXA = get_column_letter(wcol(52) + 1)   # helper: max acres if planted
 C_MINA = get_column_letter(wcol(52) + 2)   # helper: min acres if planted
 C_START = get_column_letter(wcol(52) + 3)  # helper: the week seed is paid
 
+# ---------------------------------------------------------------------------
+# THE PALETTE IS SEMANTIC (v9, at the grower's request). FOUR colours, one
+# meaning each, and everything structural is GREY.
+#
+# v8 had nine fills and they were keyed to SUBJECT — cold pool blue, ambient
+# orange, channel green and pink, annual-cap orange, binaries blue. So colour
+# told you what a row was ABOUT and never what it was FOR, and the two things
+# a reader most needs to find — what may I change, and what is the answer —
+# had no colour of their own. A reader could not tell a decision cell from a
+# storage pool at a glance, which is the whole job of colour on a sheet this
+# size.
+#
+#   YELLOW  an INPUT      — you type here, and nothing else on the sheet does
+#   GREEN   a DECISION    — the solver writes here (acres, binaries, offered
+#                           pounds, overtime hours, the advisory crew)
+#   RED     a CONSTRAINT  — a limit, and the room left under it
+#   PURPLE  the OBJECTIVE — the one cell being maximised
+#   GREY    everything else: headers, bands, section rules
+#
+# ⚠️ Binaries share the DECISION green rather than keeping their own blue.
+# They are a different KIND of decision, not a different kind of cell, and the
+# label and number format already say which they are.
+# ---------------------------------------------------------------------------
 F_TITLE = Font(bold=True, size=15)
-F_H1 = Font(bold=True, size=12, color="1F4E79")
+F_H1 = Font(bold=True, size=12, color="404040")
 F_BOLD = Font(bold=True)
 F_NOTE = Font(italic=True, size=9, color="666666")
 F_SMALL = Font(size=9)
-IN_FILL = PatternFill("solid", fgColor="FFF2CC")
-HDR_FILL = PatternFill("solid", fgColor="DDEBF7")
-POOL_C = PatternFill("solid", fgColor="E8F0FE")
-POOL_A = PatternFill("solid", fgColor="FFF0E6")
-CH_FILL = [PatternFill("solid", fgColor="EDF7ED"), PatternFill("solid", fgColor="FDF2F8")]
-DEC_FILL = PatternFill("solid", fgColor="D9EAD3")
-ANNUAL_FILL = PatternFill("solid", fgColor="FCE5CD")   # an annual-cap row reads differently.
-# NOT the input yellow: on this sheet yellow means "you type here", so tinting a FORMULA row
-# with it invites the grower to type into a computed cell. The dead-input guard caught it,
-# which is the guard doing a job it was not written for.
-BIN_FILL = PatternFill("solid", fgColor="C9DAF8")
+F_KEY = Font(bold=True, size=9, color="404040")
+
+IN_FILL = PatternFill("solid", fgColor="FFF2CC")    # INPUT
+DEC_FILL = PatternFill("solid", fgColor="D9EAD3")   # DECISION
+CON_FILL = PatternFill("solid", fgColor="F4CCCC")   # CONSTRAINT
+OBJ_FILL = PatternFill("solid", fgColor="D9D2E9")   # OBJECTIVE
+
+# Grayscale for everything structural. Three steps is enough to separate a
+# section header from a sub-band from an ordinary row.
+HDR_FILL = PatternFill("solid", fgColor="D9D9D9")
+SUB_FILL = PatternFill("solid", fgColor="EFEFEF")
+CAL_FILL = PatternFill("solid", fgColor="F2F2F2")   # the calendar's P/G/H phase markers
+BAND_FILL = PatternFill("solid", fgColor="F7F7F7")
+# ⚠️ FOUR GREYS AND FOUR COLOURS, ALL NAMED HERE. CAL_FILL was an inline PatternFill literal
+# at its one call site — grey, so it honoured the rule, but a colour defined away from the
+# palette is a colour that drifts out of it. `tests/test_toy_model.py` asserts that every
+# solid fill in the workbook is one of these eight.
+
+# The subject-keyed fills all collapse to grey. Kept as names so the call sites
+# do not have to change shape, and so a future reader can see they were retired
+# on purpose rather than lost.
+POOL_C = BAND_FILL
+POOL_A = SUB_FILL
+CH_FILL = [BAND_FILL, SUB_FILL]
+ANNUAL_FILL = SUB_FILL
+BIN_FILL = DEC_FILL
 THIN = Side(style="thin", color="BFBFBF")
 BOX = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 
@@ -126,21 +165,24 @@ def constraint_triplet(r, label, lhs, cap_ref, fill, note, fmt="0.0"):
     seasonal crews come and go — so a single capacity cell cannot express it.
     """
     _cap = cap_ref if callable(cap_ref) else (lambda w: cap_ref)
-    put(r, 1, label, font=F_BOLD, fill=fill); put(r, 2, "used", font=F_NOTE)
+    # v9: `fill` is ignored — a constraint block is RED because it is a constraint, not
+    # tinted by its subject. The parameter stays in the signature so the twelve call sites
+    # keep their shape and a reader can see the colour decision moved here, deliberately.
+    put(r, 1, label, font=F_BOLD, fill=CON_FILL); put(r, 2, "used", font=F_NOTE)
     for w in range(1, 53):
-        put(r, wcol(w), lhs(w), fmt=fmt, fill=fill)
+        put(r, wcol(w), lhs(w), fmt=fmt, fill=CON_FILL)
     used = r; r += 1
     put(r, 1, "", font=F_BOLD)
     for w in range(1, 53):
         put(r, wcol(w), "<=", align="center", font=F_BOLD)
     r += 1
-    put(r, 1, "  limit", font=F_BOLD); put(r, 2, "cap", font=F_NOTE)
+    put(r, 1, "  limit", font=F_BOLD, fill=CON_FILL); put(r, 2, "cap", font=F_NOTE)
     for w in range(1, 53):
-        put(r, wcol(w), f"={_cap(w)}", fmt=fmt)
+        put(r, wcol(w), f"={_cap(w)}", fmt=fmt, fill=CON_FILL)
     r += 1
-    put(r, 1, "  room left", font=F_SMALL)
+    put(r, 1, "  room left", font=F_SMALL, fill=CON_FILL)
     for w in range(1, 53):
-        put(r, wcol(w), f"={_cap(w)}-{wl(w)}{used}", fmt=fmt)
+        put(r, wcol(w), f"={_cap(w)}-{wl(w)}{used}", fmt=fmt, fill=CON_FILL)
     head = r; r += 1
     put(r, 1, note, font=F_NOTE); r += 2
     for rng, op, f in ((head, "lessThan", ["0"]), (used, "greaterThan", [_cap(1)])):
@@ -162,11 +204,19 @@ except Exception:
 _BUILT = _dt.datetime.now().strftime("%Y-%m-%d %H:%M")
 
 r = 1
-put(r, 1, "FARM TOY MODEL — v8: buying labour", font=F_TITLE)
+put(r, 1, "FARM TOY MODEL — v9: the labour layer, rebuilt", font=F_TITLE)
 put(r, 4, f"BUILT {_BUILT}   (from source at {_SHA})", font=F_NOTE)
 r += 1
-put(r, 1, "YELLOW = you type.  GREEN = the solver writes.  BLUE = the solver's plant/don't-plant "
-          "switches.  Read the 'READ ME' sheet first.", font=F_NOTE); r += 2
+# The legend is COLOURED, not described. A key that names a colour in grey text
+# is a key you have to translate; this one you can hold against the sheet.
+put(r, 1, "KEY:", font=F_BOLD)
+for j, (lab, fill) in enumerate((("INPUT — you type here", IN_FILL),
+                                 ("DECISION — the solver writes here", DEC_FILL),
+                                 ("CONSTRAINT — a limit and its room left", CON_FILL),
+                                 ("OBJECTIVE — the cell being maximised", OBJ_FILL))):
+    put(r, 2 + j * 4, lab, font=F_KEY, fill=fill, border=True)
+r += 1
+put(r, 1, "Everything else is grey. Read the 'READ ME' sheet first.", font=F_NOTE); r += 2
 
 # --- 1. farm ---
 put(r, 1, "1 — THE FARM", font=F_H1); r += 1
@@ -292,18 +342,71 @@ put(r, 3, "employer taxes, workers' comp, benefits — applied to EVERY wage, sa
 put(r, 1, "Overtime multiplier", font=F_BOLD)
 put(r, 2, 1.5, fill=IN_FILL, fmt="0.00", border=True); ROW_OTMULT = r
 put(r, 3, "your own crew staying late, on top of their blended hourly rate", font=F_NOTE); r += 1
-put(r, 1, "Max overtime hrs/week", font=F_BOLD)
-put(r, 2, 200, fill=IN_FILL, fmt="#,##0", border=True); ROW_OTMAX = r; r += 1
-put(r, 1, "Hired wage $/hr", font=F_BOLD)
-put(r, 2, 20.0, fill=IN_FILL, fmt="$0.00", border=True); ROW_HIREWAGE = r
-put(r, 3, "⚠️ YOUR LOCAL MARKET RATE — a placeholder, not a sourced figure. The app tried "
-          "INFERRING this from internal payroll and got three different wrong answers (W17).",
+put(r, 1, "Overtime ALLOWANCE", font=F_BOLD)
+put(r, 2, 1.25, fill=IN_FILL, fmt="0.00", border=True); ROW_OTALLOW = r
+put(r, 3, "1.25 = 'I will let people work 125% of normal hours'. ⚠️ v9 REPLACED a typed "
+          "hours cap with this. The cap is now DERIVED per week — see the Overtime cap row.",
     font=F_NOTE); r += 1
-put(r, 1, "Hire markup %", font=F_BOLD)
-put(r, 2, 0.0, fill=IN_FILL, fmt="0%", border=True); ROW_HIREMARK = r
-put(r, 3, "agency fee, recruitment — on top of the wage and its payroll load", font=F_NOTE); r += 1
-put(r, 1, "Max hired hrs/week", font=F_BOLD)
-put(r, 2, 400, fill=IN_FILL, fmt="#,##0", border=True); ROW_HIREMAX = r; r += 1
+put(r, 1, "   v8 typed a flat 200 hrs/week here. On the app's own farm that let 15 of 52 weeks "
+          "buy MORE overtime than the whole crew's regular hours (185% in winter), and the app's "
+          "solver took it: 191 overtime hours against 299 crew hours in one week.",
+    font=F_NOTE); r += 1
+put(r, 1, "   No flat number can express the rule, because the crew swings 108 to 908 hrs/wk "
+          "across the year. That is why it is an allowance and not an amount.", font=F_NOTE)
+r += 2
+
+# ---- THE ADVISORY CREW (L1). Not a spot purchase — a roster row you have not hired yet. ----
+put(r, 1, "3c — THE ADVISORY CREW  (\"what should I hire, and when?\")", font=F_H1); r += 1
+put(r, 1, "   You nominate the WINDOW; the solver picks the HEADCOUNT. The answer is a roster "
+          "row you can type into 3b above and re-solve.", font=F_NOTE); r += 1
+put(r, 1, "   ⚠️ CHARGED FOR THE WHOLE WINDOW, used or not. That is what makes it a hire and "
+          "not a spot purchase, and it is the same treatment the standing crew gets (W12).",
+    font=F_NOTE); r += 1
+put(r, 1, "   Real hiring is a committed block: H-2A wants 60-75 days of lead and guarantees "
+          "the worker 3/4 of the contract's hours; domestic seasonal wants 8-10 weeks.",
+    font=F_NOTE); r += 1
+for j, h in enumerate(["From wk", "To wk", "Hours/wk each", "Field time %", "Wage $/hr",
+                       "Max people available"]):
+    put(r, 2 + j, h, font=F_BOLD, fill=HDR_FILL, border=True)
+r += 1
+ROW_ADV = r
+put(r, 1, "Advisory crew", font=F_BOLD)
+put(r, 2, 43, fill=IN_FILL, fmt="0", border=True);      ADV_START = f"$B${r}"
+put(r, 3, 49, fill=IN_FILL, fmt="0", border=True);      ADV_END = f"$C${r}"
+put(r, 4, 40, fill=IN_FILL, fmt="0", border=True);      ADV_HRS = f"$D${r}"
+put(r, 5, 100, fill=IN_FILL, fmt="0", border=True);     ADV_FIELD = f"$E${r}"
+put(r, 6, 20.0, fill=IN_FILL, fmt="$0.00", border=True); ADV_WAGE = f"$F${r}"
+put(r, 7, 20, fill=IN_FILL, fmt="0", border=True);      ADV_MAX = f"$G${r}"
+r += 1
+put(r, 1, "PEOPLE TO HIRE", font=F_BOLD, fill=DEC_FILL)
+put(r, 2, 0, fill=DEC_FILL, fmt="0", border=True); ROW_ADVCREW = r; ADV_CREW = f"$B${r}"
+put(r, 3, "<-- SOLVER (whole people, an INTEGER — 'hire 7.3 people' is not an instruction)",
+    font=F_NOTE); r += 1
+put(r, 1, "Cost per person per week", font=F_SMALL)
+put(r, 2, f"={ADV_HRS}*{ADV_WAGE}*(1+$B${ROW_LOAD})", fmt="$#,##0", border=True)
+ROW_ADVCOSTWK = r; r += 1
+put(r, 1, "Weeks in the window", font=F_SMALL)
+put(r, 2, f"={ADV_END}-{ADV_START}+1", fmt="0", border=True); ROW_ADVWKS = r; r += 1
+put(r, 1, "TOTAL committed cost", font=F_BOLD)
+put(r, 2, f"={ADV_CREW}*$B${ROW_ADVCOSTWK}*$B${ROW_ADVWKS}", fmt="$#,##0", border=True)
+ROW_ADVTOTAL = r; r += 1
+# ⚠️ THE AVAILABILITY BOUND EARNS A "ROOM LEFT" ROW, like every other limit on this sheet.
+# I wrote it as a Solver-recipe-only bound first and the dead-input guard caught it — which is
+# EXACTLY the defect v8 recorded and fixed ("Max overtime hrs/week is read by no formula"), and
+# I recreated it one version later. A cap named only in the recipe is invisible to a reader and
+# invisible to the guard, and the tempting fix is to loosen the guard. That is a test bent
+# around a builder shortcut. Fix the builder.
+put(r, 1, "Room left to hire", font=F_SMALL, fill=CON_FILL)
+put(r, 2, f"={ADV_MAX}-{ADV_CREW}", fmt="0", border=True, fill=CON_FILL)
+put(r, 3, "how many more hands you said you could find — the availability question the research "
+          "says is the real uncertainty", font=F_NOTE)
+ROW_ADVROOM = r; r += 1
+put(r, 1, "   ⚠️ The window is YOUR call and it matters more than the headcount. Measured on "
+          "this farm: hiring into weeks 16-21, where C2 binds for six weeks straight, is worth "
+          "$5. Weeks 43-49 are worth $58,253.", font=F_NOTE); r += 1
+put(r, 1, "   A week where labour BINDS is not the same as a week where more labour PAYS, and "
+          "reading the binding weeks off the sheet would send you to the wrong one.",
+    font=F_NOTE); r += 2
 put(r, 1, "A salary wage is $/YEAR; hourly and seasonal are $/HOUR. 'Field time %' is the share "
           "of paid hours available to the crops —", font=F_NOTE); r += 1
 put(r, 1, "the rest is admin and maintenance. It reduces CAPACITY without reducing the WAGE.",
@@ -337,8 +440,7 @@ for s in SUCCS:
     pbw = {((wk - 1) % 52) + 1: ph for wk, ph in zip(s["weeks"], s["phases"])}
     for w in range(1, 53):
         if w in pbw:
-            put(r, wcol(w), PH[pbw[w]], align="center", font=F_SMALL,
-                fill=PatternFill("solid", fgColor="F2F2F2"))
+            put(r, wcol(w), PH[pbw[w]], align="center", font=F_SMALL, fill=CAL_FILL)
     # C9 / C10 helpers — the plant/don't-plant linkage, as columns the Solver can constrain
     put(r, wcol(52) + 1, f"=D{r}*$B${ROW_LAND}", fmt="0.0", font=F_SMALL)
     put(r, wcol(52) + 2, f"=D{r}*$I${crop_row[cn]}", fmt="0.0", font=F_SMALL)
@@ -371,79 +473,173 @@ r, ROW_LANDUSED, _ = constraint_triplet(
     r, "LAND in the ground", land_lhs, f"$B${ROW_LAND}", None,
     "   Acres standing that week, summed across every planting the solver chose.")
 
-# ---- LABOUR: what the crops need against what the crew can give (the app's C2) ----
+# ---------------------------------------------------------------------------
+# LABOUR (v9, rebuilt to the grower's note L3).
+#
+# v8 put this in three scattered blocks and computed the payroll mask — who is
+# on this week, hourly, and paid — inline inside a rate formula, to answer a
+# question the capacity row above it had already answered. It was dense because
+# an intermediate quantity was never given a row.
+#
+# So this section is now ONE ladder. Each row reads only the rows above it, and
+# every quantity that has a name has a row:
+#
+#    1  hourly headcount on this week
+#    2  hourly CONTRACTED hours
+#    3  hourly FIELD hours          <- the overtime base
+#    4  salaried field hours
+#    5  CREW CAPACITY               = 3 + 4
+#    6  blended hourly wage
+#    7  overtime rate               = 6 x load x multiplier
+#    8  overtime CAP                = (allowance - 1) x 3      <- L2 falls out here
+#    9  OVERTIME hours              [decision]
+#   10  advisory crew hours         from the headcount decision
+#   11  HOURS AVAILABLE             = 5 + 9 + 10
+#   12  wage bill this week         (standing crew, committed)
+#   13  advisory wage this week     (committed for the whole window)
+#   14  overtime cost this week     = 9 x 7
+#   then C2 measures crop hours against 11.
+#
+# The dense formula disappears because its parts have names.
+# ---------------------------------------------------------------------------
 r = week_header(r, "hours")
 CREWROWS = f"$B${ROW_CREW}:$B${ROW_CREW_END}"
-put(r, 1, "Crew capacity", font=F_BOLD); put(r, 2, "hrs", font=F_NOTE)
+# The "on this week, hourly, and paid" mask, written ONCE per week and then read
+# by rows 2, 3 and 6 instead of being retyped inside each of them.
+def _on(w):
+    return (f'($G${ROW_CREW}:$G${ROW_CREW_END}<={w})*($H${ROW_CREW}:$H${ROW_CREW_END}>={w})')
+def _hourly(w):
+    return (f'{_on(w)}*($C${ROW_CREW}:$C${ROW_CREW_END}<>"salary")'
+            f'*($D${ROW_CREW}:$D${ROW_CREW_END}>0)')
+
+put(r, 1, "1  Hourly headcount", font=F_SMALL); put(r, 2, "people", font=F_NOTE)
 for w in range(1, 53):
-    # every crew whose window covers this week: count x hours x field-time share
+    put(r, wcol(w), f'=SUMPRODUCT({_hourly(w)}*{CREWROWS})', fmt="#,##0")
+ROW_HHEADS = r; r += 1
+
+put(r, 1, "2  Hourly contracted hours", font=F_SMALL); put(r, 2, "hrs", font=F_NOTE)
+for w in range(1, 53):
     put(r, wcol(w),
-        f'=SUMPRODUCT(($G${ROW_CREW}:$G${ROW_CREW_END}<={w})*($H${ROW_CREW}:$H${ROW_CREW_END}>={w})'
-        f'*{CREWROWS}*$E${ROW_CREW}:$E${ROW_CREW_END}*$F${ROW_CREW}:$F${ROW_CREW_END}/100)',
-        fmt="#,##0")
+        f'=SUMPRODUCT({_hourly(w)}*{CREWROWS}*$E${ROW_CREW}:$E${ROW_CREW_END})', fmt="#,##0")
+ROW_HCONTRACT = r; r += 1
+
+put(r, 1, "3  Hourly FIELD hours", font=F_SMALL); put(r, 2, "hrs", font=F_NOTE)
+for w in range(1, 53):
+    put(r, wcol(w),
+        f'=SUMPRODUCT({_hourly(w)}*{CREWROWS}*$E${ROW_CREW}:$E${ROW_CREW_END}'
+        f'*$F${ROW_CREW}:$F${ROW_CREW_END}/100)', fmt="#,##0")
+ROW_HFIELD = r; r += 1
+put(r, 1, "   Row 3 is the one v8 never wrote down. It computed exactly this inside the rate "
+          "formula, used it once as a divisor, and threw it away — so the overtime cap had "
+          "nothing to derive itself from and became a typed constant.", font=F_NOTE); r += 1
+
+put(r, 1, "4  Salaried field hours", font=F_SMALL); put(r, 2, "hrs", font=F_NOTE)
+for w in range(1, 53):
+    put(r, wcol(w),
+        f'=SUMPRODUCT({_on(w)}*($C${ROW_CREW}:$C${ROW_CREW_END}="salary")*{CREWROWS}'
+        f'*$E${ROW_CREW}:$E${ROW_CREW_END}*$F${ROW_CREW}:$F${ROW_CREW_END}/100)', fmt="#,##0")
+ROW_SFIELD = r; r += 1
+
+put(r, 1, "5  CREW CAPACITY", font=F_BOLD); put(r, 2, "hrs", font=F_NOTE)
+for w in range(1, 53):
+    put(r, wcol(w), f"={wl(w)}{ROW_HFIELD}+{wl(w)}{ROW_SFIELD}", fmt="#,##0")
 ROW_LABCAP = r; r += 1
-put(r, 1, "Wage bill this week", font=F_BOLD); put(r, 2, "$", font=F_NOTE)
+put(r, 1, "   Rows 3 + 4. Salaried staff give capacity but cannot be paid overtime, so they "
+          "are in row 5 and out of rows 3, 6 and 8 — the app's deliberate rate/quantity "
+          "asymmetry, now visible instead of buried.", font=F_NOTE); r += 2
+
+r = week_header(r, "$/hr")
+put(r, 1, "6  Blended hourly wage", font=F_SMALL); put(r, 2, "$/hr", font=F_NOTE)
+for w in range(1, 53):
+    put(r, wcol(w),
+        f'=IFERROR(SUMPRODUCT({_hourly(w)}*{CREWROWS}*$E${ROW_CREW}:$E${ROW_CREW_END}'
+        f'*$D${ROW_CREW}:$D${ROW_CREW_END})/{wl(w)}{ROW_HCONTRACT},0)', fmt="$0.00")
+ROW_BLEND = r; r += 1
+put(r, 1, "   The divisor is row 2, by reference. v8 recomputed the whole mask a second time "
+          "to build it.", font=F_NOTE); r += 1
+
+put(r, 1, "7  Overtime rate", font=F_SMALL); put(r, 2, "$/hr", font=F_NOTE)
+for w in range(1, 53):
+    put(r, wcol(w),
+        f"={wl(w)}{ROW_BLEND}*(1+$B${ROW_LOAD})*$B${ROW_OTMULT}", fmt="$0.00")
+ROW_OTRATE = r; r += 1
+put(r, 1, "   Row 6 x payroll load x multiplier. Three named things, in the order you would "
+          "say them.", font=F_NOTE); r += 2
+
+r = week_header(r, "hours")
+put(r, 1, "8  Overtime CAP", font=F_SMALL); put(r, 2, "hrs", font=F_NOTE)
+for w in range(1, 53):
+    # ⚠️ L2. The cap is (allowance - 1) x row 3 — the hourly crew ACTUALLY on this week.
+    # A flat number cannot express it: this farm's hourly crew runs 0 to 872 field hours.
+    put(r, wcol(w), f"=MAX(0,$B${ROW_OTALLOW}-1)*{wl(w)}{ROW_HFIELD}", fmt="#,##0")
+ROW_OTCAP = r; r += 1
+put(r, 1, "   At the shipped 1.25 this is a quarter of row 3, week by week. In a week with no "
+          "hourly crew it is ZERO — which is the point: you cannot work overtime on a crew that "
+          "is not there, and v8's flat 200 said you could.", font=F_NOTE); r += 2
+
+r = week_header(r, "hours")
+put(r, 1, "9  OVERTIME hours", font=F_BOLD, fill=DEC_FILL); put(r, 2, "hrs <-- SOLVER",
+    font=F_NOTE)
+for w in range(1, 53):
+    put(r, wcol(w), 0.0, fmt="#,##0", fill=DEC_FILL)
+ROW_OTHRS = r; r += 1
+
+put(r, 1, "10 Advisory crew hours", font=F_SMALL); put(r, 2, "hrs", font=F_NOTE)
+for w in range(1, 53):
+    # In the window: headcount x hours x field share. Outside it: nothing. The crew is on for
+    # the WHOLE window — these hours exist whether the crops use them or not.
+    put(r, wcol(w),
+        f"=IF(AND({w}>={ADV_START},{w}<={ADV_END}),{ADV_CREW}*{ADV_HRS}*{ADV_FIELD}/100,0)",
+        fmt="#,##0")
+ROW_ADVHRS = r; r += 1
+
+put(r, 1, "11 HOURS AVAILABLE", font=F_BOLD); put(r, 2, "hrs", font=F_NOTE)
+for w in range(1, 53):
+    put(r, wcol(w),
+        f"={wl(w)}{ROW_LABCAP}+{wl(w)}{ROW_OTHRS}+{wl(w)}{ROW_ADVHRS}", fmt="#,##0")
+ROW_HOURSAVAIL = r; r += 1
+put(r, 1, "   Rows 5 + 9 + 10. This is what C2 measures against.", font=F_NOTE); r += 2
+
+r = week_header(r, "$")
+put(r, 1, "12 Wage bill this week", font=F_BOLD); put(r, 2, "$", font=F_NOTE)
 for w in range(1, 53):
     # ⚠️ OWED WHETHER OR NOT THE CROPS NEED THEM (the app's W12). This is why no crop carries a
     # per-acre labour charge anywhere on the sheet: the marginal crop hour is FREE, and it is
-    # rationed by the capacity row above rather than priced in the objective.
+    # rationed by row 11 rather than priced in the objective.
     put(r, wcol(w),
-        f'=SUMPRODUCT(($G${ROW_CREW}:$G${ROW_CREW_END}<={w})*($H${ROW_CREW}:$H${ROW_CREW_END}>={w})'
+        f'=SUMPRODUCT({_on(w)}*{CREWROWS}'
         # The load is written INSIDE both branches. It was one `*(1+load)` at the very end of a
         # long formula, after the IF — which reads as though it applies only to the hourly side.
-        # It always applied to both (the app does the same: count x wage x (1+bene) / 52), but a
-        # formula that has to be parsed to be believed is a formula that will be misread.
-        f'*{CREWROWS}*IF($C${ROW_CREW}:$C${ROW_CREW_END}="salary",'
+        # It always applied to both, but a formula that has to be parsed to be believed will be
+        # misread.
+        f'*IF($C${ROW_CREW}:$C${ROW_CREW_END}="salary",'
         f'$D${ROW_CREW}:$D${ROW_CREW_END}/52*(1+$B${ROW_LOAD}),'
         f'$D${ROW_CREW}:$D${ROW_CREW_END}*$E${ROW_CREW}:$E${ROW_CREW_END}*(1+$B${ROW_LOAD})))',
         fmt="#,##0")
 ROW_WAGEWK = r; r += 1
 put(r, 1, "   The wage bill has a SHAPE. Flattening it to an annual average understated the "
-          "app's own cash floor by $115,615.", font=F_NOTE); r += 2
+          "app's own cash floor by $115,615.", font=F_NOTE); r += 1
 
-# ---- BUYING HOURS. Overtime and hire are DECISION cells: this is the layer that turns labour
-# from a constraint into a choice. ----
-r = week_header(r, "$/hr")
-put(r, 1, "Overtime rate", font=F_SMALL); put(r, 2, "$/hr", font=F_NOTE)
+put(r, 1, "13 Advisory wage this week", font=F_SMALL); put(r, 2, "$", font=F_NOTE)
 for w in range(1, 53):
-    # Your own crew's HOURLY blend x the multiplier. Salaried staff give capacity but cannot be
-    # paid overtime, so they are excluded from the RATE while staying in the capacity — the app's
-    # deliberate rate/quantity asymmetry.
-    hourly = (f'($C${ROW_CREW}:$C${ROW_CREW_END}<>"salary")*($D${ROW_CREW}:$D${ROW_CREW_END}>0)'
-              f'*($G${ROW_CREW}:$G${ROW_CREW_END}<={w})*($H${ROW_CREW}:$H${ROW_CREW_END}>={w})'
-              f'*{CREWROWS}*$E${ROW_CREW}:$E${ROW_CREW_END}')
     put(r, wcol(w),
-        f'=IFERROR(SUMPRODUCT({hourly}*$D${ROW_CREW}:$D${ROW_CREW_END})'
-        f'/SUMPRODUCT({hourly})*(1+$B${ROW_LOAD})*$B${ROW_OTMULT},0)', fmt="$0.00")
-ROW_OTRATE = r; r += 1
-put(r, 1, "Hired rate", font=F_SMALL); put(r, 2, "$/hr", font=F_NOTE)
-for w in range(1, 53):
-    put(r, wcol(w), f"=$B${ROW_HIREWAGE}*(1+$B${ROW_LOAD})*(1+$B${ROW_HIREMARK})", fmt="$0.00")
-ROW_HIRERATE = r; r += 1
-put(r, 1, "OVERTIME hours", font=F_BOLD, fill=DEC_FILL); put(r, 2, "hrs <-- SOLVER", font=F_NOTE)
-for w in range(1, 53):
-    put(r, wcol(w), 0.0, fmt="#,##0", fill=DEC_FILL)
-ROW_OTHRS = r; r += 1
-put(r, 1, "HIRED hours", font=F_BOLD, fill=DEC_FILL); put(r, 2, "hrs <-- SOLVER", font=F_NOTE)
-for w in range(1, 53):
-    put(r, wcol(w), 0.0, fmt="#,##0", fill=DEC_FILL)
-ROW_HIREHRS = r; r += 1
-put(r, 1, "Cost of bought hours", font=F_SMALL); put(r, 2, "$", font=F_NOTE)
-for w in range(1, 53):
-    # ⚠️ THEIR FULL RATE, not the premium above base pay. The committed wage bill pays the crew's
-    # STATED hours; these are hours beyond that, so charging only the increment would leave the
-    # base wage charged nowhere at all. The app measured that defect at 2,080 hired hours costing
-    # $0.00 and $965,177 of phantom profit.
-    put(r, wcol(w), f"={wl(w)}{ROW_OTHRS}*{wl(w)}{ROW_OTRATE}"
-                    f"+{wl(w)}{ROW_HIREHRS}*{wl(w)}{ROW_HIRERATE}", fmt="#,##0")
-ROW_FLEXCOST = r; r += 1
-put(r, 1, "Hours available", font=F_BOLD); put(r, 2, "hrs", font=F_NOTE)
-for w in range(1, 53):
-    put(r, wcol(w), f"={wl(w)}{ROW_LABCAP}+{wl(w)}{ROW_OTHRS}+{wl(w)}{ROW_HIREHRS}", fmt="#,##0")
-ROW_HOURSAVAIL = r; r += 1
-put(r, 1, "   The crew, plus whatever the solver decided to buy. This is what C2 measures "
-          "against now.", font=F_NOTE); r += 2
+        f"=IF(AND({w}>={ADV_START},{w}<={ADV_END}),{ADV_CREW}*$B${ROW_ADVCOSTWK},0)", fmt="#,##0")
+ROW_ADVWAGE = r; r += 1
+put(r, 1, "   Every week of the window, at full cost. Compare row 13 against row 10 in a week "
+          "the plan does not need the hours: you are paying for capacity you chose to commit "
+          "to. v8 could not show this at all, because an unwanted spot hour was simply never "
+          "bought.", font=F_NOTE); r += 1
 
+put(r, 1, "14 Overtime cost this week", font=F_SMALL); put(r, 2, "$", font=F_NOTE)
+for w in range(1, 53):
+    put(r, wcol(w), f"={wl(w)}{ROW_OTHRS}*{wl(w)}{ROW_OTRATE}", fmt="#,##0")
+ROW_OTCOST = r; r += 1
+put(r, 1, "   ⚠️ Overtime hours cost their FULL rate, not the premium above base pay. The "
+          "committed wage bill (row 12) pays the crew's STATED hours; these are hours beyond "
+          "it, so charging only the increment would leave the base wage charged nowhere. The "
+          "app measured that defect at 2,080 hours costing $0.00.", font=F_NOTE); r += 2
+
+# C2 — the constraint itself.
 r = week_header(r, "hours")
 lab_lhs = lambda w: "=" + "+".join(
     f'SUMPRODUCT(({CROPCOL}="{n}")*({wl(w)}${ROW_SUCC}:{wl(w)}${ROW_SUCC_END}="{ph}")*{SR})'
@@ -451,24 +647,20 @@ lab_lhs = lambda w: "=" + "+".join(
     for n in CROP_NAMES for ph, cl in (("P", "N"), ("G", "O"), ("H", "P")))
 r, ROW_LABUSED, _ = constraint_triplet(
     r, "CROP HOURS needed", lab_lhs, lambda w: f"{wl(w)}${ROW_HOURSAVAIL}", None,
-    "   Hours the crops need that week, against what the crew can give. The app's C2 — and on "
-    "this farm it is the constraint that binds hardest.", fmt="#,##0")
+    "   Hours the crops need that week, against row 11. The app's C2 — and on this farm it is "
+    "the constraint that binds hardest, in 8 separate blocks of weeks.", fmt="#,##0")
 
-# ⚠️ The two purchase caps go through the SAME machinery as every other bound on this sheet.
-# Naming them only in the Solver recipe leaves the cap cells read by NO formula — invisible to a
-# reader, and invisible to the dead-input guard, which then has to be loosened to excuse them.
-# That is a test bent around a builder shortcut. Every other limit here earns a "room left" row;
-# so do these.
+# The overtime cap earns a room-left row like every other bound on this sheet. v8 learned this
+# the hard way: naming a cap only in the Solver recipe leaves the cap cell read by NO formula,
+# which is invisible to a reader AND to the dead-input guard, and the guard then has to be
+# loosened to excuse it. That is a test bent around a builder shortcut.
 r += 1
 r = week_header(r, "hours")
 r, ROW_OTUSED, _ = constraint_triplet(
-    r, "OVERTIME bought", lambda w: f"={wl(w)}{ROW_OTHRS}", f"$B${ROW_OTMAX}", None,
-    "   Your own crew, working longer. Capped because a week only holds so many hours.",
+    r, "OVERTIME bought", lambda w: f"={wl(w)}{ROW_OTHRS}",
+    lambda w: f"{wl(w)}${ROW_OTCAP}", None,
+    "   Row 9 against row 8. The limit MOVES WITH THE CREW — that is the whole of L2.",
     fmt="#,##0")
-r, ROW_HIREUSED, _ = constraint_triplet(
-    r, "HIRED bought", lambda w: f"={wl(w)}{ROW_HIREHRS}", f"$B${ROW_HIREMAX}", None,
-    "   Hands brought in from outside. Capped by what the local market can supply at short "
-    "notice.", fmt="#,##0")
 
 crop_block = {}
 for name in CROP_NAMES:
@@ -705,15 +897,19 @@ put(r, 1, "  wages", font=F_SMALL); put(r, 2, "$", font=F_NOTE)
 for w in range(1, 53):
     put(r, wcol(w), f"={wl(w)}{ROW_WAGEWK}", fmt="#,##0")
 R_WAGEWK = r; r += 1
-put(r, 1, "  bought hours", font=F_SMALL); put(r, 2, "$", font=F_NOTE)
+put(r, 1, "  overtime", font=F_SMALL); put(r, 2, "$", font=F_NOTE)
 for w in range(1, 53):
-    put(r, wcol(w), f"={wl(w)}{ROW_FLEXCOST}", fmt="#,##0")
-R_FLEXWK = r; r += 1
+    put(r, wcol(w), f"={wl(w)}{ROW_OTCOST}", fmt="#,##0")
+R_OTWK = r; r += 1
+put(r, 1, "  advisory crew", font=F_SMALL); put(r, 2, "$", font=F_NOTE)
+for w in range(1, 53):
+    put(r, wcol(w), f"={wl(w)}{ROW_ADVWAGE}", fmt="#,##0")
+R_ADVWK = r; r += 1
 put(r, 1, "NET CASH this week", font=F_BOLD); put(r, 2, "$", font=F_NOTE)
 for w in range(1, 53):
     put(r, wcol(w), f"={wl(w)}{R_REVWK}-{wl(w)}{R_PKGWK}-{wl(w)}{R_GROWWK}"
                     f"-{wl(w)}{R_FIXWK}-{wl(w)}{R_OVHWK}-{wl(w)}{R_WAGEWK}"
-                    f"-{wl(w)}{R_FLEXWK}", fmt="#,##0")
+                    f"-{wl(w)}{R_OTWK}-{wl(w)}{R_ADVWK}", fmt="#,##0")
 R_NETWK = r; r += 2
 
 r = week_header(r, "$")
@@ -761,7 +957,7 @@ put(r, 2, "=" + "+".join(
 ROW_REV = r; r += 1
 for _lab, _row in (("Growing cost", R_GROWWK), ("Packaging", R_PKGWK),
                    ("Fixed cost", R_FIXWK), ("Overhead", R_OVHWK), ("Wages", R_WAGEWK),
-                   ("Bought hours", R_FLEXWK)):
+                   ("Overtime", R_OTWK), ("Advisory crew", R_ADVWK)):
     put(r, 1, _lab, font=F_BOLD)
     put(r, 2, f"=SUM({wl(1)}{_row}:{LAST}{_row})", fmt="$#,##0", font=F_BOLD)
     if _lab == "Growing cost":
@@ -771,9 +967,12 @@ for _lab, _row in (("Growing cost", R_GROWWK), ("Packaging", R_PKGWK),
         put(r, 3, "owed all 52 weeks whatever you plant", font=F_NOTE)
     if _lab == "Wages":
         put(r, 3, "committed — owed whether or not the crops need the hours", font=F_NOTE)
-    if _lab == "Bought hours":
-        put(r, 3, "overtime and hire, at their FULL rate — not the premium above base pay",
+    if _lab == "Overtime":
+        put(r, 3, "at the FULL rate — not the premium above base pay", font=F_NOTE)
+    if _lab == "Advisory crew":
+        put(r, 3, "committed for the whole window, used or not — same basis as Wages above",
             font=F_NOTE)
+    ROW_COST_LAST = r          # ⚠️ the LAST cost row, captured as it is written
     r += 1
 put(r, 1, "Peak borrowing", font=F_BOLD)
 put(r, 2, f"=MAX(0,-MIN({wl(1)}{R_CUM}:{LAST}{R_CUM}))", fmt="$#,##0", font=F_BOLD)
@@ -791,9 +990,16 @@ put(r, 1, "   ⚠️ Reported, NOT optimised over. The plan is chosen first and 
           "implies is priced afterwards,", font=F_NOTE); r += 1
 put(r, 1, "     so the solver has no reason to shift sales earlier to borrow less. That is the "
           "app's simplification, inherited on purpose.", font=F_NOTE); r += 1
-put(r, 1, "PROFIT  (the objective)", font=F_BOLD, fill=DEC_FILL)
-put(r, 2, f"=B{ROW_REV}-SUM(B{ROW_COST}:B{ROW_COST+5})-B{ROW_INT}", fmt="$#,##0",
-    font=F_BOLD, fill=DEC_FILL)
+put(r, 1, "PROFIT  (the objective)", font=F_BOLD, fill=OBJ_FILL)
+# ⚠️ THE RANGE IS DERIVED, NOT COUNTED. This read `B{ROW_COST}:B{ROW_COST+5}` — six cost rows
+# addressed by a hard-coded offset — and v9 adds a seventh (the advisory crew split out of
+# "bought hours"). The stale +5 would have summed six of seven and silently dropped the whole
+# advisory wage bill from PROFIT, while every row on the sheet still looked right. That is the
+# fourth instance in this toy of "a position written down is a position that will drift", and
+# the first where it would have cost money rather than a label.
+assert ROW_COST_LAST > ROW_COST, "cost block is empty — the profit range would be inverted"
+put(r, 2, f"=B{ROW_REV}-SUM(B{ROW_COST}:B{ROW_COST_LAST})-B{ROW_INT}", fmt="$#,##0",
+    font=F_BOLD, fill=OBJ_FILL)
 put(r, 3, "<-- MAXIMISE THIS CELL", font=F_BOLD)
 ROW_OBJ = r; r += 1
 put(r, 1, "Plantings chosen", font=F_BOLD)
@@ -849,16 +1055,18 @@ recipe += [
     ("Constraint — ambient store", f"${wl(1)}${pool_rows['Ambient']['used']}:"
      f"${LAST}${pool_rows['Ambient']['used']}  <=  $B${ROW_AMBCAP}", ""),
     ("Constraint — land", f"${wl(1)}${ROW_LANDUSED}:${LAST}${ROW_LANDUSED}  <=  $B${ROW_LAND}", ""),
-    ("  ...and", f"${wl(1)}${ROW_OTHRS}:${LAST}${ROW_OTHRS};"
-     f"${wl(1)}${ROW_HIREHRS}:${LAST}${ROW_HIREHRS}", "the bought-hour rows"),
+    ("  ...and", f"${wl(1)}${ROW_OTHRS}:${LAST}${ROW_OTHRS};$B${ROW_ADVCREW}",
+     "the overtime row and the advisory headcount"),
     ("Constraint — CROP HOURS <= available", f"${wl(1)}${ROW_LABUSED}:${LAST}${ROW_LABUSED}  <=  "
      f"${wl(1)}${ROW_HOURSAVAIL}:${LAST}${ROW_HOURSAVAIL}", "the app's C2, with bought hours"),
     ("Constraint — overtime cap",
      f"${wl(1)}${ROW_OTUSED}:${LAST}${ROW_OTUSED};<=;"
-     f"${wl(1)}${ROW_OTUSED + 2}:${LAST}${ROW_OTUSED + 2}", "a week only holds so many hours"),
-    ("Constraint — hire cap",
-     f"${wl(1)}${ROW_HIREUSED}:${LAST}${ROW_HIREUSED};<=;"
-     f"${wl(1)}${ROW_HIREUSED + 2}:${LAST}${ROW_HIREUSED + 2}", "what the local market can supply"),
+     f"${wl(1)}${ROW_OTUSED + 2}:${LAST}${ROW_OTUSED + 2}",
+     "DERIVED per week from the hourly crew — not a typed number (L2)"),
+    ("Constraint — advisory crew is a whole number",
+     f"$B${ROW_ADVCREW} = integer", "you hire people, not fractions of people"),
+    ("Constraint — advisory crew available",
+     f"$B${ROW_ADVCREW}  <=  {ADV_MAX}", "how many hands you could actually find"),
     ("Constraint — CASH FLOOR", f"${wl(1)}${R_CUM}:${LAST}${R_CUM}  >=  "
      f"${wl(1)}${R_FLOOR}:${LAST}${R_FLOOR}", "the app's C13"),
 ]
@@ -889,9 +1097,16 @@ NUMS = {
     "{PEAKCAP}": f"{max(_OPT['lab_cap']):,.0f}", "{WINTERCAP}": f"{min(_OPT['lab_cap'][1:]):,.0f}",
     "{V6_PROFIT}": "$1,654,922",
     "{INTEREST}": f"${_OPT['interest']:,.0f}", "{PEAKB}": f"${_OPT['peak_borrow']:,.0f}",
-    "{OTCOST}": f"${_OPT['ot_cost']:,.0f}", "{HIRECOST}": f"${_OPT['hire_cost']:,.0f}",
-    "{OTHRS}": f"{sum(_OPT['ot_hours']):,.0f}", "{HIREHRS}": f"{sum(_OPT['hire_hours']):,.0f}",
-    "{OTRATE}": f"${_OPT['ot_rate'][20]:,.2f}", "{HIRERATE}": f"${_OPT['hire_rate'][1]:,.2f}",
+    "{OTCOST}": f"${_OPT['ot_cost']:,.0f}",
+    "{OTHRS}": f"{sum(_OPT['ot_hours']):,.0f}",
+    "{OTRATE}": f"${_OPT['ot_rate'][20]:,.2f}",
+    "{ADVCREW}": str(int(round(_OPT['adv_crew']))),
+    "{ADVCOST}": f"${_OPT['adv_cost']:,.0f}",
+    "{ADVFROM}": str(_OPT['adv_weeks'][0]) if _OPT['adv_weeks'] else "-",
+    "{ADVTO}": str(_OPT['adv_weeks'][-1]) if _OPT['adv_weeks'] else "-",
+    "{ADVGIVEN}": f"{sum(_OPT['adv_hours_given']):,.0f}",
+    "{V8_PROFIT}": "$514,774",
+    "{OTPEAKCAP}": f"{max(_OPT['ot_cap']):,.0f}",
     "{V7_PROFIT}": "$388,786",
     "{MARGIN}": f"{_OPT['profit'] / _OPT['revenue'] * 100:.1f}%",
     "{V5_PROFIT}": "$2,384,231",
@@ -906,40 +1121,72 @@ NUMS = {
     "{OBJ}": f"B{ROW_OBJ}",
 }
 readme = [
- ("Farm toy model — v8: BUYING LABOUR", F_TITLE),
+ ("Farm toy model — v9: THE LABOUR LAYER, REBUILT", F_TITLE),
  (f"BUILT {_BUILT}   (from source at commit {_SHA})", F_NOTE),
  ("If that timestamp is older than the change you are looking for, you have a stale copy —", F_NOTE),
  ("close the file and re-open it from WSL rather than from a recent-files list.", F_NOTE),
  ("", None),
- ("WHAT v8 ADDS — you can now BUY hours, and the solver decides whether to", F_H1),
- ("v7 gave you a fixed crew: a committed cost and a hard ceiling. v8 makes labour a DECISION.", None),
- ("Two green rows — OVERTIME hours and HIRED hours — the solver fills in, and C2 now measures", None),
- ("crop hours against the crew PLUS whatever it decided to buy.", None),
+ ("WHAT v9 CHANGES — the labour layer, rebuilt on three notes from the grower", F_H1),
+ ("This is the first version where a labour change makes the model SMALLER. 52 spot-hire", None),
+ ("variables became ONE headcount, and a typed cap became a derived row.", None),
  ("", None),
- ("     profit {V7_PROFIT} -> {PROFIT}        revenue {REV}", F_BOLD),
- ("     it buys {HIREHRS} hired hours ({HIRECOST}) and {OTHRS} overtime ({OTCOST})", F_BOLD),
+ ("     profit {V8_PROFIT} (v8) -> {PROFIT}        revenue {REV}        margin {MARGIN}", F_BOLD),
+ ("     it hires {ADVCREW} people for weeks {ADVFROM}-{ADVTO} ({ADVCOST}) and works {OTHRS} overtime hours ({OTCOST})", F_BOLD),
  ("", None),
- ("Revenue rises again, and for the same reason it fell in v7: hours are what let you PICK. Buy", None),
- ("more of them and acres that were not worth planting become worth planting.", None),
+ ("Profit FALLS against v8 and that is the honest direction: v8 could buy an hour in any week", None),
+ ("at a spot price and never pay for an hour it did not use.", None),
  ("", None),
- ("TWO PRICING RULES THE APP PAID FOR, AND WHY THEY MATTER", F_H1),
+ ("1. THERE IS NO SPOT HIRE ANY MORE. You nominate a WINDOW; the solver picks the HEADCOUNT.", F_BOLD),
+ ("   v8's plan was unexecutable: 21 separate weeks of hiring in blocks of 2, 2, 2, 3 and 12", None),
+ ("   weeks, and one week that bought TWO HOURS. No real hiring path works that way. H-2A wants", None),
+ ("   60-75 days of lead and GUARANTEES the worker three-quarters of the contract's hours;", None),
+ ("   domestic seasonal hiring wants 8-10 weeks and the good crews book out months ahead.", None),
+ ("   Every path is a committed block decided before the season.", None),
  ("", None),
- ("1. BOUGHT HOURS COST THEIR FULL RATE, not the premium above base pay.", F_BOLD),
- ("   The committed wage bill pays the crew's STATED hours. Overtime and hire are hours BEYOND", None),
- ("   that, so charging only the increment leaves the base wage charged nowhere at all. The app", None),
- ("   measured that defect at 2,080 hired hours costing $0.00 — $965,177 of phantom profit.", None),
+ ("   So the advisory crew is CHARGED FOR ITS WHOLE WINDOW, used or not — the same treatment", None),
+ ("   the standing crew already gets. Compare row 13 against row 10 in a week the plan does not", None),
+ ("   need the hours: that gap is what committing to people actually costs, and v8 could not", None),
+ ("   show it, because an hour it did not want was simply never bought.", None),
  ("", None),
- ("2. OVERTIME AND HIRE ARE PRICED SEPARATELY.", F_BOLD),
- ("   Overtime {OTRATE}/hr — your crew's blended rate x the multiplier. Hire {HIRERATE}/hr — a", None),
- ("   market wage you enter, plus payroll load and markup. At these rates hire is cheaper, so", None),
- ("   the solver buys only hire. That is NOT a fixed truth: raise the hired wage past about $30", None),
- ("   and it flips entirely to overtime. 'Hire is cheaper' is an assumption, and the app once", None),
- ("   reported enabling an extra, MORE expensive option as making profit $3,165.71 WORSE — which", None),
- ("   no correct model can do. It came from guessing the split instead of reading it.", None),
+ ("   The answer is a ROSTER ROW: 'hire {ADVCREW} people, weeks {ADVFROM} to {ADVTO}'. Type it into", None),
+ ("   section 3b, set the advisory headcount back to 0, and re-solve. That round trip is the", None),
+ ("   point — the recommendation is written in the same units as the input.", None),
  ("", None),
- ("⚠️ The hired wage is a PLACEHOLDER, not a sourced figure. Put your own local rate in. The app", None),
- ("tried inferring it from internal payroll and got three different wrong answers (W17) — a", None),
- ("manager-heavy crew inferred $40.60/hr for a field hand.", None),
+ ("2. THE OVERTIME CAP IS DERIVED, NOT TYPED.", F_BOLD),
+ ("   v8 typed a flat 200 hrs/week. The crew on this farm swings from 0 to 872 hourly field", None),
+ ("   hours across the year, so one number cannot express 'how much overtime will you allow'.", None),
+ ("   On the app's own farm that flat cap let 15 of 52 weeks buy MORE overtime than the whole", None),
+ ("   crew's regular hours — 185% in winter — and the app's solver took it, buying 191 overtime", None),
+ ("   hours against 299 crew hours in one week. A 64% overtime rate is a 66-hour week for", None),
+ ("   everybody on the crew.", None),
+ ("", None),
+ ("   Now you type an ALLOWANCE (1.25 = 'up to 125% of normal hours') and row 8 computes", None),
+ ("   (allowance - 1) x row 3, week by week. It peaks at {OTPEAKCAP} hrs and it is ZERO in a week", None),
+ ("   with no hourly crew, which is the whole point: you cannot work overtime on people who are", None),
+ ("   not there.", None),
+ ("", None),
+ ("3. THE SECTION BUILDS UP IN NAMED ROWS.", F_BOLD),
+ ("   v8 computed the payroll mask — who is on this week, hourly, and paid — INSIDE the overtime", None),
+ ("   rate formula, to answer a question the capacity row above had already answered. It was", None),
+ ("   dense because an intermediate quantity had no row of its own.", None),
+ ("   Rows 1-14 now each read only the rows above them. Row 3 (hourly FIELD hours) is the one", None),
+ ("   v8 never wrote down — and it is exactly what the overtime cap needed, which is why the cap", None),
+ ("   had to be a typed constant. Give the quantity a name and the defect has nowhere to live.", None),
+ ("", None),
+ ("⚠️ THE WINDOW IS YOUR CALL, AND IT MATTERS MORE THAN THE HEADCOUNT", F_H1),
+ ("Labour binds in EIGHT separate blocks of weeks on this farm. Only one of them is worth", None),
+ ("hiring into. Measured, same farm, same solver, only the window changes:", None),
+ ("", None),
+ ("     weeks 16-21  (C2 binds all six weeks)      worth $5", F_BOLD),
+ ("     weeks 27-31  (C2 binds all five weeks)     worth $21", F_BOLD),
+ ("     weeks 43-49                                worth $58,253", F_BOLD),
+ ("", None),
+ ("A week where labour BINDS is not a week where more labour PAYS. In weeks 16-31 the crew is", None),
+ ("already 908 hrs/wk and something else is holding the plan back; in weeks 43-49 the seasonal", None),
+ ("crews have gone home to 108 hrs/wk and there is garlic in the ground.", None),
+ ("", None),
+ ("That is worth stating plainly because the obvious report — 'here are your binding weeks' —", None),
+ ("would send you to the wrong one. Try it: put 16 and 21 in the window and re-solve.", None),
  ("", None),
  ("WHAT v7 ADDED — labour, which is TWO things at once", F_H1),
  ("", None),
@@ -1084,7 +1331,8 @@ readme = [
  ("       overhead     {OVH}      a share of revenue", None),
  ("       wages        {WAGES}      committed — owed whether the crops need the hours or not", None),
  ("       interest     {INTEREST}          APR on what the credit line actually carries", None),
- ("       bought hrs   {HIRECOST}      {HIREHRS} hired hours; {OTHRS} overtime", None),
+ ("       overtime     {OTCOST}       {OTHRS} hours, capped by row 8 week by week", None),
+ ("       advisory     {ADVCOST}      {ADVCREW} people, weeks {ADVFROM}-{ADVTO} — {ADVGIVEN} hrs committed", None),
  ("     peak borrowing {PEAKB} — the deepest the line is ever drawn", None),
  ("       interest     {INTEREST}          on {PEAKB} of peak borrowing — reported, not optimised over", None),
  ("     {N_PLANTED} of {N_OFFERED} plantings used", F_BOLD),
@@ -1131,10 +1379,16 @@ readme = [
  ("   alone. Now set Garlic's 'Returns to store' to 0.00 and re-solve: the delay becomes a loss", None),
  ("   and the plan changes.", None),
  ("", None),
- ("EXPERIMENT 2 — make hiring expensive.  Set 'Hired wage $/hr' to 40 and re-solve.", F_BOLD),
- ("   Hire becomes dearer than overtime and the plan flips: hired hours go to zero and overtime", None),
- ("   appears instead. Same work, different supplier, chosen on price. A model that assumed", None),
- ("   'hire is cheaper' would have got this backwards and never noticed.", None),
+ ("EXPERIMENT 2 — move the hiring window.  Set the advisory window to 16 and 21, re-solve.", F_BOLD),
+ ("   C2 binds in all six of those weeks, so they LOOK like the place to add people. The solver", None),
+ ("   hires nobody, and profit moves by about five dollars. Put it back to 43-49 and it hires", None),
+ ("   {ADVCREW} for {ADVCOST}. Utilisation tells you where a constraint is tight; it does not tell", None),
+ ("   you what relieving it is worth, and only one of those is a hiring decision.", None),
+ ("", None),
+ ("EXPERIMENT 2b — tighten the overtime allowance.  Set it to 1.00 and re-solve.", F_BOLD),
+ ("   Row 8 goes to zero everywhere and overtime disappears — 1.00 means 'no hours beyond", None),
+ ("   normal'. Then try 2.00: the cap doubles in every week, but it doubles PROPORTIONALLY, so", None),
+ ("   winter still gets almost none. That is what a typed hours cap could never do.", None),
  ("", None),
  ("EXPERIMENT 3 — sack the harvest crew.  Set the Harvest Crew count to 0 and re-solve.", F_BOLD),
  ("   You save their whole wage bill. Watch what happens to profit anyway: with fewer hours in", None),
@@ -1193,7 +1447,7 @@ for text, font in readme:
     if font: c.font = font
     row_i += 1
 
-out = REPO / "toy_models" / "farm_toy_v8_flex.xlsx"
+out = REPO / "toy_models" / "farm_toy_v9_labour.xlsx"
 wb.save(out)
 print(f"wrote {out}")
 print(f"  successions offered : {len(SUCCS)}")

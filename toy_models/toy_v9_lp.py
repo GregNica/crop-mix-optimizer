@@ -1,8 +1,8 @@
 """
-toy_v8_lp.py — the v5 sheet's model, written as a MILP and solved with scipy.
+toy_v9_lp.py — the v5 sheet's model, written as a MILP and solved with scipy.
 
-Imported by BOTH `build_toy_v8.py` (so the READ ME can promise the optimum LibreOffice should
-find) and `verify_toy_v8.py` (as the oracle the workbook is checked against).
+Imported by BOTH `build_toy_v9.py` (so the READ ME can promise the optimum LibreOffice should
+find) and `verify_toy_v9.py` (as the oracle the workbook is checked against).
 
 WHY THIS EXISTS. v4 is the first version whose answer is not arithmetic — it is a CHOICE, made
 by a solver. So "is the sheet right?" splits in two:
@@ -43,6 +43,39 @@ without costs to spend, and v5's profit was absurd precisely because seed was th
 DEFERRED, and named so the omissions are not silent: labour (committed-cost machinery, v7),
 water (the app prices on-farm water at $0 — backlog W10, not a toy simplification), and
 interest on borrowing (post-solve in the app).
+
+v9 REBUILDS THE LABOUR LAYER on the grower's three notes (DECISIONS.md GROUP F, rows L1-L3).
+It is the first version where a labour change makes the model SMALLER.
+
+  L1  THE PER-WEEK HIRE VARIABLE IS GONE. v8 let the solver buy hours in any week at a spot
+      price, and the plan it produced was unexecutable: 21 non-zero weeks in blocks of
+      2/2/2/3/12, and one week that bought TWO HOURS. No real hiring path works that way —
+      H-2A wants 60-75 days of lead and carries a three-fourths guarantee, domestic seasonal
+      wants 8-10 weeks (research: DECISIONS.md appendix, 2026-08-31). Every path is a
+      COMMITTED BLOCK decided before the season, which is what an `employees[]` row already is.
+
+      So v9 has ONE advisory variable — `crew_add`, an INTEGER headcount for a window the
+      grower nominates — and it is CHARGED FOR THE WHOLE WINDOW whether the crops need the
+      hours or not. That is the guarantee's economics and it is the same treatment W12 gives
+      the standing crew. The answer reads "hire N people from week A to week B", which is a
+      roster row the grower can type back in. 52 spot variables became 1.
+
+  L2  THE OVERTIME CAP IS DERIVED, NOT TYPED. v8 (and the app) broadcast one scalar flat
+      across 52 weeks while the crew is seasonal, so in 15 of 52 weeks the cap exceeded the
+      whole crew's regular hours — and the app's solver took it, buying 191 overtime hours
+      against 299 crew hours in one week. Here the input is an ALLOWANCE (1.25 = "I will let
+      people work 125% of normal") and the cap is
+          ot_cap[w] = (allowance - 1) x hourly_field_hours[w]
+      over the standing hourly crew only. Salaried staff give capacity but cannot be paid
+      overtime, so they are out of the cap for the same reason they are out of the rate.
+
+      The advisory crew is deliberately NOT in the overtime base. Overtime is a policy about
+      the people you already employ; letting the advice depend on overtime worked by the
+      people the advice tells you to hire is the conflation L1 exists to remove.
+
+  L3  THE LABOUR BLOCK BUILDS UP IN NAMED STEPS instead of recomputing a payroll mask inline.
+      `labour_arrays()` now returns the intermediate the sheet needs — hourly field hours per
+      week — which v8 computed, used once as a wage-blend denominator, and threw away.
 """
 from __future__ import annotations
 
@@ -120,32 +153,50 @@ def defaults(cn, hn):
 
 
 def labour_arrays():
-    """(capacity h/wk, committed $/wk), both 1-indexed to week 52.
+    """(capacity h/wk, committed $/wk, HOURLY field h/wk, hourly headcount), 1-indexed to 52.
 
     Reproduces the app's own figures exactly — $4,884/wk winter, $24,484/wk at peak, $855,150
     for the year — which is the check that this crew model is the app's and not a paraphrase.
+
+    ⚠️ L3: the third and fourth returns are new in v9 and they are the whole point of the row.
+    `hourly_field` is the field hours contributed by HOURLY roles only. v8 computed exactly this
+    quantity, used it once as the denominator of the wage blend, and returned it to nobody — so
+    the overtime cap had nothing to derive itself from and became a typed constant, which is
+    L2's defect. Publishing it here is most of L2's fix.
     """
     load = 1.0 + PAYLOAD.get("payroll_load_pct", 0.0)
     cap = np.zeros(N_WEEKS + 1)
     wage = np.zeros(N_WEEKS + 1)
+    hourly_field = np.zeros(N_WEEKS + 1)
+    hourly_heads = np.zeros(N_WEEKS + 1)
     for e in PAYLOAD.get("employees", []):
         a, b = e.get("start_week", 1), e.get("end_week", N_WEEKS)
         per_wk = (e["wage"] / N_WEEKS if e["type"] == "salary"
                   else e["wage"] * e["hours_per_week"])
+        field = e["count"] * e["hours_per_week"] * e.get("field_time_pct", 100) / 100.0
         for w in range(a, b + 1):
             wage[w] += per_wk * e["count"] * load
-            cap[w] += e["count"] * e["hours_per_week"] * e.get("field_time_pct", 100) / 100.0
-    return cap, wage
+            cap[w] += field
+            # Salaried staff give capacity but cannot be paid overtime — out of the CAP for
+            # the same reason they are out of the RATE. An unpaid role is out of both.
+            if e["type"] != "salary" and e["wage"] > 0:
+                hourly_field[w] += field
+                hourly_heads[w] += e["count"]
+    return cap, wage, hourly_field, hourly_heads
 
 
-def flex_rates(hired_wage_per_hr=20.0, overtime_multiplier=1.5, hire_markup=0.0):
-    """($/hr for an overtime hour, $/hr for a hired hour), per week.
+def overtime_rate(overtime_multiplier=1.5):
+    """$/hr for an overtime hour, per week.
 
-    Overtime is priced from the crew's own HOURLY blend — salaried staff contribute capacity but
-    you cannot pay them overtime, so they are excluded from the RATE while remaining in the
-    capacity (the app's deliberate rate/quantity asymmetry). Hire is priced from an entered
-    market wage: inferring it from internal payroll gave the app three different wrong answers
-    (W17), so it is an input here and the sheet says so.
+    Priced from the crew's own HOURLY blend — salaried staff contribute capacity but you cannot
+    pay them overtime, so they are excluded from the RATE while remaining in the capacity (the
+    app's deliberate rate/quantity asymmetry).
+
+    ⚠️ v9 DROPPED THE HIRE LEG. There is no spot price for a hired hour any more, because there
+    is no spot hire: an advisory crew is paid its own roster wage for a whole committed window
+    (L1). That also retires W15's hire-vs-overtime pricing question and W17's wage inference —
+    a hired hand's wage is now typed on a roster row like every other wage, so there is nothing
+    left to infer.
     """
     load = 1.0 + PAYLOAD.get("payroll_load_pct", 0.0)
     ot = np.zeros(N_WEEKS + 1)
@@ -160,8 +211,7 @@ def flex_rates(hired_wage_per_hr=20.0, overtime_multiplier=1.5, hire_markup=0.0)
             paid_hrs += h
             paid_cost += h * e["wage"] * load
         ot[w] = (paid_cost / paid_hrs * overtime_multiplier) if paid_hrs else 0.0
-    hire = np.full(N_WEEKS + 1, hired_wage_per_hr * load * (1.0 + hire_markup))
-    return ot, hire
+    return ot
 
 
 def weekly_fixed_cost(cold_cap=None, amb_cap=None):
@@ -177,8 +227,9 @@ def weekly_fixed_cost(cold_cap=None, amb_cap=None):
 def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
           fixed_acres=None, min_acreage=True, annual_override=None,
           opening_cash=None, credit_line=None, cash_floor=True,
-          flex=True, hired_wage_per_hr=20.0, overtime_multiplier=1.5, hire_markup=0.0,
-          max_overtime_hrs=200.0, max_hire_hrs=400.0):
+          flex=True, overtime_multiplier=1.5, overtime_allowance=1.25,
+          advisory=True, adv_start=43, adv_end=49, adv_hours_per_week=40.0,
+          adv_wage=20.0, adv_field_pct=100.0, max_adv_crew=20):
     """Maximise revenue - growing cost, as a MILP. Returns a dict of the optimum.
 
     `min_acreage=False` drops the binaries and solves the LP relaxation — useful only to show
@@ -193,12 +244,21 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
     pairs = [(c, h) for c in CROP_NAMES for h in CH_NAMES]
     n_off = len(pairs) * N_WEEKS
     n_y = n_s if min_acreage else 0
-    n_flex = 2 * N_WEEKS if flex else 0
-    N = n_s + n_off + n_y + n_flex
+    n_ot = N_WEEKS if flex else 0
+    n_adv = 1 if advisory else 0          # L1: ONE headcount, not 52 spot purchases
+    N = n_s + n_off + n_y + n_ot + n_adv
     off_i = lambda p, w: n_s + p * N_WEEKS + (w - 1)
     y_i = lambda i: n_s + n_off + i
     ot_i = lambda w: n_s + n_off + n_y + (w - 1)
-    hire_i = lambda w: n_s + n_off + n_y + N_WEEKS + (w - 1)
+    adv_i = n_s + n_off + n_y + n_ot      # the advisory crew size (integer headcount)
+
+    # The nominated window. Everything about the advisory crew is derived from it, so the
+    # window is stated ONCE and never re-derived — v8's labour bugs were all a quantity
+    # recomputed in a second place.
+    adv_weeks = [w for w in range(int(adv_start), int(adv_end) + 1) if 1 <= w <= N_WEEKS]
+    adv_field_h = adv_hours_per_week * adv_field_pct / 100.0            # h/wk per person
+    adv_cost_wk = adv_hours_per_week * adv_wage * (
+        1.0 + PAYLOAD.get("payroll_load_pct", 0.0))                     # $/wk per person
 
     # lb packed out per acre of succession i, in week w
     packed_per_acre = np.zeros((n_s, N_WEEKS + 1))
@@ -234,14 +294,20 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
         for wk, ph in zip(s_["weeks"], s_["phases"]):
             lab_week[i, ((wk - 1) % N_WEEKS) + 1] += c.get(
                 f"labor_{['plant', 'grow', 'harv'][ph]}", 0.0)
-    lab_cap, wage_wk = labour_arrays()
-    ot_rate, hire_rate = flex_rates(hired_wage_per_hr, overtime_multiplier, hire_markup)
+    lab_cap, wage_wk, hourly_field, hourly_heads = labour_arrays()
+    ot_rate = overtime_rate(overtime_multiplier)
+    # L2: the cap is DERIVED, per week, from the hourly crew actually on that week.
+    ot_cap = np.maximum(0.0, (overtime_allowance - 1.0)) * hourly_field
     if flex:
-        # The app's own refusal: a bought hour with no price is a free hour, and no markup or
-        # multiplier rescues a zero base.
-        if not (ot_rate[1:].min() > 0 and hire_rate[1] > 0):
-            raise RuntimeError("flex enabled but a bought hour prices at $0 — refusing to hand "
-                               "out free labour (the app refuses this too)")
+        # The app's own refusal: a bought hour with no price is a free hour, and no multiplier
+        # rescues a zero base. Checked only where the cap actually allows an hour — a week with
+        # no hourly crew has ot_cap 0 and a $0 rate, and those agree.
+        live = [w for w in range(1, N_WEEKS + 1) if ot_cap[w] > 0]
+        if live and min(ot_rate[w] for w in live) <= 0:
+            raise RuntimeError("overtime is allowed in a week priced at $0/hr — refusing to "
+                               "hand out free labour (the app refuses this too)")
+    if advisory and adv_weeks and not adv_cost_wk > 0:
+        raise RuntimeError("an advisory crew with no wage is free labour — refusing")
 
     # objective: -(revenue - cost) because milp minimises
     c_obj = np.zeros(N)
@@ -338,13 +404,27 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
                 e[i] = lab_week[i, w]
         if flex:
             e[ot_i(w)] = -1.0
-            e[hire_i(w)] = -1.0
+        if advisory and w in adv_weeks:
+            # The advised crew is on for the WHOLE window, so it gives hours in every week of
+            # it — used or not. That is what makes its cost committed rather than marginal.
+            e[adv_i] = -adv_field_h
         add(e, -np.inf, lab_cap[w])
+
+    # L2 — overtime is bounded per week by the hourly crew ACTUALLY on that week, not by a
+    # flat scalar. This is a constraint row rather than a variable bound because ot_cap varies
+    # weekly; expressing it as a bound is exactly the mistake that produced 185% weeks.
+    if flex:
+        for w in range(1, N_WEEKS + 1):
+            e = np.zeros(N)
+            e[ot_i(w)] = 1.0
+            add(e, -np.inf, ot_cap[w])
 
     if flex:
         for w in range(1, N_WEEKS + 1):
             c_obj[ot_i(w)] += ot_rate[w]
-            c_obj[hire_i(w)] += hire_rate[w]
+    if advisory:
+        # COMMITTED: the whole window is charged the moment the crew exists.
+        c_obj[adv_i] += adv_cost_wk * len(adv_weeks)
 
     # C13 — the weekly cash floor. Cumulative cash from week 1 to W must never fall below
     # -(opening cash + credit line). Revenue lands in the week of sale, variable costs in the
@@ -367,7 +447,9 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
             if flex:
                 for w in range(1, W + 1):
                     e[ot_i(w)] -= ot_rate[w]
-                    e[hire_i(w)] -= hire_rate[w]
+            if advisory:
+                # Wages leave the bank every week of the window, like the standing crew's.
+                e[adv_i] -= adv_cost_wk * len([w for w in adv_weeks if w <= W])
             add(e, -(op_cash + cred) + W * fixed_wk + wage_wk[1:W + 1].sum(), np.inf)
 
     # land standing in the ground
@@ -393,11 +475,15 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
 
     A = np.vstack(rows)
     lb_v, ub_v = np.zeros(N), np.full(N, np.inf)
-    if flex:
-        for w in range(1, N_WEEKS + 1):
-            ub_v[ot_i(w)] = max_overtime_hrs
-            ub_v[hire_i(w)] = max_hire_hrs
+    # ⚠️ NO per-week ub for overtime any more — its cap is the constraint block above, because
+    # a bound can only hold a constant and the honest cap is a weekly quantity.
     integrality = np.zeros(N, dtype=int)
+    if advisory:
+        # An INTEGER headcount, because the output is a roster row a grower types in. "Hire 7.3
+        # people" is not an instruction. The cap is how many hands the grower says they could
+        # actually find — the availability question the research says is the real uncertainty.
+        ub_v[adv_i] = float(max_adv_crew)
+        integrality[adv_i] = 1
     if min_acreage:
         ub_v[n_s + n_off:n_s + n_off + n_y] = 1.0
         integrality[n_s + n_off:n_s + n_off + n_y] = 1
@@ -438,7 +524,8 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
                     * CROPS[cn].get("channels", {}).get(hn, {}).get("packaging_cost_per_lb", 0.0)
                     for p_, (cn, hn) in enumerate(pairs))
         grow_w = sum(x[i] * var_week[i, w] for i in range(n_s))
-        flex_w = ((x[ot_i(w)] * ot_rate[w] + x[hire_i(w)] * hire_rate[w]) if flex else 0.0)
+        flex_w = (x[ot_i(w)] * ot_rate[w] if flex else 0.0)
+        flex_w += (x[adv_i] * adv_cost_wk if (advisory and w in adv_weeks) else 0.0)
         week_net[w] = (rev_w - pkg_w - grow_w - fixed_wk - wage_wk[w] - overhead * rev_w
                        - flex_w)
     bank = np.cumsum(week_net[1:]) + op_cash
@@ -447,17 +534,44 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
     peak_borrow = float(borrowed.max())
     ovh = overhead * revenue
     ot_hours = [float(x[ot_i(w)]) for w in range(1, N_WEEKS + 1)] if flex else [0.0] * N_WEEKS
-    hire_hours = [float(x[hire_i(w)]) for w in range(1, N_WEEKS + 1)] if flex else [0.0] * N_WEEKS
     ot_cost = sum(h * ot_rate[w + 1] for w, h in enumerate(ot_hours))
-    hire_cost = sum(h * hire_rate[w + 1] for w, h in enumerate(hire_hours))
-    cost = growing + packaging + fixed + ovh + wages + interest + ot_cost + hire_cost
+    adv_crew = float(x[adv_i]) if advisory else 0.0
+    adv_cost = adv_crew * adv_cost_wk * len(adv_weeks)
+    # The hours the advised crew GIVES, and the hours the plan actually USES from them. They
+    # differ, and the gap is the point: a committed block is paid whole. v8 could not show this
+    # at all, because a spot hour that was not needed was simply never bought.
+    adv_hours_given = [adv_crew * adv_field_h if w in adv_weeks else 0.0
+                       for w in range(1, N_WEEKS + 1)] if advisory else [0.0] * N_WEEKS
+    cost = growing + packaging + fixed + ovh + wages + interest + ot_cost + adv_cost
+
+    # ⚠️ THE OBJECTIVE MUST RECONCILE AGAINST THE COST BREAKDOWN, and this check exists because
+    # a mutation walked straight through everything else. Charging the advisory crew for ONE
+    # week in `c_obj` while the report charges the whole window leaves the solver optimising a
+    # problem nobody ever sees: it picks a too-large crew, the reported cost prices that crew
+    # correctly, the SHEET prices it correctly too — so the sheet-vs-LP comparison agrees to the
+    # cent and the defect is invisible. Both sides right about a plan chosen on wrong prices.
+    #
+    # `res.fun` is the minimised value, so -res.fun is what the objective actually maximised.
+    # Wages and fixed costs are constants (committed, not decided) and interest is post-solve,
+    # so none of them appear in it.
+    obj_from_parts = revenue - growing - packaging - ovh - ot_cost - adv_cost
+    if abs(-float(res.fun) - obj_from_parts) > max(1.0, abs(obj_from_parts) * 1e-9):
+        raise RuntimeError(
+            f"the objective and the cost breakdown disagree: solver maximised "
+            f"{-float(res.fun):,.2f} but the parts sum to {obj_from_parts:,.2f}. Some cost is "
+            f"priced one way in c_obj and another way in the report, so the plan was chosen on "
+            f"prices nothing else on this sheet uses.")
     planted = {k: v for k, v in acres.items() if v > 1e-6}
-    return dict(profit=revenue - cost, revenue=revenue, cost=cost, acres=acres,
+    return dict(profit=revenue - cost, obj_value=-float(res.fun),
+                obj_from_parts=obj_from_parts, revenue=revenue, cost=cost, acres=acres,
                 growing=growing, packaging=packaging, fixed=fixed, overhead=ovh,
                 wages=wages, lab_cap=lab_cap, wage_wk=wage_wk, lab_week=lab_week,
                 interest=interest, peak_borrow=peak_borrow, bank=list(bank),
-                ot_cost=ot_cost, hire_cost=hire_cost, ot_hours=ot_hours, hire_hours=hire_hours,
-                ot_rate=list(ot_rate), hire_rate=list(hire_rate),
+                ot_cost=ot_cost, ot_hours=ot_hours, ot_rate=list(ot_rate),
+                ot_cap=list(ot_cap), hourly_field=list(hourly_field),
+                hourly_heads=list(hourly_heads),
+                adv_crew=adv_crew, adv_cost=adv_cost, adv_hours_given=adv_hours_given,
+                adv_weeks=adv_weeks, adv_field_h=adv_field_h, adv_cost_wk=adv_cost_wk,
                 fixed_weekly=fixed_wk, opening_cash=op_cash, credit_line=cred,
                 var_week=var_week,
                 offered=offered, sold=sold, status=res.status, planted=planted,
@@ -469,7 +583,7 @@ if __name__ == "__main__":
     print(f"OPTIMUM  profit ${r['profit']:,.0f}")
     print(f"   revenue    {r['revenue']:>12,.0f}")
     for k in ("growing", "packaging", "fixed", "overhead", "wages", "interest",
-              "ot_cost", "hire_cost"):
+              "ot_cost", "adv_cost"):
         print(f"   {k:<10} {-r[k]:>12,.0f}")
     print(f"   plants {r['n_planted']} of {r['n_offered']} successions the app offers")
     print("\nacres:")
