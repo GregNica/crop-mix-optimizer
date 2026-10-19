@@ -725,6 +725,70 @@ mis-charging).
 
 ---
 
+## Batch FX — The fixed layer (scheduled 2026-10-19; after Batch 2, before Batch 3)
+
+**WHY.** The grower's first page of January (`SPEC_product.md` prompt 1): *"what do you know you
+need to plant? This absorbs the big blocks and then the rest gets filled in with extras."* The app
+has no first page — it optimises every acre from zero. This batch is the **"absorb the big blocks
+first"** half: things the grower has already decided, owes, or physically has, which CONSTRAIN
+the plan before the optimiser fills what is left for profit. Ranked #1 missing primitive in July,
+then parked as P1 with no batch. Rulings and evidence: `DECISIONS.md` **GROUP G**.
+
+Placed before Batch 3 because it is what a grower meets first; placed after Batch 2 because a
+with/without delta ("this contract costs you $X") is only honest once the cost model is complete.
+
+**FX.0 · Prototype in the toy first (v12).** Same pattern as labour: prove the shapes against an
+independent oracle on a hand-checkable sheet before touching the guarded money path.
+
+**FX.1 · Must-plant floors — UNCONDITIONAL.** "I need N acres of X." `min_acreage_if_planted` is
+NOT this: it is conditional on the plant binary, so the solver escapes it by dropping the crop
+(measured: a 14-ac garlic floor → 0 ac, −$344k). A must-plant floor forces the crop in. ⚠️ Open
+design point, decide in the toy: floor on STANDING acreage (C15's lesson — a floor on the annual
+sum of plantings was satisfied with eighteen 1-acre slivers and reserved nothing) vs. on total
+acres planted across the year (legitimate for a multi-succession crop like lettuce). Probably
+both, named differently.
+
+**FX.2 · Carry-ins — overwintering AND perennials (grower ruling: "committed" covers both).**
+- *Overwintering* exists: `overwinters` flag + C15 committed acres. Fold it under the same
+  "already in the ground" heading in the UI rather than leaving it a flag on a crop card.
+- *Perennials* (asparagus, cane fruit, bushes) are **new**: `calendar.py:114` rejects any cycle
+  > 52 weeks. Model as committed ground standing all 52 weeks — no plant decision, a harvest
+  window, annual maintenance costs, and establishment cost on the OWN→depreciate basis
+  (the locked cost-accounting basis), never charged as this year's seed. Its land is unavailable to
+  everything else.
+
+**FX.3 · Contract delivery floors (P1).** `v[c,ch,w] ≥ floor` per crop × channel × week, with a
+**shortfall slack priced at a penalty** (grower ruling — an unmeetable contract must surface as
+a reported shortfall, never as "no feasible plan"). Ship with the with/without delta so the tool
+PRICES the obligation. ⚠️ Interacts with GROUP E (shelf life): today Tomatoes/Basil have L=1, so a
+weekly floor in a non-harvest week can only be met by shortfall. The slack makes FX safe to build
+before E lands; re-check the shortfall report after E.
+
+**FX.4 · Zones (amends the plot non-goal — grower sign-off 2026-10-19).** No geometry, no map:
+named land pools ("2 ac high tunnel, 6 ac part sun, 10 ac open field") and a crop × zone
+eligibility table. Acres split by zone; C1 land becomes per zone per week. Variable count grows
+by ×zones — fine at 3–5.
+
+**FX.5 · Zone-specific growing behaviour = a separate crop name (grower ruling).** "Tomatoes" vs
+"High-tunnel Tomatoes", each with its own windows/yield/costs, eligible only in its zone — no
+per-zone yield modifiers. ⚠️ **TRAP: demand caps are keyed by crop name**, so two variants selling
+to the same market would each get the full cap and double it. Variants need a shared demand
+identity (`sells_as: "Tomatoes"`); same bug family as W1's duplicate-name defect. Guard it with a
+test that two variants of one crop cannot together exceed one cap.
+
+**FX.6 · Templates for common variants** (high-tunnel tomatoes/peppers/cucumbers/greens,
+part-shade greens, perennials such as asparagus) — sourced values only, under Batch 3's data
+discipline. **And the wizard instruction** (lands in Batch 7, recorded here so it is not lost):
+when a grower declares a zone that changes growing behaviour and a crop in it has no variant,
+PROMPT for one.
+
+**FX.7 · Re-pin / guards.** ⚠️ The golden farm uses none of this, so everything can ship with the
+baseline unchanged — the L4 / "defaulting a feature off leaves it unguarded" trap. A golden
+fixture with a zone, a perennial, a must-plant and a contract floor goes in **the same commit** as
+the feature.
+
+---
+
 ## Batch 3 — Crop data truth (M2/M9/M4/M7/M10 + C8; ONE re-pin)
 
 The library's 29 templates feed everything and have never been audited (the July audit "reviewed
@@ -890,7 +954,7 @@ C6 (yield series) falls out of Batch 3's library work. C1 (printable season plan
 
 ## Explicitly parked (so silence is not drift)
 
-Tier 7 (until a second user is imminent — grower confirms not deployed); plot-level modelling,
+Tier 7 (until a second user is imminent — grower confirms not deployed); plot-level MAPPING (zones with eligibility are IN scope — Batch FX),
 weather prediction, price/demand research (locked non-goals, unchallenged); P1/P2/P5–P12 beyond
 the Batch-5 slice (bet ① sequencing, grower-gated); E6 (rides the wizard); the M1 number itself —
 **never chase it directly; it is the scoreboard, not the work** (grower posture, evidence in

@@ -1005,6 +1005,46 @@ For reference, on a farm with both levers on at shipped caps: profit $723,659 wi
 
 ---
 
+## GROUP G — The fixed layer (grower rulings, 2026-10-19) → PLAN Batch FX
+
+**Grower:** *"a big piece we're maybe missing in the roadmap… if a user comes in and says I already
+have contract and committed sales to this channel. Or if they know they need to plant a certain
+amount of x crop. A connected piece to this would be plot level constraints: tagging certain
+amounts of acreage to certain plots that have limitations on what can be planted."*
+
+**Status found:** half on record. Obligations were the #1 missing primitive in `SPEC_product.md`
+(July, from the grower's own "first page of January") and sat in BACKLOG as P1, parked with no
+batch. Plot-level modelling was a recorded NON-GOAL, grounded in the grower's own July words
+("it would require mapping… a whole other app"). What the grower asks for now is narrower than
+what that non-goal rejected: zones, not maps.
+
+**Rulings (all accepted as recommended, plus three grower additions):**
+
+1. **The non-goal is amended: zones in, mapping out.** Named land pools + a crop × zone
+   eligibility table. Passes the complexity test — a grower knows their tunnel and shade acreage
+   offhand. Rotation may later live here too (it was my call, never the grower's, to keep it out).
+2. **Placement: after Batch 2, before Batch 3.** It is the first thing a grower meets, but a
+   with/without contract delta is only honest once costs are complete.
+3. **An unmeetable contract is a priced SHORTFALL, not infeasibility.** The plan always solves;
+   the shortfall is reported.
+4. **⭐ Grower addition — "committed" covers overwintering (garlic) AND perennials (asparagus,
+   fruit bushes).** Overwintering exists (`overwinters` + C15). Perennials do NOT:
+   `calendar.py:114` raises on any cycle over 52 weeks. They become committed ground standing all
+   year, establishment cost depreciated, maintenance + harvest only.
+5. **⭐ Grower addition — zone-specific growing behaviour is a separate CROP NAME** ("Tomatoes" vs
+   "High-tunnel Tomatoes"), not a per-zone yield modifier. Simpler, and it reuses everything a crop
+   already carries. ⚠️ **Trap found while recording this**: demand caps are keyed by crop name, so
+   two variants would each receive the full market cap. Needs a shared demand identity
+   (`sells_as`). Same family as W1's duplicate-name defect.
+6. **⭐ Grower addition — templates for common variants, and the wizard PROMPTS for a variant** when
+   a declared zone changes growing behaviour and the grower has not supplied one.
+
+**Not decided, to settle in the toy (FX.0):** whether a must-plant floor is on standing acreage
+(C15's lesson) or annual acres planted — likely both, named differently. P2 (allocation by stake)
+is NOT in this batch; it remains parked.
+
+---
+
 ## Rulings on the audit's three open questions (2026-07-31, all resolved)
 
 **M9 — volume basis: proceed with the recommended scope.** `STRATEGY.md`'s "volume/pack basis"

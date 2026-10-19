@@ -165,7 +165,7 @@ Ranked as in the spec. All `track` or `strategy` class — none proceed without 
 
 | ID | Item | Unblocks |
 |---|---|---|
-| **P1** | Obligations / must-plant floors — build as floors on weekly deliveries `v[c,ch,w]`, **not** acreage floors (a floor ≥14 ac deletes garlic entirely, −$344k). Ship with a with/without delta so the tool *prices* the obligation | D4 |
+| **P1** | ➡️ **SCHEDULED 2026-10-19 as PLAN Batch FX (the fixed layer)**, with zones, perennials and crop variants — `DECISIONS.md` GROUP G. Obligations / must-plant floors — contract floors on weekly deliveries `v[c,ch,w]` with a priced shortfall. ⚠️ **Corrected**: the old note said "not acreage floors" because a *conditional* floor (`min_acreage_if_planted`) let the solver delete garlic (−$344k); an UNCONDITIONAL must-plant floor is a different thing and the grower wants it (FX.1). Ship with a with/without delta so the tool *prices* the obligation | D4 |
 | **P2** | Allocation by **stake**, not margin — the farmer's stated rule; the model allocates every scarce pound by price | D4, D10 |
 | **P3** | **Payment terms per channel** — wholesale net-30, market immediate, CSA prepaid. C13's cash floor and the interest line are fed fiction today | D7 |
 | **P4** | **CSA as a financing instrument** — the clearest case where the app gives actively bad advice | D7 |

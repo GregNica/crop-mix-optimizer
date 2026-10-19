@@ -253,7 +253,7 @@ the field should exist. Ask the complexity test first.
 
 ## Non-goals — decided, not forgotten
 
-Plot-level modelling (soil, pest, flood, sunlight vary per plot and are what the grower thinks
+**AMENDED 2026-10-19 (grower): zones are in scope, mapping is not** — named land pools with a crop eligibility table (high tunnel, part sun, low fertility, market garden vs open field), zone-specific growing behaviour as a separate crop name; see PLAN Batch FX / DECISIONS GROUP G. Still out: plot-level modelling (soil, pest, flood, sunlight vary per plot and are what the grower thinks
 about hardest — but it needs mapping and is a different app; **disclose the assumption, do not
 approximate it**); weather/yield prediction; ~~volume/pack basis~~ (**NARROWLY AMENDED 2026-07-31,
 grower sign-off — see below**); a third storage regime; researching prices and demand
