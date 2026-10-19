@@ -99,6 +99,13 @@ GUARDS = [
         "setting (unit drift), a saved field the form no longer has is skipped without a report, "
         "a rename bypasses FORM_FIELD_RENAMES, or a collection input is never serialized",
     ),
+    (
+        "field-registry-client",
+        ["tests/field_registry_client.cjs"],
+        "public/fields.js and the form disagree: an input is rendered but not registered (or the "
+        "reverse), a form field feeds no payload key (a dead input), or a view the page reads "
+        "(units registries, BENCHMARK_DEFAULTS) is no longer built from the registry",
+    ),
 ]
 
 

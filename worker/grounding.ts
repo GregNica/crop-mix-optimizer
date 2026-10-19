@@ -2,14 +2,21 @@
  * Agent grounding for the setup-assistant chatbot (Phase 1, input role).
  *
  * CHATBOT_FIELDS is the curated allowlist of flat form fields the assistant may
- * propose values for — the single source of truth for both the `set_form_fields`
- * tool schema and the system-prompt field guide. It is intentionally a SUBSET of
- * the full form (the always-on farm-economics basics); crops/channels/labor
- * collections and PD-gated detail fields are out of scope for v1.
+ * propose values for — it drives both the `set_form_fields` tool schema and the
+ * system-prompt field guide. Since E5b it is a VIEW over public/fields.js: every form
+ * field there that declares a `chat` block (CROP_DETAIL_FIELDS likewise, from the crop
+ * section). It is intentionally a SUBSET of the full form (the always-on farm-economics
+ * basics); crops/channels/labor collections and PD-gated detail fields are out of
+ * scope for v1.
  *
  * Precise definitions matter here (e.g. sell-through ≠ price cut; overhead excludes
  * costs counted elsewhere) so the model fills fields the way the model intends.
  */
+
+// The field metadata lives in public/fields.js (E5b) — one registry the page, its tests and this
+// Worker all read, so a renamed or re-unit-ed field cannot drift between the form and the
+// assistant. It attaches to globalThis; this side-effect import is what wrangler bundles.
+import "../public/fields.js";
 
 export type ChatbotField = {
   id: string;
@@ -22,53 +29,42 @@ export type ChatbotField = {
   description: string;
 };
 
-export const CHATBOT_FIELDS: ChatbotField[] = [
-  { id: "total_land", label: "Total land", type: "number", unit: "acres", min: 1, max: 5000,
-    description: "Acreage usable for crops (exclude buildings, roads, unusable land). Hectares × 2.47 = acres." },
-  { id: "sell_through_pct", label: "Sell-through %", type: "number", unit: "%", min: 1, max: 100,
-    description: "Share of harvested produce that converts to cash sales (rest = shrink/spoilage/grade-out). NOT a price discount. If the user describes LOSS ('X% doesn't sell / spoils / is wasted'), this = 100 − X. This is the FARM-WIDE default; per-crop sell-through is set on each crop in the form." },
-  { id: "overhead_pct", label: "Overhead % of revenue", type: "number", unit: "%", min: 0, max: 60,
-    description: "Overhead as a percent of REVENUE (not of costs) — insurance, property tax, admin, utilities (incl. irrigation pump energy), repairs & maintenance, office/vehicle. EXCLUDES costs itemized elsewhere (labor, seed, fertilizer, fuel, packaging, irrigation, storage); if the user's figure includes those, ask them to exclude them. If given in dollars, ask for revenue or the percent — don't guess." },
-  { id: "interest_rate_pct", label: "Interest APR %", type: "number", unit: "% APR", min: 0, max: 40,
-    description: "APR on the SEASONAL OPERATING credit line (drawn when cash runs short) — NOT a mortgage or equipment-loan rate. Annualize a monthly rate (× 12)." },
-  { id: "min_viable_margin_pct", label: "Minimum viable margin %", type: "number", unit: "%", min: 0, max: 60,
-    description: "Net-margin floor: crop-channels below it are dropped as 'not worth growing'; 0 disables it. Expert setting — if the user doesn't raise it, briefly explain it and suggest a small floor (~8%) or 0, and CONFIRM rather than setting silently." },
-  { id: "payroll_load_pct", label: "Payroll load %", type: "number", unit: "%", min: 0, max: 80,
-    description: "Percent ADDED on top of wages for employer burden (payroll taxes, benefits, workers' comp, insurance) — NOT the wage itself and NOT labor's share of revenue. Typical 15–35%. Explain if the user is unsure." },
-  { id: "rate_property_mortgage_rent", label: "Property mortgage/rent", type: "number", unit: "$/week", min: 0,
-    description: "Cost of the land itself — mortgage payment or lease/rent — PER WEEK. Convert monthly ÷ 4.33, annual ÷ 52. A payment, not an interest rate. 0 if owned free and clear (or impute a rental value). Commonly overlooked." },
-  { id: "other_debt_service_per_week", label: "Other debt service", type: "number", unit: "$/week", min: 0,
-    description: "Whole weekly PAYMENT on other carried/long-term debt (e.g. equipment loans) — not an interest rate. Convert monthly ÷ 4.33, annual ÷ 52." },
-  { id: "well_enabled", label: "Well water available", type: "boolean",
-    description: "Whether the farm draws irrigation water from a well / groundwater. Set false if they say they don't use one." },
-  { id: "well_weekly_cap_L", label: "Well weekly cap", type: "number", unit: "liters/week", min: 0,
-    description: "Max LITERS PER WEEK the well/permit allows. Convert gallons × 3.785. A pump FLOW RATE (e.g. gpm) is NOT a weekly cap — NEVER assume the well runs 24/7. Ask how many hours/day and days/week they actually pump, and whether it runs dry / must recharge, THEN compute liters/week = gpm × 3.785 × minutes actually pumped per week. Only relevant when well water is enabled." },
-  { id: "catchment_enabled", label: "Rainwater catchment", type: "boolean",
-    description: "Whether the farm captures rainwater off a surface for irrigation. Set false if they say they don't." },
-  { id: "catchment_surface_area_m2", label: "Catchment surface area", type: "number", unit: "m²", min: 0,
-    description: "The rainwater COLLECTION SURFACE area (e.g. roof) in m² — NOT the storage tank size. Convert sq ft ÷ 10.76. Only relevant when catchment is enabled." },
-  { id: "city_water_enabled", label: "City/municipal water", type: "boolean",
-    description: "Whether the farm can buy municipal water as a backstop supply. Set false if they say they don't." },
-  { id: "city_water_cost_per_L", label: "City water cost", type: "number", unit: "$/liter", min: 0,
-    description: "Cost per LITER of municipal water. Convert $/gallon ÷ 3.785, $/m³ ÷ 1000 (bills often quote $/1000 gal or $/CCF — ask if unsure). Only relevant when city water is enabled." },
-];
+type ChatSpec = Omit<ChatbotField, "id">;
+const FARM_FIELDS = (globalThis as unknown as {
+  FARM_FIELDS: { view(section: "form" | "crop", part: "chat"): Record<string, ChatSpec> };
+}).FARM_FIELDS;
+
+// THE ALLOWLIST — which fields the assistant may propose values for, in the order its field
+// guide presents them. It lives HERE, not in fields.js, so that widening what the LLM may set is
+// an edit to the Worker that review sees; fields.js only says how each field is described.
+// tests/test_field_registry.py requires each list to name exactly the fields with a `chat` block.
+const CHAT_ALLOWLIST = {
+  form: ["total_land", "sell_through_pct", "overhead_pct", "interest_rate_pct", "min_viable_margin_pct",
+         "payroll_load_pct", "rate_property_mortgage_rent", "other_debt_service_per_week",
+         "well_enabled", "well_weekly_cap_L", "catchment_enabled", "catchment_surface_area_m2",
+         "city_water_enabled", "city_water_cost_per_L"],
+  crop: ["yield_per_acre", "days_to_maturity", "planting_weeks", "harvest_weeks", "min_acreage_if_planted",
+         "sell_through_pct", "sales_spread_weeks", "seed_transplant_cost_per_acre", "lbs_per_tote",
+         "planting_type"],
+} as const;
+
+/** The allowlisted fields of one section, described by fields.js. Throws at load if one has no
+ *  description there — an allowlisted field the model cannot be told about is a broken tool. */
+function chatView(section: "form" | "crop"): ChatbotField[] {
+  const specs = FARM_FIELDS.view(section, "chat");
+  return CHAT_ALLOWLIST[section].map((id) => {
+    if (!specs[id]) throw new Error(`grounding: allowlisted field "${id}" has no chat spec in fields.js`);
+    return { id, ...specs[id] };
+  });
+}
+
+export const CHATBOT_FIELDS: ChatbotField[] = chatView("form");
 
 const FIELD_BY_ID = new Map(CHATBOT_FIELDS.map((f) => [f.id, f]));
 
 /** Per-crop scalar fields the chatbot may update via update_crop. (Per-channel prices, seasons,
  *  and the land-share cap are still form-only for now — they need special widgets.) */
-export const CROP_DETAIL_FIELDS: ChatbotField[] = [
-  { id: "yield_per_acre", label: "Yield per acre", type: "number", unit: "lbs/acre", min: 1, description: "Expected pounds harvested per acre per planting." },
-  { id: "days_to_maturity", label: "Days to maturity", type: "number", unit: "days", min: 7, description: "Days from planting to first harvest." },
-  { id: "planting_weeks", label: "Planting weeks", type: "number", min: 1, max: 8, description: "Weeks spent in the planting phase." },
-  { id: "harvest_weeks", label: "Harvest weeks", type: "number", min: 1, max: 20, description: "Weeks the crop yields harvestable produce." },
-  { id: "min_acreage_if_planted", label: "Min acreage if planted", type: "number", unit: "acres", min: 0, description: "Minimum acres to commit if this crop is planted at all." },
-  { id: "sell_through_pct", label: "Per-crop sell-through %", type: "number", unit: "%", min: 1, max: 100, description: "Share of THIS crop's harvest that sells (overrides the farm default). '15% doesn't sell' => 85." },
-  { id: "sales_spread_weeks", label: "Sellable weeks", type: "number", min: 1, max: 52, description: "Weeks the crop can be sold in, counting the harvest week (1 = must sell the week it is picked)." },
-  { id: "seed_transplant_cost_per_acre", label: "Seed/transplant cost", type: "number", unit: "$/acre", min: 0, description: "Seed or transplant cost per acre." },
-  { id: "lbs_per_tote", label: "Lbs per tote", type: "number", min: 1, description: "Pounds per 18-gallon harvest tote (storage sizing)." },
-  { id: "planting_type", label: "Planting type", type: "enum", enum: ["seed", "transplant"], description: "Direct-seeded or transplanted." },
-];
+export const CROP_DETAIL_FIELDS: ChatbotField[] = chatView("crop");
 const CROP_FIELD_BY_ID = new Map(CROP_DETAIL_FIELDS.map((f) => [f.id, f]));
 
 /** OpenAI-compatible tool definition for proposing field values. */

@@ -14,20 +14,17 @@
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
+const { inlinePageScripts } = require('./page_scripts.cjs');
 
 const ROOT = path.join(__dirname, '..');
 
 /** Boot index.html in jsdom and resolve once the app's DOMContentLoaded work has run. */
 function bootApp({ quiet = true } = {}) {
   const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
-  const units = fs.readFileSync(path.join(ROOT, 'public', 'units.js'), 'utf8');
 
-  // Inline units.js — jsdom is given no resource loader on purpose (no network, no surprise
-  // fetches), so the <script src> would silently never load and UNITS would be undefined.
-  let doc = html.replace(/<script src="units\.js[^"]*"><\/script>/,
-                         `<script>${units}</script>`);
-  if (doc === html) throw new Error(
-    'units.js <script src> tag not found — jsdom would boot the app with UNITS undefined');
+  // Inline fields.js + units.js — jsdom is given no resource loader on purpose (no network, no
+  // surprise fetches), so a <script src> would silently never load and UNITS would be undefined.
+  let doc = inlinePageScripts(html);
   // Drop the Pyodide kick-off: it injects a loader that fetches WASM, which jsdom cannot run.
   // Nothing in these flows needs the solver. (The loader is injected by bootPyodide() rather
   // than a static <script src>, so disabling the call is what stops the fetch.)

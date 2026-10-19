@@ -14,10 +14,9 @@ const fs = require('fs');
 const vm = require('vm');
 const path = require('path');
 
-const code = fs.readFileSync(path.join(__dirname, '..', 'public', 'units.js'), 'utf8');
 const sandbox = { window: {}, console };
 vm.createContext(sandbox);
-vm.runInContext(code, sandbox);
+require('./page_scripts.cjs').runPageScripts(sandbox);   // fields.js, then units.js (E5b)
 const U = sandbox.window.UNITS;
 
 let failures = 0;

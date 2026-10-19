@@ -2059,12 +2059,13 @@
 
 </main>
 
-<!-- Unit-system foundation (canonical⇄display conversion + field registry). Must load
-     before the main script. Step 1: defined but not yet wired — see SPEC_units.md. -->
-<!-- ?v= is a content hash, verified by tests/test_units_asset_version.py: units.js is the
-     app's only external script, and a browser serving a cached copy against fresh HTML makes
-     unit conversion fail silently. CI tells you the value to paste when units.js changes. -->
-<script src="units.js?v=abc6e9f2"></script>
+<!-- The app's two external scripts, in this order: fields.js is THE field registry (E5b) and
+     units.js (canonical⇄display conversion) derives its registries from it. Both must load
+     before the main script. ?v= is each file's content hash, verified by
+     tests/test_units_asset_version.py: a browser serving a cached copy against fresh HTML makes
+     unit conversion fail silently. CI tells you the value to paste when either file changes. -->
+<script src="fields.js?v=e569fd14"></script>
+<script src="units.js?v=64f6d15f"></script>
 <script>
 // ============================================================
 // Embedded farm_v2 Python files (JSON-serialised)
@@ -2178,35 +2179,12 @@ const CHANNEL_DEFAULTS = [
 ];
 
 // ============================================================
-// Benchmark Defaults with Provenance
-// Field values match current form defaults; provenance added for traceability.
-// confidence: high = peer-reviewed/govt survey, medium = industry survey, low = rough estimate
+// Benchmark Defaults with Provenance — a view over public/fields.js
 // ============================================================
-const BENCHMARK_DEFAULTS = {
-  total_land:           { value: 80,       label: 'Total Land',           source: 'USDA NASS CA vegetable census',      vintage: '2022', confidence: 'medium' },
-  opening_cash:         { value: 300000,   label: 'Opening Cash',         source: 'Farm Bureau operating capital guide', vintage: '2023', confidence: 'medium' },
-  credit_line:          { value: 800000,   label: 'Credit Line',          source: 'AgriBank farm credit survey',         vintage: '2022', confidence: 'low'    },
-  // 80 ac × 120 ft³/ac (CIAS Grower to Grower Table 2, range 50–250) = 272 m³. Sanity-checked
-  // against this plan's own physics: peak weekly sellable harvest is 139 m³, ÷0.75 for
-  // aisles/racking/airflow = 185 m³ of room, so 275 leaves ~1.5× headroom — the right shape
-  // for a building you commit to before you know the year's crop mix. The previous 5,000 m³
-  // was a scaled-down echo of the legacy Excel model's arbitrary 24,000, and cited a Cornell
-  // "sizing guide" that does not exist — Cornell's actual resource is a temp/humidity chart.
-  // Note this is a cost driver as well as a cap: every m³ bills depreciation, used or not.
-  // 275 m3 covers room occupancy: that week's harvest plus anything carried over. B.3 closed
-    // the held-stock gap this note used to describe.
-  // vs the 163 m³ inflow it enforces) — sized to cover both until SPEC_v3 §3 closes the gap.
-  harvest_storage_cap:  { value: 275,      label: 'Harvest Storage',      source: 'CIAS/UW-Madison Grower to Grower survey (120 ft³/acre)', vintage: '2008', confidence: 'medium' },
-  // NOTE: irrigation, equipment-storage and fuel-storage rates are DERIVED from their capital
-  // cost ÷ useful life (see the cost-accounting-basis decision) — they are no longer standalone
-  // operating-rate inputs, so they are not benchmarked here. Their capital+depreciation inputs
-  // carry the provenance instead.
-  rate_machinery:       { value: 1000,     label: 'Machinery ($/wk)',     source: 'USDA ERS machinery ownership model',  vintage: '2022', confidence: 'medium' },
-  rate_property_mortgage_rent: { value: 0, label: 'Property Mortgage/Rent ($/wk)', source: 'USDA ERS land value survey — user override recommended', vintage: '2023', confidence: 'low' },
-  cost_fert_per_lb:     { value: 0.82,     label: 'Fertilizer Rate',      source: 'USDA NASS fertilizer price survey',   vintage: '2023', confidence: 'high'   },
-  cost_fuel_per_L:      { value: 1.25,     label: 'Fuel Rate ($/L)',      source: 'EIA diesel fuel CA avg',              vintage: '2023', confidence: 'medium' },
-  well_weekly_cap_L:    { value: 8700000,  label: 'Well Weekly Cap',      source: 'UW-Madison Extension: 8 gpm/irrigated acre x 80 ac x 60 h/wk (= 1.06 in/ac/wk; cross-checks against the 1-1.5 in/wk peak need)', vintage: '2016', confidence: 'medium' },
-};
+// Sourced defaults live in public/fields.js (form[id].benchmark), beside the rest of each field's
+// metadata and with the provenance research for each value (E5b). Values are CANONICAL.
+// In FORM order (the Defaults Applied panel lists them as the form does); it was hand-ordered.
+const BENCHMARK_DEFAULTS = FARM_FIELDS.view('form', 'benchmark');
 
 function renderChannelRow(ch, idx) {
   return `
@@ -7526,64 +7504,13 @@ function validateParams(params) {
   return errors;
 }
 
-async function runOptimizer() {
-  if (!pyReady) {
-    alert('Pyodide is still loading. Please wait.');
-    return;
-  }
-
-  // Both buttons (top and bottom) share the same handler — update all
-  const btn      = document.getElementById('btn-optimize');
-  const btnTop   = document.getElementById('btn-optimize-top');
-  const btnText  = document.getElementById('btn-text');
-  const errBox   = document.getElementById('error-box');
-  const progressWrap = document.getElementById('progress-wrap');
-  const fillEl   = document.getElementById('progress-bar-fill');
-  const labelEl  = document.getElementById('progress-label');
-
-  const setRunning = (running) => {
-    // ALL of them. `btn`/`btnTop` are two of six: each input section carries its own
-    // `.section-opt-btn`, and those stayed enabled and still reading "Optimize" for the whole
-    // solve. Survivable while the post-solve path was one uninterrupted task; E2 added an await
-    // before switchToResults() hides the input view, which is a real return to the event loop
-    // with those buttons live.
-    [btn, btnTop, ...document.querySelectorAll('.section-opt-btn')]
-      .forEach(b => { if (b) { b.disabled = running; } });
-    [document.getElementById('spinner'), document.getElementById('spinner-top')].forEach(s => {
-      if (s) s.style.display = running ? 'block' : 'none';
-    });
-    if (btnText) btnText.textContent = running ? 'Solving…' : 'Optimize';
-    const topTexts = btnTop ? btnTop.querySelectorAll('span:not(.spinner)') : [];
-    topTexts.forEach(s => { s.textContent = running ? 'Solving…' : 'Optimize'; });
-  };
-
-  // One-time nudge if land rent is $0 (common omission that inflates profit)
-  if (!window._landRentNudgeDone) {
-    const rentVal = parseFloat((document.getElementById('rate_property_mortgage_rent') || {}).value) || 0;
-    if (rentVal === 0) {
-      window._landRentNudgeDone = true;
-      const nudge = document.getElementById('land-rent-nudge');
-      if (nudge) nudge.style.display = 'flex';
-    }
-  }
-
-  // Small-farm staffing nudge: fires once when a small farm carries 2+ salaried managers
-  // (the default is now a single manager sized for ~80 acres, so this only triggers if the
-  // user has added extra salaried staff on a small farm).
-  if (!window._staffingNudgeDone) {
-    const landVal = parseFloat((document.getElementById('total_land') || {}).value) || 80;
-    const salariedCount = getLaborFromForm().filter(e => e.type === 'salary').reduce((n, e) => n + (parseInt(e.count) || 0), 0);
-    if (landVal < 75 && salariedCount >= 2) {
-      window._staffingNudgeDone = true;
-      const nudge = document.getElementById('staffing-nudge');
-      if (nudge) nudge.style.display = 'flex';
-    }
-  }
-
-  setRunning(true);
-  errBox.style.display = 'none';
-  errBox.textContent = '';
-
+/**
+ * The solver payload the main Optimize run sends, read straight off the form. A function of its
+ * own (E5b) so tests can drive it: tests/field_registry_client.cjs nudges every form field that
+ * public/fields.js says feeds a payload key and requires that key to MOVE — the `from` lists are
+ * measured, not trusted.
+ */
+function buildSolveParams() {
   const g = id => document.getElementById(id);
   const pdOn = id => { const el = g(id); return el ? el.checked : false; };
   // Weekly depreciation rate for an OWNED asset: installed cost ÷ (useful-life-years × 52).
@@ -7668,6 +7595,68 @@ async function runOptimizer() {
   // It used to be applied here in JS using hard-coded rates the model never charges, so the app
   // dropped and kept the wrong channels. The exclusions come back in the result.
   params.min_viable_margin_pct = numOr(g('min_viable_margin_pct')?.value, 0);
+  return params;
+}
+
+async function runOptimizer() {
+  if (!pyReady) {
+    alert('Pyodide is still loading. Please wait.');
+    return;
+  }
+
+  // Both buttons (top and bottom) share the same handler — update all
+  const btn      = document.getElementById('btn-optimize');
+  const btnTop   = document.getElementById('btn-optimize-top');
+  const btnText  = document.getElementById('btn-text');
+  const errBox   = document.getElementById('error-box');
+  const progressWrap = document.getElementById('progress-wrap');
+  const fillEl   = document.getElementById('progress-bar-fill');
+  const labelEl  = document.getElementById('progress-label');
+
+  const setRunning = (running) => {
+    // ALL of them. `btn`/`btnTop` are two of six: each input section carries its own
+    // `.section-opt-btn`, and those stayed enabled and still reading "Optimize" for the whole
+    // solve. Survivable while the post-solve path was one uninterrupted task; E2 added an await
+    // before switchToResults() hides the input view, which is a real return to the event loop
+    // with those buttons live.
+    [btn, btnTop, ...document.querySelectorAll('.section-opt-btn')]
+      .forEach(b => { if (b) { b.disabled = running; } });
+    [document.getElementById('spinner'), document.getElementById('spinner-top')].forEach(s => {
+      if (s) s.style.display = running ? 'block' : 'none';
+    });
+    if (btnText) btnText.textContent = running ? 'Solving…' : 'Optimize';
+    const topTexts = btnTop ? btnTop.querySelectorAll('span:not(.spinner)') : [];
+    topTexts.forEach(s => { s.textContent = running ? 'Solving…' : 'Optimize'; });
+  };
+
+  // One-time nudge if land rent is $0 (common omission that inflates profit)
+  if (!window._landRentNudgeDone) {
+    const rentVal = parseFloat((document.getElementById('rate_property_mortgage_rent') || {}).value) || 0;
+    if (rentVal === 0) {
+      window._landRentNudgeDone = true;
+      const nudge = document.getElementById('land-rent-nudge');
+      if (nudge) nudge.style.display = 'flex';
+    }
+  }
+
+  // Small-farm staffing nudge: fires once when a small farm carries 2+ salaried managers
+  // (the default is now a single manager sized for ~80 acres, so this only triggers if the
+  // user has added extra salaried staff on a small farm).
+  if (!window._staffingNudgeDone) {
+    const landVal = parseFloat((document.getElementById('total_land') || {}).value) || 80;
+    const salariedCount = getLaborFromForm().filter(e => e.type === 'salary').reduce((n, e) => n + (parseInt(e.count) || 0), 0);
+    if (landVal < 75 && salariedCount >= 2) {
+      window._staffingNudgeDone = true;
+      const nudge = document.getElementById('staffing-nudge');
+      if (nudge) nudge.style.display = 'flex';
+    }
+  }
+
+  setRunning(true);
+  errBox.style.display = 'none';
+  errBox.textContent = '';
+
+  const params = buildSolveParams();
 
   // Pre-flight validation
   const validationErrors = validateParams(params);
@@ -10584,23 +10573,8 @@ window._testWhatIf = function() {
   }
   console.log('T29: saturation follows the solved plan, not the form; sort order verified ✓');
 
-  // ── T30: BENCHMARK_DEFAULTS structure ────────────────────────────────────
-  const BENCH_KEYS = Object.keys(BENCHMARK_DEFAULTS);
-  console.assert(BENCH_KEYS.length === 13, `T30a: expected 13 benchmark fields, got ${BENCH_KEYS.length}`);
-  // Every entry has required provenance fields
-  BENCH_KEYS.forEach(k => {
-    const d = BENCHMARK_DEFAULTS[k];
-    console.assert(d.value !== undefined,   `T30b[${k}]: has value`);
-    console.assert(d.label && d.label.length > 0, `T30c[${k}]: has label`);
-    console.assert(d.source && d.source.length > 0, `T30d[${k}]: has source`);
-    console.assert(d.vintage && /^\d{4}$/.test(d.vintage), `T30e[${k}]: vintage is 4-digit year, got "${d.vintage}"`);
-    console.assert(['high','medium','low'].includes(d.confidence), `T30f[${k}]: confidence is high/medium/low, got "${d.confidence}"`);
-  });
-  // Spot-check known values match form defaults
-  console.assert(BENCHMARK_DEFAULTS.total_land.value   === 80,     'T30g: total_land=80');
-  console.assert(BENCHMARK_DEFAULTS.cost_fert_per_lb.value === 0.82, 'T30h: fert=0.82');
-  console.assert(BENCHMARK_DEFAULTS.cost_fuel_per_L.value  === 1.25, 'T30i: fuel=1.25');
-  console.log('T30: BENCHMARK_DEFAULTS structure and provenance fields verified ✓');
+  // T30 (benchmark structure) moved to tests/field_registry_client.cjs with E5b, where it runs in
+  // CI. As an in-page console.assert it expected 13 entries against 9 and had failed unseen.
 
   // ── T31: applyBenchmarkDefaults sets form values ──────────────────────────
   // Only test fields whose DOM elements exist (may not all exist in test harness)

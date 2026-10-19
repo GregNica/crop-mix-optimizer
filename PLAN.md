@@ -269,7 +269,7 @@ selling; this re-pins direct-caller baselines → own commit, documented delta. 
 by construction). (d) two `opReconcile`-shaped tripwires for the P&L's REVENUE and SELLING
 sections (fail-closed per guardrail 9). Mutation-verify (b) and (d) only — they are money.
 
-**1.3 · E5 — ONE field registry, keyed by what the payload carries.** 🟡 **E5a DONE 2026-10-19** (silent-drop impossible + the save/load unit drift it uncovered — see BACKLOG E5); **E5b** (the single shared registry, incl. the Worker's CHATBOT_FIELDS) still open.
+**1.3 · E5 — ONE field registry, keyed by what the payload carries.** 🟡 **E5a DONE 2026-10-19** (silent-drop impossible + the save/load unit drift it uncovered — see BACKLOG E5); ✅ **E5b DONE 2026-10-19** — see BACKLOG E5. ⚠️ **"version-added" is DROPPED from the DONE criteria, on purpose:** E5a's `applyFormState` already detects a field a saved plan predates by ABSENCE (and fills the default, with a note), which is everything a `since` tag would have bought; an unused tag on 52 entries would be decoration. Follow-ups filed as **E5c**.
 WHY: three overlapping registries drift; `FORM_STATE_VERSION` is stamped and never read;
 `applyFormState` silently drops renamed ids from saved plans. Must precede the wizard; grower
 approved "before we build much more".

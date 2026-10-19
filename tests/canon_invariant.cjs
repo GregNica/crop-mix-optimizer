@@ -25,16 +25,8 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
-const unitsSrc = fs.readFileSync(path.join(ROOT, 'public', 'units.js'), 'utf8');
 
-const afterUnits = html.indexOf('<script src="units.js');
-const open = html.indexOf('<script>', afterUnits);
-const close = html.indexOf('</script>', open);
-if (afterUnits < 0 || open < 0 || close < 0) {
-  console.error('FATAL: could not locate the main inline <script> in public/index.html');
-  process.exit(1);
-}
-const appSrc = html.slice(open + '<script>'.length, close);
+const appSrc = require('./page_scripts.cjs').mainInlineScript(html);
 
 // ---- DOM stub: rich enough to render the crop/channel collections -----------------------
 // The real collections are built with innerHTML, so the stub needs a parser. Rather than
@@ -82,7 +74,7 @@ const sandbox = {
 };
 sandbox.window = sandbox; sandbox.globalThis = sandbox;
 vm.createContext(sandbox);
-vm.runInContext(unitsSrc, sandbox);
+require('./page_scripts.cjs').runPageScripts(sandbox);   // fields.js, then units.js (E5b)
 sandbox.UNITS = sandbox.window.UNITS;
 
 const EPILOGUE = `

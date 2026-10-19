@@ -30,17 +30,9 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
-const unitsSrc = fs.readFileSync(path.join(ROOT, 'public', 'units.js'), 'utf8');
 
 // --- extract the main inline script (the one following the units.js tag) ---------------
-const afterUnits = html.indexOf('<script src="units.js');
-const open = html.indexOf('<script>', afterUnits);
-const close = html.indexOf('</script>', open);
-if (afterUnits < 0 || open < 0 || close < 0) {
-  console.error('FATAL: could not locate the main inline <script> in public/index.html');
-  process.exit(1);
-}
-const appSrc = html.slice(open + '<script>'.length, close);
+const appSrc = require('./page_scripts.cjs').mainInlineScript(html);
 
 // --- minimal DOM / browser stubs -------------------------------------------------------
 // Enough for the script to evaluate: it touches the DOM at top level (a status bar, a
@@ -120,7 +112,7 @@ vm.createContext(sandbox);
 
 // units.js first (browser classic-script path sets window.UNITS), then alias it to the bare
 // global the app code refers to.
-vm.runInContext(unitsSrc, sandbox);
+require('./page_scripts.cjs').runPageScripts(sandbox);   // fields.js, then units.js (E5b)
 sandbox.UNITS = sandbox.window.UNITS;
 if (!sandbox.UNITS) { console.error('FATAL: units.js did not set window.UNITS'); process.exit(1); }
 

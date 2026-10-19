@@ -1,15 +1,13 @@
-/* units.js — canonical ⇄ display unit conversion + declarative field registry.
+/* units.js — canonical ⇄ display unit conversion.
  *
- * Foundation for the app-wide metric ⇄ US-customary toggle (see SPEC_units.md).
- * ROLLOUT STEP 1: this defines the module, the field registry, and a boot-time
- * self-check. NOTHING here is wired into the payload builder, the form, or the
- * toggle yet (steps 2+). Loading this file must not change any behavior.
+ * The engine behind the app-wide metric ⇄ US-customary toggle (see SPEC_units.md). Its
+ * field registries are VIEWS over public/fields.js (E5b), which must load first.
  *
  * Core invariant: the MILP solver ALWAYS runs in CANONICAL units. Canonical is
  * simply the solver's existing unit per dimension (acre, lb, L, m³, m², mm) — an
  * internal choice, so cross-dimension "consistency" is irrelevant; only the
  * conversion factors need to be right. The UI holds DISPLAY values and converts
- * to canonical at the payload boundary (a later step).
+ * to canonical at the payload boundary.
  */
 (function (root) {
   'use strict';
@@ -80,115 +78,40 @@
     return u(spec.measure) + (spec.perWeek ? '/wk' : '');
   }
 
-  /* Declarative field registry — the E5 substrate.
-   * Keys are DOM input ids. Only UNIT-BEARING fields appear here; unitless fields
-   * (counts, %, years, $ currency, $/wk flat) are intentionally absent and never
-   * converted (currency is out of scope — SPEC_units §1/§9).
+  /* Declarative field registry — VIEWS over public/fields.js (E5b), which must load first.
+   * Keys are DOM input ids (FIELD_REGISTRY) and data-f attributes (DATA_F_REGISTRY). Only
+   * UNIT-BEARING fields appear; unitless fields (counts, %, years, $ currency, $/wk flat) are
+   * intentionally absent and never converted (currency is out of scope — SPEC_units §1/§9).
+   * The specs themselves, with their comments, live in fields.js under each field's `units`.
    */
-  var FIELD_REGISTRY = {
-    // --- area (land) ---
-    total_land:                 { measure: 'area_land' },
-    irrigation_cost_per_acre:   { measure: 'area_land', inverse: true },   // $/acre (capital)
-    // --- area (floor) ---
-    catchment_surface_area_m2:  { measure: 'area_floor' },
-    // --- bulk / storage volume ---
-    equip_storage:              { measure: 'vol_bulk' },
-    harvest_storage_cap:        { measure: 'vol_bulk' },
-    equip_storage_cost_per_m3:  { measure: 'vol_bulk', inverse: true },    // $/m³ (capital)
-    harvest_storage_cost_per_m3:{ measure: 'vol_bulk', inverse: true },    // $/m³ (capital)
-    ambient_storage_cap:        { measure: 'vol_bulk' },
-    ambient_storage_cost_per_m3:{ measure: 'vol_bulk', inverse: true },    // $/m³ (capital)
-    // --- liquid volume ---
-    fuel_storage:               { measure: 'vol_liquid' },
-    water_storage_capacity:     { measure: 'vol_liquid' },
-    well_weekly_cap_L:          { measure: 'vol_liquid', perWeek: true },  // L/wk quantity
-    city_water_cost_per_L:      { measure: 'vol_liquid', inverse: true },  // $/L
-    water_tank_cost_per_L:      { measure: 'vol_liquid', inverse: true },  // $/L (capital)
-    fuel_storage_cost_per_L:    { measure: 'vol_liquid', inverse: true },  // $/L (capital)
-    cost_fuel_per_L:            { measure: 'vol_liquid', inverse: true },  // $/L (metered)
-    // --- mass ---
-    cost_fert_per_lb:           { measure: 'mass', inverse: true }         // $/lb (metered)
-  };
+  var FF = globalThis.FARM_FIELDS;   // fields.js attaches here, in the page and every harness
+  // Loud, not silent: without the registry no field converts and the page LOOKS fine in US mode.
+  if (!FF) throw new Error('units.js: FARM_FIELDS is missing — load fields.js before units.js');
+  var FIELD_REGISTRY  = FF.view('form', 'units');
+  var DATA_F_REGISTRY = FF.view('crop', 'units');
 
-  /* Dynamic per-crop / per-channel fields, keyed by their data-f attribute (they
-   * render inside crop/channel rows, not by id). Wired in a later step; declared
-   * now so the registry is authoritative. */
-  var DATA_F_REGISTRY = {
-    yield_per_acre:              { num: 'mass', den: 'area_land' },  // lb/acre
-    ch_price:                    { measure: 'mass', inverse: true }, // $/lb
-    ch_pkg:                      { measure: 'mass', inverse: true }, // $/lb packaging
-    ch_demand_value:            { measure: 'mass' },                 // lbs (a capacity quantity)
-    // Sales-channel DEFINITION row (the Channels panel, not the per-crop overrides above).
-    // These render with classes rather than ids, so they are keyed by data-f like crop fields.
-    ch_default_pkg:             { measure: 'mass', inverse: true }, // $/lb default packaging
-    ch_var_sell:                { measure: 'mass', inverse: true }, // $/lb variable selling cost
-    // (ch_fixed_sell is $/wk — currency per time, no physical unit — deliberately absent.)
-    lbs_per_tote:               { measure: 'mass' },                 // lbs
-    min_acreage_if_planted:     { measure: 'area_land' },            // acres
-    committed_acres:     { measure: 'area_land' },            // acres
-    seed_transplant_cost_per_acre: { measure: 'area_land', inverse: true }, // $/acre
-    // Per-phase resource rates (behind pd-phase-detail) — per-area rates, /wk. The denominator
-    // (area_land) converts acre⇄ha; the numerator converts by its own dimension (labor's is
-    // time, which is system-invariant, so only the /area factor applies).
-    labor_plant: { num: 'time',       den: 'area_land', perWeek: true },  // hr/acre/wk
-    labor_grow:  { num: 'time',       den: 'area_land', perWeek: true },
-    labor_harv:  { num: 'time',       den: 'area_land', perWeek: true },
-    water_plant: { num: 'vol_liquid', den: 'area_land', perWeek: true },  // L/acre/wk
-    water_grow:  { num: 'vol_liquid', den: 'area_land', perWeek: true },
-    water_harv:  { num: 'vol_liquid', den: 'area_land', perWeek: true },
-    fert_plant:  { num: 'mass',       den: 'area_land', perWeek: true },  // lb/acre/wk
-    fert_grow:   { num: 'mass',       den: 'area_land', perWeek: true },
-    fert_harv:   { num: 'mass',       den: 'area_land', perWeek: true },
-    fuel_plant:  { num: 'vol_liquid', den: 'area_land', perWeek: true },  // L/acre/wk
-    fuel_grow:   { num: 'vol_liquid', den: 'area_land', perWeek: true },
-    fuel_harv:   { num: 'vol_liquid', den: 'area_land', perWeek: true }
-  };
-
-  /* Boot self-check (dev only): every registry id must exist in the DOM, and no
-   * unit-bearing-looking numeric input should be missing from the registry.
-   * Logs to console; never throws in production. Call after DOMContentLoaded. */
-  function assertFieldRegistry(opts) {
-    if (typeof document === 'undefined')
-      return { ok: true, missing: [], unregistered: [], absentDataF: [], unknownDataF: [] };
-    opts = opts || {};
-    var missing = [];
-    Object.keys(FIELD_REGISTRY).forEach(function (id) {
-      if (!document.getElementById(id)) missing.push(id);
-    });
-    // Heuristic: numeric inputs whose label/id implies a physical unit but aren't registered.
+  /* Opt-in audit (?units-audit): numeric inputs whose label LOOKS unit-bearing but carry no
+   * `units` spec in fields.js, and rendered data-f keys the registry does not know. The strict
+   * both-directions checks (every rendered input registered, every entry rendered) moved to CI in
+   * E5b — tests/field_registry_client.cjs — so nothing runs on a normal page load any more. */
+  function assertFieldRegistry() {
+    if (typeof document === 'undefined') return { unregistered: [], unknownDataF: [] };
     var unregistered = [];
     var UNIT_HINT = /\b(acre|acres|ha|hectare|lb|lbs|kg|gal|gallon|liter|litre|\/l\b|m³|m3|ft³|ft3|m²|m2|ft²|ft2|\/acre|\/m3|\/m³|\/lb)\b/i;
     Array.prototype.forEach.call(document.querySelectorAll('input[type="number"][id]'), function (el) {
-      var id = el.id;
-      if (FIELD_REGISTRY[id]) return;
+      if (FIELD_REGISTRY[el.id]) return;
       var grp = el.closest('.form-group');
-      var text = (grp ? grp.textContent : '') + ' ' + id;
-      if (UNIT_HINT.test(text) && !/\$\/wk|per week|\byears?\b|%/.test(text)) unregistered.push(id);
+      var text = (grp ? grp.textContent : '') + ' ' + el.id;
+      if (UNIT_HINT.test(text) && !/\$\/wk|per week|\byears?\b|%/.test(text)) unregistered.push(el.id);
     });
-    // Same drift check for the data-f keys (crop/channel/sales-channel rows). A renamed or
-    // typo'd data-f silently stops converting, so surface both directions: registry keys that
-    // no longer render, and rendered keys nothing in the registry claims.
-    var renderedF = {};
+    var unknownF = [];
     Array.prototype.forEach.call(document.querySelectorAll('[data-f]'), function (el) {
-      renderedF[el.getAttribute('data-f')] = true;
+      var f = el.getAttribute('data-f');
+      if (!DATA_F_REGISTRY[f] && unknownF.indexOf(f) < 0) unknownF.push(f);
     });
-    // Skip entirely when nothing has rendered yet — the crop/channel collections are built by
-    // the app's own DOMContentLoaded handler, which runs AFTER this script's. Comparing then
-    // would report every key as missing.
-    var nRendered = Object.keys(renderedF).length;
-    var unknownF = nRendered ? Object.keys(renderedF).filter(function (f) { return !DATA_F_REGISTRY[f]; }) : [];
-    var absentF  = nRendered ? Object.keys(DATA_F_REGISTRY).filter(function (f) { return !renderedF[f]; }) : [];
-
-    if (missing.length) console.warn('[units] registry ids missing from DOM (form drift):', missing);
-    if (absentF.length) console.warn('[units] DATA_F_REGISTRY keys not rendered anywhere:', absentF);
-    // The unregistered-field heuristic stays opt-in (?units-audit) until the dynamic
-    // crop/channel registry is complete — otherwise deferred per-acre fields false-positive.
-    if (opts.audit && unregistered.length) console.warn('[units] unit-looking inputs NOT in registry:', unregistered);
-    if (opts.audit && unknownF.length) console.warn('[units] rendered data-f keys NOT in registry:', unknownF);
-    if (opts.verbose && !missing.length) console.log('[units] field registry ✓ (' + Object.keys(FIELD_REGISTRY).length +
-      ' static' + (nRendered ? ' + ' + nRendered + ' data-f rendered' : '') + ')');
-    return { ok: !missing.length && !absentF.length, missing: missing, unregistered: unregistered,
-             absentDataF: absentF, unknownDataF: unknownF };
+    if (unregistered.length) console.warn('[units] unit-looking inputs NOT in registry:', unregistered);
+    if (unknownF.length) console.warn('[units] rendered data-f keys with no units spec:', unknownF);
+    return { unregistered: unregistered, unknownDataF: unknownF };
   }
 
   var API = {
@@ -206,17 +129,11 @@
   if (root) root.UNITS = API;                       // browser: window.UNITS
   if (typeof module !== 'undefined' && module.exports) module.exports = API;  // node: tests
 
-  // Boot self-check: verify the registry hasn't drifted from the DOM (quiet unless it has).
-  // The heavier unregistered-field audit is opt-in via ?units-audit. Neither changes behavior.
-  if (typeof document !== 'undefined' && typeof window !== 'undefined') {
-    var run = function () {
-      var audit = /[?&]units-audit\b/.test(window.location ? window.location.search : '');
-      assertFieldRegistry({ audit: audit, verbose: audit });
-    };
-    // Run AFTER the app's own DOMContentLoaded handler: this script is parsed first, so its
-    // listener fires first, and at that point the crop/channel collections do not exist yet —
-    // the data-f half of the check would see an empty DOM and silently pass on nothing.
-    var runDeferred = function () { setTimeout(run, 0); };
+  // Opt-in audit only (?units-audit). Deferred past the app's own DOMContentLoaded handler, which
+  // builds the crop/channel rows the data-f half reads.
+  if (typeof document !== 'undefined' && typeof window !== 'undefined' &&
+      /[?&]units-audit\b/.test(window.location ? window.location.search : '')) {
+    var runDeferred = function () { setTimeout(assertFieldRegistry, 0); };
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', runDeferred);
     else runDeferred();
   }
