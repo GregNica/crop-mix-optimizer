@@ -81,6 +81,42 @@ DEMAND_AT_CAP_FRACTION = 0.95   # a week counts as "at cap" in demand_saturation
 # is free and is rationed by C2's capacity rather than by price. See `committed_weekly_wages`.
 VC_CATEGORIES = ("water", "fertilizer", "fuel", "seed")
 
+# R8 — overhead is a defined RESIDUAL, not a bucket. `overhead_pct_of_revenue` is one number the
+# grower enters, and by its own definition it once "contained" insurance, taxes, repairs and
+# utilities — so every one of those the model starts charging EXPLICITLY (Batch 2: R7 land and
+# ownership costs, W10 utilities) must leave it in the same commit, or the farm pays twice.
+#
+# THE LEDGER. A line moves from COVERS to EXCLUDES when the model gains it.
+#   COVERS[key]   = (short label for the P&L overhead row, words a reader must find)
+#   EXCLUDES[key] = (the solver cost lines it stands for, words a reader must find)
+# tests/test_overhead_ledger.py holds it to both ends: every cost line the solver charges must be
+# claimed by an EXCLUDES entry (so a new line cannot go undeclared), and the overhead field's
+# tooltip and the assistant's description must put each entry's words on its side of "EXCLUDES"
+# and NOT on the other (so a half-finished move is caught).
+OVERHEAD_COVERS = {
+    "insurance":  ("insurance", ("insurance",)),
+    "taxes":      ("taxes", ("tax",)),
+    "admin":      ("admin", ("admin",)),
+    "utilities":  ("utilities", ("utilit",)),
+    "repairs":    ("R&M", ("repair",)),
+    "vehicles":   ("vehicles", ("vehicle",)),
+}
+OVERHEAD_EXCLUDES = {
+    "rent":       (("property_mortgage_rent",), ("rent", "mortgage")),
+    "machinery":  (("machinery",), ("machinery",)),
+    "storage":    (("harvest_storage", "ambient_storage", "water_storage", "equipment_storage",
+                    "fuel_storage"), ("storage",)),
+    "irrigation": (("irrigation",), ("irrigation",)),
+    "labor":      (("wages", "overtime", "hire"), ("labor",)),
+    "inputs":     (("water", "fertilizer", "fuel", "seed"), ("seed", "water", "fert", "fuel")),
+    "packaging":  (("packaging",), ("packaging",)),
+    "selling":    (("fixed_selling",), ("selling",)),
+    "debt":       (("other_debt_service",), ("debt",)),
+    "interest":   (("interest",), ("interest",)),
+    "city_water": (("city_water", "city_water_fixed_fee"), ("city water",)),
+}
+assert not set(OVERHEAD_COVERS) & set(OVERHEAD_EXCLUDES), "an overhead line cannot be both covered and excluded"
+
 # Both consumers build their dict as `dict(zip(VC_CATEGORIES, ...), extra=...)`, and a keyword
 # argument SILENTLY WINS over a zipped key of the same name. So a sixth category called "packaging"
 # or "total" would discard its own column, leave `variable_cost` short of what the objective
@@ -321,7 +357,7 @@ def solve_farm_v2(
     # --- Realism factors (sell-through in-objective; overhead & interest below the line) ---
     min_viable_margin_pct: float = 0.0,   # 0 = off; see Step 3b
     sell_through_fraction: float = 1.0,    # FARM-WIDE DEFAULT fraction of harvest that converts to sellable product (shrink/grade-out/spoilage). Per-crop override via crop["sell_through_fraction"]. Scales C5/C7 production→sales link, so the farm grows more to deliver the cap.
-    overhead_pct_of_revenue: float = 0.0,  # indirect overhead (insurance, tax, admin, utilities, R&M, vehicle/office) as a share of revenue; deducted post-solve
+    overhead_pct_of_revenue: float = 0.0,  # indirect overhead — what it covers and excludes is the OVERHEAD_COVERS / OVERHEAD_EXCLUDES ledger (R8) — as a share of revenue; deducted post-solve
     interest_rate_apr: float = 0.0,        # APR charged on the solved weekly operating borrowing; deducted post-solve
     # --- Variable cost rates ---
     cost_fert_per_lb: float = 0.0,
@@ -342,6 +378,7 @@ def solve_farm_v2(
     dict with keys:
         "status"            : str  ("optimal", "infeasible", "unbounded", ...)
         "profit"            : float — NET: operating_profit − overhead − fixed selling − interest
+        "overhead_covers"   : list[str] — short labels of what the overhead % still stands for (R8)
         "revenue"           : float
         "variable_cost"     : float
         "fixed_cost"        : float
@@ -1842,7 +1879,7 @@ def solve_farm_v2(
     peak_borrowing = max(0.0, -float(weekly_cash_flow[1:].min()))
 
     # Below-the-line realism deductions — applied to the optimized plan, do NOT reshape it:
-    #   overhead — indirect business costs as a share of revenue (insurance, tax, admin, etc.)
+    #   overhead — indirect business costs as a share of revenue (see the R8 ledger for what it covers)
     #   interest — APR on the average weekly operating borrowing the plan implies
     overhead_cost = overhead_pct_of_revenue * revenue
     borrowed_weekly = np.maximum(0.0, -weekly_cash_flow[1:])
@@ -1931,6 +1968,8 @@ def solve_farm_v2(
         "profit":           profit,
         "operating_profit": operating_profit,
         "overhead_cost":    overhead_cost,
+        # R8: what that overhead % still stands for — the P&L overhead row's label. See the ledger.
+        "overhead_covers":   [short for short, _ in OVERHEAD_COVERS.values()],
         "interest_cost":    interest_cost,
         "fixed_selling_cost":  fixed_selling_cost,
         "fixed_selling_split": fixed_selling_split,

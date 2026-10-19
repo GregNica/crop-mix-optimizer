@@ -314,3 +314,10 @@ def test_the_browser_draws_on_exactly_one_path():
         f"{len(charts)} call sites draw the waterfall; exactly one may — runOptimizer. Every "
         "other path reads figures off the result and decodes no image."
     )
+
+
+def test_the_overhead_ledger_reaches_the_page(golden_out):
+    """R8: the P&L overhead row is labelled from this list, so it must arrive — short labels only."""
+    from farm_v2.solver import OVERHEAD_COVERS
+    assert golden_out["overhead_covers"] == [short for short, _ in OVERHEAD_COVERS.values()]
+    assert "overhead_excludes" not in golden_out, "nothing in the page reads it — do not send it"

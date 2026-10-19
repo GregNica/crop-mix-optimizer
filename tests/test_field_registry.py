@@ -18,7 +18,7 @@ import subprocess
 
 import pytest
 
-from tests.bundling import bundle_and_probe
+from tests.bundling import bundle_and_probe, load_farm_fields
 from tests.helpers import GOLDEN_PAYLOAD, REPO
 
 NODE = shutil.which("node")
@@ -29,12 +29,7 @@ READERS = {"_num", "_num_no_invent", "_num_if_on"}
 
 @pytest.fixture(scope="module")
 def registry():
-    # Through tests/page_scripts.cjs, like every other harness, so the load contract is stated once.
-    code = ("const vm=require('vm');const sb={window:{},console};vm.createContext(sb);"
-            "require('./tests/page_scripts.cjs').runPageScripts(sb);"
-            "process.stdout.write(JSON.stringify(sb.FARM_FIELDS))")
-    out = subprocess.run([NODE, "-e", code], cwd=REPO, capture_output=True, text=True, check=True)
-    return json.loads(out.stdout)
+    return load_farm_fields()
 
 
 def _adapter_payload_keys():

@@ -136,7 +136,7 @@
     },
     overhead_pct: {
       chat: { label: "Overhead % of revenue", type: "number", unit: "%", min: 0, max: 60,
-        description: "Overhead as a percent of REVENUE (not of costs) — insurance, property tax, admin, utilities (incl. irrigation pump energy), repairs & maintenance, office/vehicle. EXCLUDES costs itemized elsewhere (labor, seed, fertilizer, fuel, packaging, irrigation, storage); if the user's figure includes those, ask them to exclude them. If given in dollars, ask for revenue or the percent — don't guess." },
+        description: "Overhead as a percent of REVENUE (not of costs) — insurance, property tax, admin, utilities (incl. pump energy), repairs & maintenance, office/vehicle. EXCLUDES costs itemized elsewhere (land rent/mortgage, the machinery line, labor, seed, water, fertilizer, fuel, packaging, irrigation, storage, channel selling costs, other debt service, interest on operating borrowing, city water); if the user's figure includes those, ask them to exclude them. If given in dollars, ask for revenue or the percent — don't guess." },
     },
     interest_rate_pct: {
       chat: { label: "Interest APR %", type: "number", unit: "% APR", min: 0, max: 40,

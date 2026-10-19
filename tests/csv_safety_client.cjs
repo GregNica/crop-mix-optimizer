@@ -62,7 +62,7 @@ const RES = {
   peak_borrowing: 9000,
   // W8: the P&L iterates these, so a fixture without them tests a statement that does not
   // reconcile — and the hostile channel would never reach the selling row at all.
-  bought_capacity_split: { city_water: 300, overtime: 700, hire: 0 },
+  bought_capacity_split: { city_water: 300, overtime: 700, hire: 0 }, overhead_covers: ['admin'],
   fixed_selling_split: { [HOSTILE_CHANNEL]: 1200 },
   variable_cost_split: { water: 1500, fertilizer: 2500, fuel: 900, seed: 8100, packaging: 8000 },
   fixed_cost_split: {

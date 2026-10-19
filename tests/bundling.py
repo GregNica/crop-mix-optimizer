@@ -1,4 +1,5 @@
-"""Bundle a Worker module with esbuild the way wrangler does, and probe it under Node.
+"""Run the app's JavaScript under Node from pytest: the field registry, and Worker modules
+bundled with esbuild the way wrangler does.
 
 Kept OUT of tests/helpers.py, whose contract is pure functions: this shells out and skips.
 """
@@ -14,6 +15,17 @@ from tests.helpers import REPO
 
 NODE = shutil.which("node")
 ESBUILD = REPO / "node_modules" / ".bin" / "esbuild"
+
+
+def load_farm_fields():
+    """public/fields.js's FARM_FIELDS, loaded through tests/page_scripts.cjs like every harness."""
+    if NODE is None:
+        pytest.skip("node not installed")
+    code = ("const vm=require('vm');const sb={window:{},console};vm.createContext(sb);"
+            "require('./tests/page_scripts.cjs').runPageScripts(sb);"
+            "process.stdout.write(JSON.stringify(sb.FARM_FIELDS))")
+    out = subprocess.run([NODE, "-e", code], cwd=REPO, capture_output=True, text=True, check=True)
+    return json.loads(out.stdout)
 
 
 def bundle_and_probe(entry: str, probe_js: str):

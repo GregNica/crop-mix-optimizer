@@ -434,6 +434,7 @@ def run_from_js(params_json):
             'profit':        profit,
             'operating_profit': operating_profit,
             'overhead_cost': overhead_cost,
+            'overhead_covers': result['overhead_covers'],     # R8 — the P&L overhead row's label
             'interest_cost': interest_cost,
             'fixed_selling_cost': fixed_selling_cost,
             # W8 — the parts the P&L iterates instead of re-deriving: per-channel fixed selling

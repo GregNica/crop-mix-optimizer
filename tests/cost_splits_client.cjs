@@ -47,6 +47,7 @@ const RES = {
   peak_borrowing: 9000,
   // W8: iterated by the exporter, not three hand-named keys.
   bought_capacity_split: { city_water: 300, overtime: 700, hire: 0 },
+  overhead_covers: ['admin', 'vehicles'],   // R8 — deliberately not the shipped list
   variable_cost_split: {
     water: 1500, fertilizer: 2500, fuel: 900, seed: 8100, packaging: 8000,
   },
@@ -420,6 +421,20 @@ const EXPECT_FIXED_LABELS = {
     ok('a selling component with no figure fires it too (fail-closed on NaN)',
        runExport().some(r => text(r[0]).includes('channel selling lines do not add up')));
     W._lastParams = PARAMS; W._lastRes = RES;
+  }
+
+  // R8 — the overhead row is labelled from the solver's ledger, not fixed text; an empty ledger
+  // reads as plain "Overhead"; a missing one is loud, not a plausible label.
+  {
+    W._lastRes = RES;
+    ok('the overhead row is labelled from overhead_covers',
+       amountOf(runExport(), 'Overhead (admin, vehicles)') === -RES.overhead_cost);
+    W._lastRes = { ...RES, overhead_covers: [] };
+    ok('an empty ledger labels the row plain "Overhead"', amountOf(runExport(), 'Overhead') === -RES.overhead_cost);
+    const { overhead_covers, ...noLedger } = RES;
+    W._lastRes = noLedger;
+    ok('a missing ledger is LOUD', runExport().some(r => text(r[0]).includes('MISSING FROM PAYLOAD')));
+    W._lastRes = RES;
   }
 
   // W8 tripwire (d), REVENUE. The rows are joined to channel_sales by the FORM's channel names, so
