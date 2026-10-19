@@ -92,6 +92,13 @@ GUARDS = [
         "throttles it to one wake-up a minute, so a backgrounded Monte Carlo crawls) or a visible "
         "tab no longer waits for a frame (the spinner never paints before the solve blocks)",
     ),
+    (
+        "form-state-client",
+        ["tests/form_state_client.cjs"],
+        "a saved plan can lose a value silently again: either a save/load round-trip moves a "
+        "setting (unit drift), a saved field the form no longer has is skipped without a report, "
+        "a rename bypasses FORM_FIELD_RENAMES, or a collection input is never serialized",
+    ),
 ]
 
 

@@ -3411,6 +3411,9 @@ function writeFieldCanonical(el, canonicalValue) {
   const spec = specForEl(el);
   if (el.dataset) el.dataset.canon = spec ? v : '';
   el.value = spec ? roundForDisplay(dispVal(v, spec)) : v;
+  // The exact string written, so initUnitInputSync can tell the 'input' event a program fires
+  // after this from a real edit: the field is untouched only while it still shows THIS string.
+  if (el.dataset) { if (spec) el.dataset.shown = el.value; else delete el.dataset.shown; }
 }
 
 /** Write a field from a value already in the ACTIVE DISPLAY system (e.g. one the user typed,
@@ -3421,7 +3424,7 @@ function writeFieldDisplay(el, displayValue) {
   if (isNaN(v)) { el.value = ''; if (el.dataset) el.dataset.canon = ''; return; }
   const spec = specForEl(el);
   el.value = v;
-  if (el.dataset) el.dataset.canon = spec ? toCanonicalActive(v, spec) : '';
+  if (el.dataset) { el.dataset.canon = spec ? toCanonicalActive(v, spec) : ''; delete el.dataset.shown; }
 }
 
 /** Clear a field AND its canonical shadow. Clearing only the display leaves readCanonicalEl
@@ -3429,7 +3432,7 @@ function writeFieldDisplay(el, displayValue) {
 function clearField(el) {
   if (!el) return;
   el.value = '';
-  if (el.dataset) el.dataset.canon = '';
+  if (el.dataset) { el.dataset.canon = ''; delete el.dataset.shown; }
 }
 
 /** Every unit-bearing field whose data-canon disagrees with its displayed value. Empty array
@@ -3529,8 +3532,19 @@ function initUnitInputSync() {
     const isSensBound = el.id === 'sens-min' || el.id === 'sens-max';
     if (!spec && !isSensBound) return;
     const v = parseFloat(el.value);
-    el.dataset.canon = isNaN(v) ? ''
-      : (spec ? UNITS.toCanonical(v, spec, APP_STATE.unitSystem || 'canonical') : v);
+    // An input event is not proof of an edit. applyFormState and the chatbot's two write paths
+    // (applyProposal, updateCropByName) fire one after writeFieldCanonical stored the EXACT value,
+    // and re-deriving canon from the ROUNDED display here moved every unit-bearing setting on each
+    // save/load — 275 → 275.013 m³ of cooler, $500 → $500.06/m³ — numbers that bill depreciation
+    // (E5, found by the round-trip guard). The field is untouched only while it still shows the
+    // exact string that write left; the first real keystroke changes it and clears the marker.
+    // (Comparing against the rounded display instead ignored real edits: type 1000.4, backspace to
+    // 1000, and the solver kept 1000.4 — /code-review.)
+    if (el.dataset.shown !== undefined) {
+      if (el.value === el.dataset.shown) return;
+      delete el.dataset.shown;
+    }
+    el.dataset.canon = isNaN(v) ? '' : (spec ? toCanonicalActive(v, spec) : v);
   });
 }
 
@@ -3576,6 +3590,73 @@ function initUnitSystem() {
 // for v1 rather than reinterpreting those numbers as canonical, which would corrupt every plan
 // saved before this change (a US-display 847,552 ft3 store read as 847,552 m3).
 const FORM_STATE_VERSION = 2;
+
+// Flat-field ids that changed since a plan could have been saved: old id → new id, or → null for
+// an id RETIRED on purpose (its value is deliberately not restored, so it is not reported either).
+// migrateFormState applies this before anything is written, so a markup rename can never again
+// drop a saved value silently — the failure E5 exists to close. Empty today: measured on
+// 2026-10-19, no id in the shipped form has been renamed since plans began to be saved.
+// ADD AN ENTRY IN THE SAME COMMIT AS ANY RENAME; tests/form_state_client.cjs pins the mechanism.
+const FORM_FIELD_RENAMES = {};
+
+/**
+ * Bring a saved form state up to FORM_STATE_VERSION. Returns { state, notes }, where `notes` are
+ * plain-language facts about the plan the grower should hear (saved by a newer app, unstamped).
+ * v1 → v2 needs no rewrite here: v1 stored DISPLAY numbers with no record of the unit system, so
+ * they cannot be converted, only written back as display values — applyFormState does that.
+ */
+function migrateFormState(state) {
+  const notes = [];
+  const v = Number(state.version);
+  if (!(v >= 1)) notes.push('this plan carries no version stamp; values were restored as saved');
+  else if (v > FORM_STATE_VERSION) {
+    notes.push(`this plan was saved by a newer version of the app (format v${v}, this app reads ` +
+               `v${FORM_STATE_VERSION}); some values may not apply`);
+  }
+  const fields = {};
+  for (const [id, val] of Object.entries(state.fields || {})) {
+    const to = Object.prototype.hasOwnProperty.call(FORM_FIELD_RENAMES, id) ? FORM_FIELD_RENAMES[id] : id;
+    if (to !== null) fields[to] = val;
+  }
+  return { state: { ...state, fields }, notes };
+}
+
+/**
+ * What a saved collection carried that the re-rendered form no longer holds: per row, every key
+ * the saved row had and the restored row lacks, plus every per-channel block of a crop whose
+ * channel no longer exists. Measured by RE-SERIALIZING after the render rather than by a list of
+ * known keys — a list is exactly the thing that drifts.
+ */
+function collectionLosses(kind, saved, restored, rowName) {
+  const lost = [];
+  (saved || []).forEach((row, i) => {
+    if (!row || typeof row !== 'object') return;
+    // Matched by NAME, not position: getChannelDefs skips an unnamed row, which would shift every
+    // later index and blame the wrong rows. Unnamed rows fall back to their position. (Duplicate
+    // names need no special case: one serializer builds every restored row, so all rows of a kind
+    // carry the same keys and any same-named match answers the key question identically.)
+    const name = rowName(row, i);
+    const back = restored.find((r, k) => rowName(r, k) === name);
+    const who = `${kind} "${name}"`;
+    if (!back) { lost.push(`${who} (the whole row)`); return; }
+    Object.keys(row).forEach(k => {
+      if (!(k in back)) { lost.push(`${who}: ${k}`); return; }
+      // An OPTION-like value (planting type, labour type) that no longer exists renders as the
+      // default with the same key present, so keys alone cannot see it. Numbers are skipped:
+      // they are normalised on the way through (canonical units), so a string compare would cry wolf.
+      const was = row[k];
+      if (typeof was === 'string' && was !== '' && isNaN(Number(was)) && String(back[k]) !== was) {
+        lost.push(`${who}: ${k} "${was}" (not an available option)`);
+      }
+    });
+    if (row.channels_data && back.channels_data) {
+      Object.keys(row.channels_data).forEach(ch => {
+        if (!(ch in back.channels_data)) lost.push(`${who}: prices/demand for channel "${ch}" (no such channel)`);
+      });
+    }
+  });
+  return lost;
+}
 
 // Dynamic collections are handled explicitly (variable row counts, data-* attrs);
 // their containers are excluded from the flat-field sweep.
@@ -3717,7 +3798,9 @@ function serializeFormState() {
   });
   return {
     version: FORM_STATE_VERSION,
-    fields,
+    // Unrestorable values from the loaded plan ride along underneath, so autosave cannot erase
+    // what the load report just named. The live form always wins on a shared id.
+    fields: { ...(APP_STATE.unrestoredFields || {}), ...fields },
     labor:    serializeLabor(),
     channels: getChannelDefs(),   // already returns form shape {name,default_pkg,var_sell,fixed_sell}
     crops:    serializeCrops(),
@@ -3781,8 +3864,12 @@ function applyCrops(crops) {
  *  3) collections last (authoritative re-render)
  *  4) re-assert the visual PD toggles, restore uploads + override set
  */
-function applyFormState(state) {
-  if (!state || typeof state !== 'object') return;
+function applyFormState(saved) {
+  if (!saved || typeof saved !== 'object') return { dropped: [], notes: [] };
+  // E5: never skip silently. Every saved value that cannot land is named in `dropped`; callers
+  // that load a plan show it (G6's say-do rule — the app reports what it did not do).
+  const { state, notes } = migrateFormState(saved);
+  const dropped = [];
   const ui = state.ui || {};
 
   // 1) UI flags
@@ -3792,26 +3879,56 @@ function applyFormState(state) {
   APP_STATE.annualizeMargins    = !!ui.annualizeMargins;
 
   // 2) flat fields
-  Object.entries(state.fields || {}).forEach(([id, val]) => {
+  // Values for ids the form no longer has are KEPT and written back on the next save, so a report
+  // never turns into a loss when autosave fires (/code-review).
+  APP_STATE.unrestoredFields = {};
+  // `canonical`: v2+ stores canonical for unit-bearing fields; v1 stored the DISPLAY number with
+  // no record of the system, so it can only be written back as display (see FORM_STATE_VERSION).
+  const writeSaved = (id, val, canonical) => {
     const el = document.getElementById(id);
-    if (!el) return;
+    if (!el) {
+      dropped.push(`setting "${id}" (no longer a field)`);
+      APP_STATE.unrestoredFields[id] = val;
+      return;
+    }
     if (el.type === 'checkbox') {
       el.checked = !!val;
     } else if (specForEl(el) && val !== '' && val != null) {
-      // v2+ stores canonical; v1 stored the display number (see FORM_STATE_VERSION).
-      if (Number(state.version) >= 2) writeFieldCanonical(el, val);
-      else                            writeFieldDisplay(el, val);
+      if (canonical) writeFieldCanonical(el, val);
+      else           writeFieldDisplay(el, val);
     } else {
       el.value = val;
+      // A <select> option that no longer exists (or text a number box refuses) lands as ''.
+      if (val !== '' && val != null && String(el.value) !== String(val)) {
+        dropped.push(`setting "${id}": saved value "${val}" is not an available option`);
+      }
     }
     el.dispatchEvent(new Event('input',  { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
-  });
+  };
+  const savedFields = state.fields || {};
+  Object.entries(savedFields).forEach(([id, val]) => writeSaved(id, val, Number(state.version) >= 2));
+
+  // A setting the plan PREDATES would otherwise keep whatever the previously loaded plan had —
+  // plan B solving with plan A's value under a clean "Saved ✓" (/code-review). Fill it from the
+  // app's own defaults, which are always canonical (captured from this page at boot), and say so.
+  const defaults = (_defaultFormState && _defaultFormState.fields) || {};
+  const predates = Object.keys(defaults).filter(id => !(id in savedFields));
+  predates.forEach(id => writeSaved(id, defaults[id], true));
+  if (predates.length) {
+    notes.push(`${predates.length} setting${predates.length > 1 ? 's' : ''} did not exist when this plan ` +
+               `was saved; the app's defaults were used (${predates.slice(0, 3).join(', ')}` +
+               `${predates.length > 3 ? ', …' : ''})`);
+  }
 
   // 3) collections (authoritative; channels before crops)
   applyLabor(state.labor);
   applyChannels(state.channels);
   applyCrops(state.crops);
+  dropped.push(
+    ...collectionLosses('Labor position', state.labor,    serializeLabor(),  (r, i) => r.position || `row ${i + 1}`),
+    ...collectionLosses('Channel',        state.channels, getChannelDefs(),  (r, i) => r.name || `row ${i + 1}`),
+    ...collectionLosses('Crop',           state.crops,    serializeCrops(),  r => r.name || 'Crop'));  // renderCrop's default
 
   // 4) re-assert visual PD detail toggles now that collections re-rendered
   if (typeof setPDChannelVarDetail === 'function') setPDChannelVarDetail(APP_STATE._pdChannelVarDetail);
@@ -3826,42 +3943,25 @@ function applyFormState(state) {
 
   // 6) override set (also rebuilt by the input events in step 2; set explicitly for fidelity)
   if (Array.isArray(ui.overriddenFields)) APP_STATE.overriddenFields = new Set(ui.overriddenFields);
+
+  if (dropped.length || notes.length) console.warn('[plan load] not restored:', dropped, notes);
+  return { dropped, notes };
 }
 
-// ── Console-accessible self-test: run window._testFormState() in the browser ──
-// Round-trip: serialize → apply → serialize must be byte-identical (idempotent),
-// which proves applyFormState faithfully restores everything serializeFormState
-// captured. DOM-dependent (needs the rendered form), so it can't run headlessly —
-// run it from the browser console after the page loads.
-window._testFormState = function() {
-  const a = serializeFormState();
-  applyFormState(a);
-  const b = serializeFormState();
-  const aJson = JSON.stringify(a), bJson = JSON.stringify(b);
-  console.assert(aJson === bJson, 'TFS1: serialize→apply→serialize must be idempotent');
-  if (aJson !== bJson) {
-    ['fields','labor','channels','crops','ui','uploads'].forEach(k => {
-      if (JSON.stringify(a[k]) !== JSON.stringify(b[k])) console.warn('TFS1 mismatch in section:', k, a[k], b[k]);
-    });
+/** One status line for a load: "Saved ✓", or what did not come back. Full list in the console. */
+function loadReportText(report, okText) {
+  const { dropped = [], notes = [] } = report || {};
+  if (!dropped.length && !notes.length) return okText;
+  const parts = [];
+  if (dropped.length) {
+    const shown = dropped.slice(0, 3).join('; ');
+    parts.push(`${dropped.length} saved value${dropped.length > 1 ? 's' : ''} could not be restored: ` +
+               shown + (dropped.length > 3 ? `; and ${dropped.length - 3} more (see console)` : ''));
   }
-  // TFS2: a mutation is captured and restored.
-  const land = document.getElementById('total_land');
-  if (land) {
-    const orig = land.value;
-    land.value = '123.5';
-    const snap = serializeFormState();
-    land.value = '1';
-    applyFormState(snap);
-    console.assert(document.getElementById('total_land').value === '123.5',
-      `TFS2: applyFormState must restore total_land, got ${document.getElementById('total_land').value}`);
-    land.value = orig;  // leave the form as we found it
-  }
-  // TFS3: registry covers every flat id'd control (no silent drift).
-  const regIds = new Set(buildFieldRegistry().map(f => f.id));
-  console.assert(regIds.size >= 20, `TFS3: field registry should enumerate the flat fields, got ${regIds.size}`);
-  console.log(`✓ Form-state round-trip OK (${regIds.size} flat fields, ${a.labor.length} labor, ${a.channels.length} channels, ${a.crops.length} crops).`);
-  return aJson === bJson;
-};
+  parts.push(...notes);
+  return `Loaded — ⚠ ${parts.join('. ')}.`;
+}
+
 
 // ============================================================
 // Saved plans — Phase 1 persistence + AUTO-SAVE (backed by /api/scenarios).
@@ -3940,10 +4040,12 @@ function offerLocalDraft() {
   restore.className = 'acct-btn';
   restore.textContent = 'Restore';
   restore.addEventListener('click', () => {
-    applyFormState(draft.formState);
+    _suppressDirty = true;   // same as a plan load: the events it fires are not edits
+    let report;
+    try { report = applyFormState(draft.formState); } finally { _suppressDirty = false; }
     _currentPlan = draft.name || null;
     setPlanNameLabel();
-    setSaveStatus('Draft restored');
+    setSaveStatus(loadReportText(report, 'Draft restored'));
   });
   const discard = document.createElement('button');
   discard.type = 'button';
@@ -4138,11 +4240,12 @@ async function onScenarioSelect(value) {
     if (!res.ok) throw new Error(res.status === 404 ? 'Not found' : ('HTTP ' + res.status));
     const { scenario } = await res.json();
     _suppressDirty = true;
-    try { applyFormState(scenario.formState); } finally { _suppressDirty = false; }
+    let report;
+    try { report = applyFormState(scenario.formState); } finally { _suppressDirty = false; }
     _currentPlan = value;
     _planDirty = false;
     setPlanNameLabel();
-    setSaveStatus('Saved ✓');
+    setSaveStatus(loadReportText(report, 'Saved ✓'));
     // A loaded plan already has complete data — don't make the user re-walk the steps.
     // Mark all sections visited so Optimize is unlocked, then land on the home page.
     SECTION_ORDER.forEach(id => APP_STATE.visitedSections.add(id));
@@ -4155,6 +4258,7 @@ async function onScenarioSelect(value) {
 async function newPlan() {
   autoSaveFlush();
   _suppressDirty = true;
+  // No load report: _defaultFormState was serialized from this very page at boot, so nothing can be lost.
   try { if (_defaultFormState) applyFormState(_defaultFormState); } finally { _suppressDirty = false; }
   APP_STATE.visitedSections = new Set();   // fresh start → review the sections again
   _currentPlan = null;

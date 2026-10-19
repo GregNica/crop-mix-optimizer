@@ -27,7 +27,7 @@ npm run dev          # wrangler dev → http://localhost:8787
 Verify:
 - Open **http://localhost:8787** → the optimizer app loads (same as before).
 - Open **http://localhost:8787/api/health** → `{"ok":true,"service":"farm-optimizer",...}`.
-- In the browser console, `_testFormState()` still returns the green round-trip line.
+- `node tests/form_state_client.cjs` (part of `npm test`) passes — the save/load round-trip check that used to be the `_testFormState()` console helper.
 
 That confirms the Worker serves the static app and routes `/api/*`. Auth, DB, and the
 LLM proxy are **not** wired yet — they're the next Phase-1 steps.
