@@ -1,5 +1,5 @@
 """
-build_toy_v10.py — generates the LABOUR-BY-POSITION toy model workbook (a MILP).
+build_toy_v11.py — generates the LABOUR-BY-ROLE (per-role overtime, hire-more, piece rate) toy model workbook (a MILP).
 
 v5 closes the two gaps the grower found in v4, both of which were DECISION VARIABLES rather
 than cost lines:
@@ -39,7 +39,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.formatting.rule import CellIsRule
 
 from farm_v2.utils.calendar import harvest_weeks_of
-import toy_v10_lp as LP
+import toy_v11_lp as LP
 
 CROP_NAMES = LP.CROP_NAMES
 crops = LP.CROPS
@@ -50,11 +50,19 @@ SUCCS = LP.SUCCS
 # still said 448 after v8 added 104 flex cells — the sheet's own description of itself was wrong
 # in the docstring, the READ ME and the build banner at once. Derive it, do not retype it.
 N_OFFER_CELLS = len(CROP_NAMES) * len(CH_NAMES) * 52
-# v9: 52 spot-hire cells became ONE advisory headcount, so the model got smaller.
-N_FLEX_CELLS = 52 + 1  # overtime hours (52 weeks) + the advisory crew size (one integer)
+# v11. Derived from its parts, never retyped — this count was written out longhand in three
+# places once and all three were stale.
+_N_HOURLY = sum(1 for e in LP.PAYLOAD["employees"]
+                if e["type"] != "salary" and e["wage"] > 0)
+_N_ROLES = len(LP.PAYLOAD["employees"])
+N_OT_CELLS = _N_HOURLY * 52          # one overtime row PER ROLE — no blend
+N_EXTRA_CELLS = _N_ROLES             # extra heads, one integer per roster row
+N_PIECE_CELLS = len(CROP_NAMES) * 52 + 1     # lb picked per crop per week + the engage switch
+N_FLEX_CELLS = N_OT_CELLS + N_EXTRA_CELLS + N_PIECE_CELLS
 N_DEC_CELLS = len(SUCCS) * 2 + N_OFFER_CELLS + N_FLEX_CELLS
 DEC_BREAKDOWN = (f"{len(SUCCS)} acres + {len(SUCCS)} binaries + {N_OFFER_CELLS} offered "
-                 f"+ 52 overtime + 1 proposed-hire headcount")
+                 f"+ {N_OT_CELLS} overtime ({_N_HOURLY} roles x 52) + {N_EXTRA_CELLS} extra "
+                 f"heads + {N_PIECE_CELLS} piece-rate")
 PACK_OUT = 1.00
 COLD_CAP = LP.PAYLOAD["harvest_storage_cap"]
 AMB_CAP = LP.PAYLOAD["ambient_storage_cap"]
@@ -204,7 +212,7 @@ except Exception:
 _BUILT = _dt.datetime.now().strftime("%Y-%m-%d %H:%M")
 
 r = 1
-put(r, 1, "FARM TOY MODEL — v10: labour by position", font=F_TITLE)
+put(r, 1, "FARM TOY MODEL — v11: labour by role, hire-more and piece rate", font=F_TITLE)
 put(r, 4, f"BUILT {_BUILT}   (from source at {_SHA})", font=F_NOTE)
 r += 1
 # The legend is COLOURED, not described. A key that names a colour in grey text
@@ -319,7 +327,8 @@ r += 1
 # --- 3b. the crew ---
 put(r, 1, "3b — THE CREW", font=F_H1); r += 1
 for j, h in enumerate(["Position", "Count", "Type", "Wage", "Hours/wk", "Field time %",
-                       "From wk", "To wk"]):
+                       "From wk", "To wk", "Hire more?", "Max more", "EXTRA HIRED",
+                       "Room left"]):
     put(r, 1 + j, h, font=F_BOLD, fill=HDR_FILL, border=True)
 r += 1
 ROW_CREW = r
@@ -332,8 +341,28 @@ for e in LP.PAYLOAD.get("employees", []):
     put(r, 6, e.get("field_time_pct", 100), fill=IN_FILL, fmt="0", border=True)
     put(r, 7, e.get("start_week", 1), fill=IN_FILL, fmt="0", border=True)
     put(r, 8, e.get("end_week", 52), fill=IN_FILL, fmt="0", border=True)
+    # v11: hiring MORE of a role you already listed. Nothing new is entered — the extra heads
+    # inherit this row's wage, hours, field% and window, which is exactly why a different
+    # window or a different wage is a different ROW rather than another knob.
+    put(r, 9, "Y" if e.get("can_hire_more") else "N", fill=IN_FILL, border=True)
+    put(r, 10, e.get("max_extra", 0), fill=IN_FILL, fmt="0", border=True)
+    put(r, 11, 0, fill=DEC_FILL, fmt="0", border=True)      # <-- SOLVER
+    # ⚠️ THE TOGGLE AND THE CAP ARE READ BY FORMULAS, not just obeyed by the Solver recipe.
+    # Third time in this toy: v8's "Max overtime hrs/week" and v10's "Max people available"
+    # both shipped as recipe-only bounds that no formula touched, invisible to a reader AND to
+    # the dead-input guard. The recorded lesson is "fix the builder, not the guard".
+    put(r, 12, f'=IF($I${r}="Y",$J${r}-$K${r},0)', fmt="0", border=True, fill=CON_FILL)
     r += 1
 ROW_CREW_END = r - 1
+put(r, 1, "   EXTRA HIRED is the solver's answer, in whole people: \"change this row's Count "
+          "from 8 to 11\". It is committed for the ROLE'S window — a head you add to a 27-week "
+          "crew is 27 weeks of wages, which is why the answer is often zero.", font=F_NOTE)
+r += 1
+put(r, 1, "   ⚠️ If the weeks you could hire for DIFFER from this row's window, add a NEW row "
+          "with the same title and its own weeks. A different window is a different job offer, "
+          "not a variation on this one.", font=F_NOTE); r += 1
+put(r, 1, "   No committed staff of a role, but curious? Put Count 0, Hire more Y, and set the "
+          "weeks. That asks \"should I have this crew at all?\"", font=F_NOTE); r += 1
 put(r, 1, "Payroll load %", font=F_BOLD)
 put(r, 2, LP.PAYLOAD.get("payroll_load_pct", 0.0), fill=IN_FILL, fmt="0%", border=True)
 ROW_LOAD = r
@@ -356,74 +385,114 @@ put(r, 1, "   No flat number can express the rule, because the crew swings 108 t
 r += 2
 
 # ---- THE ADVISORY CREW (L1). Not a spot purchase — a roster row you have not hired yet. ----
-put(r, 1, "3c — PROPOSED HIRE  (\"what should I take on, and when?\")", font=F_H1); r += 1
-put(r, 1, "   You nominate the WINDOW; the solver picks the HEADCOUNT. The answer is a roster "
-          "row you can type into 3b above and re-solve.", font=F_NOTE); r += 1
-put(r, 1, "   ⚠️ CHARGED FOR THE WHOLE WINDOW, used or not. That is what makes it a hire and "
-          "not a spot purchase, and it is the same treatment the standing crew gets (W12).",
+put(r, 1, "New-hire productivity %", font=F_BOLD)
+put(r, 2, 70, fill=IN_FILL, fmt="0", border=True); ROW_PROD = r
+put(r, 3, "a new hand is not as fast as the crew already doing the job — it multiplies their "
+          "HOURS, not their wage", font=F_NOTE); r += 1
+put(r, 1, "Cost per new head", font=F_BOLD)
+put(r, 2, 800, fill=IN_FILL, fmt="$#,##0", border=True); ROW_HEADCOST = r
+put(r, 3, "recruitment, onboarding, transport — per PERSON, once", font=F_NOTE); r += 2
+
+# ---- 3c: the piece-rate crew -------------------------------------------
+put(r, 1, "3c — PIECE-RATE HARVEST CREW  (paid per pound, not per hour)", font=F_H1); r += 1
+put(r, 1, "   Everything else on this sheet is COMMITTED labour — owed whether the crops need "
+          "it or not. This is the opposite: you pay for what they pick and nothing when there "
+          "is nothing to pick, which is why it lands in COGS and not the wage bill.",
     font=F_NOTE); r += 1
-put(r, 1, "   Real hiring is a committed block: H-2A wants 60-75 days of lead and guarantees "
-          "the worker 3/4 of the contract's hours; domestic seasonal wants 8-10 weeks.",
-    font=F_NOTE); r += 1
-for j, h in enumerate(["From wk", "To wk", "Hours/wk each", "Field time %", "Wage $/hr",
-                       "Max people available", "Productivity %", "$ per head"]):
-    put(r, 2 + j, h, font=F_BOLD, fill=HDR_FILL, border=True)
+for j2, h in enumerate(["From wk", "To wk", "Crew hrs/week", "Var cost $/lb", "Fixed cost $",
+                        "Pre-committed?"]):
+    put(r, 2 + j2, h, font=F_BOLD, fill=HDR_FILL, border=True)
 r += 1
-put(r, 1, "Proposed hire", font=F_BOLD)
-put(r, 2, 43, fill=IN_FILL, fmt="0", border=True);      ADV_START = f"$B${r}"
-put(r, 3, 49, fill=IN_FILL, fmt="0", border=True);      ADV_END = f"$C${r}"
-put(r, 4, 40, fill=IN_FILL, fmt="0", border=True);      ADV_HRS = f"$D${r}"
-put(r, 5, 100, fill=IN_FILL, fmt="0", border=True);     ADV_FIELD = f"$E${r}"
-put(r, 6, 20.0, fill=IN_FILL, fmt="$0.00", border=True); ADV_WAGE = f"$F${r}"
-put(r, 7, 20, fill=IN_FILL, fmt="0", border=True);      ADV_MAX = f"$G${r}"
-put(r, 8, 70, fill=IN_FILL, fmt="0", border=True);      ADV_PROD = f"$H${r}"
-put(r, 9, 800, fill=IN_FILL, fmt="$#,##0", border=True); ADV_HEAD = f"$I${r}"
+put(r, 1, "Piece-rate crew", font=F_BOLD)
+put(r, 2, 1, fill=IN_FILL, fmt="0", border=True);        PC_START = f"$B${r}"
+put(r, 3, 52, fill=IN_FILL, fmt="0", border=True);       PC_END = f"$C${r}"
+put(r, 4, LP.PIECE_MAX_HOURS_PER_WEEK, fill=IN_FILL, fmt="#,##0", border=True)
+PC_MAX = f"$D${r}"
+put(r, 5, 0.02, fill=IN_FILL, fmt="$0.0000", border=True); PC_VAR = f"$E${r}"
+put(r, 6, 2500, fill=IN_FILL, fmt="$#,##0", border=True); PC_FIX = f"$F${r}"
+put(r, 7, "N", fill=IN_FILL, border=True);               PC_COMMIT = f"$G${r}"
+ROW_PC = r; r += 1
+put(r, 1, "ENGAGED?", font=F_BOLD, fill=DEC_FILL)
+put(r, 2, 0, fill=DEC_FILL, fmt="0", border=True); ROW_PCBIN = r; PC_BIN = f"$B${r}"
+put(r, 3, "<-- SOLVER (0 or 1). The fixed cost is charged only if they are engaged — or "
+          "always, if Pre-committed is Y.", font=F_NOTE); r += 1
+put(r, 1, "Minimum wage floor $/hr", font=F_BOLD)
+put(r, 2, 16.07, fill=IN_FILL, fmt="$0.00", border=True); ROW_FLOOR = r
+put(r, 3, "AEWR Skill II, 2026. A piece-rate worker must still earn this for the hours worked; "
+          "if the rate falls short the employer makes up the difference (FLSA).", font=F_NOTE)
+r += 2
+
+# The per-crop rate table. ⚠️ RATES DIFFER BY CROP AND THE FLOOR IS WHY: it converts to $/lb
+# through picking speed, a 3.6x spread here. Entered as $ per container the way a contract
+# reads, converted with the crop's OWN volume figure — the same number the storage rows use.
+for j2, h in enumerate(["$ per bushel", "lb per bushel", "-> $/lb", "floor $/lb",
+                        "EFFECTIVE $/lb", "which binds"]):
+    put(r, 2 + j2, h, font=F_BOLD, fill=HDR_FILL, border=True)
 r += 1
-put(r, 1, "   ⚠️ PRODUCTIVITY % and $ PER HEAD are new, and without them the hire was "
-          "unbeatable: $25.00/hr all-in against overtime at $37.84-48.75, so the solver took "
-          "18 of the 20 heads on offer.", font=F_NOTE); r += 1
-put(r, 1, "   A green seasonal picker is not as fast as your harvest crew. At 70% you pay for "
-          "40 hours and get 28 hours of trained-crew work — an effective $35.71/hr, which is a "
-          "real contest with overtime. The two meet at about 65%.", font=F_NOTE); r += 1
-put(r, 1, "   $ per head is recruitment, onboarding and transport: paid per PERSON, once, not "
-          "per hour. It is what makes 18 casual hires cost more than 4 regardless of hours — "
-          "and why H-2A, at ~$10,000/worker of non-wage cost, is not an 80-acre instrument.",
-    font=F_NOTE); r += 1
-put(r, 1, "PEOPLE TO HIRE", font=F_BOLD, fill=DEC_FILL)
-put(r, 2, 0, fill=DEC_FILL, fmt="0", border=True); ROW_ADVCREW = r; ADV_CREW = f"$B${r}"
-put(r, 3, "<-- SOLVER (whole people, an INTEGER — 'hire 7.3 people' is not an instruction)",
-    font=F_NOTE); r += 1
-put(r, 1, "Cost per person per week", font=F_SMALL)  # noqa: E501
-put(r, 2, f"={ADV_HRS}*{ADV_WAGE}*(1+$B${ROW_LOAD})", fmt="$#,##0", border=True)
-ROW_ADVCOSTWK = r; r += 1
-put(r, 1, "Weeks in the window", font=F_SMALL)
-put(r, 2, f"={ADV_END}-{ADV_START}+1", fmt="0", border=True); ROW_ADVWKS = r; r += 1
-put(r, 1, "TOTAL committed cost", font=F_BOLD)
-put(r, 2, f"={ADV_CREW}*($B${ROW_ADVCOSTWK}*$B${ROW_ADVWKS}+{ADV_HEAD})",
-    fmt="$#,##0", border=True)
-r += 1
-put(r, 1, "   Weekly wage for every week of the window, plus $ per head once.", font=F_NOTE)
-r += 1
-# ⚠️ THE AVAILABILITY BOUND EARNS A "ROOM LEFT" ROW, like every other limit on this sheet.
-# I wrote it as a Solver-recipe-only bound first and the dead-input guard caught it — which is
-# EXACTLY the defect v8 recorded and fixed ("Max overtime hrs/week is read by no formula"), and
-# I recreated it one version later. A cap named only in the recipe is invisible to a reader and
-# invisible to the guard, and the tempting fix is to loosen the guard. That is a test bent
-# around a builder shortcut. Fix the builder.
-put(r, 1, "Room left to hire", font=F_SMALL, fill=CON_FILL)
-put(r, 2, f"={ADV_MAX}-{ADV_CREW}", fmt="0", border=True, fill=CON_FILL)
-put(r, 3, "how many more hands you said you could find — the availability question the research "
-          "says is the real uncertainty", font=F_NOTE)
-r += 1
-put(r, 1, "   ⚠️ The window is YOUR call and it matters more than the headcount. Measured on "
-          "this farm: hiring into weeks 16-21, where C2 binds for six weeks straight, is worth "
-          "$5. Weeks 43-49 are worth $58,253.", font=F_NOTE); r += 1
-put(r, 1, "   A week where labour BINDS is not the same as a week where more labour PAYS, and "
-          "reading the binding weeks off the sheet would send you to the wrong one.",
+PC_ROWS = {}
+for name in CROP_NAMES:
+    cr = crop_row[name]
+    lh = crops[name].get("labor_harv", 0.0) or 0.0
+    put(r, 1, f"   {name}", font=F_SMALL)
+    put(r, 2, LP.PIECE_CONTAINER[name][1], fill=IN_FILL, fmt="$0.00", border=True)
+    put(r, 3, f"={LP.BUSHEL_M3}/$D${cr}", fmt="0.0", border=True)
+    put(r, 4, f"=B{r}/C{r}", fmt="$0.0000", border=True)
+    # floor $/lb = minimum wage / lb-per-harvest-hour, and lb-per-harvest-hour is
+    # yield / harvest labour — both already on this sheet.
+    # floor $/lb = minimum wage / (yield / harvest hrs per acre). Every term is a CELL on this
+    # sheet — column B is yield and column P is harvest hours per acre — so the formula can be
+    # read and changed. Baking the crop's hours in as a literal is the v7 defect ("the sheet
+    # used numbers it could not show"), and column E is the STORE NAME, not the yield.
+    put(r, 5, f"=$B${ROW_FLOOR}/($B${cr}/$P${cr})" if lh else 0, fmt="$0.0000", border=True)
+    put(r, 6, f"=MAX(D{r},E{r})+{PC_VAR}", fmt="$0.0000", border=True, fill=CON_FILL)
+    put(r, 7, f'=IF(E{r}>D{r},"FLOOR","rate")', border=True)
+    PC_ROWS[name] = r; r += 1
+put(r, 1, "   A rate entered BELOW its floor is inoperative — you pay the floor. That is not a "
+          "modelling choice, it is FLSA: the make-up pay is real money.", font=F_NOTE); r += 1
+put(r, 1, "   ⚠️ 'lb per bushel' comes from the crop's own volume figure. Check it against what "
+          "you can lift: a bushel of kale is about 18 lb in the trade. See backlog L6.",
     font=F_NOTE); r += 2
-put(r, 1, "A salary wage is $/YEAR; hourly and seasonal are $/HOUR. 'Field time %' is the share "
-          "of paid hours available to the crops —", font=F_NOTE); r += 1
-put(r, 1, "the rest is admin and maintenance. It reduces CAPACITY without reducing the WAGE.",
+
+# The piece-rate crew's DECISION rows: pounds of each crop they pick, week by week. The solver
+# chooses which crops, how much and when — bounded by what was actually harvested that week,
+# by the crew's weekly capacity, and by the harvest hours the relief cannot exceed.
+r = week_header(r, "lb")
+PIECE_LB_ROW = {}
+for name in CROP_NAMES:
+    put(r, 1, f"   {name} — picked by piece-rate crew", font=F_BOLD, fill=DEC_FILL)
+    put(r, 2, "lb <-- SOLVER", font=F_NOTE)
+    for w in range(1, 53):
+        put(r, wcol(w), 0.0, fmt="#,##0", fill=DEC_FILL)
+    PIECE_LB_ROW[name] = r; r += 1
+put(r, 1, "Piece-rate lb this week", font=F_SMALL); put(r, 2, "lb", font=F_NOTE)
+for w in range(1, 53):
+    put(r, wcol(w), "=" + "+".join(f"{wl(w)}{PIECE_LB_ROW[n]}" for n in CROP_NAMES), fmt="#,##0")
+ROW_PCTOT = r; r += 1
+# ⚠️ THE CAPACITY IS IN HOURS, NOT POUNDS, AND THE GROWER FOUND WHY. A crew picks pounds at a
+# rate that differs 3.6x by crop, so ONE pound number describes a crew that silently resizes
+# with the crop: 20,000 lb/wk is 200 harvest hours of spinach, 150 of garlic, 55 of kale. It
+# also distorted the ANSWER — a pound cap rewards hours-per-pound, so it favoured spinach over
+# garlic even though garlic is the cheaper relief ($18.74/hr against $20.71). Measured on this
+# farm, moving the cap to hours triples the garlic picked. Hours is the thing you actually have.
+put(r, 1, "  picking hours used", font=F_BOLD, fill=CON_FILL); put(r, 2, "hrs", font=F_NOTE)
+for w in range(1, 53):
+    # the ONE definition of this quantity on the sheet — block B reads it from here
+    terms = [f"{wl(w)}{PIECE_LB_ROW[n]}/($B${crop_row[n]}/$P${crop_row[n]})"
+             for n in CROP_NAMES if (crops[n].get("labor_harv", 0.0) or 0.0)]
+    put(r, wcol(w), ("=" + "+".join(terms)) if terms else 0, fmt="#,##0", fill=CON_FILL)
+ROW_PCHRS = r; r += 1
+put(r, 1, "  their weekly capacity", font=F_BOLD, fill=CON_FILL); put(r, 2, "hrs", font=F_NOTE)
+for w in range(1, 53):
+    put(r, wcol(w), f"=IF(AND({w}>={PC_START},{w}<={PC_END}),{PC_BIN}*{PC_MAX},0)",
+        fmt="#,##0", fill=CON_FILL)
+ROW_PCCAP = r; r += 1
+put(r, 1, "  room left", font=F_SMALL, fill=CON_FILL); put(r, 2, "hrs", font=F_NOTE)
+for w in range(1, 53):
+    put(r, wcol(w), f"={wl(w)}{ROW_PCCAP}-{wl(w)}{ROW_PCHRS}", fmt="#,##0", fill=CON_FILL)
+r += 1
+put(r, 1, "   Zero outside their weeks, and zero unless ENGAGED — that link is what makes the "
+          "fixed cost conditional. Capacity is HOURS: 200 is five pickers at forty hours, and "
+          "it buys whatever pounds that many hours picks of whichever crop they are on.",
     font=F_NOTE); r += 2
 
 # --- 4. the planting calendar: EVERY succession the app offers ---
@@ -488,30 +557,30 @@ r, ROW_LANDUSED, _ = constraint_triplet(
     "   Acres standing that week, summed across every planting the solver chose.")
 
 # ---------------------------------------------------------------------------
-# LABOUR (v10, rebuilt again on the grower's notes).
+# LABOUR (v11). Four blocks, one job each — A who is on, B what you can add,
+# C the limits, D what it costs. Nothing above C is money; nothing below it is
+# a limit.
 #
-# TWO CHANGES FROM v9, both his:
+# WHAT CHANGED FROM v10, and both are the grower's:
 #
-# 1. SPLIT BY POSITION instead of blending inside a mask. v9 answered "how many
-#    hours this week" with a five-factor SUMPRODUCT — (on this week) x (not
-#    salary) x (paid) x count x hours — recomputed inside every row that needed
-#    it. Here each position gets its own row of plain
-#    `IF(in window, count x hours x field%, 0)`, the aggregates are SUMs of
-#    named rows, and the overtime blend is a ratio of rows already on the sheet.
-#    The mask is gone. The position rows are also the labour calendar (D9).
+#  * OVERTIME IS PER ROLE, and there is no blended rate anywhere. Once the
+#    solver can also hire extra heads, a blend depends on a decision variable
+#    and `hours x blend(extra)` stops being linear. Per role the rate is that
+#    role's own wage x load x multiplier — a CONSTANT, because the wage is an
+#    input. It is also a better model: with one blend an overtime hour costs
+#    the same whoever works it, so the plan cannot prefer the cheap one or tell
+#    you who to ask to stay late.
 #
-# 2. TOP-TO-BOTTOM FLOW, like the crop blocks. v9 went capacity -> prices ->
-#    cap -> decisions -> available -> costs -> constraints, so money appeared
-#    twice, split around the middle, and the limits trailed after the costs.
-#    Now: A who is on -> B what you can add -> C the limits -> D what it costs.
-#    Every row still reads only rows above it.
+#  * HIRING IS "MORE OF A ROLE YOU ALREADY LISTED", not a synthetic new crew.
+#    v10 invented a row with its own window, wage, hours and field% — eight
+#    inputs to re-describe something the roster already describes, and the same
+#    error v9 made with spot hire. Extra heads inherit their role's everything.
 # ---------------------------------------------------------------------------
 put(r, 1, "A — WHO IS ON, WEEK BY WEEK", font=F_H1); r += 1
-put(r, 1, "   One row per position. Field hours = count x hours/wk x field time %, inside that "
-          "position's own window.", font=F_NOTE); r += 1
+put(r, 1, "   Committed staff PLUS whatever the solver decided to hire, at that role's own "
+          "hours and window. New heads count for less: they are multiplied by the "
+          "new-hire productivity %.", font=F_NOTE); r += 1
 r = week_header(r, "hours")
-# The window test is written ONCE. Block A (hours) and block D (cost) both need "is this
-# position on in week w", and two copies of a predicate is how they drift apart.
 _on_wk = lambda i_, w_: f"AND({w_}>=$G${i_},{w_}<=$H${i_})"
 POS_ROWS = []
 for _i in range(ROW_CREW, ROW_CREW_END + 1):
@@ -520,135 +589,173 @@ for _i in range(ROW_CREW, ROW_CREW_END + 1):
     put(r, 1, f"   {_nm}", font=F_SMALL)
     put(r, 2, "hrs" + ("" if _hourly else "  (salaried)"), font=F_NOTE)
     for w in range(1, 53):
+        # committed heads at full rate + extra heads at the productivity discount
         put(r, wcol(w),
-            f"=IF({_on_wk(_i, w)},$B${_i}*$E${_i}*$F${_i}/100,0)", fmt="#,##0")
+            f'=IF({_on_wk(_i, w)},($B${_i}+IF($I${_i}="Y",$K${_i},0)*$B${ROW_PROD}/100)'
+            f'*$E${_i}*$F${_i}/100,0)',
+            fmt="#,##0")
     POS_ROWS.append((r, _i, _hourly))
     r += 1
 
 put(r, 1, "CREW CAPACITY", font=F_BOLD); put(r, 2, "hrs", font=F_NOTE)
 for w in range(1, 53):
-    put(r, wcol(w),
-        "=" + "+".join(f"{wl(w)}{pr}" for pr, _, _ in POS_ROWS), fmt="#,##0")
+    put(r, wcol(w), "=" + "+".join(f"{wl(w)}{pr}" for pr, _, _ in POS_ROWS), fmt="#,##0")
 ROW_LABCAP = r; r += 1
-put(r, 1, "   The sum of the rows above. No mask, no SUMPRODUCT — you can add them up by eye.",
-    font=F_NOTE); r += 1
-
-_HOURLY_ROWS = [pr for pr, _, h in POS_ROWS if h]
-put(r, 1, "Hourly field hours", font=F_SMALL); put(r, 2, "hrs", font=F_NOTE)
-for w in range(1, 53):
-    put(r, wcol(w), "=" + "+".join(f"{wl(w)}{pr}" for pr in _HOURLY_ROWS), fmt="#,##0")
-ROW_HFIELD = r; r += 1
-put(r, 1, "   Only the HOURLY rows. Salaried staff give capacity but cannot be paid overtime, "
-          "so they are in CREW CAPACITY and out of this one — and out of everything derived "
-          "from it.", font=F_NOTE); r += 2
+put(r, 1, "   The sum of the rows above — no mask, no SUMPRODUCT. You can add them by eye.",
+    font=F_NOTE); r += 2
 
 put(r, 1, "B — WHAT YOU CAN ADD", font=F_H1); r += 1
 r = week_header(r, "hours")
-put(r, 1, "Overtime CAP", font=F_SMALL); put(r, 2, "hrs", font=F_NOTE)
-for w in range(1, 53):
-    # ⚠️ DERIVED, not typed. v8 broadcast one flat number across 52 weeks while the crew is
-    # seasonal; on the app's own farm that let 15 of 52 weeks buy MORE overtime than the whole
-    # crew's regular hours (185% in winter) and the solver took it.
-    put(r, wcol(w), f"=MAX(0,$B${ROW_OTALLOW}-1)*{wl(w)}{ROW_HFIELD}", fmt="#,##0")
-ROW_OTCAP = r; r += 1
-put(r, 1, "   (allowance - 1) x the hourly row above. ZERO in a week with no hourly crew — you "
-          "cannot work overtime on people who are not there.", font=F_NOTE); r += 1
+OT_ROWS = []
+for _pr, _i, _hourly in POS_ROWS:
+    if not _hourly:
+        continue
+    _nm = ws.cell(row=_i, column=1).value
+    put(r, 1, f"   {_nm} — overtime CAP", font=F_SMALL); put(r, 2, "hrs", font=F_NOTE)
+    for w in range(1, 53):
+        # (allowance - 1) x THIS role's hours that week, extra heads included.
+        put(r, wcol(w), f"=MAX(0,$B${ROW_OTALLOW}-1)*{wl(w)}{_pr}", fmt="#,##0")
+    _cap = r; r += 1
+    put(r, 1, f"   {_nm} — OVERTIME hrs", font=F_BOLD, fill=DEC_FILL)
+    put(r, 2, "hrs <-- SOLVER", font=F_NOTE)
+    for w in range(1, 53):
+        put(r, wcol(w), 0.0, fmt="#,##0", fill=DEC_FILL)
+    OT_ROWS.append((r, _cap, _i, _nm)); r += 1
+put(r, 1, "   One cap and one decision per role. The RATE is that role's own wage — see block "
+          "D — so the plan can prefer the cheap overtime, which a single blended rate could "
+          "never express.", font=F_NOTE); r += 1
 
-put(r, 1, "OVERTIME hours", font=F_BOLD, fill=DEC_FILL); put(r, 2, "hrs <-- SOLVER", font=F_NOTE)
+put(r, 1, "Harvest hours relieved", font=F_SMALL); put(r, 2, "hrs", font=F_NOTE)
 for w in range(1, 53):
-    put(r, wcol(w), 0.0, fmt="#,##0", fill=DEC_FILL)
-ROW_OTHRS = r; r += 1
-
-put(r, 1, "Proposed hire hours", font=F_SMALL); put(r, 2, "hrs", font=F_NOTE)
-for w in range(1, 53):
-    # ⚠️ x PRODUCTIVITY. A green seasonal picker is not as fast as your harvest crew, and until
-    # v10 a bought hour was worth exactly as much crop work as a trained one — which made the
-    # hire unbeatable at $25.00/hr all-in against overtime at $37.84-48.75, so the solver took
-    # every head on offer (18 of 20). It multiplies the HOURS, not the wage: you pay for the
-    # hours you booked and get less crop work out of them.
-    put(r, wcol(w),
-        f"=IF(AND({w}>={ADV_START},{w}<={ADV_END}),"
-        f"{ADV_CREW}*{ADV_HRS}*{ADV_FIELD}/100*{ADV_PROD}/100,0)", fmt="#,##0")
-ROW_ADVHRS = r; r += 1
+    # ⚠️ ONE definition, in 3c, where the crew's own capacity is measured against it. This row
+    # carries it into the labour block; it does not restate the conversion.
+    put(r, wcol(w), f"={wl(w)}{ROW_PCHRS}", fmt="#,##0")
+ROW_PCRELIEF = r; r += 1
+put(r, 1, "   ⚠️ The piece-rate crew changes the HOURS you need, not the wages you owe — the "
+          "committed crew is paid either way. Bounded below by the harvest hours actually "
+          "needed, or pickers would be relieving the planting.", font=F_NOTE); r += 1
 
 put(r, 1, "HOURS AVAILABLE", font=F_BOLD); put(r, 2, "hrs", font=F_NOTE)
 for w in range(1, 53):
-    put(r, wcol(w),
-        f"={wl(w)}{ROW_LABCAP}+{wl(w)}{ROW_OTHRS}+{wl(w)}{ROW_ADVHRS}", fmt="#,##0")
+    parts = [f"{wl(w)}{ROW_LABCAP}"] + [f"{wl(w)}{o}" for o, _, _, _ in OT_ROWS]
+    put(r, wcol(w), "=" + "+".join(parts), fmt="#,##0")
 ROW_HOURSAVAIL = r; r += 1
-put(r, 1, "   Crew capacity, plus overtime, plus whatever the proposed hire really delivers.",
-    font=F_NOTE); r += 2
+put(r, 1, "   Crew capacity plus every role's overtime. The piece-rate crew is NOT in here — "
+          "it removes hours from the demand side instead, which is block C.", font=F_NOTE)
+r += 2
 
 put(r, 1, "C — THE LIMITS", font=F_H1); r += 1
 r = week_header(r, "hours")
 lab_lhs = lambda w: "=" + "+".join(
     f'SUMPRODUCT(({CROPCOL}="{n}")*({wl(w)}${ROW_SUCC}:{wl(w)}${ROW_SUCC_END}="{ph}")*{SR})'
     f'*${cl}${crop_row[n]}'
-    for n in CROP_NAMES for ph, cl in (("P", "N"), ("G", "O"), ("H", "P")))
+    for n in CROP_NAMES for ph, cl in (("P", "N"), ("G", "O"), ("H", "P"))) \
+    + f"-{wl(w)}{ROW_PCRELIEF}"
 r, ROW_LABUSED, _ = constraint_triplet(
     r, "CROP HOURS needed", lab_lhs, lambda w: f"{wl(w)}${ROW_HOURSAVAIL}", None,
-    "   The app's C2. On this farm it is the constraint that binds hardest — in 8 separate "
-    "blocks of weeks.", fmt="#,##0")
-r, ROW_OTUSED, _ = constraint_triplet(
-    r, "OVERTIME bought", lambda w: f"={wl(w)}{ROW_OTHRS}",
-    lambda w: f"{wl(w)}${ROW_OTCAP}", None,
-    "   The limit MOVES WITH THE CREW. No flat number could: the hourly crew runs 72 to 872 "
-    "field hours across the year.", fmt="#,##0")
+    "   The app's C2, less whatever the piece-rate crew picked. On this farm it is the "
+    "constraint that binds hardest.", fmt="#,##0")
+
+r = week_header(r, "hours")
+put(r, 1, "HARVEST hours needed", font=F_SMALL); put(r, 2, "hrs", font=F_NOTE)
+for w in range(1, 53):
+    put(r, wcol(w), "=" + "+".join(
+        f'SUMPRODUCT(({CROPCOL}="{n}")*({wl(w)}${ROW_SUCC}:{wl(w)}${ROW_SUCC_END}="H")*{SR})'
+        f'*$P${crop_row[n]}' for n in CROP_NAMES), fmt="#,##0")
+ROW_HARVNEED = r; r += 1
+put(r, 1, "   Harvest-phase hours only. The relief above cannot exceed this row.", font=F_NOTE)
+r += 1
+# ⚠️ v11: THREE ROWS, NOT TWENTY-ONE. Each role used to get a full constraint triplet here —
+# a "used" row that was an alias of its decision row, a "<=" row, a "limit" row that was an
+# alias of its cap row, and a "room left". The Solver recipe constrains the decision row
+# against the cap row DIRECTLY (`$E$160:$AZ$160 <= $E$159:$AZ$159`), so those blocks stated a
+# constraint nothing read — not the recipe, not the verifier, not a test. The grower spotted
+# it. Only the slack was worth keeping, and slack is one row per role.
+r = week_header(r, "hours")
+OT_ROOM_ROWS = {}
+for _ot, _cap, _i, _nm in OT_ROWS:
+    put(r, 1, f"   {_nm} — overtime room left", font=F_SMALL, fill=CON_FILL)
+    put(r, 2, "hrs", font=F_NOTE)
+    for w in range(1, 53):
+        put(r, wcol(w), f"={wl(w)}${_cap}-{wl(w)}{_ot}", fmt="#,##0", fill=CON_FILL)
+    ws.conditional_formatting.add(f"{wl(1)}{r}:{LAST}{r}", CellIsRule(
+        operator="lessThan", formula=["0"], fill=PatternFill("solid", fgColor="FFC7CE"),
+        font=Font(color="9C0006", bold=True)))
+    OT_ROOM_ROWS[_nm] = r; r += 1
+put(r, 1, "   Each role's overtime against its OWN crew that week — the cap is two rows above "
+          "the decision in block B, and the Solver constrains them there. Zero means that "
+          "role is at its limit; negative means the recipe is not loaded.", font=F_NOTE)
+r += 2
 
 put(r, 1, "D — WHAT IT COSTS", font=F_H1); r += 1
-put(r, 1, "   Nothing above this line is money. Nothing below it is a limit.", font=F_NOTE); r += 1
+put(r, 1, "   Nothing above this line is money. Nothing below it is a limit.", font=F_NOTE)
+r += 1
 r = week_header(r, "$")
 COST_ROWS = []
 for _pr, _i, _hourly in POS_ROWS:
     _nm = ws.cell(row=_i, column=1).value
     put(r, 1, f"   {_nm}", font=F_SMALL); put(r, 2, "$", font=F_NOTE)
     for w in range(1, 53):
-        # ⚠️ Salary is $/YEAR over 52; hourly is wage x CONTRACTED hours. Field% reduces the
-        # hours the CROPS get and not the hours the PAYSLIP covers, so it is absent here and
-        # present in block A — that asymmetry is why both blocks exist.
+        # ⚠️ Extra heads are paid the FULL wage — the productivity discount is on their HOURS,
+        # not their payslip. Field% likewise reduces capacity and not the wage.
+        heads = f'($B${_i}+IF($I${_i}="Y",$K${_i},0))' 
         if ws.cell(row=_i, column=3).value == "salary":
-            body = f"$B${_i}*$D${_i}/52*(1+$B${ROW_LOAD})"
+            body = f"{heads}*$D${_i}/52*(1+$B${ROW_LOAD})"
         else:
-            body = f"$B${_i}*$D${_i}*$E${_i}*(1+$B${ROW_LOAD})"
+            body = f"{heads}*$D${_i}*$E${_i}*(1+$B${ROW_LOAD})"
         put(r, wcol(w), f"=IF({_on_wk(_i, w)},{body},0)", fmt="#,##0")
     COST_ROWS.append(r); r += 1
 
+r = week_header(r, "$")
 put(r, 1, "Wage bill this week", font=F_BOLD); put(r, 2, "$", font=F_NOTE)
 for w in range(1, 53):
-    put(r, wcol(w), "=" + "+".join(f"{wl(w)}{cr_}" for cr_ in COST_ROWS), fmt="#,##0")
+    put(r, wcol(w), "=" + "+".join(f"{wl(w)}{c_}" for c_ in COST_ROWS), fmt="#,##0")
 ROW_WAGEWK = r; r += 1
-put(r, 1, "   ⚠️ OWED WHETHER OR NOT THE CROPS NEED THEM (the app's W12). That is why no crop "
-          "carries a per-acre labour charge anywhere on this sheet: the marginal crop hour is "
-          "FREE, and it is rationed by block C instead of priced.", font=F_NOTE); r += 1
+put(r, 1, "   ⚠️ OWED WHETHER OR NOT THE CROPS NEED THEM (the app's W12) — which is why no crop "
+          "carries a per-acre labour charge anywhere on this sheet.", font=F_NOTE); r += 1
+
+put(r, 1, "New-head cost — ONCE, in the role's first week", font=F_SMALL)
+put(r, 2, "$", font=F_NOTE)
+for w in range(1, 53):
+    # ⚠️ GATED BY THE TOGGLE, like the hours and the wage rows. Without it the sheet charges
+    # recruitment for heads on a role that cannot be hired at all — found by the extra-head
+    # fixture (5 heads on a toggle-N role billed $4,000 in week 1), and missed by every other
+    # check because at the optimum extra heads are zero.
+    terms = [f'IF(AND({w}=$G${_i},$I${_i}="Y",$K${_i}>0),$K${_i}*$B${ROW_HEADCOST},0)'
+             for _, _i, _ in POS_ROWS]
+    put(r, wcol(w), "=" + "+".join(terms), fmt="#,##0")
+ROW_HEADWK = r; r += 1
+put(r, 1, "   Recruitment and onboarding, per person, in the week that role starts. ⚠️ The "
+          "wage rows above test w>=From AND w<=To, because a wage is owed EVERY week of the "
+          "window. This one tests w=From because it is paid ONCE. The two shapes differ on "
+          "purpose — charged per week it would bill three heads for 33 weeks, not one.",
+    font=F_NOTE); r += 1
 
 put(r, 1, "Overtime cost this week", font=F_SMALL); put(r, 2, "$", font=F_NOTE)
 for w in range(1, 53):
-    # The blend is a RATIO OF ROWS ALREADY ON THE SHEET — hourly position rows against their
-    # wages — computed where it is used instead of taking a 52-cell row of its own to display
-    # three distinct values ($37.74, $39.04, $48.75). v9 spent a row on it and rebuilt the mask
-    # to fill it.
-    num = "+".join(f"{wl(w)}{pr}*$D${i_}" for pr, i_, h in POS_ROWS if h)
-    den = "+".join(f"{wl(w)}{pr}" for pr, i_, h in POS_ROWS if h)
-    put(r, wcol(w),
-        f"=IFERROR({wl(w)}{ROW_OTHRS}*({num})/({den})*(1+$B${ROW_LOAD})*$B${ROW_OTMULT},0)",
-        fmt="#,##0")
+    # ⚠️ EACH ROLE AT ITS OWN RATE. No blend: the rate is a constant per role, which is what
+    # keeps this linear once extra heads are also a decision.
+    terms = [f"{wl(w)}{_o}*$D${_i}*(1+$B${ROW_LOAD})*$B${ROW_OTMULT}"
+             for _o, _c, _i, _nm in OT_ROWS]
+    put(r, wcol(w), "=" + "+".join(terms), fmt="#,##0")
 ROW_OTCOST = r; r += 1
-put(r, 1, "   ⚠️ Overtime hours cost their FULL rate, not the premium above base pay. The wage "
-          "bill pays the crew's STATED hours; these are hours beyond it, so charging only the "
-          "increment leaves the base wage charged nowhere. Measured in the app at 2,080 hours "
-          "costing $0.00.", font=F_NOTE); r += 1
+put(r, 1, "   ⚠️ FULL rate, not the premium above base pay — the wage bill pays the stated "
+          "hours, these are hours beyond them.", font=F_NOTE); r += 1
 
-put(r, 1, "Proposed hire cost this week", font=F_SMALL); put(r, 2, "$", font=F_NOTE)
+put(r, 1, "Piece-rate cost — per lb every week, + the fixed cost ONCE", font=F_SMALL)
+put(r, 2, "$", font=F_NOTE)
 for w in range(1, 53):
-    # Weekly wage every week of the window, PLUS the per-head cost once, in the first week —
-    # recruitment and moving people happen before they pick anything.
-    put(r, wcol(w),
-        f"=IF(AND({w}>={ADV_START},{w}<={ADV_END}),{ADV_CREW}*$B${ROW_ADVCOSTWK},0)"
-        f"+IF({w}={ADV_START},{ADV_CREW}*{ADV_HEAD},0)", fmt="#,##0")
-ROW_ADVWAGE = r; r += 1
-put(r, 1, "   ⚠️ CHARGED FOR THE WHOLE WINDOW, used or not — that is what makes it a hire and "
-          "not a spot purchase, and it is the same treatment the standing crew gets. Compare "
-          "this against 'Proposed hire hours' in a week the plan does not need them.",
+    terms = [f"{wl(w)}{PIECE_LB_ROW[n]}*$F${PC_ROWS[n]}" for n in CROP_NAMES]
+    # ⚠️ 'Pre-committed?' was read by NOTHING — the FOURTH recipe-only input this toy has
+    # shipped (v8's overtime cap, v10's max people, v11's hire toggle). Wire it where it
+    # belongs: a pre-committed crew's fixed cost is sunk whether or not the solver engages
+    # them, which is the entire meaning of the toggle.
+    fixed = f'+IF({w}={PC_START},IF({PC_COMMIT}="Y",1,{PC_BIN})*{PC_FIX},0)'
+    put(r, wcol(w), "=" + "+".join(terms) + fixed, fmt="#,##0")
+ROW_PCCOST = r; r += 1
+put(r, 1, "   COGS, not payroll: you pay for what they pick. ⚠️ The fixed cost lands ONCE, in "
+          "the first week of their window — which is why its IF tests w=From and not the "
+          "whole window. Charged per week it would bill $2,500 fifty-two times.",
     font=F_NOTE); r += 2
 
 crop_block = {}
@@ -894,15 +1001,19 @@ put(r, 1, "  overtime", font=F_SMALL); put(r, 2, "$", font=F_NOTE)
 for w in range(1, 53):
     put(r, wcol(w), f"={wl(w)}{ROW_OTCOST}", fmt="#,##0")
 R_OTWK = r; r += 1
-put(r, 1, "  advisory crew", font=F_SMALL); put(r, 2, "$", font=F_NOTE)
+put(r, 1, "  new-head one-off", font=F_SMALL); put(r, 2, "$", font=F_NOTE)
 for w in range(1, 53):
-    put(r, wcol(w), f"={wl(w)}{ROW_ADVWAGE}", fmt="#,##0")
-R_ADVWK = r; r += 1
+    put(r, wcol(w), f"={wl(w)}{ROW_HEADWK}", fmt="#,##0")
+R_HEADWK = r; r += 1
+put(r, 1, "  piece rate (COGS)", font=F_SMALL); put(r, 2, "$", font=F_NOTE)
+for w in range(1, 53):
+    put(r, wcol(w), f"={wl(w)}{ROW_PCCOST}", fmt="#,##0")
+R_PCWK = r; r += 1
 put(r, 1, "NET CASH this week", font=F_BOLD); put(r, 2, "$", font=F_NOTE)
 for w in range(1, 53):
     put(r, wcol(w), f"={wl(w)}{R_REVWK}-{wl(w)}{R_PKGWK}-{wl(w)}{R_GROWWK}"
                     f"-{wl(w)}{R_FIXWK}-{wl(w)}{R_OVHWK}-{wl(w)}{R_WAGEWK}"
-                    f"-{wl(w)}{R_OTWK}-{wl(w)}{R_ADVWK}", fmt="#,##0")
+                    f"-{wl(w)}{R_OTWK}-{wl(w)}{R_HEADWK}-{wl(w)}{R_PCWK}", fmt="#,##0")
 R_NETWK = r; r += 2
 
 r = week_header(r, "$")
@@ -952,7 +1063,8 @@ put(r, 2, "=" + "+".join(
 ROW_REV = r; r += 1
 for _lab, _row in (("Growing cost", R_GROWWK), ("Packaging", R_PKGWK),
                    ("Fixed cost", R_FIXWK), ("Overhead", R_OVHWK), ("Wages", R_WAGEWK),
-                   ("Overtime", R_OTWK), ("Advisory crew", R_ADVWK)):
+                   ("Overtime", R_OTWK), ("New heads", R_HEADWK),
+                   ("Piece rate", R_PCWK)):
     put(r, 1, _lab, font=F_BOLD)
     put(r, 2, f"=SUM({wl(1)}{_row}:{LAST}{_row})", fmt="$#,##0", font=F_BOLD)
     if _lab == "Growing cost":
@@ -964,9 +1076,11 @@ for _lab, _row in (("Growing cost", R_GROWWK), ("Packaging", R_PKGWK),
         put(r, 3, "committed — owed whether or not the crops need the hours", font=F_NOTE)
     if _lab == "Overtime":
         put(r, 3, "at the FULL rate — not the premium above base pay", font=F_NOTE)
-    if _lab == "Advisory crew":
-        put(r, 3, "committed for the whole window, used or not — same basis as Wages above",
-            font=F_NOTE)
+    if _lab == "New heads":
+        put(r, 3, "recruitment and onboarding, per person, once", font=F_NOTE)
+    if _lab == "Piece rate":
+        put(r, 3, "paid per POUND picked — COGS, not payroll, and nothing owed when there is "
+                  "nothing to pick", font=F_NOTE)
     ROW_COST_LAST = r          # ⚠️ the LAST cost row, captured as it is written
     r += 1
 put(r, 1, "Peak borrowing", font=F_BOLD)
@@ -1050,18 +1164,30 @@ recipe += [
     ("Constraint — ambient store", f"${wl(1)}${pool_rows['Ambient']['used']}:"
      f"${LAST}${pool_rows['Ambient']['used']}  <=  $B${ROW_AMBCAP}", ""),
     ("Constraint — land", f"${wl(1)}${ROW_LANDUSED}:${LAST}${ROW_LANDUSED}  <=  $B${ROW_LAND}", ""),
-    ("  ...and", f"${wl(1)}${ROW_OTHRS}:${LAST}${ROW_OTHRS};$B${ROW_ADVCREW}",
-     "the overtime row and the advisory headcount"),
+    ("  ...and", ";".join(f"${wl(1)}${o}:${LAST}${o}" for o, _, _, _ in OT_ROWS),
+     "one overtime row per hourly role — no blend"),
+    ("  ...and", f"$K${ROW_CREW}:$K${ROW_CREW_END};$B${ROW_PCBIN};"
+     + ";".join(f"${wl(1)}${PIECE_LB_ROW[n]}:${LAST}${PIECE_LB_ROW[n]}" for n in CROP_NAMES),
+     "extra heads, the engage switch, and the pounds picked"),
     ("Constraint — CROP HOURS <= available", f"${wl(1)}${ROW_LABUSED}:${LAST}${ROW_LABUSED}  <=  "
-     f"${wl(1)}${ROW_HOURSAVAIL}:${LAST}${ROW_HOURSAVAIL}", "the app's C2, with bought hours"),
-    ("Constraint — overtime cap",
-     f"${wl(1)}${ROW_OTUSED}:${LAST}${ROW_OTUSED};<=;"
-     f"${wl(1)}${ROW_OTUSED + 2}:${LAST}${ROW_OTUSED + 2}",
-     "DERIVED per week from the hourly crew — not a typed number (L2)"),
-    ("Constraint — advisory crew is a whole number",
-     f"$B${ROW_ADVCREW} = integer", "you hire people, not fractions of people"),
-    ("Constraint — advisory crew available",
-     f"$B${ROW_ADVCREW}  <=  {ADV_MAX}", "how many hands you could actually find"),
+     f"${wl(1)}${ROW_HOURSAVAIL}:${LAST}${ROW_HOURSAVAIL}", "the app's C2, less piece-rate relief"),
+] + [
+    (f"Constraint — overtime {nm}", f"${wl(1)}${o}:${LAST}${o}  <=  ${wl(1)}${c}:${LAST}${c}",
+     "that role's own crew that week")
+    for o, c, _i, nm in OT_ROWS
+] + [
+    ("Constraint — relief <= harvest hours",
+     f"${wl(1)}${ROW_PCRELIEF}:${LAST}${ROW_PCRELIEF}  <=  "
+     f"${wl(1)}${ROW_HARVNEED}:${LAST}${ROW_HARVNEED}", "pickers cannot relieve the planting"),
+    ("Constraint — piece-rate capacity",
+     f"${wl(1)}${ROW_PCTOT}:${LAST}${ROW_PCTOT}  <=  ${wl(1)}${ROW_PCCAP}:${LAST}${ROW_PCCAP}",
+     "and zero unless ENGAGED"),
+    ("Constraint — extra heads are whole people",
+     f"$K${ROW_CREW}:$K${ROW_CREW_END} = integer", "you hire people, not fractions"),
+    ("Constraint — extra heads available",
+     f"$K${ROW_CREW}:$K${ROW_CREW_END}  <=  $J${ROW_CREW}:$J${ROW_CREW_END}",
+     "each role's own 'max more'"),
+    ("Constraint — ENGAGED is binary", f"$B${ROW_PCBIN} = binary", ""),
     ("Constraint — CASH FLOOR", f"${wl(1)}${R_CUM}:${LAST}${R_CUM}  >=  "
      f"${wl(1)}${R_FLOOR}:${LAST}${R_FLOOR}", "the app's C13"),
 ]
@@ -1094,14 +1220,17 @@ NUMS = {
     "{INTEREST}": f"${_OPT['interest']:,.0f}", "{PEAKB}": f"${_OPT['peak_borrow']:,.0f}",
     "{OTCOST}": f"${_OPT['ot_cost']:,.0f}",
     "{OTHRS}": f"{sum(_OPT['ot_hours']):,.0f}",
-    "{OTRATE}": f"${_OPT['ot_rate'][20]:,.2f}",
-    "{ADVCREW}": str(int(round(_OPT['adv_crew']))),
-    "{ADVCOST}": f"${_OPT['adv_cost']:,.0f}",
-    "{ADVFROM}": str(_OPT['adv_weeks'][0]) if _OPT['adv_weeks'] else "-",
-    "{ADVTO}": str(_OPT['adv_weeks'][-1]) if _OPT['adv_weeks'] else "-",
-    "{ADVGIVEN}": f"{sum(_OPT['adv_hours_given']):,.0f}",
-    "{V8_PROFIT}": "$514,774",
-    "{OTPEAKCAP}": f"{max(_OPT['ot_cap']):,.0f}",
+    "{OTRATES}": " / ".join(f"{n} ${x:,.2f}" for n, x in
+                            zip(_OPT['role_names'], _OPT['ot_rate_role']) if x),
+    "{OTWHO}": " / ".join(f"{n} {sum(h):,.0f} h" for n, h in
+                          zip(_OPT['role_names'], _OPT['ot_by_role']) if sum(h) > 0.5) or "none",
+    "{EXTRA}": " / ".join(f"{n} +{x:,.0f}" for n, x in
+                          zip(_OPT['role_names'], _OPT['extra_heads']) if x > 0) or "none",
+    "{HIRECOST}": f"${_OPT['hire_cost']:,.0f}",
+    "{PIECECOST}": f"${_OPT['piece_cost']:,.0f}",
+    "{PIECELB}": f"{sum(sum(v) for v in _OPT['piece_lb'].values()):,.0f}",
+    "{PIECEREL}": f"{sum(_OPT['piece_hours_relieved']):,.0f}",
+    "{V10_PROFIT}": "$472,091",
     "{V7_PROFIT}": "$388,786",
     "{MARGIN}": f"{_OPT['profit'] / _OPT['revenue'] * 100:.1f}%",
     "{V5_PROFIT}": "$2,384,231",
@@ -1116,72 +1245,68 @@ NUMS = {
     "{OBJ}": f"B{ROW_OBJ}",
 }
 readme = [
- ("Farm toy model — v10: LABOUR BY POSITION", F_TITLE),
+ ("Farm toy model — v11: ONE LABOUR MECHANISM — THE ROSTER", F_TITLE),
  (f"BUILT {_BUILT}   (from source at commit {_SHA})", F_NOTE),
  ("If that timestamp is older than the change you are looking for, you have a stale copy —", F_NOTE),
  ("close the file and re-open it from WSL rather than from a recent-files list.", F_NOTE),
  ("", None),
- ("WHAT v9 CHANGES — the labour layer, rebuilt on three notes from the grower", F_H1),
- ("This is the first version where a labour change makes the model SMALLER. 52 spot-hire", None),
- ("variables became ONE headcount, and a typed cap became a derived row.", None),
+ ("WHAT v11 CHANGES — labour is now ONE mechanism: the roster", F_H1),
+ ("v10 invented a separate 'proposed hire' block with its own window, wage, hours and field% —", None),
+ ("eight inputs to re-describe something the roster already described. That was the same error", None),
+ ("v9 made with spot hire, one version later. It is gone.", None),
  ("", None),
- ("     profit {V8_PROFIT} (v8) -> {PROFIT}        revenue {REV}        margin {MARGIN}", F_BOLD),
- ("     it hires {ADVCREW} people for weeks {ADVFROM}-{ADVTO} ({ADVCOST}) and works {OTHRS} overtime hours ({OTCOST})", F_BOLD),
+ ("     profit {V10_PROFIT} (v10) -> {PROFIT}      revenue {REV}      margin {MARGIN}", F_BOLD),
+ ("     overtime {OTWHO}      extra heads: {EXTRA}", F_BOLD),
+ ("     piece rate {PIECECOST} for {PIECELB} lb, relieving {PIECEREL} harvest hours", F_BOLD),
  ("", None),
- ("Profit FALLS against v8 and that is the honest direction: v8 could buy an hour in any week", None),
- ("at a spot price and never pay for an hour it did not use.", None),
+ ("1. HIRING IS 'MORE OF A ROLE YOU ALREADY LISTED'.", F_BOLD),
+ ("   Three columns on the crew table: Hire more? / Max more / EXTRA HIRED. Extra heads inherit", None),
+ ("   that row's wage, hours, field% AND window — nothing new is entered anywhere. The answer", None),
+ ("   is a roster edit: 'change this Count from 8 to 11'.", None),
+ ("   Different weeks, or a different wage? Add a NEW ROW with the same title. A different", None),
+ ("   window is a different job offer, not a variation on this one.", None),
+ ("   No committed staff of a role but curious? Count 0, Hire more Y, set the weeks.", None),
+ ("   ⚠️ The answer is often ZERO, and that is the finding: a head added to a 27-week crew is", None),
+ ("   27 weeks of wages to buy hours you need in a handful of them.", None),
  ("", None),
- ("1. THERE IS NO SPOT HIRE ANY MORE. You nominate a WINDOW; the solver picks the HEADCOUNT.", F_BOLD),
- ("   v8's plan was unexecutable: 21 separate weeks of hiring in blocks of 2, 2, 2, 3 and 12", None),
- ("   weeks, and one week that bought TWO HOURS. No real hiring path works that way. H-2A wants", None),
- ("   60-75 days of lead and GUARANTEES the worker three-quarters of the contract's hours;", None),
- ("   domestic seasonal hiring wants 8-10 weeks and the good crews book out months ahead.", None),
- ("   Every path is a committed block decided before the season.", None),
+ ("2. OVERTIME IS PER ROLE. THERE IS NO BLENDED RATE ANYWHERE.", F_BOLD),
+ ("   {OTRATES}", None),
+ ("   Once the solver can also hire extra heads, a blended rate depends on a decision variable", None),
+ ("   and 'hours x blend' stops being linear. Per role the rate is that role's own wage x load", None),
+ ("   x multiplier — a constant, because the wage is an input. So the model stays an LP AND it", None),
+ ("   gets better: with one blend an overtime hour costs the same whoever works it, so the plan", None),
+ ("   could not prefer the cheap one, or tell you WHO to ask to stay late.", None),
  ("", None),
- ("   So the advisory crew is CHARGED FOR ITS WHOLE WINDOW, used or not — the same treatment", None),
- ("   the standing crew already gets. Compare row 13 against row 10 in a week the plan does not", None),
- ("   need the hours: that gap is what committing to people actually costs, and v8 could not", None),
- ("   show it, because an hour it did not want was simply never bought.", None),
+ ("3. A PIECE-RATE HARVEST CREW, PAID PER POUND.", F_BOLD),
+ ("   Everything else here is COMMITTED labour — owed whether the crops need it or not. This is", None),
+ ("   the opposite: you pay for what they pick and nothing when there is nothing to pick, which", None),
+ ("   is why it lands in COGS and not the wage bill.", None),
+ ("   You set the weeks, the crew's HOURS per week, and a rate PER CROP. The solver picks", None),
+ ("   which crops, how much, and when.", None),
+ ("   ⚠️ CAPACITY IS HOURS, NOT POUNDS, and the grower found why. A crew picks pounds at a rate", None),
+ ("   that differs 3.6x by crop, so one pound number is a crew that resizes with the crop:", None),
+ ("   20,000 lb/wk is 200 hours of spinach, 150 of garlic, 55 of kale. It distorted the answer", None),
+ ("   too — a pound cap rewards hours-per-pound, so it picked spinach over the cheaper garlic", None),
+ ("   relief ($18.74/hr against $20.71). Moving it to hours triples the garlic picked.", None),
  ("", None),
- ("   The answer is a ROSTER ROW: 'hire {ADVCREW} people, weeks {ADVFROM} to {ADVTO}'. Type it into", None),
- ("   section 3b, set the advisory headcount back to 0, and re-solve. That round trip is the", None),
- ("   point — the recommendation is written in the same units as the input.", None),
+ ("   ⚠️ RATES DIFFER BY CROP, AND THE LAW IS WHY. A piece-rate worker must still earn the", None),
+ ("   minimum wage for the hours worked; if the rate falls short the employer makes up the", None),
+ ("   difference (FLSA — the AEWR under H-2A). Converted to $/lb that floor depends entirely on", None),
+ ("   how fast the crop picks: spinach $0.161/lb against kale $0.044/lb, a 3.6x spread from", None),
+ ("   picking difficulty alone. A rate entered BELOW its floor is inoperative — you pay the", None),
+ ("   floor — and the 'which binds' column says so. Garlic's shipped rate is below its floor on", None),
+ ("   purpose, so you can see it happen.", None),
  ("", None),
- ("2. THE OVERTIME CAP IS DERIVED, NOT TYPED.", F_BOLD),
- ("   v8 typed a flat 200 hrs/week. The crew on this farm swings from 0 to 872 hourly field", None),
- ("   hours across the year, so one number cannot express 'how much overtime will you allow'.", None),
- ("   On the app's own farm that flat cap let 15 of 52 weeks buy MORE overtime than the whole", None),
- ("   crew's regular hours — 185% in winter — and the app's solver took it, buying 191 overtime", None),
- ("   hours against 299 crew hours in one week. A 64% overtime rate is a 66-hour week for", None),
- ("   everybody on the crew.", None),
+ ("   ⚠️ THE PIECE-RATE CREW CHANGES THE HOURS YOU NEED, NOT THE WAGES YOU OWE. The committed", None),
+ ("   crew is paid either way. Pounds picked convert to harvest hours relieved at each crop's", None),
+ ("   own yield / harvest-hours — and the relief is capped by the harvest hours actually", None),
+ ("   needed, or pickers would be relieving the planting.", None),
  ("", None),
- ("   Now you type an ALLOWANCE (1.25 = 'up to 125% of normal hours') and row 8 computes", None),
- ("   (allowance - 1) x row 3, week by week. It peaks at {OTPEAKCAP} hrs and it is ZERO in a week", None),
- ("   with no hourly crew, which is the whole point: you cannot work overtime on people who are", None),
- ("   not there.", None),
- ("", None),
- ("3. THE SECTION BUILDS UP IN NAMED ROWS.", F_BOLD),
- ("   v8 computed the payroll mask — who is on this week, hourly, and paid — INSIDE the overtime", None),
- ("   rate formula, to answer a question the capacity row above had already answered. It was", None),
- ("   dense because an intermediate quantity had no row of its own.", None),
- ("   Rows 1-14 now each read only the rows above them. Row 3 (hourly FIELD hours) is the one", None),
- ("   v8 never wrote down — and it is exactly what the overtime cap needed, which is why the cap", None),
- ("   had to be a typed constant. Give the quantity a name and the defect has nowhere to live.", None),
- ("", None),
- ("⚠️ THE WINDOW IS YOUR CALL, AND IT MATTERS MORE THAN THE HEADCOUNT", F_H1),
- ("Labour binds in EIGHT separate blocks of weeks on this farm. Only one of them is worth", None),
- ("hiring into. Measured, same farm, same solver, only the window changes:", None),
- ("", None),
- ("     weeks 16-21  (C2 binds all six weeks)      worth $5", F_BOLD),
- ("     weeks 27-31  (C2 binds all five weeks)     worth $21", F_BOLD),
- ("     weeks 43-49                                worth $58,253", F_BOLD),
- ("", None),
- ("A week where labour BINDS is not a week where more labour PAYS. In weeks 16-31 the crew is", None),
- ("already 908 hrs/wk and something else is holding the plan back; in weeks 43-49 the seasonal", None),
- ("crews have gone home to 108 hrs/wk and there is garlic in the ground.", None),
- ("", None),
- ("That is worth stating plainly because the obvious report — 'here are your binding weeks' —", None),
- ("would send you to the wrong one. Try it: put 16 and 21 in the window and re-solve.", None),
+ ("   Enter the rate as $ PER BUSHEL. The sheet converts with the crop's own m3-per-lb — the", None),
+ ("   same number the storage rows use. ⚠️ That conversion is also a CHECK: 'lb per bushel' is", None),
+ ("   something you can weigh, where m3-per-lb is not. A bushel of kale is about 18 lb in the", None),
+ ("   trade; if this sheet says 9, the volume figure is wrong and the cooler is mis-sized too.", None),
+ ("   See backlog L6.", None),
  ("", None),
  ("WHAT v7 ADDED — labour, which is TWO things at once", F_H1),
  ("", None),
@@ -1442,7 +1567,7 @@ for text, font in readme:
     if font: c.font = font
     row_i += 1
 
-out = REPO / "toy_models" / "farm_toy_v10_labour.xlsx"
+out = REPO / "toy_models" / "farm_toy_v11_labour.xlsx"
 wb.save(out)
 print(f"wrote {out}")
 print(f"  successions offered : {len(SUCCS)}")

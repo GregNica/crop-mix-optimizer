@@ -243,3 +243,66 @@ but check first.
 > linear enough for Simplex LP. Make it demonstrate a trade-off I can change and re-solve.
 > State plainly what your prototype does not carry. Put the decisions you need from me at
 > the top of the write-up, each with a recommendation and what it depends on.
+
+
+---
+
+## Mutation harnesses: three ways they strand you (2026-09-02, all three hit in one session)
+
+The rule "file-copy backup for mutation testing, never `git restore`" is in this repo's
+guardrails. This session paid for three sharper versions of it.
+
+**1. A `finally` block does not survive SIGKILL.** A background mutation run was killed by a
+time limit mid-mutation and left the builder MUTATED on disk. The `finally` that restores it
+never ran. It happened twice — once on a kill, once on a timeout. **The file-copy backup is the
+only thing that saved the source both times**, which is the guardrail earning its place in a way
+it had not previously been tested.
+→ *One mutation per invocation, and assert the restore afterwards rather than trusting the
+`finally`.*
+
+**2. RESTORING THE SOURCE IS NOT ENOUGH — REBUILD THE ARTIFACT.** The workbook on disk had been
+generated from the mutant. The source was restored correctly, so the builder plainly contained
+the guard, and the verifier plainly reported it missing. That cost a full cycle of chasing a
+defect that did not exist: *the artifact and its source disagreed, and only the artifact was
+being read.*
+→ *Regenerate every downstream artifact in the same step that restores the source.*
+
+**3. TRIMMING THE HARNESS CHANGES WHAT "SURVIVED" MEANS.** Halving the runtime by dropping the
+pytest leg turned one result into "*** SURVIVED ***" when the mutation was in fact caught — by
+the leg that had been removed. A survivor is only a survivor against the suite you actually ran,
+and the report has to say which suite that was.
+→ *Name the legs in the verdict, and re-run a survivor against everything before believing it.*
+
+⚠️ **The one real finding underneath all that noise is worth more than the noise.** Removing the
+`IF(Hire more? = "Y", ...)` gate changed nothing the VERIFIER could see, because at the optimum
+extra heads are zero and every hireable role has its toggle on. The gate was guarded
+structurally (a test reads the formula) and not behaviourally at all. That is the
+"defaulting a feature off leaves it unguarded" trap in its fourth appearance here, and the fix
+is a fixture that forces the feature ON: heads on a role toggled Y, heads on a role toggled N,
+and the sheet required to count the first and ignore the second.
+
+
+---
+
+## A mutation "caught" by a stale artifact is not caught (2026-09-03)
+
+Three mutations against the new piece-rate capacity rows. Two died honestly. The third taught
+the sharper lesson, and it is the mirror image of the entry above.
+
+Giving the oracle a cap in POUNDS while the sheet capped HOURS made the verifier fail loudly —
+eight READ ME figures at once. That looks like a catch and is not one: the READ ME is written by
+the builder from the oracle, and the workbook had been built from the *unmutated* oracle. The
+failure said only "this artifact is older than this source". **Rebuild from the mutant and every
+one of 404 checks passes.**
+
+→ *Before recording a mutation as caught, regenerate every downstream artifact and run it again.
+The previous entry's rule — restore the source AND rebuild — has a twin: mutate the source AND
+rebuild, or the catch you record is staleness wearing the costume of a guard.*
+
+⚠️ **What that survivor exposes is worth more than the guard I added for it.** An oracle that
+solves a *tighter* problem than the sheet hands over a plan that is feasible, priced to the cent,
+and merely worse — and no check here can see it, because section E proves what a plan is WORTH
+and that it FITS, never that a better one was unavailable. Feasibility was closed at v9; this is
+the optimality half, still open, filed as **L11**. The structural half of the answer is cheap and
+worth doing anyway: **give the number one definition and have the builder write it into the
+sheet**, so the oracle and the workbook cannot carry different copies of the same bound.

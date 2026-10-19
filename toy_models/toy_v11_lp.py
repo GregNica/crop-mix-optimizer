@@ -1,8 +1,8 @@
 """
-toy_v10_lp.py — the v5 sheet's model, written as a MILP and solved with scipy.
+toy_v11_lp.py — the v5 sheet's model, written as a MILP and solved with scipy.
 
-Imported by BOTH `build_toy_v10.py` (so the READ ME can promise the optimum LibreOffice should
-find) and `verify_toy_v10.py` (as the oracle the workbook is checked against).
+Imported by BOTH `build_toy_v11.py` (so the READ ME can promise the optimum LibreOffice should
+find) and `verify_toy_v11.py` (as the oracle the workbook is checked against).
 
 WHY THIS EXISTS. v4 is the first version whose answer is not arithmetic — it is a CHOICE, made
 by a solver. So "is the sheet right?" splits in two:
@@ -108,6 +108,41 @@ def load():
 
 
 PAYLOAD, CROPS, CH_ORDER, SUCCS = load()
+
+# ⚠️ PIECE RATES ARE PER CROP, and the research says why: a piece-rate worker must still earn
+# the minimum wage for hours worked, so the FLOOR in $/lb is set by how fast the crop picks —
+# a 3.6x spread here. Entered the way a contract actually reads ($ per container) and converted
+# with the crop's own volume figure, which is the same number the storage rows use.
+BUSHEL_M3 = 1.2444 * 0.0283168        # USDA bushel = 1.2444 cu ft
+PIECE_CONTAINER = {"Spinach": ("bushel", 3.00), "Kale": ("bushel", 1.00),
+                   "Garlic": ("bushel", 2.00)}
+
+
+# ⚠️ THE ONE DEFINITION of the piece-rate crew's weekly capacity. The builder writes THIS
+# into the sheet's input cell, so the oracle and the workbook cannot carry different caps.
+# They did, briefly, and a mutation proved nothing noticed: an LP capped in POUNDS hands
+# the sheet a plan that is feasible against an HOURS cap and priced to the cent, so all 403
+# checks passed on a plan that was simply worse. Section E proves worth and feasibility,
+# never OPTIMALITY.
+PIECE_MAX_HOURS_PER_WEEK = 200.0
+
+
+def piece_rates_per_lb():
+    """$/container -> $/lb, using each crop's own m3-per-lb. No new number is invented."""
+    out = {}
+    for cn, (_unit, per_container) in PIECE_CONTAINER.items():
+        lb = BUSHEL_M3 / CROPS[cn]["crop_size_m3_per_lb"]
+        out[cn] = per_container / lb
+    return out
+
+# v11: the hire toggles live on the ROLE. Only the two SEASONAL crews are marked hireable —
+# you do not scale a farm manager to get a crop picked, and the equipment operators are a
+# skilled year-round role. The cap is the grower's "how many more could I actually find",
+# which the research says is the real uncertainty (>half of surveyed farms could not fill).
+for _e in PAYLOAD.get("employees", []):
+    if _e["type"] == "seasonal":
+        _e.setdefault("can_hire_more", True)
+        _e.setdefault("max_extra", 10)
 CH_NAMES = [c["name"] for c in CH_ORDER]
 _DT = build_demand_table(list(CROPS.values()), CH_ORDER, N_WEEKS)
 _AC = build_annual_caps(list(CROPS.values()), CH_ORDER)
@@ -182,9 +217,15 @@ def positions():
         heads = np.zeros(N_WEEKS + 1)
         for w in range(a, b + 1):
             f_h[w] = field; c_h[w] = contract; cost[w] = per_wk; heads[w] = e["count"]
+        # v11: "can I hire more of this?" and "how many more could I get?" live on the ROLE.
+        # Nothing else is entered — wage, hours, field% and window all come from the row, which
+        # is why a different window or wage is a different ROW rather than another knob.
         out.append(dict(name=e["position"], type=e["type"], wage=float(e["wage"]),
                         salaried=salaried, paid=e["wage"] > 0,
                         hourly=(not salaried) and e["wage"] > 0,
+                        can_hire_more=bool(e.get("can_hire_more", False)),
+                        max_extra=(float(e.get("max_extra", 0.0))
+                                   if e.get("can_hire_more", False) else 0.0),
                         field_h=f_h, contract_h=c_h, cost=cost, heads=heads,
                         start=a, end=b))
     return out
@@ -267,9 +308,11 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
           fixed_acres=None, min_acreage=True, annual_override=None,
           opening_cash=None, credit_line=None, cash_floor=True,
           flex=True, overtime_multiplier=1.5, overtime_allowance=1.25,
-          advisory=True, adv_start=43, adv_end=49, adv_hours_per_week=40.0,
-          adv_wage=20.0, adv_field_pct=100.0, max_adv_crew=20,
-          adv_productivity_pct=70.0, adv_cost_per_head=800.0):
+          hire_more=True, hire_productivity_pct=70.0, hire_cost_per_head=800.0,
+          piece=True, piece_committed=False, piece_start=1, piece_end=52,
+          piece_max_hours_per_week=None, piece_rate_per_lb=None,
+          piece_var_cost_per_lb=0.02, piece_fixed_cost=2_500.0,
+          wage_floor_per_hr=16.07):
     """Maximise revenue - growing cost, as a MILP. Returns a dict of the optimum.
 
     `min_acreage=False` drops the binaries and solves the LP relaxation — useful only to show
@@ -284,35 +327,78 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
     pairs = [(c, h) for c in CROP_NAMES for h in CH_NAMES]
     n_off = len(pairs) * N_WEEKS
     n_y = n_s if min_acreage else 0
-    n_ot = N_WEEKS if flex else 0
-    n_adv = 1 if advisory else 0          # L1: ONE headcount, not 52 spot purchases
-    N = n_s + n_off + n_y + n_ot + n_adv
+    POS = positions()
+    n_roles = len(POS)
+    # ⚠️ OVERTIME IS PER ROLE NOW, AND THAT IS WHAT MAKES THE MODEL LINEAR AGAIN.
+    # v10 priced overtime at a BLENDED rate. Once the solver can also hire extra heads, the
+    # blend depends on a decision variable, so `hours x blend(extra)` is variable x variable —
+    # no longer an LP. Per role, the rate is that role's own wage x load x multiplier, which is
+    # a CONSTANT because the wage is an input. cost = sum_r ot[r][w] x rate[r]: linear.
+    # It is also a better model: with one blended rate an overtime hour costs the same whoever
+    # works it, so the plan cannot prefer the cheap one or tell you who to ask to stay late.
+    n_ot = n_roles * N_WEEKS if flex else 0
+    n_extra = n_roles if hire_more else 0
+    n_piece = len(CROP_NAMES) * N_WEEKS if piece else 0
+    n_pbin = 1 if piece else 0
+    N = n_s + n_off + n_y + n_ot + n_extra + n_piece + n_pbin
     off_i = lambda p, w: n_s + p * N_WEEKS + (w - 1)
     y_i = lambda i: n_s + n_off + i
-    ot_i = lambda w: n_s + n_off + n_y + (w - 1)
-    adv_i = n_s + n_off + n_y + n_ot      # the advisory crew size (integer headcount)
+    _ot0 = n_s + n_off + n_y
+    ot_i = lambda r, w: _ot0 + r * N_WEEKS + (w - 1)
+    _ex0 = _ot0 + n_ot
+    extra_i = lambda r: _ex0 + r
+    _pc0 = _ex0 + n_extra
+    piece_i = lambda c, w: _pc0 + c * N_WEEKS + (w - 1)
+    pbin_i = _pc0 + n_piece          # 1 if the piece-rate crew is engaged at all
 
     # The nominated window. Everything about the advisory crew is derived from it, so the
     # window is stated ONCE and never re-derived — v8's labour bugs were all a quantity
     # recomputed in a second place.
-    adv_weeks = [w for w in range(int(adv_start), int(adv_end) + 1) if 1 <= w <= N_WEEKS]
-    # ⚠️ PRODUCTIVITY (v10). Until now a bought hour was worth exactly as much crop work as a
-    # trained crew hour, which made the hire unbeatable: $25.00/hr all-in against overtime at
-    # $37.84-48.75, so the solver took every head on offer. A green seasonal picker is not as
-    # fast as your harvest crew, and the two prices meet at about 65% — so this single factor
-    # decides the whole hire-vs-overtime answer and the model had no opinion on it.
-    #
-    # It multiplies the HOURS, not the wage: you pay for the hours you booked and get less crop
-    # work out of them. Pricing it as a wage discount is the same arithmetic and the wrong
-    # story — the payslip is not what changes.
-    adv_field_h = (adv_hours_per_week * adv_field_pct / 100.0
-                   * max(0.0, adv_productivity_pct) / 100.0)            # effective h/wk each
-    adv_cost_wk = adv_hours_per_week * adv_wage * (
-        1.0 + PAYLOAD.get("payroll_load_pct", 0.0))                     # $/wk per person
-    # ⚠️ PER-HEAD COST (v10). Recruitment, onboarding, transport — per PERSON, once, not per
-    # hour. It is what makes 18 casual hires cost more than 4 regardless of hours worked, and
-    # it is why H-2A (~$10,000/worker of non-wage cost) is not an 80-acre instrument.
-    adv_head_cost = max(0.0, float(adv_cost_per_head))
+    load = 1.0 + PAYLOAD.get("payroll_load_pct", 0.0)
+    # Per-role overtime rate: a CONSTANT, because the wage is an input.
+    ot_rate_role = [p_["wage"] * load * overtime_multiplier if p_["hourly"] else 0.0
+                    for p_ in POS]
+    # Per-role cost of ONE extra head, per week, over that role's own window. Extra heads
+    # inherit the role's wage, hours, field% AND window — nothing new is entered anywhere,
+    # which is the whole point: a different window or wage is a different ROW, not a knob.
+    ex_head_cost = []
+    ex_head_field = []
+    for p_ in POS:
+        on = [w for w in range(1, N_WEEKS + 1) if p_["field_h"][w] > 0]
+        heads = p_["heads"][on[0]] if on else 0.0
+        ex_head_cost.append((p_["cost"][on[0]] / heads) if on and heads else 0.0)
+        # x productivity: a new hand is not as fast as the crew already doing the job.
+        ex_head_field.append(((p_["field_h"][on[0]] / heads) if on and heads else 0.0)
+                             * max(0.0, hire_productivity_pct) / 100.0)
+    ex_on = [[1.0 if p_["field_h"][w] > 0 else 0.0 for w in range(N_WEEKS + 1)] for p_ in POS]
+
+    # ---- PIECE RATE -----------------------------------------------------------------
+    # Pounds a harvest hour moves, per crop — derived from the crop's own harvest labour and
+    # yield, so no new input. It is what converts pounds picked into HOURS RELIEVED.
+    lb_per_harvest_hr = {}
+    for cn in CROP_NAMES:
+        lh = CROPS[cn].get("labor_harv", 0.0) or 0.0
+        lb_per_harvest_hr[cn] = (CROPS[cn]["yield_per_acre"] / lh) if lh else 0.0
+    # ⚠️ THE MINIMUM-WAGE FLOOR, AND IT COLLAPSES TO A CONSTANT. A piece-rate worker must still
+    # earn at least the floor for the hours worked; if the rate falls short the employer makes
+    # up the difference (FLSA; the AEWR under H-2A). Cost per lb is therefore
+    #     max(rate, floor / lb-per-harvest-hour)
+    # and BOTH terms are linear in pounds, so the max resolves per crop at build time — no
+    # binary, no piecewise anything. A rate entered below its floor is simply inoperative.
+    # It is also why real rates differ by crop: the floor per lb differs by picking speed, and
+    # on this farm that is a 3.6x spread (spinach $0.161/lb vs kale $0.044/lb at $16.07).
+    piece_rate_per_lb = piece_rate_per_lb or piece_rates_per_lb()
+    if piece_max_hours_per_week is None:
+        piece_max_hours_per_week = PIECE_MAX_HOURS_PER_WEEK
+    piece_eff = {}
+    piece_floor = {}
+    for cn in CROP_NAMES:
+        lbph = lb_per_harvest_hr[cn]
+        floor = (wage_floor_per_hr / lbph) if lbph else 0.0
+        piece_floor[cn] = floor
+        piece_eff[cn] = max(float(piece_rate_per_lb.get(cn, 0.0)), floor) + piece_var_cost_per_lb
+    piece_weeks = [w for w in range(int(piece_start), int(piece_end) + 1)
+                   if 1 <= w <= N_WEEKS]
 
     # lb packed out per acre of succession i, in week w
     packed_per_acre = np.zeros((n_s, N_WEEKS + 1))
@@ -348,20 +434,30 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
         for wk, ph in zip(s_["weeks"], s_["phases"]):
             lab_week[i, ((wk - 1) % N_WEEKS) + 1] += c.get(
                 f"labor_{['plant', 'grow', 'harv'][ph]}", 0.0)
+    # Harvest-phase hours only — what a piece-rate crew can actually relieve. C2 pools all
+    # three phases, and relieving the pool would let pickers do the planting.
+    harv_week = np.zeros((n_s, N_WEEKS + 1))
+    for i, s_ in enumerate(SUCCS):
+        c = CROPS[CROP_NAMES[s_["crop"]]]
+        for wk, ph in zip(s_["weeks"], s_["phases"]):
+            if ph == 2:
+                harv_week[i, ((wk - 1) % N_WEEKS) + 1] += c.get("labor_harv", 0.0)
+
     lab_cap, wage_wk, hourly_field, hourly_heads = labour_arrays()
     ot_rate = overtime_rate(overtime_multiplier)
-    # L2: the cap is DERIVED, per week, from the hourly crew actually on that week.
-    ot_cap = np.maximum(0.0, (overtime_allowance - 1.0)) * hourly_field
+    # The app's own refusal: a bought hour with no price is a free hour. Now checked PER ROLE,
+    # where it belongs — a blend could hide one unpaid role behind three paid ones.
     if flex:
-        # The app's own refusal: a bought hour with no price is a free hour, and no multiplier
-        # rescues a zero base. Checked only where the cap actually allows an hour — a week with
-        # no hourly crew has ot_cap 0 and a $0 rate, and those agree.
-        live = [w for w in range(1, N_WEEKS + 1) if ot_cap[w] > 0]
-        if live and min(ot_rate[w] for w in live) <= 0:
-            raise RuntimeError("overtime is allowed in a week priced at $0/hr — refusing to "
-                               "hand out free labour (the app refuses this too)")
-    if advisory and adv_weeks and not adv_cost_wk > 0:
-        raise RuntimeError("an advisory crew with no wage is free labour — refusing")
+        for r_, p_ in enumerate(POS):
+            if p_["hourly"] and not ot_rate_role[r_] > 0:
+                raise RuntimeError(
+                    f"{p_['name']} can work overtime priced at $0/hr — refusing to hand out "
+                    f"free labour (the app refuses this too)")
+    if hire_more:
+        for r_, c_ in enumerate(ex_head_cost):
+            if any(ex_on[r_][1:]) and not c_ > 0:
+                raise RuntimeError(
+                    f"an extra head on {POS[r_]['name']} costs $0 — free labour, refused")
 
     # objective: -(revenue - cost) because milp minimises
     c_obj = np.zeros(N)
@@ -457,28 +553,99 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
             if lab_week[i, w]:
                 e[i] = lab_week[i, w]
         if flex:
-            e[ot_i(w)] = -1.0
-        if advisory and w in adv_weeks:
-            # The advised crew is on for the WHOLE window, so it gives hours in every week of
-            # it — used or not. That is what makes its cost committed rather than marginal.
-            e[adv_i] = -adv_field_h
+            for r_ in range(n_roles):
+                if POS[r_]["hourly"]:
+                    e[ot_i(r_, w)] = -1.0
+        if hire_more:
+            # Extra heads are committed for their ROLE'S window — they give hours in every
+            # week of it, used or not, exactly like the crew already on that row.
+            for r_ in range(n_roles):
+                if ex_on[r_][w]:
+                    e[extra_i(r_)] = -ex_head_field[r_]
+        if piece:
+            # ⚠️ POUNDS PICKED BY THE PIECE-RATE CREW RELIEVE HARVEST HOURS. Without this the
+            # farm pays committed wages for hours it no longer needs AND a rate per pound for
+            # the same picking — the hours are the thing that moves, not the wages, which are
+            # owed either way.
+            for c_, cn in enumerate(CROP_NAMES):
+                if lb_per_harvest_hr[cn] and w in piece_weeks:
+                    e[piece_i(c_, w)] = -1.0 / lb_per_harvest_hr[cn]
         add(e, -np.inf, lab_cap[w])
 
-    # L2 — overtime is bounded per week by the hourly crew ACTUALLY on that week, not by a
-    # flat scalar. This is a constraint row rather than a variable bound because ot_cap varies
-    # weekly; expressing it as a bound is exactly the mistake that produced 185% weeks.
+    # Overtime is bounded PER ROLE by that role's own crew, extra heads included. Linear:
+    #     ot[r][w] <= (allowance-1) x (count + extra) x hours x field%
+    # rearranges to  ot[r][w] - k.extra[r] <= k.count[r].
     if flex:
-        for w in range(1, N_WEEKS + 1):
-            e = np.zeros(N)
-            e[ot_i(w)] = 1.0
-            add(e, -np.inf, ot_cap[w])
+        k = max(0.0, overtime_allowance - 1.0)
+        for r_, p_ in enumerate(POS):
+            if not p_["hourly"]:
+                continue
+            for w in range(1, N_WEEKS + 1):
+                e = np.zeros(N)
+                e[ot_i(r_, w)] = 1.0
+                if hire_more and ex_on[r_][w]:
+                    e[extra_i(r_)] = -k * ex_head_field[r_]
+                add(e, -np.inf, k * p_["field_h"][w])
 
     if flex:
+        for r_ in range(n_roles):
+            if POS[r_]["hourly"]:
+                for w in range(1, N_WEEKS + 1):
+                    c_obj[ot_i(r_, w)] += ot_rate_role[r_]
+    if hire_more:
+        for r_ in range(n_roles):
+            c_obj[extra_i(r_)] += (ex_head_cost[r_] * sum(ex_on[r_][1:])
+                                   + max(0.0, hire_cost_per_head))
+    if piece:
+        # Piece-rate cost is a COGS line: rate (floored at minimum wage) plus the variable
+        # cost, on every pound picked. The fixed cost is charged once — always if the crew is
+        # pre-committed, otherwise only if the solver engages them at all.
+        for c_, cn in enumerate(CROP_NAMES):
+            for w in piece_weeks:
+                c_obj[piece_i(c_, w)] += piece_eff[cn]
+        c_obj[pbin_i] += max(0.0, piece_fixed_cost)
+
+    if piece:
+        crop_succs = {cn: [i for i, s_ in enumerate(SUCCS)
+                           if CROP_NAMES[s_["crop"]] == cn] for cn in CROP_NAMES}
         for w in range(1, N_WEEKS + 1):
-            c_obj[ot_i(w)] += ot_rate[w]
-    if advisory:
-        # COMMITTED: the whole window is charged the moment the crew exists.
-        c_obj[adv_i] += adv_cost_wk * len(adv_weeks) + adv_head_cost
+            for c_, cn in enumerate(CROP_NAMES):
+                if w not in piece_weeks:
+                    e = np.zeros(N); e[piece_i(c_, w)] = 1.0
+                    add(e, -np.inf, 0.0)                 # outside their window: nothing
+                    continue
+                # (a) they cannot pick what was not harvested that week
+                e = np.zeros(N)
+                e[piece_i(c_, w)] = 1.0
+                for i in crop_succs[cn]:
+                    e[i] -= packed_per_acre[i, w]
+                add(e, -np.inf, 0.0)
+            # (b) the crew's weekly capacity, and the on/off link to the fixed cost.
+            # ⚠️ MEASURED IN HOURS, NOT POUNDS. A pound cap describes a crew whose size moves
+            # with the crop (20,000 lb = 200 h of spinach, 55 h of kale) and it distorts the
+            # mix: it rewards hours-per-pound, favouring spinach over the cheaper garlic
+            # relief. Hours is what a crew actually has.
+            e = np.zeros(N)
+            for c_, cn in enumerate(CROP_NAMES):
+                if lb_per_harvest_hr[cn]:
+                    e[piece_i(c_, w)] = 1.0 / lb_per_harvest_hr[cn]
+            e[pbin_i] = -float(piece_max_hours_per_week)
+            add(e, -np.inf, 0.0)
+            # (c) ⚠️ relief cannot exceed the HARVEST hours actually needed that week. Without
+            # it the crew relieves planting and growing hours it never touches — free labour
+            # wearing a piece rate.
+            e = np.zeros(N)
+            for c_, cn in enumerate(CROP_NAMES):
+                if lb_per_harvest_hr[cn]:
+                    e[piece_i(c_, w)] = 1.0 / lb_per_harvest_hr[cn]
+            for i in range(n_s):
+                if harv_week[i, w]:
+                    e[i] -= harv_week[i, w]
+            add(e, -np.inf, 0.0)
+        if piece_committed:
+            # Pre-committed: you signed, so the fixed cost is sunk whether or not it is used.
+            e = np.zeros(N); e[pbin_i] = 1.0
+            add(e, 1.0, 1.0)
 
     # C13 — the weekly cash floor. Cumulative cash from week 1 to W must never fall below
     # -(opening cash + credit line). Revenue lands in the week of sale, variable costs in the
@@ -499,14 +666,22 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
                 for w in range(1, W + 1):
                     e[off_i(p, w)] += net
             if flex:
-                for w in range(1, W + 1):
-                    e[ot_i(w)] -= ot_rate[w]
-            if advisory:
-                # Wages leave the bank every week of the window, like the standing crew's.
-                e[adv_i] -= adv_cost_wk * len([w for w in adv_weeks if w <= W])
-                # the per-head cost lands up front — that is when you recruit and move people
-                if adv_weeks and W >= adv_weeks[0]:
-                    e[adv_i] -= adv_head_cost
+                for r_ in range(n_roles):
+                    if POS[r_]["hourly"]:
+                        for w in range(1, W + 1):
+                            e[ot_i(r_, w)] -= ot_rate_role[r_]
+            if hire_more:
+                for r_ in range(n_roles):
+                    e[extra_i(r_)] -= ex_head_cost[r_] * sum(ex_on[r_][1:W + 1])
+                    if any(ex_on[r_][1:W + 1]):
+                        e[extra_i(r_)] -= max(0.0, hire_cost_per_head)
+            if piece:
+                for c_, cn in enumerate(CROP_NAMES):
+                    for w in range(1, W + 1):
+                        if w in piece_weeks:
+                            e[piece_i(c_, w)] -= piece_eff[cn]
+                if piece_weeks and W >= piece_weeks[0]:
+                    e[pbin_i] -= max(0.0, piece_fixed_cost)
             add(e, -(op_cash + cred) + W * fixed_wk + wage_wk[1:W + 1].sum(), np.inf)
 
     # land standing in the ground
@@ -535,12 +710,16 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
     # ⚠️ NO per-week ub for overtime any more — its cap is the constraint block above, because
     # a bound can only hold a constant and the honest cap is a weekly quantity.
     integrality = np.zeros(N, dtype=int)
-    if advisory:
-        # An INTEGER headcount, because the output is a roster row a grower types in. "Hire 7.3
-        # people" is not an instruction. The cap is how many hands the grower says they could
-        # actually find — the availability question the research says is the real uncertainty.
-        ub_v[adv_i] = float(max_adv_crew)
-        integrality[adv_i] = 1
+    if hire_more:
+        # INTEGER heads, because the output is a roster edit a grower types in — "change
+        # Harvest Crew from 8 to 11". "Hire 7.3 people" is not an instruction. The cap is that
+        # role's own "max more"; a role with the toggle off is pinned at zero.
+        for r_, p_ in enumerate(POS):
+            ub_v[extra_i(r_)] = float(p_.get("max_extra", 0.0))
+            integrality[extra_i(r_)] = 1
+    if piece:
+        ub_v[pbin_i] = 1.0
+        integrality[pbin_i] = 1
     if min_acreage:
         ub_v[n_s + n_off:n_s + n_off + n_y] = 1.0
         integrality[n_s + n_off:n_s + n_off + n_y] = 1
@@ -581,10 +760,20 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
                     * CROPS[cn].get("channels", {}).get(hn, {}).get("packaging_cost_per_lb", 0.0)
                     for p_, (cn, hn) in enumerate(pairs))
         grow_w = sum(x[i] * var_week[i, w] for i in range(n_s))
-        flex_w = (x[ot_i(w)] * ot_rate[w] if flex else 0.0)
-        flex_w += (x[adv_i] * adv_cost_wk if (advisory and w in adv_weeks) else 0.0)
-        if advisory and adv_weeks and w == adv_weeks[0]:
-            flex_w += x[adv_i] * adv_head_cost
+        flex_w = sum(x[ot_i(r_, w)] * ot_rate_role[r_]
+                     for r_ in range(n_roles) if POS[r_]["hourly"]) if flex else 0.0
+        if hire_more:
+            flex_w += sum(x[extra_i(r_)] * ex_head_cost[r_]
+                          for r_ in range(n_roles) if ex_on[r_][w])
+            for r_ in range(n_roles):
+                on = [ww for ww in range(1, N_WEEKS + 1) if ex_on[r_][ww]]
+                if on and w == on[0]:
+                    flex_w += x[extra_i(r_)] * max(0.0, hire_cost_per_head)
+        if piece:
+            flex_w += sum(x[piece_i(c_, w)] * piece_eff[cn]
+                          for c_, cn in enumerate(CROP_NAMES)) if w in piece_weeks else 0.0
+            if piece_weeks and w == piece_weeks[0]:
+                flex_w += x[pbin_i] * max(0.0, piece_fixed_cost)
         week_net[w] = (rev_w - pkg_w - grow_w - fixed_wk - wage_wk[w] - overhead * rev_w
                        - flex_w)
     bank = np.cumsum(week_net[1:]) + op_cash
@@ -592,16 +781,25 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
     interest = PAYLOAD.get("interest_rate_apr", 0.0) * float(borrowed.mean())
     peak_borrow = float(borrowed.max())
     ovh = overhead * revenue
-    ot_hours = [float(x[ot_i(w)]) for w in range(1, N_WEEKS + 1)] if flex else [0.0] * N_WEEKS
-    ot_cost = sum(h * ot_rate[w + 1] for w, h in enumerate(ot_hours))
-    adv_crew = float(x[adv_i]) if advisory else 0.0
-    adv_cost = adv_crew * (adv_cost_wk * len(adv_weeks) + adv_head_cost)
-    # The hours the advised crew GIVES, and the hours the plan actually USES from them. They
-    # differ, and the gap is the point: a committed block is paid whole. v8 could not show this
-    # at all, because a spot hour that was not needed was simply never bought.
-    adv_hours_given = [adv_crew * adv_field_h if w in adv_weeks else 0.0
-                       for w in range(1, N_WEEKS + 1)] if advisory else [0.0] * N_WEEKS
-    cost = growing + packaging + fixed + ovh + wages + interest + ot_cost + adv_cost
+    ot_by_role = [[float(x[ot_i(r_, w)]) if (flex and POS[r_]["hourly"]) else 0.0
+                   for w in range(1, N_WEEKS + 1)] for r_ in range(n_roles)]
+    ot_hours = [sum(ot_by_role[r_][w] for r_ in range(n_roles)) for w in range(N_WEEKS)]
+    ot_cost = sum(sum(ot_by_role[r_]) * ot_rate_role[r_] for r_ in range(n_roles))
+    extra_heads = [float(x[extra_i(r_)]) if hire_more else 0.0 for r_ in range(n_roles)]
+    hire_cost = sum(extra_heads[r_] * (ex_head_cost[r_] * sum(ex_on[r_][1:])
+                                       + max(0.0, hire_cost_per_head))
+                    for r_ in range(n_roles))
+    piece_lb = {cn: [float(x[piece_i(c_, w)]) if piece else 0.0
+                     for w in range(1, N_WEEKS + 1)]
+                for c_, cn in enumerate(CROP_NAMES)}
+    piece_used = bool(piece and x[pbin_i] > 0.5)
+    piece_cost = (sum(sum(v) * piece_eff[cn] for cn, v in piece_lb.items())
+                  + (max(0.0, piece_fixed_cost) if piece_used else 0.0))
+    piece_hours_relieved = [sum(piece_lb[cn][w] / lb_per_harvest_hr[cn]
+                                for cn in CROP_NAMES if lb_per_harvest_hr[cn])
+                            for w in range(N_WEEKS)]
+    cost = (growing + packaging + fixed + ovh + wages + interest
+            + ot_cost + hire_cost + piece_cost)
 
     # ⚠️ THE OBJECTIVE MUST RECONCILE AGAINST THE COST BREAKDOWN, and this check exists because
     # a mutation walked straight through everything else. Charging the advisory crew for ONE
@@ -613,7 +811,8 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
     # `res.fun` is the minimised value, so -res.fun is what the objective actually maximised.
     # Wages and fixed costs are constants (committed, not decided) and interest is post-solve,
     # so none of them appear in it.
-    obj_from_parts = revenue - growing - packaging - ovh - ot_cost - adv_cost
+    obj_from_parts = (revenue - growing - packaging - ovh
+                      - ot_cost - hire_cost - piece_cost)
     if abs(-float(res.fun) - obj_from_parts) > max(1.0, abs(obj_from_parts) * 1e-9):
         raise RuntimeError(
             f"the objective and the cost breakdown disagree: solver maximised "
@@ -626,12 +825,16 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
                 growing=growing, packaging=packaging, fixed=fixed, overhead=ovh,
                 wages=wages, lab_cap=lab_cap, wage_wk=wage_wk, lab_week=lab_week,
                 interest=interest, peak_borrow=peak_borrow, bank=list(bank),
-                ot_cost=ot_cost, ot_hours=ot_hours, ot_rate=list(ot_rate),
-                ot_cap=list(ot_cap), hourly_field=list(hourly_field),
+                ot_cost=ot_cost, ot_hours=ot_hours, ot_by_role=ot_by_role,
+                ot_rate_role=ot_rate_role, hourly_field=list(hourly_field),
                 hourly_heads=list(hourly_heads),
-                adv_crew=adv_crew, adv_cost=adv_cost, adv_hours_given=adv_hours_given,
-                adv_weeks=adv_weeks, adv_field_h=adv_field_h, adv_cost_wk=adv_cost_wk,
-                adv_head_cost=adv_head_cost, adv_productivity_pct=adv_productivity_pct,
+                extra_heads=extra_heads, hire_cost=hire_cost,
+                ex_head_cost=ex_head_cost, ex_head_field=ex_head_field,
+                role_names=[p_["name"] for p_ in POS],
+                piece_lb=piece_lb, piece_cost=piece_cost, piece_used=piece_used,
+                piece_eff=piece_eff, piece_floor=piece_floor, piece_weeks=piece_weeks,
+                lb_per_harvest_hr=lb_per_harvest_hr,
+                piece_hours_relieved=piece_hours_relieved, harv_week=harv_week,
                 positions=[dict(name=q["name"], hourly=q["hourly"], wage=q["wage"],
                                 field_h=list(q["field_h"]), contract_h=list(q["contract_h"]),
                                 cost=list(q["cost"]), heads=list(q["heads"]))
@@ -647,7 +850,7 @@ if __name__ == "__main__":
     print(f"OPTIMUM  profit ${r['profit']:,.0f}")
     print(f"   revenue    {r['revenue']:>12,.0f}")
     for k in ("growing", "packaging", "fixed", "overhead", "wages", "interest",
-              "ot_cost", "adv_cost"):
+              "ot_cost", "hire_cost", "piece_cost"):
         print(f"   {k:<10} {-r[k]:>12,.0f}")
     print(f"   plants {r['n_planted']} of {r['n_offered']} successions the app offers")
     print("\nacres:")

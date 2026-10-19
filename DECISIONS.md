@@ -852,6 +852,142 @@ rather than conceded.
 Each row reads only the one above it. The dense formula disappears because its parts have names.
 **F2 is not a separate fix — it is what F3 produces.**
 
+### F1 SUPERSEDED (2026-09-01) — the grower's design, and my proposal was the weaker one
+
+⚠️ **F1 above is kept for the record but its mechanism is WRONG.** It wrote the advisory output
+as *"add 10 seasonal @ 40 h/wk, weeks 43-49"* — a brand-new roster row with a brand-new window.
+v10 implemented exactly that and it took **eight new inputs** (window start/end, hours, field %,
+wage, max people, productivity, $/head) to re-describe something `employees[]` already describes.
+
+**That is the same error v9 made with spot hire, one version later.** The v9 commit message says
+the spot-hire variable was "a second, worse representation of something `employees[]` already
+models correctly" — and then F1 built a second, worse representation of a roster ROW. The drift
+was in the written proposal, not the implementation: the grower approved the design on my framing.
+
+**THE GROWER'S DESIGN, which is what v11 builds:** three columns on the roster —
+`Hire more?` / `Max more` / `EXTRA HIRED` (solver). Extra heads inherit that row's wage, hours,
+field % and window. **Zero new inputs.** And the two cases I thought needed special machinery both
+fall out of it:
+
+- *a crew you do not have yet* → Count 0, toggle on, set the weeks
+- *a different window or wage* → **a new row with the same title**. A different window is a
+  different job offer, not a variation on this one — and saying so in a tooltip teaches the
+  model's shape instead of hiding it behind a knob.
+
+⭐ **The measurement that decides between the two, and neither of us predicted it:** scaling an
+existing role commits you to that role's WHOLE SEASON. Measured, one extra head, re-solving each
+time — Farm Manager **−$65,714**, Seasonal Field Crew **−$18,311**, Harvest Crew **−$16,147**,
+Equipment Operator **−$9,098**. Every role loses money, because a head on a 27-week crew is 27
+weeks of wages to buy hours needed in a handful of them. *That is why v10's short synthetic window
+looked attractive* — it was buying 7 weeks where the honest form buys 27–33. The zero is a real
+answer, not a null result.
+
+### F4 · L9 — per-role overtime, and the blended rate is DELETED
+
+**Grower:** *"we don't need a blended overtime rate anymore right? … you just multiply the total
+hours by the overtime rate per role."*
+
+**Correct, and it solves a problem I had accepted as a constraint.** In F1 I wrote that extra
+heads could raise the overtime CAP but not the RATE, because `hours x blend(extra)` is a variable
+times a variable once hiring is a decision. Per role that disappears: the rate is that role's own
+wage x load x multiplier, a **constant**, because the wage is an input. `cost = Σ ot[r][w] x
+rate[r]` is linear, and the cap `ot[r][w] ≤ (allowance−1) x (count+extra) x hours x field%`
+rearranges to something linear too. **The blend is not worked around; it ceases to exist.**
+
+It is also the better model. Measured on this roster: Equipment Operator **$48.75/hr**, Seasonal
+Field Crew **$37.50**, Harvest Crew **$35.62** — against a blend that reads $37.74–48.75 depending
+who is on. **With one rate an overtime hour costs the same whoever works it, so the plan cannot
+prefer the cheap one, and cannot tell the grower WHO to ask to stay late.**
+
+Retires **L5** outright — there is no blend left to weight.
+
+### F5 · L7 — piece rate, and the minimum wage is why rates differ by crop
+
+**Grower:** *"if I hired migrant harvesters here is their piece rate and availability… how much
+should I hire to optimize?"* — plus the ruling that rates are entered **per crop**, as
+**$ per container**, with fixed and variable costs held farm-wide.
+
+**Research (2026-09-01) confirms both halves.** Rates are per crop AND per unit, and the unit
+changes by crop: sweet potatoes $0.45 per 35-lb bucket, strawberries $2.00/box ground crew vs
+$1.90 machine crew (*the same crop, two rates, because the method differs*), apples $28.26/bin,
+blueberries $0.50/lb.
+
+⭐ **AND THERE IS A MECHANISM UNDER IT, not just custom.** A piece-rate worker must still earn the
+minimum wage for hours worked; if the rate falls short the employer makes up the difference
+(FLSA; the AEWR under H-2A, and postings state *"all piece work will be paid at the applicable
+AEWR"*). Converted to $/lb that floor depends entirely on picking speed:
+
+| crop | lb per harvest hour | floor $/lb at $16.07 |
+|---|---:|---:|
+| Spinach | 100 | **0.1607** |
+| Garlic | 133 | 0.1205 |
+| Kale | 364 | **0.0442** |
+
+**A 3.6x spread from picking difficulty alone — so rates differ by crop because the legal floor
+does.** Two consequences that make the model simpler, not harder: the employer's real cost is
+`max(rate, floor / lb-per-hour)`, and both terms are **linear in pounds**, so the max resolves to
+a constant per crop at build time (no binary, no piecewise). And **piece rate can never be cheap
+labour, only fast labour** — which kills any chance of the optimizer discovering phantom cheap
+hours, the failure mode this repo keeps finding.
+
+⚠️ **My "you would pay twice" framing was WRONG and the grower corrected it.** Committed wages are
+owed either way, so there is no double-count to prevent. What the piece-rate crew changes is the
+HOURS DEMANDED, not the wages owed — and when the solver decides, it simply will not buy relief it
+cannot use. Pre-committed is the mirror: sunk, into COGS, hours relieved whether that helps or not.
+
+⚠️ **Relief is HARVEST hours only**, capped by the harvest hours actually needed that week — or
+pickers relieve the planting, which is free labour wearing a piece rate.
+
+⚠️ **Entering the rate per container is also a CHECK, and it found something.** `crop_size_m3_per_lb`
+is unfalsifiable by eye; "lb per bushel" is not. Converted, the toy's own figures give Spinach
+16.0 lb/bu against a published 18–25, **Kale 9.3 against 18**, Garlic 29.5 against ~20 — and the
+inconsistent direction argues against the benign "it includes air gaps" reading. These figures
+also drive C4b room occupancy. Filed as **L6**, open.
+
+---
+
+### The grower's four notes on v11 (2026-09-03) — two real, two correct as shipped
+
+Read off the built sheet, not the code. **Two were live defects, and the two that were not are
+still findings**, because the sheet led a careful reader to the wrong conclusion twice.
+
+**1 · `D46` "Max lb/week" should not be one number for the whole farm — CORRECT, and the fix is
+not per-crop.** Pounds per hour differ **3.6x** by crop, so one pound figure describes a crew that
+resizes with whatever it picks: 20,000 lb/wk is 200 harvest hours of spinach, 150 of garlic, **55
+of kale**. Per-crop lb caps would fix the label and still could not say *"20,000 lb of spinach OR
+72,700 lb of kale, not both"*. The cap belongs in **hours**, which is what a crew has.
+⭐ **It was distorting the answer, not just the label.** A pound cap rewards hours-relieved-per-
+pound, which favours spinach; ranked by what actually matters — **$ per harvest hour relieved** —
+garlic is the cheapest at **$18.74**, spinach **$20.71**, kale **$46.34**. Re-solved in hours,
+garlic picked goes **19,647 → 59,376 lb (3x)** while profit moves +$1,015. *The advice changes;
+the money barely does.* Built; the conversion now has one definition that both the capacity row
+and the labour block read.
+
+**2 · Rows 182–202 could be replaced by `160/162/164 <= 159/161/163` — CORRECT, and the recipe
+already said so.** Each role carried a constraint triplet whose "used" row was an alias of its
+decision row and whose "limit" row was an alias of its cap row. The Solver recipe constrains the
+decision against the cap directly; **nothing read the triplet** — not the recipe, not the
+verifier, not a test, and the builder discarded the row number it returned. **21 rows → 3
+room-left rows**, mutation-guarded against the ordinal drift this sheet has hit four times.
+
+**3 · Row 213's `=` should be `>=` with `H` — NO, and mutation proves it.** The wage rows charge
+every week of the window; this one is a **one-off**, charged in the week the role starts. Applying
+the change and re-running: week 11 off by $2,400, wrong in 32 further weeks — three heads at $800
+billed for all 33 weeks of the crew's window instead of once. Caught only by the forced-extra-head
+fixture, since at the optimum extra heads are zero.
+
+**4 · Row 217 likewise — NO.** The piece-rate fixed cost is also a one-off. Applied, it charges
+**$2,500 x 52 = $130,000 instead of $2,500**. The oracle confirms independently: the fixed cost is
+a coefficient on the engage binary (`c_obj[pbin_i] += piece_fixed_cost`), charged once.
+
+⚠️ **3 and 4 are still findings.** A reader who knows this sheet inferred a bug from two formulas
+that sit directly beneath four others of nearly identical shape whose semantics differ. By this
+repo's own rule — *a formula that must be parsed to be believed will be misread* (the v7 payroll
+load, `4f87cf7`) — the sheet is at fault even though the arithmetic is not. Both rows now say
+one-off on the row.
+
+---
+
 ### Sequencing and the re-pin
 
 **ORDER: F3 → F2 → F1.** F3 publishes the arrays; F2 is then a one-line cap; F1 is the semantics
