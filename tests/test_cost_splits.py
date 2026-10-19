@@ -42,7 +42,7 @@ FIXED_COMPONENTS = {
 }
 # No `labor` (W12): every listed worker is paid for their stated hours whether the crops need them
 # or not, so wages are a committed weekly cost and live in fixed_cost_split["wages"].
-VARIABLE_COMPONENTS = {"water", "fertilizer", "fuel", "seed", "packaging"}
+VARIABLE_COMPONENTS = {"water", "fertilizer", "fuel", "seed", "packaging", "crop_protection"}   # R1
 
 
 class TestTheTotalsAreSummedFromTheirParts:

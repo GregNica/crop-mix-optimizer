@@ -147,7 +147,7 @@
     },
     overhead_pct: {
       chat: { label: "Overhead % of revenue", type: "number", unit: "%", min: 0, max: 60,
-        description: "Overhead as a percent of REVENUE (not of costs) — land taxes, admin, utilities (incl. pump energy), office/vehicle. EXCLUDES costs itemized elsewhere (land rent/mortgage, the machinery line, labor, seed, water, fertilizer, fuel, packaging, irrigation, storage, channel selling costs, other debt service, interest on operating borrowing, city water, farm insurance, and the interest, repairs and property tax on owned buildings, storage and irrigation); if the user's figure includes those, ask them to exclude them. If given in dollars, ask for revenue or the percent — don't guess." },
+        description: "Overhead as a percent of REVENUE (not of costs) — land taxes, admin, utilities (incl. pump energy), office/vehicle. EXCLUDES costs itemized elsewhere (land rent/mortgage, the machinery line, labor, seed, water, fertilizer, fuel, packaging, crop protection, irrigation, storage, channel selling costs, other debt service, interest on operating borrowing, city water, farm insurance, and the interest, repairs and property tax on owned buildings, storage and irrigation); if the user's figure includes those, ask them to exclude them. If given in dollars, ask for revenue or the percent — don't guess." },
     },
     interest_rate_pct: {
       chat: { label: "Interest APR %", type: "number", unit: "% APR", min: 0, max: 40,
@@ -252,6 +252,9 @@
     seed_transplant_cost_per_acre: {
       units: { measure: 'area_land', inverse: true },   // $/acre
       chat: { label: "Seed/transplant cost", type: "number", unit: "$/acre", min: 0, description: "Seed or transplant cost per acre." },
+    },
+    crop_protection_cost_per_acre: {
+      units: { measure: 'area_land', inverse: true },   // $/acre per planting (R1)
     },
     yield_per_acre: {
       units: { num: 'mass', den: 'area_land' },   // lb/acre

@@ -187,6 +187,10 @@ def validate_params(
 
     total_committed = 0.0
     for crop in crops:
+        # R1: charged straight into the objective — a negative rate PAYS the farm (reproduced:
+        # -$2,000/acre turned a -$99k farm into +$139k "optimal"), NaN crashes scipy.
+        _check_nonneg(crop.get("crop_protection_cost_per_acre", 0.0),
+                      f"Crop '{crop.get('name')}': crop_protection_cost_per_acre")
         warnings.extend(_validate_crop(crop, ch_names, year))
         # Acres already in the ground (S14). Checked here rather than in _validate_crop
         # because it is only meaningful against the farm's size.

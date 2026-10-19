@@ -79,7 +79,7 @@ DEMAND_AT_CAP_FRACTION = 0.95   # a week counts as "at cap" in demand_saturation
 # Labour is NOT here (W12): every listed worker is paid for their stated hours whether or not the
 # crops need them, so wages are a committed weekly cost, not a per-acre one. The marginal crop hour
 # is free and is rationed by C2's capacity rather than by price. See `committed_weekly_wages`.
-VC_CATEGORIES = ("water", "fertilizer", "fuel", "seed")
+VC_CATEGORIES = ("water", "fertilizer", "fuel", "seed", "crop_protection")
 
 # R8 — overhead is a defined RESIDUAL, not a bucket. `overhead_pct_of_revenue` is one number the
 # grower enters, and by its own definition it once "contained" insurance, taxes, repairs and
@@ -111,6 +111,7 @@ OVERHEAD_EXCLUDES = {
     "labor":      (("wages", "overtime", "hire"), ("labor",)),
     "inputs":     (("water", "fertilizer", "fuel", "seed"), ("seed", "water", "fert", "fuel")),
     "packaging":  (("packaging",), ("packaging",)),
+    "protection": (("crop_protection",), ("crop protection",)),     # R1
     "selling":    (("fixed_selling",), ("selling",)),
     "debt":       (("other_debt_service",), ("debt",)),
     "interest":   (("interest",), ("interest",)),
@@ -682,6 +683,16 @@ def solve_farm_v2(
         first_week = s["weeks"][0] if s["weeks"] else None
         if first_week and 1 <= first_week <= N_WEEKS:
             vc_weekly_split[i, first_week, _CAT["seed"]] += total_land * seed_cost
+
+        # Crop protection (R1, Batch 2.3): $/acre per planting, spread evenly over the GROW weeks —
+        # when sprays, biologicals and row covers go on. A crop with no grow phase spreads it over
+        # every active week instead, so the charge can never vanish for want of a phase.
+        protect = crop.get("crop_protection_cost_per_acre", 0.0)
+        if protect:
+            grow = [w for w in range(1, N_WEEKS + 1) if phase_table[i][w] == 1]
+            weeks = grow or [w for w in range(1, N_WEEKS + 1) if phase_table[i][w] is not None]
+            for w in weeks:
+                vc_weekly_split[i, w, _CAT["crop_protection"]] += total_land * protect / len(weeks)
 
         for w in range(1, N_WEEKS + 1):
             if phase_table[i][w] is None:

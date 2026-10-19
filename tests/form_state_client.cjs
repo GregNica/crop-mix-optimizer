@@ -266,6 +266,18 @@ const ok = (name, cond) => { if (!cond) fail(name); };
     reset();
   }
 
+  // 6d. R1 — loading a crop template must not inherit the previous crop's crop-protection cost.
+  //     `set` in loadCropTemplate SKIPS undefined, and no template has a value yet, so without an
+  //     explicit $0 the old figure stayed on the card (the season-window bug, again).
+  {
+    const el = D.querySelector('#crop-list .crop-detail [data-f="crop_protection_cost_per_acre"]');
+    W.eval('writeFieldCanonical')(el, 250);
+    W.eval('loadCropTemplate')(0, 'Garlic');
+    ok(`a loaded template resets crop protection to $0 (got ${el.dataset.canon || el.value})`,
+       Number(el.dataset.canon || el.value) === 0);
+    reset();
+  }
+
   // 7. The status line the grower reads.
   {
     const txt = W.eval('loadReportText');
