@@ -85,6 +85,13 @@ GUARDS = [
         "or a blank wage box is once again silently coerced to $0, erasing that role's payroll "
         "with nothing on screen",
     ),
+    (
+        "yield-client",
+        ["tests/yield_client.cjs"],
+        "paintYield regressed: either a hidden tab yields through a timer again (Chromium "
+        "throttles it to one wake-up a minute, so a backgrounded Monte Carlo crawls) or a visible "
+        "tab no longer waits for a frame (the spinner never paints before the solve blocks)",
+    ),
 ]
 
 

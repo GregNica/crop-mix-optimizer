@@ -2043,6 +2043,7 @@
         </div>
         <div id="mc-progress" style="display:none;margin-top:0.5rem">
           <div style="font-size:0.74rem;color:#6b7280" id="mc-progress-text">Running 0 / 100…</div>
+          <div style="font-size:0.7rem;color:#9ca3af">Runs about 3× slower while this tab is in the background — keep it visible.</div>
           <div style="height:6px;background:#e5e7eb;border-radius:3px;margin-top:3px;overflow:hidden">
             <div id="mc-progress-bar" style="height:100%;width:0%;background:#10b981;border-radius:3px;transition:width 0.3s"></div>
           </div>
@@ -7223,7 +7224,20 @@ function fmt(n) {
 //
 // The timer arm removes the dependency; whichever fires first wins. In a visible tab rAF wins and
 // the behaviour is unchanged, so this costs the paint nothing.
-const paintYield = () => Promise.race([
+//
+// ⚠️ But a timer is not free in a HIDDEN tab either (2026-10-19): Chromium clamps hidden-tab
+// timers to >= 1 s, and after ~5 min hidden its intensive throttling lets a chain of timers wake
+// only once per MINUTE. A backgrounded 100-draw Monte Carlo yields here once per draw, so the
+// August fix turned "stops dead" into "crawls". So when hidden, yield a MessageChannel task
+// instead — not timer-throttled, and there is nothing to paint anyway. Only when hidden: in a
+// visible tab it would resolve at once and beat rAF, and the frame before the solve's freeze
+// (spinner, "Solving…") would never paint.
+const taskYield = () => new Promise(r => {
+  const ch = new MessageChannel();
+  ch.port1.onmessage = () => { ch.port1.close(); r(); };
+  ch.port2.postMessage(0);
+});
+const paintYield = () => document.hidden ? taskYield() : Promise.race([
   new Promise(requestAnimationFrame),
   new Promise(r => setTimeout(r, 50)),
 ]);
@@ -13921,7 +13935,7 @@ async function runMonteCarlo() {
     if (completed % 5 === 0 || completed === nSims) {
       if (progBar) progBar.style.width = `${Math.round(completed / nSims * 100)}%`;
       if (progTxt) progTxt.textContent = `Running ${completed} / ${nSims}…`;
-      await new Promise(r => setTimeout(r, 0)); // yield to UI thread
+      await paintYield(); // let the bar paint; a bare timer is throttled in a hidden tab
     }
   }
 

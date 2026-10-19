@@ -196,6 +196,11 @@ delete it when the panel is rebuilt.
 ## Batch 1 — Structural enablers (E2 + W8, then E5, then T4)
 
 **1.1 · E2 — extract the Python adapter to `farm_v2/adapter.py`. ✅ DONE 2026-08-02.**
+**✅ BROWSER-VERIFIED 2026-10-19 by the grower** on `54e8451` (wrangler, Edge): Pyodide boots with no
+app errors in the console, Optimize solves, and the Profit Waterfall draws. Monte Carlo runs at
+~7-8 s/draw in the foreground (faster than August's 12+ s). A BACKGROUNDED run measured ~3x slower
+(~21-22 s/draw), NOT fixed by a timer-free hidden-tab yield nor by Edge's efficiency setting —
+cause unknown, measurement snippet in BACKLOG Q3.
 568 lines left `index.html`; `farm_v2/adapter.py` (493) + `farm_v2/charts.py` (107). **Proved
 equivalent BEFORE the page was touched, and again after `/simplify`:** same result-dict key set,
 zero value diffs, profit identical to the last digit ($428,546.6374901873), and the waterfall PNG
