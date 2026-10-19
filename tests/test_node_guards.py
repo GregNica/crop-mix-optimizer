@@ -114,6 +114,13 @@ GUARDS = [
         "a blank fertilizer/fuel/machinery box reaches the solver as $0 again (My Farm Data mode "
         "blanks all three), or Monte Carlo swaps a $0 price for the benchmark in every draw",
     ),
+    (
+        "land-cost-client",
+        ["tests/land_cost_client.cjs"],
+        "R7's land inputs mislead again: a land nudge ignores rented acres (and so asks a renter to "
+        "re-enter rent as a mortgage — a double charge), a tenure label lost its unit bracket (Metric "
+        "shows hectares under 'acres'), or the land What-If adds rent-free acres",
+    ),
 ]
 
 

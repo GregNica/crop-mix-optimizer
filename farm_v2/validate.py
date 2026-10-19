@@ -14,6 +14,8 @@ Checks performed:
   7. Channels — at least one; unique names
   8. Succession feasibility — at least one succession generated per crop
   9. Demand — at least one non-zero demand entry exists
+ 10. Land tenure, ownership carrying and insurance (R7) — non-negative, rented ≤ total land,
+     payment week 1–52, known asset classes, no carrying cost on a 'no constraint' capacity
 """
 
 from __future__ import annotations
@@ -48,6 +50,13 @@ def validate_params(
     max_plant_acres_per_week: float = 1e9,
     max_harvest_acres_per_week: float = 1e9,
     year: int = 2024,
+    rented_acres: float = 0.0,
+    cash_rent_per_acre_yr: float = 0.0,
+    ownership_carrying_rate: float = 0.0,
+    capital_cost_per_unit: dict | None = None,
+    insurance_premium_per_yr: float = 0.0,
+    insurance_payment_week: int | None = None,
+    owned_capacity: dict | None = None,   # {asset class: capacity} — the solver's owned-asset table
     **_kwargs,  # absorb unused kwargs for forward-compatibility
 ) -> list[str]:
     """
@@ -115,6 +124,32 @@ def validate_params(
             f"max_harvest_acres_per_week must be positive, got {max_harvest_acres_per_week}."
         )
 
+    # R7 — every one of these is charged straight into fixed cost (and the premium into the cash
+    # floor), so a bad value is refused, never coerced; a week outside 1-52 would index past the year.
+    for v, what in ((rented_acres, "rented_acres"), (cash_rent_per_acre_yr, "cash_rent_per_acre_yr"),
+                    (ownership_carrying_rate, "ownership_carrying_rate"),
+                    (insurance_premium_per_yr, "insurance_premium_per_yr")):
+        _check_nonneg(v, what)
+    if rented_acres > total_land:
+        raise ValueError(f"rented_acres ({rented_acres:g}) cannot exceed total_land ({total_land:g}).")
+    if insurance_payment_week is not None and not (
+            _is_number(insurance_payment_week) and float(insurance_payment_week).is_integer()
+            and 1 <= insurance_payment_week <= 52):
+        raise ValueError(f"insurance_payment_week must be a whole week 1-52 or omitted, got {insurance_payment_week!r}.")
+    # Keys are checked as well as values: an unknown class ('equip_storage', 'machinery') would be
+    # silently ignored by the solver and charge nothing — the silent-drop class.
+    if not isinstance(capital_cost_per_unit or {}, dict):
+        raise ValueError(f"capital_cost_per_unit must be a mapping of asset class to $ per unit, got {capital_cost_per_unit!r}.")
+    for cls, v in (capital_cost_per_unit or {}).items():
+        if cls not in (owned_capacity or {}):
+            raise ValueError(f"capital_cost_per_unit: unknown asset class {cls!r}; expected one of {sorted(owned_capacity or {})}.")
+        _check_nonneg(v, f"capital_cost_per_unit[{cls!r}]")
+        # A capacity at the 'no constraint' sentinel is not a building — carrying it would charge
+        # on a billion cubic metres (the mechanism behind the earlier −$25.9B "optimal" plan).
+        if v > 0 and ownership_carrying_rate > 0 and owned_capacity[cls] >= 1e8:
+            raise ValueError(f"{cls}: an ownership carrying cost needs a real capacity, not the "
+                             f"'no constraint' default ({owned_capacity[cls]:g}).")
+
     # 6. Channels
     if not channels:
         raise ValueError("At least one channel must be defined.")
@@ -125,11 +160,8 @@ def validate_params(
     # (W8). A None, NaN or negative fee must be refused, not coerced: NaN would turn the profit
     # NaN, and a negative fee is a stall that pays the farm.
     for ch in channels:
-        fee = ch.get("fixed_selling_cost_per_wk", 0.0)
-        if not isinstance(fee, (int, float)) or isinstance(fee, bool) or not math.isfinite(fee) or fee < 0:
-            raise ValueError(
-                f"Channel '{ch['name']}': fixed_selling_cost_per_wk must be a number ≥ 0, got {fee!r}."
-            )
+        _check_nonneg(ch.get("fixed_selling_cost_per_wk", 0.0),
+                      f"Channel '{ch['name']}': fixed_selling_cost_per_wk")
 
     # 7. Crops
     if not crops:
@@ -269,6 +301,18 @@ def validate_params(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _is_number(v) -> bool:
+    """A real, finite number — not a bool (which Python counts as an int), not None, not NaN."""
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def _check_nonneg(val, name: str) -> None:
+    """For values charged straight into money: NaN poisons the profit and a negative pays the farm,
+    so both are refused rather than coerced."""
+    if not (_is_number(val) and val >= 0):
+        raise ValueError(f"{name} must be a number ≥ 0, got {val!r}.")
+
 
 def _check_positive(val: float, name: str) -> None:
     if val is None or val <= 0:

@@ -32,20 +32,11 @@ const OWNED = ['crops', 'ambient_storage_cap', 'rate_ambient_storage',
 
 bootApp().then(({ window: w }) => {
   const payload = JSON.parse(fs.readFileSync(PAYLOAD, 'utf8'));
-  const fresh = {
-    crops: w.eval('getCropsFromForm()'),
-    ambient_storage_cap: w.eval("readCanonical('ambient_storage_cap')"),
-    // The app's own function, not a mirror — see the note where it was hoisted.
-    rate_ambient_storage: w.eval(
-      "rateFromCapital('ambient_storage_cost_per_m3', 150, 'depreciation_ambient_years', 30)"),
-    harvest_storage_cap: w.eval("readCanonical('harvest_storage_cap')"),
-    well_weekly_cap_L: w.eval("readCanonical('well_weekly_cap_L')"),
-    // The rainfall series the water rates were benchmarked against — the payload pinned Fresno
-    // while every water number assumed humid temperate.
-    climate_zone: w.eval("document.getElementById('climate_zone').value"),
-    rate_harvest_storage: w.eval(
-      "rateFromCapital('harvest_storage_cost_per_m3', 500, 'depreciation_harvest_years', 20)"),
-  };
+  // Read straight off the app's own payload builder (buildSolveParams, E5b) — not a mirror of
+  // pieces of it. This used to re-call rateFromCapital with hand-copied arguments, and broke the
+  // moment that function's signature changed (R7).
+  const built = w.eval('buildSolveParams()');
+  const fresh = Object.fromEntries(OWNED.map(k => [k, built[k]]));
 
   const before = JSON.stringify(OWNED.map(k => payload[k]));
   OWNED.forEach(k => { payload[k] = fresh[k]; });

@@ -76,6 +76,15 @@ def run_from_js(params_json):
         rate_machinery           = _num_no_invent('rate_machinery', 0.0)   # blank refused — see cost_fert_per_lb
         rate_property_mortgage_rent = _num('rate_property_mortgage_rent', 0.0)
         other_debt_service_per_week = _num('other_debt_service_per_week', 0.0)
+        # R7 — land tenure, ownership carrying, insurance. ABSENT = $0 (a caller that predates them
+        # gets the farm it described); a PRESENT null is refused, never read as $0 — the form
+        # always sends a number, so a null means a box was blanked (or NaN crossed the boundary).
+        rented_acres             = _num_no_invent('rented_acres', 0.0)
+        cash_rent_per_acre_yr    = _num_no_invent('cash_rent_per_acre_yr', 0.0)
+        ownership_carrying_rate  = _num_no_invent('ownership_carrying_rate', 0.0)
+        insurance_premium_per_yr = _num_no_invent('insurance_premium_per_yr', 0.0)
+        insurance_payment_week   = p.get('insurance_payment_week')      # None = spread evenly
+        capital_cost_per_unit    = p.get('capital_cost_per_unit')       # validated by validate.py
 
         # --- Water ---
         climate_zone             = str(p.get('climate_zone', 'california_central_valley'))
@@ -265,6 +274,12 @@ def run_from_js(params_json):
             rate_machinery=rate_machinery,
             rate_property_mortgage_rent=rate_property_mortgage_rent,
             other_debt_service_per_week=other_debt_service_per_week,
+            rented_acres=rented_acres,
+            cash_rent_per_acre_yr=cash_rent_per_acre_yr,
+            ownership_carrying_rate=ownership_carrying_rate,
+            capital_cost_per_unit=capital_cost_per_unit,
+            insurance_premium_per_yr=insurance_premium_per_yr,
+            insurance_payment_week=insurance_payment_week,
             equip_storage=equip_storage,
             fuel_storage=fuel_storage,
             water_storage_capacity=water_storage_capacity,

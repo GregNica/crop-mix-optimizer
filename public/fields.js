@@ -68,12 +68,23 @@
     rate_property_mortgage_rent: {
       benchmark: { value: 0, label: 'Property Mortgage/Rent ($/wk)', source: 'USDA ERS land value survey — user override recommended', vintage: '2023', confidence: 'low' },
       chat: { label: "Property mortgage/rent", type: "number", unit: "$/week", min: 0,
-        description: "Cost of the land itself — mortgage payment or lease/rent — PER WEEK. Convert monthly ÷ 4.33, annual ÷ 52. A payment, not an interest rate. 0 if owned free and clear (or impute a rental value). Commonly overlooked." },
+        description: "Cost of the land itself — mortgage payment or another fixed land/facility payment — PER WEEK. Convert monthly ÷ 4.33, annual ÷ 52. A payment, not an interest rate. 0 if owned free and clear. NOT per-acre cash rent on rented ground: that is a separate field (rented acres × rent per acre), so never put it here too." },
     },
     other_debt_service_per_week: {
       chat: { label: "Other debt service", type: "number", unit: "$/week", min: 0,
         description: "Whole weekly PAYMENT on other carried/long-term debt (e.g. equipment loans) — not an interest rate. Convert monthly ÷ 4.33, annual ÷ 52." },
     },
+    // R7 (Batch 2.2) — land tenure, ownership carrying, insurance. No `chat` blocks: the
+    // assistant's allowlist is unchanged until these have defaults and the grower has seen them.
+    rented_acres: {
+      units: { measure: 'area_land' },
+    },
+    cash_rent_per_acre_yr: {
+      units: { measure: 'area_land', inverse: true },   // $/acre/yr
+    },
+    ownership_carrying_pct: {},
+    insurance_premium_per_yr: {},
+    insurance_payment_week: {},
     'pd-harvest-storage': {
       ui: true,
     },
@@ -136,7 +147,7 @@
     },
     overhead_pct: {
       chat: { label: "Overhead % of revenue", type: "number", unit: "%", min: 0, max: 60,
-        description: "Overhead as a percent of REVENUE (not of costs) — insurance, property tax, admin, utilities (incl. pump energy), repairs & maintenance, office/vehicle. EXCLUDES costs itemized elsewhere (land rent/mortgage, the machinery line, labor, seed, water, fertilizer, fuel, packaging, irrigation, storage, channel selling costs, other debt service, interest on operating borrowing, city water); if the user's figure includes those, ask them to exclude them. If given in dollars, ask for revenue or the percent — don't guess." },
+        description: "Overhead as a percent of REVENUE (not of costs) — land taxes, admin, utilities (incl. pump energy), office/vehicle. EXCLUDES costs itemized elsewhere (land rent/mortgage, the machinery line, labor, seed, water, fertilizer, fuel, packaging, irrigation, storage, channel selling costs, other debt service, interest on operating borrowing, city water, farm insurance, and the interest, repairs and property tax on owned buildings, storage and irrigation); if the user's figure includes those, ask them to exclude them. If given in dollars, ask for revenue or the percent — don't guess." },
     },
     interest_rate_pct: {
       chat: { label: "Interest APR %", type: "number", unit: "% APR", min: 0, max: 40,
@@ -347,6 +358,16 @@
     opening_cash:                { from: ['opening_cash', 'pd-cash'] },   // sent only while pd-cash is on
     credit_line:                 { from: ['credit_line', 'pd-cash'] },
     min_viable_margin_pct:       { from: ['min_viable_margin_pct'] },
+    rented_acres:                { from: ['rented_acres'] },
+    cash_rent_per_acre_yr:       { from: ['cash_rent_per_acre_yr'] },
+    ownership_carrying_rate:     { from: ['ownership_carrying_pct'] },   // a FRACTION (pct / 100)
+    insurance_premium_per_yr:    { from: ['insurance_premium_per_yr'] },
+    insurance_payment_week:      { from: ['insurance_payment_week'] },
+    // The installed cost per unit of each owned asset class — the base ownership carrying is
+    // charged on (the solver multiplies by the capacity it already has).
+    capital_cost_per_unit:       { from: ['harvest_storage_cost_per_m3', 'ambient_storage_cost_per_m3',
+                                          'water_tank_cost_per_L', 'irrigation_cost_per_acre',
+                                          'equip_storage_cost_per_m3', 'fuel_storage_cost_per_L'] },
     // The What-If "Plan optimal labor" tool (buildLaborFlexParams) — never the main solve.
     labor_flex_enabled:          { sentBy: 'what-if', from: [] },
     hire_enabled:                { sentBy: 'what-if', from: ['labor_flex_hire'] },

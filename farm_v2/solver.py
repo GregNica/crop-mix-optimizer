@@ -94,15 +94,16 @@ VC_CATEGORIES = ("water", "fertilizer", "fuel", "seed")
 # tooltip and the assistant's description must put each entry's words on its side of "EXCLUDES"
 # and NOT on the other (so a half-finished move is caught).
 OVERHEAD_COVERS = {
-    "insurance":  ("insurance", ("insurance",)),
-    "taxes":      ("taxes", ("tax",)),
+    "taxes":      ("land taxes", ("land tax",)),       # R7: building/asset property tax is in carrying
     "admin":      ("admin", ("admin",)),
     "utilities":  ("utilities", ("utilit",)),
-    "repairs":    ("R&M", ("repair",)),
     "vehicles":   ("vehicles", ("vehicle",)),
 }
 OVERHEAD_EXCLUDES = {
-    "rent":       (("property_mortgage_rent",), ("rent", "mortgage")),
+    "rent":       (("property_mortgage_rent", "land_rent"), ("rent", "mortgage")),
+    # R7 moved these two out of overhead: they are now charged explicitly.
+    "insurance":  (("insurance",), ("insurance",)),
+    "ownership":  (("ownership_carrying",), ("repair", "owned")),
     "machinery":  (("machinery",), ("machinery",)),
     "storage":    (("harvest_storage", "ambient_storage", "water_storage", "equipment_storage",
                     "fuel_storage"), ("storage",)),
@@ -116,6 +117,11 @@ OVERHEAD_EXCLUDES = {
     "city_water": (("city_water", "city_water_fixed_fee"), ("city water",)),
 }
 assert not set(OVERHEAD_COVERS) & set(OVERHEAD_EXCLUDES), "an overhead line cannot be both covered and excluded"
+
+# R7 — owned asset classes that carry an ownership cost beyond depreciation. Machinery is NOT one:
+# its line is a blended payment that already includes maintenance.
+OWNED_ASSET_CLASSES = ("harvest_storage", "ambient_storage", "water_storage", "irrigation",
+                       "equipment_storage", "fuel_storage")
 
 # Both consumers build their dict as `dict(zip(VC_CATEGORIES, ...), extra=...)`, and a keyword
 # argument SILENTLY WINS over a zipped key of the same name. So a sixth category called "packaging"
@@ -333,6 +339,13 @@ def solve_farm_v2(
     # --- Additional fixed costs ---
     rate_property_mortgage_rent: float = 0.0,  # $/week — land lease or mortgage payment
     other_debt_service_per_week: float = 0.0,  # $/week — P&I on other long-term loans (buildings, land improvements, carried debt) not already in the machinery/property lines
+    # --- R7 (Batch 2.2): land tenure, ownership carrying, insurance. All $0 by default. ---
+    rented_acres: float = 0.0,             # acres rented at cash_rent_per_acre_yr (0 ≤ x ≤ total_land)
+    cash_rent_per_acre_yr: float = 0.0,    # $/acre/yr
+    ownership_carrying_rate: float = 0.0,  # FRACTION of installed cost per year — interest + repairs + property tax on owned storage, tanks and irrigation (the I-R-T of D-I-R-T-I; insurance is its own line)
+    capital_cost_per_unit: dict | None = None,  # {asset class: installed $ per unit of its capacity} — classes in OWNED_ASSET_CLASSES
+    insurance_premium_per_yr: float = 0.0,     # $/yr — all premiums: crop, liability, property (incl. buildings)
+    insurance_payment_week: int | None = None,  # 1–52: the whole premium is paid that week (cash curve, C13); None = spread evenly
     # --- Storage shrink ---
     # Weight lost per week in store: respiration, moisture loss, trimming, sorting out rots.
     # SPEC_v3 §3.4. This is what makes holding COST something — without it a long shelf life is
@@ -411,11 +424,10 @@ def solve_farm_v2(
                               ⚠️ There is NO labour entry (W12): every listed worker is paid for
                               their stated hours whether the crops need them or not, so wages are
                               a committed weekly cost and appear in `fixed_cost_split["wages"]`.
-        "fixed_cost_split"  : dict — fixed cost by component (harvest_storage,
-                              ambient_storage, water_storage, irrigation, equipment_storage,
-                              fuel_storage, machinery, property_mortgage_rent,
-                              other_debt_service, wages, and city_water_fixed_fee when a
-                              metered supply charges one). Sums to "fixed_cost" exactly.
+        "fixed_cost_split"  : dict — fixed cost by component; the components are whatever the
+                              construction site in Step 4 builds (deliberately not re-listed
+                              here — a list beside the code is how it lagged before).
+                              Sums to "fixed_cost" exactly.
                               Consumers should ITERATE this rather than name its keys: the
                               P&L exporter named eight of eleven and silently dropped the rest.
         "fixed_selling_split": dict — annual channel fixed selling by channel name (only
@@ -435,6 +447,7 @@ def solve_farm_v2(
     # status dict — same category of mistake, two different things for a caller to handle.
     crops = crops or []
     channels = channels or []
+    capital_cost_per_unit = capital_cost_per_unit or {}
     if year_round_employees is None:
         year_round_employees = []
     if seasonal_employees is None:
@@ -469,6 +482,19 @@ def solve_farm_v2(
             "successions": list(successions),
         }
 
+    # The six OWNED asset classes, ONE table: (the capacity this solve uses, the weekly
+    # depreciation per unit of it). Both the depreciation lines below and R7's ownership-carrying
+    # base read it — the capacities used to be paired with their class names twice.
+    owned_assets = {
+        "harvest_storage":   (harvest_storage_cap, rate_harvest_storage),
+        "ambient_storage":   (ambient_storage_cap, rate_ambient_storage),
+        "water_storage":     (water_storage_capacity, rate_water_storage),
+        "irrigation":        (total_land, rate_irrigation),
+        "equipment_storage": (equip_storage, rate_equip_storage),
+        "fuel_storage":      (fuel_storage, rate_fuel_storage),
+    }
+    assert tuple(owned_assets) == OWNED_ASSET_CLASSES
+
     try:
         validation_warnings = validate_params(
             total_land=total_land,
@@ -488,6 +514,13 @@ def solve_farm_v2(
             well_weekly_cap_L=well_weekly_cap_L,
             year=year,
             hired_wage_per_hr=hired_wage_per_hr,
+            rented_acres=rented_acres,
+            cash_rent_per_acre_yr=cash_rent_per_acre_yr,
+            ownership_carrying_rate=ownership_carrying_rate,
+            capital_cost_per_unit=capital_cost_per_unit,
+            insurance_premium_per_yr=insurance_premium_per_yr,
+            insurance_payment_week=insurance_payment_week,
+            owned_capacity={cls: cap for cls, (cap, _) in owned_assets.items()},
         ) or []
     except ValueError as ve:
         return _invalid([str(ve)])
@@ -837,21 +870,29 @@ def solve_farm_v2(
     # alone, and unbounded on a farm that enters `other_debt_service_per_week`. Deriving the
     # total from the parts makes that particular lie unrepresentable: a component added here
     # lands in both numbers or in neither.
-    irrigation_fixed = total_land * rate_irrigation * N_WEEKS
-    fixed_cost_split = {
-        "harvest_storage":        float(harvest_storage_cap * rate_harvest_storage * N_WEEKS),
-        "ambient_storage":        float(ambient_storage_cap * rate_ambient_storage * N_WEEKS),
-        "water_storage":          float(water_storage_capacity * rate_water_storage * N_WEEKS),
-        "irrigation":             float(irrigation_fixed),
-        "equipment_storage":      float(equip_storage * rate_equip_storage * N_WEEKS),
-        "fuel_storage":           float(fuel_storage * rate_fuel_storage * N_WEEKS),
+    fixed_cost_split = {cls: float(cap * rate * N_WEEKS) for cls, (cap, rate) in owned_assets.items()}
+    fixed_cost_split.update({
         "machinery":              float(rate_machinery * N_WEEKS),
         "property_mortgage_rent": float(rate_property_mortgage_rent * N_WEEKS),
         "other_debt_service":     float(other_debt_service_per_week * N_WEEKS),
         "wages":                  float(committed_weekly_wages.sum()),
-    }
+    })
     if city_water_enabled and city_water_fixed_fee_per_week > 0:
         fixed_cost_split["city_water_fixed_fee"] = float(city_water_fixed_fee_per_week * N_WEEKS)
+
+    # R7 — the rest of what owning and occupying the farm costs (Batch 2.2). Before this, land read
+    # $0 and the six owned asset classes carried DEPRECIATION ONLY — the D of the standard D-I-R-T-I
+    # ownership cost with none of the interest, repairs, taxes or insurance — so ownership was
+    # systematically under-costed and any rent-vs-own comparison rigged toward owning.
+    #   * land rent: rented acres x cash rent. Owned land's mortgage stays in property_mortgage_rent.
+    #   * ownership carrying: ONE farm-level rate on each class's installed cost (per unit x the
+    #     capacity above) — never a per-asset questionnaire. Machinery is not a class: its line is
+    #     a blended payment that already includes maintenance.
+    #   * insurance: one premium; WHEN it is paid is the shaped weekly profile below.
+    owned_capital = sum(capital_cost_per_unit.get(cls, 0.0) * cap for cls, (cap, _) in owned_assets.items())
+    fixed_cost_split["land_rent"] = float(rented_acres * cash_rent_per_acre_yr)
+    fixed_cost_split["ownership_carrying"] = float(ownership_carrying_rate * owned_capital)
+    fixed_cost_split["insurance"] = float(insurance_premium_per_yr)
     fixed_cost = float(sum(fixed_cost_split.values()))
 
     # Fixed cost splits into a genuinely FLAT part and PAYROLL, which is not flat (W12).
@@ -864,7 +905,17 @@ def solve_farm_v2(
     # $806,313 against the $690,698 a flat spread charges, so the floor was letting a farm plan
     # $115,615 of payroll it could not fund. The weekly profile already exists; collapsing it to a
     # scalar and re-spreading it was throwing away the one thing that makes it honest.
-    fixed_weekly = (fixed_cost - float(committed_weekly_wages.sum())) / N_WEEKS
+    #
+    # ONE shaped profile carries every fixed cost that is not flat — payroll, and (R7) an insurance
+    # premium paid in a single week — and it leaves the flat spread. C13 and the reported cash
+    # curve each read it in exactly one place, so the next shaped cost is one addition here, not
+    # three call sites to remember (the W12 failure mode).
+    insurance_weekly = np.zeros(N_WEEKS)
+    if insurance_payment_week is not None:
+        insurance_weekly[int(insurance_payment_week) - 1] = float(insurance_premium_per_yr)
+    shaped_weekly = np.asarray(committed_weekly_wages, dtype=float) + insurance_weekly
+    shaped_cum = np.cumsum(shaped_weekly)
+    fixed_weekly = (fixed_cost - float(shaped_weekly.sum())) / N_WEEKS
 
     # Channel fixed selling (stall fees, retainers) — a cost the plan pays whatever it sells, so
     # it shapes nothing in the objective but is a real weekly cash outflow (C13) and a real
@@ -1443,7 +1494,7 @@ def solve_farm_v2(
 
         # Fixed selling (stall fees/retainers) is a steady weekly cash outflow → in the floor.
         rhs_lo = (floor + W * (fixed_weekly + fixed_selling_per_week)
-                  + float(committed_weekly_wages[:W].sum()))
+                  + float(shaped_cum[W - 1]))
         add_row(cols, rhs_lo, np.inf)
 
     # (Former C14 removed.) Overtime/hire are needed only beyond TOTAL labor capacity
@@ -1873,7 +1924,7 @@ def solve_farm_v2(
     cum = opening_cash
     for w in range(1, N_WEEKS + 1):
         cum += (weekly_rev[w] - weekly_vcost[w] - fixed_weekly
-                - float(committed_weekly_wages[w - 1]) - weekly_other[w])
+                - float(shaped_weekly[w - 1]) - weekly_other[w])
         weekly_cash_flow[w] = cum
 
     peak_borrowing = max(0.0, -float(weekly_cash_flow[1:].min()))
