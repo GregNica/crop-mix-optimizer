@@ -18,6 +18,7 @@ import subprocess
 
 import pytest
 
+from tests.bundling import bundle_and_probe
 from tests.helpers import GOLDEN_PAYLOAD, REPO
 
 NODE = shutil.which("node")
@@ -90,21 +91,11 @@ def test_the_form_sends_only_declared_keys_and_no_unsent_one(registry):
 
 
 @pytest.fixture(scope="module")
-def bundled_grounding(tmp_path_factory):
-    esbuild = REPO / "node_modules" / ".bin" / "esbuild"
-    if not esbuild.exists():
-        pytest.skip("esbuild not installed (npm install)")
-    out = tmp_path_factory.mktemp("bundle") / "grounding.mjs"
-    subprocess.run([str(esbuild), "worker/grounding.ts", "--bundle", "--format=esm",
-                    "--platform=neutral", f"--outfile={out}", "--log-level=error"],
-                   cwd=REPO, check=True)
-    probe = (f"import * as G from {json.dumps(out.as_uri())};"
-             "const tool=G.buildSetFormFieldsTool();"
-             "process.stdout.write(JSON.stringify({form:G.CHATBOT_FIELDS,crop:G.CROP_DETAIL_FIELDS,"
-             "toolProps:Object.keys(tool.function?.parameters?.properties||tool.parameters?.properties||{})}))")
-    res = subprocess.run([NODE, "--input-type=module", "-e", probe], capture_output=True, text=True)
-    assert res.returncode == 0, res.stderr[-1500:]
-    return json.loads(res.stdout)
+def bundled_grounding():
+    return bundle_and_probe("worker/grounding.ts",
+        "const tool = M.buildSetFormFieldsTool();"
+        "process.stdout.write(JSON.stringify({form: M.CHATBOT_FIELDS, crop: M.CROP_DETAIL_FIELDS,"
+        "toolProps: Object.keys(tool.function?.parameters?.properties || tool.parameters?.properties || {})}))")
 
 
 def test_the_bundled_worker_offers_exactly_the_registrys_chat_fields(registry, bundled_grounding):

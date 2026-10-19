@@ -286,7 +286,7 @@ error. If the exemption list grows past a couple of entries, that is the signal 
 carrying two different kinds of thing and wants splitting.
 DONE = one source of truth, three views, versioned migration path, silent-drop impossible.
 
-**1.4 · T4 — the headless-browser smoke test (scheduled 2026-08-29; BACKLOG row T4, previously ❓).**
+**1.4 · T4 — the headless-browser smoke test (scheduled 2026-08-29; BACKLOG row T4, previously ❓).** ✅ **DONE 2026-10-19** — `npm run test:smoke`. Two spec corrections, both measured: profit cannot match the pin 'to the dollar' (two correct HiGHS builds differ inside the MIP gap), and a real hidden tab cannot be produced headlessly (simulated instead, and said so). See BACKLOG T4/T8/T9.
 WHY: **jsdom cannot run Pyodide**, and that single gap is why E2 sat "unverified in the browser"
 for four weeks, why every batch boundary ends in a standing human QA ask, and why the
 hidden-tab Monte Carlo stall (`0a3c15b`) reached a grower with 407 tests green. Guardrail 15 keeps

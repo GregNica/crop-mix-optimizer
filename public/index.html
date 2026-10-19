@@ -7452,7 +7452,10 @@ function validateParams(params) {
   // W8: the fee is now charged in the solver, which REFUSES a negative one (before W8 it was
   // silently credited to the farm). Say so at the field, not as a backend error after a solve.
   for (const ch of params.channels || []) {
-    if (!(ch.fixed_selling_cost_per_wk >= 0)) {
+    // An ABSENT fee is $0 (callers other than the form may omit it). A present null is NOT absent:
+    // validate.py refuses it, and NaN/Infinity become null on the way to Pyodide.
+    const fee = ch.fixed_selling_cost_per_wk === undefined ? 0 : ch.fixed_selling_cost_per_wk;
+    if (!(typeof fee === 'number' && fee >= 0)) {
       errors.push(`Channel "${ch.name}": fixed selling cost must be ≥ 0 $/wk.`);
     }
   }
@@ -13261,9 +13264,9 @@ window._testWhatIf = function() {
     console.assert(typeof renderContributionMargins === 'function', 'T174e: renderContributionMargins() still defined');
     console.assert(typeof renderScenarioHistory === 'function', 'T174f: renderScenarioHistory() still defined');
     // Farm-Wide Variable Costs card removed but fertilizer/fuel costs still collected in runOptimizer
-    const runSrc174 = typeof runOptimizer === 'function' ? runOptimizer.toString() : '';
-    console.assert(runSrc174.includes('cost_fert_per_lb'), 'T174g: runOptimizer still collects cost_fert_per_lb');
-    console.assert(runSrc174.includes('cost_fuel_per_L'), 'T174h: runOptimizer still collects cost_fuel_per_L');
+    // T174g/h (source greps for cost_fert_per_lb / cost_fuel_per_L in the payload builder) were
+    // retired in T4: tests/field_registry_client.cjs proves both BEHAVIOURALLY — each field is
+    // nudged and its payload key must move — which a refactor cannot break by moving text.
     console.log('T174: Regression — all key globals intact ✓');
   }
 
@@ -13429,17 +13432,9 @@ window._testWhatIf = function() {
     console.log('T186: Uncertainty pills present ✓');
   }
 
-  // ── T187: Parameter omission — runOptimizer params assembly uses pdOn() ───────
-  {
-    const fnSrc187 = typeof runOptimizer === 'function' ? runOptimizer.toString() : '';
-    console.assert(fnSrc187.includes('pdOn('), 'T187a: runOptimizer uses pdOn() for conditional params');
-    console.assert(fnSrc187.includes('pd-cash'), 'T187b: pd-cash toggle gates opening_cash inclusion');
-    console.assert(fnSrc187.includes('pd-harvest-storage'), 'T187c: pd-harvest-storage toggle gates harvest_storage_cap');
-    console.assert(fnSrc187.includes('pd-machinery'), 'T187d: pd-machinery toggle gates equip/fuel storage');
-    console.assert(fnSrc187.includes('pd-irrig-fert'), 'T187e: pd-irrig-fert toggle gates irrigation rate + fert cost');
-    console.assert(fnSrc187.includes('pd-machinery-rates'), 'T187f: pd-machinery-rates toggle gates machinery cost rates');
-    console.log('T187: Parameter omission — pdOn() gating present in runOptimizer ✓');
-  }
+  // T187 (source greps for pdOn()/pd-* gating in the payload builder) retired in T4. Its c-f half
+  // asserted the pd-* panels GATE cost lines, which audit A2 reversed, so it had failed silently
+  // since; pd-cash — the one real gate left — is proven behaviourally by field_registry_client.cjs.
 
   // ── T188: Parameter omission correctness — OFF toggles exclude fields ─────────
   {
@@ -13508,6 +13503,9 @@ window._testWhatIf = function() {
   }
 
   console.log('✓ All what-if tests passed (191/191).');
+  // Count-free end-of-suite marker: tests/browser_smoke.mjs requires it, so a throw swallowed
+  // mid-suite (which silently drops every later assert) fails the smoke run.
+  console.log('[self-test] what-if suite complete');
 };
 
 // ============================================================

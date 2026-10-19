@@ -13,6 +13,7 @@ import { createAuth } from "./auth";
 import { handleScenarios } from "./routes/scenarios";
 import { handleChat } from "./routes/chat";
 import { json } from "./http";
+import { smokeBypassActive } from "./smoke";
 
 export interface Env {
   // Static assets binding (public/).
@@ -27,6 +28,8 @@ export interface Env {
   LLM_BASE_URL: string;
   LLM_MODEL: string;
   LLM_API_KEY: string;
+  // Local smoke test only — see worker/smoke.ts. Never set in .dev.vars or in production.
+  SMOKE_TEST_BYPASS?: string;
 }
 
 export default {
@@ -45,6 +48,7 @@ export default {
     }
 
     // Static app — gated behind login (pilot access control + protects the app).
+    if (smokeBypassActive(env, url)) return env.ASSETS.fetch(request);
     const session = await auth.api.getSession({ headers: request.headers });
     if (!session) return loginPage();
     return env.ASSETS.fetch(request);
