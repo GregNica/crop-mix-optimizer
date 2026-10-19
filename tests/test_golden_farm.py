@@ -506,8 +506,10 @@ class TestGoldenFarm:
         """The pinned numbers must also be internally consistent, so a re-pin can't paper
         over a broken P&L by adjusting one line."""
         r = result
-        enumerated = (r["fixed_cost"] + r["variable_cost"] + r.get("city_water_cost", 0.0)
-                      + r.get("overtime_cost", 0.0) + r.get("hire_cost", 0.0))
+        # Strict and iterated (W8): the adapter no longer forwards the flat bought-cost keys, and
+        # `.get(…, 0.0)` here read all three as 0 — silently, because the golden farm buys none.
+        enumerated = (r["fixed_cost"] + r["variable_cost"]
+                      + sum(r["bought_capacity_split"].values()))
         assert r["operating_profit"] == pytest.approx(r["revenue"] - enumerated, abs=DOLLAR)
         assert r["overhead_cost"] == pytest.approx(
             r["revenue"] * json.loads(PAYLOAD.read_text())["overhead_pct_of_revenue"], rel=1e-6)

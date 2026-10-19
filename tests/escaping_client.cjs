@@ -49,7 +49,9 @@ function fixtures(NAME) {
   const RES = {
     revenue: 100000, variable_cost: 21000, fixed_cost: 22400, operating_profit: 55600,
     overhead_cost: 5000, interest_cost: 400, fixed_selling_cost: 1200, profit: 49000,
-    peak_borrowing: 9000, city_water_cost: 300, overtime_cost: 700, hire_cost: 0,
+    peak_borrowing: 9000,
+    bought_capacity_split: { city_water: 300, overtime: 700, hire: 0 },   // W8: iterated, not named
+    fixed_selling_split: { [NAME]: 1200 },
     crop_names: [NAME],
     variable_cost_split: { water: 1500, fertilizer: 2500, fuel: 900, seed: 8100, packaging: 8000 },
     fixed_cost_split: { harvest_storage: 4000, wages: 5000 },

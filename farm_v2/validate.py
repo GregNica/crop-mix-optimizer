@@ -121,6 +121,15 @@ def validate_params(
     ch_names = [ch["name"] for ch in channels]
     if len(ch_names) != len(set(ch_names)):
         raise ValueError(f"Channel names must be unique. Got: {ch_names}.")
+    # A channel's fixed selling fee is charged straight into net profit and the C13 cash floor
+    # (W8). A None, NaN or negative fee must be refused, not coerced: NaN would turn the profit
+    # NaN, and a negative fee is a stall that pays the farm.
+    for ch in channels:
+        fee = ch.get("fixed_selling_cost_per_wk", 0.0)
+        if not isinstance(fee, (int, float)) or isinstance(fee, bool) or not math.isfinite(fee) or fee < 0:
+            raise ValueError(
+                f"Channel '{ch['name']}': fixed_selling_cost_per_wk must be a number ≥ 0, got {fee!r}."
+            )
 
     # 7. Crops
     if not crops:

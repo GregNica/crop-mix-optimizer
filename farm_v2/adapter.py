@@ -181,14 +181,16 @@ def run_from_js(params_json):
         channels_from_ui = p.get('channels', None)
         if not channels_from_ui:
             raise ValueError("no channels in payload: a farm with no way to sell is not a plan")
-        channels = [{"name": ch['name']} for ch in channels_from_ui]
+        # The fixed selling fee rides on its channel, so the solver can return it per channel and
+        # deduct it from net profit itself (W8). Passed through untouched: validate.py refuses a
+        # None/NaN/negative fee, and coercing it here would override that refusal one layer up.
+        channels = [{"name": ch['name'],
+                     "fixed_selling_cost_per_wk": ch.get('fixed_selling_cost_per_wk', 0.0)}
+                    for ch in channels_from_ui]
 
         # Variable selling cost per lb (deducted from net price per channel)
         ch_var_cost = {ch['name']: float(ch.get('variable_selling_cost_per_lb', 0))
                        for ch in (channels_from_ui or [])}
-        # Fixed selling cost (informational only — not passed to solver, shown in results)
-        ch_fixed_per_wk = sum(float(ch.get('fixed_selling_cost_per_wk', 0))
-                              for ch in (channels_from_ui or []))
 
         # --- Crops (fully dynamic from UI) ---
         # No fallback. A payload without crops used to silently solve a stale 8-crop demo
@@ -251,7 +253,6 @@ def run_from_js(params_json):
             rate_machinery=rate_machinery,
             rate_property_mortgage_rent=rate_property_mortgage_rent,
             other_debt_service_per_week=other_debt_service_per_week,
-            fixed_selling_per_week=ch_fixed_per_wk,
             equip_storage=equip_storage,
             fuel_storage=fuel_storage,
             water_storage_capacity=water_storage_capacity,
@@ -314,11 +315,9 @@ def run_from_js(params_json):
         fixed_cost   = float(result['fixed_cost'])
         peak_borrow       = float(result['peak_borrowing'])
         weekly_cash_flow  = result.get('weekly_cash_flow', [])
-
-        # Channel fixed-selling (market stall fees, distributor retainers): a real recurring cost
-        # the optimizer does not allocate over. Deduct it below the line so net profit reflects it.
-        fixed_selling_cost = ch_fixed_per_wk * 52          # annual: a market stall fee is a yearly commitment
-        profit = profit - fixed_selling_cost
+        # Net of channel fixed selling already — the solver deducts it (W8). This adapter used
+        # to finish the profit itself, so every caller that skipped it got a higher number.
+        fixed_selling_cost = float(result['fixed_selling_cost'])
 
         # Succession schedule for Gantt calendar and pie chart
         sched = []
@@ -425,6 +424,13 @@ def run_from_js(params_json):
             'overhead_cost': overhead_cost,
             'interest_cost': interest_cost,
             'fixed_selling_cost': fixed_selling_cost,
+            # W8 — the parts the P&L iterates instead of re-deriving: per-channel fixed selling
+            # (sums to fixed_selling_cost), and the three costs bought outside both totals (city
+            # water, overtime, hire). Strict: the P&L's sections ARE these, so a missing split must
+            # fail here, not render as an empty section. `total_cost` is the solver's for
+            # non-browser callers; nothing in the page reads it, so it is not sent.
+            'fixed_selling_split':   result['fixed_selling_split'],
+            'bought_capacity_split': result['bought_capacity_split'],
             'sell_through_fraction': sell_through_frac,
             'revenue':       revenue,
             'variable_cost': variable_cost,
@@ -438,17 +444,11 @@ def run_from_js(params_json):
             # comment saying the fixed-cost breakdown needed it and was read by nothing at all.
             'variable_cost_split': result.get('variable_cost_split', {}),
             'fixed_cost_split':    result.get('fixed_cost_split', {}),
-            # The three operating costs that sit OUTSIDE both totals above, each with its own P&L
-            # row. city_water_cost was the one this fix nearly shipped without: the solver charges
-            # it into operating_profit, so a row reading a key the adapter never sent would print
-            # 0.00 AND push the difference into the new UNRECONCILED tripwire on every farm that
-            # buys metered water. The golden farm has city water off and the jsdom fixture
-            # supplied the key itself, so nothing would have failed. Same mechanism as W6's
-            # demand_at_cap_threshold, one release later.
-            'city_water_cost':      float(result.get('city_water_cost', 0.0)),
+            # city_water_cost / hire_cost / overtime_cost are NOT forwarded flat any more (W8):
+            # `bought_capacity_split` above carries all three, and two copies of one number with
+            # fail-open `.get(…, 0.0)` defaults is how city_water_cost once reached the page as
+            # nothing at all (W6's mechanism, one release later).
             'labor_flex_enabled':   bool(result.get('labor_flex_enabled', False)),
-            'hire_cost':            float(result.get('hire_cost', 0.0)),
-            'overtime_cost':        float(result.get('overtime_cost', 0.0)),
             'total_hired_hours':    float(result.get('total_hired_hours', 0.0)),
             'total_overtime_hours': float(result.get('total_overtime_hours', 0.0)),
             'hired_hours_weekly':    [round(float(v), 1) for v in result.get('hired_hours_weekly', [])],

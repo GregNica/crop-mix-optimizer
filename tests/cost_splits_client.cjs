@@ -39,12 +39,14 @@ const RES = {
   operating_profit: 55600,   // = 100000 - 21000 - 22400 - (300 + 700 + 0)
   overhead_cost: 5000,
   interest_cost: 400,
-  fixed_selling_cost: 1200,
-  profit: 49000,             // = 55600 - 5000 - 400 - 1200
+  // W8: the solver sums this FROM fixed_selling_split, so a total with no channel under it is a
+  // state the app cannot produce. This fixture's one channel charges no fee — the common case.
+  fixed_selling_cost: 0,
+  fixed_selling_split: {},
+  profit: 50200,             // = 55600 - 5000 - 400 - 0
   peak_borrowing: 9000,
-  city_water_cost: 300,
-  overtime_cost: 700,
-  hire_cost: 0,
+  // W8: iterated by the exporter, not three hand-named keys.
+  bought_capacity_split: { city_water: 300, overtime: 700, hire: 0 },
   variable_cost_split: {
     water: 1500, fertilizer: 2500, fuel: 900, seed: 8100, packaging: 8000,
   },
@@ -60,8 +62,8 @@ const RES = {
 };
 // operating_profit must equal revenue - variable - fixed - (city water + overtime + hire), or the
 // tripwire assertion below would be testing arithmetic that was never true.
-const RES_OP = RES.revenue - RES.variable_cost - RES.fixed_cost
-             - (RES.city_water_cost + RES.overtime_cost + RES.hire_cost);
+const boughtSum = split => Object.values(split).reduce((a, b) => a + b, 0);
+const RES_OP = RES.revenue - RES.variable_cost - RES.fixed_cost - boughtSum(RES.bought_capacity_split);
 if (RES.operating_profit !== RES_OP) {
   console.error(`fixture is inconsistent: operating_profit ${RES.operating_profit} != ${RES_OP}`);
   process.exit(1);
@@ -220,8 +222,8 @@ const EXPECT_FIXED_LABELS = {
     W._lastRes = RES;
     let rows = runExport();
     ok('overtime and city water print as named rows',
-       amountOf(rows, 'Overtime (full rate)') === -RES.overtime_cost &&
-       amountOf(rows, 'City Water (metered purchase)') === -RES.city_water_cost);
+       amountOf(rows, 'Overtime (full rate)') === -RES.bought_capacity_split.overtime &&
+       amountOf(rows, 'City Water (metered purchase)') === -RES.bought_capacity_split.city_water);
     ok('no UNRECONCILED line when every cost has a row',
        !rows.some(r => text(r[0]).includes('UNRECONCILED')));
 
@@ -233,19 +235,18 @@ const EXPECT_FIXED_LABELS = {
     // "Charged nothing" is what would PRINT as nothing, not exact zero. A float residual out of
     // the solver renders as "-0.00" — sign and all — which is a row claiming a cost of negative
     // nothing. Exact-equality filtering lets it straight through.
-    W._lastRes = { ...RES, hire_cost: 3e-8, operating_profit: RES.operating_profit - 3e-8 };
+    W._lastRes = { ...RES, bought_capacity_split: { ...RES.bought_capacity_split, hire: 3e-8 },
+                   operating_profit: RES.operating_profit - 3e-8 };
     ok('a float residual that would print as 0.00 is not a component either',
        amountOf(runExport(), 'Hired Labor (wage + markup)') === null);
     W._lastRes = RES;
     ok('Total Bought Capacity is still the full sum',
-       amountOf(rows, 'Total Bought Capacity') ===
-       -(RES.city_water_cost + RES.overtime_cost + RES.hire_cost));
+       amountOf(rows, 'Total Bought Capacity') === -boughtSum(RES.bought_capacity_split));
 
     // ...and a farm that buys NO capacity at all — the shipped default, which enables neither city
     // water nor hiring — gets one line, not a group name over three 0.00 rows and a 0.00 total.
-    W._lastRes = { ...RES, city_water_cost: 0, overtime_cost: 0, hire_cost: 0,
-                   operating_profit: RES.operating_profit
-                                   + RES.city_water_cost + RES.overtime_cost + RES.hire_cost };
+    W._lastRes = { ...RES, bought_capacity_split: { city_water: 0, overtime: 0, hire: 0 },
+                   operating_profit: RES.operating_profit + boughtSum(RES.bought_capacity_split) };
     const noBuyRows = runExport();
     ok('a farm that buys no capacity prints one collapsed line, no 0.00 detail',
        amountOf(noBuyRows, 'Bought Capacity') === 0 &&
@@ -266,10 +267,18 @@ const EXPECT_FIXED_LABELS = {
     // `Math.abs(NaN) > 0.5` is FALSE: three rows printed "NaN", OPERATING INCOME printed a clean
     // figure, and nothing fired. A check that goes silent precisely when the data is broken reads
     // as a pass, which is this repo's most expensive failure class.
-    const { city_water_cost, ...noCityWater } = RES;
-    W._lastRes = noCityWater;
+    // Since W8 the rows are ITERATED, so the two ways a figure can go missing are now different
+    // and both are pinned: a component dropped from the split (no row, total short — the
+    // reconcile must catch the gap), and a component present with no number (null over JSON).
+    {
+      const { city_water, ...noCw } = RES.bought_capacity_split;
+      W._lastRes = { ...RES, bought_capacity_split: noCw };
+      ok('a component DROPPED from the bought split fires the UNRECONCILED line',
+         runExport().some(r => text(r[0]).includes('UNRECONCILED')));
+    }
+    W._lastRes = { ...RES, bought_capacity_split: { ...RES.bought_capacity_split, city_water: null } };
     rows = runExport();
-    ok('a MISSING payload key fires the UNRECONCILED line rather than printing NaN quietly',
+    ok('a MISSING payload figure fires the UNRECONCILED line rather than printing NaN quietly',
        rows.some(r => text(r[0]).includes('UNRECONCILED')));
     // ...and no cell may carry a number-shaped non-number. "NaN" in a money column is read as a
     // value by a human and by a spreadsheet; an empty cell is worse still, because that is exactly
@@ -278,6 +287,13 @@ const EXPECT_FIXED_LABELS = {
     ok('a missing figure says so in words, and is never blank or "NaN"',
        rows.every(r => r[1] !== 'NaN') &&
        rows.some(r => String(r[1]).includes('MISSING FROM PAYLOAD')));
+    // ...and on the COMPONENT's own row, not merely somewhere: the poisoned total says MISSING
+    // too, so "somewhere" passed while the zero-row filter silently dropped the row (W8 mutation).
+    {
+      const cwRow = rows.find(r => text(r[0]) === 'City Water (metered purchase)');
+      ok(`the missing component keeps its own row and says so (got ${JSON.stringify(cwRow)})`,
+         cwRow && String(cwRow[1]).includes('MISSING FROM PAYLOAD'));
+    }
     W._lastRes = RES;
 
     // The same at the other end: a channel object present but carrying no `revenue`.
@@ -371,14 +387,14 @@ const EXPECT_FIXED_LABELS = {
     // The OTHER branch: a channel that does charge a stall fee prints as a group — name, indented
     // component, then the total. Testing only the empty case would leave the populated one, which
     // is the one with the indentation in it, unexercised.
-    // The adapter computes fixed_selling_cost as Σ (per-week fee × 52), so a fixture whose
+    // The SOLVER computes fixed_selling_cost as Σ fixed_selling_split (W8), so a fixture whose
     // component does not sum to its own total tests a state the app cannot produce — and asserts a
     // "Total …" line that contradicts the row above it. The result is moved with the params.
     const FEE_WK = 25, FEE_YR = FEE_WK * 52;
     W._lastParams = { ...PARAMS,
       channels: [{ name: 'Wholesale', fixed_selling_cost_per_wk: 0 },
                  { name: 'Farmers Market', fixed_selling_cost_per_wk: FEE_WK }] };
-    W._lastRes = { ...RES, fixed_selling_cost: FEE_YR,
+    W._lastRes = { ...RES, fixed_selling_cost: FEE_YR, fixed_selling_split: { 'Farmers Market': FEE_YR },
                    profit: RES.profit - (FEE_YR - RES.fixed_selling_cost) };
     const feeRows = runExport();
     const feeDetail = detailUnder(feeRows, 'Channel Fixed Selling (market fees, retainers)');
@@ -388,7 +404,42 @@ const EXPECT_FIXED_LABELS = {
        amountOf(feeRows, 'Total Channel Fixed Selling') === -FEE_YR);
     ok('a consistent populated group fires no tripwire',
        !feeRows.some(r => text(r[0]).includes('UNRECONCILED')));
+
+    // W8 — the selling detail is the solver's split, not `rate × 52` off the form. Prove it reads
+    // the split: a form fee that disagrees with the result must change NOTHING printed.
+    W._lastParams = { ...PARAMS,
+      channels: [{ name: 'Wholesale', fixed_selling_cost_per_wk: 0 },
+                 { name: 'Farmers Market', fixed_selling_cost_per_wk: 999 }] };
+    ok('the selling detail comes from the result, not the form fee × 52',
+       detailUnder(runExport(), 'Channel Fixed Selling (market fees, retainers)')[0][1] === -FEE_YR);
+    // W8 tripwire (d): detail that does not sum to its total must be LOUD, and so must NaN.
+    W._lastRes = { ...W._lastRes, fixed_selling_split: { 'Farmers Market': FEE_YR - 100 } };
+    ok('selling detail short of its total fires the UNRECONCILED line',
+       runExport().some(r => text(r[0]).includes('channel selling lines do not add up')));
+    W._lastRes = { ...W._lastRes, fixed_selling_split: { 'Farmers Market': null } };
+    ok('a selling component with no figure fires it too (fail-closed on NaN)',
+       runExport().some(r => text(r[0]).includes('channel selling lines do not add up')));
     W._lastParams = PARAMS; W._lastRes = RES;
+  }
+
+  // W8 tripwire (d), REVENUE. The rows are joined to channel_sales by the FORM's channel names, so
+  // a channel the solver sold into that the form no longer lists drops out of the detail while
+  // Total Revenue keeps it — the W1b shape.
+  {
+    W._lastRes = { ...RES, revenue: 130000, operating_profit: RES.operating_profit + 30000,
+                   profit: RES.profit + 30000,
+                   channel_sales: { ...RES.channel_sales,
+                                    'Farmers Market': { lbs_sold: 300, revenue: 30000, by_crop: {} } } };
+    ok('revenue sold into a channel the form does not list fires the UNRECONCILED line',
+       runExport().some(r => text(r[0]).includes('revenue lines do not add up')));
+    W._lastParams = { ...PARAMS, channels: [...PARAMS.channels, { name: 'Farmers Market' }] };
+    ok('...and listing that channel silences it — the detail now sums to the total',
+       !runExport().some(r => text(r[0]).includes('UNRECONCILED')));
+    W._lastParams = PARAMS;
+    W._lastRes = { ...RES, channel_sales: { Wholesale: { lbs_sold: 1000, revenue: NaN, by_crop: {} } } };
+    ok('a NaN channel revenue fires the revenue tripwire (fail-closed)',
+       runExport().some(r => text(r[0]).includes('revenue lines do not add up')));
+    W._lastRes = RES;
   }
 
   if (failures) {

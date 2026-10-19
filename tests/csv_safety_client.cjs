@@ -59,7 +59,11 @@ const HOSTILE_CROP2   = '@Garlic';
 const RES = {
   revenue: 100000, variable_cost: 21000, fixed_cost: 22400, operating_profit: 55600,
   overhead_cost: 5000, interest_cost: 400, fixed_selling_cost: 1200, profit: 49000,
-  peak_borrowing: 9000, city_water_cost: 300, overtime_cost: 700, hire_cost: 0,
+  peak_borrowing: 9000,
+  // W8: the P&L iterates these, so a fixture without them tests a statement that does not
+  // reconcile — and the hostile channel would never reach the selling row at all.
+  bought_capacity_split: { city_water: 300, overtime: 700, hire: 0 },
+  fixed_selling_split: { [HOSTILE_CHANNEL]: 1200 },
   variable_cost_split: { water: 1500, fertilizer: 2500, fuel: 900, seed: 8100, packaging: 8000 },
   fixed_cost_split: {
     harvest_storage: 4000, ambient_storage: 750, water_storage: 1000, irrigation: 2000,
@@ -168,6 +172,13 @@ const PARAMS = {
     const label = rows.map(r => String(r[0] == null ? '' : r[0]))
                       .find(v => v.includes(`${HOSTILE_CHANNEL} Revenue`));
     ok(`the hostile channel's P&L label is present: ${JSON.stringify(label)}`, !!label);
+    // W8 moved the SELLING row onto a new, name-keyed path (fixed_selling_split). Prove the
+    // hostile name reaches it, and that the statement under test reconciles — a safety check
+    // over a broken P&L proves less than it reads as.
+    ok('the hostile channel reaches the channel-selling row',
+       rows.some(r => String(r[0]).includes(`${HOSTILE_CHANNEL} Fixed Selling`)));
+    ok('the fixture P&L reconciles (no UNRECONCILED row)',
+       !rows.some(r => String(r[0]).includes('UNRECONCILED')));
     const lead = ((label || '').match(/^\u00a0*/) || [''])[0].length;
     ok(`an already-safe indented label is left alone (${lead} leading U+00A0, want a multiple `
        + `of 4 — an odd count means the formula rule looked through the indent)`,

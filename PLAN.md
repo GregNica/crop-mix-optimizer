@@ -259,7 +259,8 @@ false-green class this repo documents).
 DONE = no `PYTHON_CODE` literal (or a one-line loader), all 399+ tests green with imports instead
 of regex, blob check covers the adapter.
 
-**1.2 · W8 — totals summed from parts, in the same seam (one commit each):**
+**1.2 · W8 — totals summed from parts, in the same seam (one commit each):** ✅ **DONE 2026-10-19** — one commit, not two: (b) re-pins nothing, because every browser path already went through the adapter (measured). See BACKLOG W8.
+
 (a) solver returns `total_cost` + `bought_capacity_split`; exporter iterates instead of
 hand-naming three keys. (b) **move the `fixed_selling_cost` deduction from the adapter into the
 solver** — every non-browser caller currently gets a profit that silently ignores channel fixed

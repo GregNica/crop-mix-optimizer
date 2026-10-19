@@ -30,13 +30,18 @@ def _fig_to_b64(fig, dpi):
     return b64
 
 
-def make_waterfall_chart(revenue, variable_cost, fixed_cost, overhead_cost, interest_cost, selling_cost, profit):
+def make_waterfall_chart(revenue, variable_cost, fixed_cost, overhead_cost, interest_cost, selling_cost, profit,
+                         bought_cost=0.0):
     # Page-palette colors: green revenue, red/amber costs, green/red profit.
     # profit is NET (after overhead + interest + selling). Below-the-line rows appear only when nonzero.
     c_green = '#2d6a4f'; c_red = '#dc2626'; c_amber = '#b45309'
     labels = ['Revenue', 'Variable Cost', 'Fixed Cost']
     values = [revenue, -variable_cost, -fixed_cost]
     colors = [c_green, c_red, c_amber]
+    # City water, overtime and hire sit OUTSIDE both cost totals (W8's bought_capacity_split).
+    # Without this bar a farm buying any of them drew bars that did not add up to Net Profit.
+    if bought_cost >= 5000:
+        labels.append('Bought Capacity'); values.append(-bought_cost); colors.append(c_amber)
     if selling_cost >= 5000:    # only show material lines (avoids a "$0.00M" sliver)
         labels.append('Selling');   values.append(-selling_cost);   colors.append(c_amber)
     if overhead_cost >= 5000:
@@ -113,4 +118,5 @@ def waterfall_png(result_json):
         float(r['interest_cost']),
         float(r['fixed_selling_cost']),
         float(r['profit']),
+        float(sum(r['bought_capacity_split'].values())),
     )

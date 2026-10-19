@@ -297,7 +297,6 @@ def solve_farm_v2(
     # --- Additional fixed costs ---
     rate_property_mortgage_rent: float = 0.0,  # $/week — land lease or mortgage payment
     other_debt_service_per_week: float = 0.0,  # $/week — P&I on other long-term loans (buildings, land improvements, carried debt) not already in the machinery/property lines
-    fixed_selling_per_week: float = 0.0,       # $/week — channel fixed selling (stall fees, retainers); in cash flow only, P&L handles it below the line
     # --- Storage shrink ---
     # Weight lost per week in store: respiration, moisture loss, trimming, sorting out rots.
     # SPEC_v3 §3.4. This is what makes holding COST something — without it a long shelf life is
@@ -329,7 +328,7 @@ def solve_farm_v2(
     cost_fuel_per_L: float = 0.0,
     # --- Crops and channels ---
     crops: list | None = None,
-    channels: list | None = None,
+    channels: list | None = None,     # each {"name", optional "fixed_selling_cost_per_wk"}
     # --- Year ---
     year: int = 2024,
     # --- Solver options ---
@@ -342,7 +341,7 @@ def solve_farm_v2(
     -------
     dict with keys:
         "status"            : str  ("optimal", "infeasible", "unbounded", ...)
-        "profit"            : float
+        "profit"            : float — NET: operating_profit − overhead − fixed selling − interest
         "revenue"           : float
         "variable_cost"     : float
         "fixed_cost"        : float
@@ -382,6 +381,13 @@ def solve_farm_v2(
                               metered supply charges one). Sums to "fixed_cost" exactly.
                               Consumers should ITERATE this rather than name its keys: the
                               P&L exporter named eight of eleven and silently dropped the rest.
+        "fixed_selling_split": dict — annual channel fixed selling by channel name (only
+                              channels with a fee). Sums to "fixed_selling_cost" exactly.
+        "fixed_selling_cost": float — deducted from "profit" here, below operating profit.
+        "bought_capacity_split": dict — city_water, overtime, hire: the costs bought outside
+                              both totals. Iterate it, as with fixed_cost_split.
+        "total_cost"        : float — fixed + variable + Σ bought_capacity_split, so that
+                              revenue − total_cost == operating_profit.
         "successions"       : list[dict]
         "crops"             : list[dict]
         "channels"          : list[dict]
@@ -822,6 +828,17 @@ def solve_farm_v2(
     # $115,615 of payroll it could not fund. The weekly profile already exists; collapsing it to a
     # scalar and re-spreading it was throwing away the one thing that makes it honest.
     fixed_weekly = (fixed_cost - float(committed_weekly_wages.sum())) / N_WEEKS
+
+    # Channel fixed selling (stall fees, retainers) — a cost the plan pays whatever it sells, so
+    # it shapes nothing in the objective but is a real weekly cash outflow (C13) and a real
+    # deduction from net profit. W8: the deduction used to be finished in the ADAPTER, so every
+    # direct caller got a profit $13,000 too high on the golden farm (its $250/wk market fee),
+    # and the P&L re-derived each channel's line as rate x 52 beside a total it never summed.
+    # One split per channel, the total summed FROM it, the weekly rate derived from the total.
+    fee_per_week = {ch["name"]: float(ch.get("fixed_selling_cost_per_wk", 0.0)) for ch in channels}
+    fixed_selling_split = {name: fee * N_WEEKS for name, fee in fee_per_week.items() if fee > 0.0}
+    fixed_selling_cost = float(sum(fixed_selling_split.values()))
+    fixed_selling_per_week = float(sum(fee_per_week.values()))
 
     # -----------------------------------------------------------------------
     # Step 5 — Decision variable layout
@@ -1513,17 +1530,12 @@ def solve_farm_v2(
     # once means they cannot drift, and it is the quantity the whole money path is built on.
     sold_by_pair = v_sol[:, :, 1:].sum(axis=2)
 
-    # Revenue and costs
-    revenue = 0.0
+    # Packaging is charged per pound SOLD. (Revenue is summed from `channel_sales` below.)
     packaging_cost = 0.0
     for c_idx, crop in enumerate(crops):
         for ch_idx, ch in enumerate(channels):
-            ch_spec = crop.get("channels", {}).get(ch["name"], {})
-            price = ch_spec.get("price_per_lb", 0.0)
-            pkg   = ch_spec.get("packaging_cost_per_lb", 0.0)
-            sold  = sold_by_pair[c_idx, ch_idx]
-            revenue       += sold * price
-            packaging_cost += sold * pkg
+            pkg = crop.get("channels", {}).get(ch["name"], {}).get("packaging_cost_per_lb", 0.0)
+            packaging_cost += sold_by_pair[c_idx, ch_idx] * pkg
 
     # Same discipline as fixed_cost_split above: the reported total is summed FROM the
     # breakdown (W4). `vc_split` has carried the five growing categories since B.1 and was
@@ -1580,8 +1592,8 @@ def solve_farm_v2(
     # revenue printed on the same page.
     #
     # Two properties this structure is built to have, both pinned by tests:
-    #   * `revenue` per channel uses gross_price — the SAME product the headline `revenue`
-    #     total above is summed from — so the channel lines add up to it exactly.
+    #   * the channel lines add up to the headline `revenue` exactly — by construction since
+    #     W8, because the headline is summed from them just below.
     #   * `weekly_lbs` sums to `lbs_sold`, so a weekly view and an annual view of the same
     #     channel cannot disagree.
     #
@@ -1610,6 +1622,12 @@ def solve_farm_v2(
             "revenue":  ch_rev,
             "by_crop":  by_crop,
         }
+
+    # The headline revenue IS the sum of the channel lines (W8). It used to be a second,
+    # independent accumulation of the identical product — equal, but only because two loops
+    # happened to agree, guarded by two tests instead of by construction. Channel names are
+    # unique (validate.py), so no line can overwrite another here.
+    revenue = float(sum(cs["revenue"] for cs in channel_sales.values()))
 
     # Demand saturation per crop-channel, measured against the row the solver ACTUALLY
     # ENFORCES (W6).
@@ -1758,8 +1776,16 @@ def solve_farm_v2(
                                  hire_rate_full)) \
                     if hire_enabled else 0.0
 
-    total_cost = fixed_cost + variable_cost + city_water_cost + overtime_cost + hire_cost
-    operating_profit = revenue - total_cost  # what the solver maximized (before overhead + interest)
+    # The three costs bought OUTSIDE both totals above, as a split the P&L iterates (W8) — the
+    # exporter used to hand-name these three keys, the last hand-named list in the money path,
+    # and `total_cost` was never returned at all.
+    bought_capacity_split = {
+        "city_water": float(city_water_cost),
+        "overtime":   float(overtime_cost),
+        "hire":       float(hire_cost),
+    }
+    total_cost = fixed_cost + variable_cost + float(sum(bought_capacity_split.values()))
+    operating_profit = revenue - total_cost  # what the solver maximized (before overhead, fixed selling + interest)
 
     # Weekly cash flow for reporting
     # weekly_rev[w]      = net revenue received in week w
@@ -1822,7 +1848,7 @@ def solve_farm_v2(
     borrowed_weekly = np.maximum(0.0, -weekly_cash_flow[1:])
     avg_borrowing = float(borrowed_weekly.mean()) if borrowed_weekly.size else 0.0
     interest_cost = interest_rate_apr * avg_borrowing
-    profit = operating_profit - overhead_cost - interest_cost  # net profit (honest headline)
+    profit = operating_profit - overhead_cost - fixed_selling_cost - interest_cost  # NET profit
 
     # capacity_series — the used-vs-capacity pairs the CONSTRAINTS actually used, so the
     # client can render them instead of rebuilding the physics with different assumptions
@@ -1906,6 +1932,10 @@ def solve_farm_v2(
         "operating_profit": operating_profit,
         "overhead_cost":    overhead_cost,
         "interest_cost":    interest_cost,
+        "fixed_selling_cost":  fixed_selling_cost,
+        "fixed_selling_split": fixed_selling_split,
+        "total_cost":          total_cost,
+        "bought_capacity_split": bought_capacity_split,
         "sell_through_fraction": sell_through_fraction,
         "revenue":          revenue,
         "variable_cost":    variable_cost,
@@ -1914,9 +1944,10 @@ def solve_farm_v2(
         "variable_cost_split": variable_cost_split,
         "fixed_cost":       fixed_cost,
         "fixed_cost_split": fixed_cost_split,
-        "city_water_cost":  city_water_cost,
-        "overtime_cost":    overtime_cost,
-        "hire_cost":        hire_cost,
+        # Flat copies kept for direct callers, DERIVED from the split so they cannot drift.
+        "city_water_cost":  bought_capacity_split["city_water"],
+        "overtime_cost":    bought_capacity_split["overtime"],
+        "hire_cost":        bought_capacity_split["hire"],
         "labor_flex_enabled": bool(overtime_enabled or hire_enabled),
         "total_hired_hours":    float(hired_hours_weekly.sum()),
         "total_overtime_hours": float(overtime_hours_weekly.sum()),
