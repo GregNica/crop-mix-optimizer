@@ -468,8 +468,6 @@ def run_from_js(params_json):
             'weekly_labor_used':   [round(v, 1) for v in weekly_labor_used],
             'weekly_labor_supply': weekly_labor_supply,
             'weekly_cash_flow':    [round(float(v), 0) for v in weekly_cash_flow] if len(weekly_cash_flow) > 0 else [],
-            'opening_cash':        opening_cash,
-            'credit_line':         credit_line,
             # Pre-flight findings from validate.py (S1). Carried on every successful solve,
             # including the What-If / sensitivity / Monte Carlo paths, because they all come
             # through here and none of them passes the browser's validateParams().

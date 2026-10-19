@@ -102,6 +102,21 @@ def test_fractional_headcount_survives_the_adapter(golden_out):
     )
 
 
+def test_the_result_does_not_echo_cash_inputs_back():
+    """E2b: `opening_cash` / `credit_line` used to be echoed into the result dict. Their last
+    reader (renderConstraintSummary) died with W7 and every live site reads `params.*`, so the
+    echo was a second copy of an input that could drift from the first — the shape this repo
+    keeps paying for. Held out of E2 only because removing keys would have forfeited its
+    byte-equivalence proof. The solver's own result still carries `opening_cash` (the cash
+    curve's basis); this pins the ADAPTER's dict only."""
+    p = _payload()
+    p.update(opening_cash=300_000.0, credit_line=800_000.0)
+    out = json.loads(run_from_js(json.dumps(p)))
+    assert out.get("status") == "optimal", out.get("error", "")[:300]
+    echoed = {"opening_cash", "credit_line"} & out.keys()
+    assert not echoed, f"the adapter echoes cash inputs back into its result again: {echoed}"
+
+
 @pytest.mark.parametrize("key", ["credit_line", "cost_fert_per_lb",
                                  "overhead_pct_of_revenue"])
 def test_a_blanked_numeric_field_is_a_status_not_a_traceback(key):
