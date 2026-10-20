@@ -177,6 +177,14 @@ def build_phase_table(successions: list[dict], n_weeks: int = 52) -> list[list]:
     return table
 
 
+def phase_weeks_of(s: dict, phase: int | None, n_weeks: int = 52) -> list[int]:
+    """Weeks (1-indexed, clamped to 1..n_weeks) in which succession `s` is in `phase`
+    (0 plant, 1 grow, 2 harvest), or in ANY phase when `phase` is None. The one clamp every
+    per-phase divisor in the money path uses — see harvest_weeks_of for why that matters."""
+    return [w for w, p in zip(s["weeks"], s["phases"])
+            if (phase is None or p == phase) and 1 <= w <= n_weeks]
+
+
 def harvest_weeks_of(s: dict, n_weeks: int = 52) -> list[int]:
     """Weeks (1-indexed, clamped to 1..n_weeks) in which succession `s` is harvesting.
 
@@ -190,7 +198,7 @@ def harvest_weeks_of(s: dict, n_weeks: int = 52) -> list[int]:
     so a caller supplying successions directly (rather than via generate_successions,
     which never emits an out-of-range slot) still gets the count the solver will use.
     """
-    return [w for w, p in zip(s["weeks"], s["phases"]) if p == 2 and 1 <= w <= n_weeks]
+    return phase_weeks_of(s, 2, n_weeks)
 
 
 # ---------------------------------------------------------------------------

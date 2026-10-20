@@ -88,7 +88,8 @@ function fixtures(NAME) {
       margin_pct: 20, margin_per_acre_day: 3, margin_per_acre_cycle: 210,
       labor_hours_per_acre: 10, revenue_per_acre: 500, sold_lbs_per_acre: 4000,
       gross_price_per_lb: 4, occupancy_days: 70, cost_per_acre: {
-        water: 10, fertilizer: 20, fuel: 5, seed: 30, packaging: 40, overhead: 15 } } } },
+        water: 10, fertilizer: 20, fuel: 5, seed: 30, crop_protection: 25, packaging: 40, overhead: 15,
+        total: 145 } } } },
     crop_contribution: { [NAME]: { contribution: 5000, acres_planted: 10 } },
   };
   const PARAMS = {
@@ -222,6 +223,21 @@ function surfaces(W, RES, PARAMS) {
     ok('a crop name input still exists', !!input);
     ok(`the name round-trips through the form input unchanged (got ${JSON.stringify(input && input.value)})`,
        !!input && input.value === BENIGN);
+  }
+
+  // R1 — the margin table's cost tooltip lists EVERY category the solver puts in cost_per_acre.
+  // It used to hand-name them and missed crop protection the commit it was added, so its lines
+  // summed short of the Total VC printed beside them. (Here because this harness already renders
+  // the table with a full fixture.)
+  {
+    const { RES, PARAMS } = drive(BENIGN);
+    W.renderContributionMargins(PARAMS);
+    const cell = [...D.querySelectorAll('[title]')].find(e => e.getAttribute('title').includes('Total VC'));
+    const tip = cell ? cell.getAttribute('title') : '';
+    const cats = Object.keys(Object.values(Object.values(RES.channel_margins)[0])[0].cost_per_acre).filter(k => k !== 'total');
+    const missing = cats.filter(k => !tip.includes(`${W.eval('VC_TOOLTIP_LABELS')[k] || k}: $`));
+    ok(`the margin-table cost tooltip lists every cost category (missing: ${JSON.stringify(missing)})`,
+       !!cell && missing.length === 0);
   }
 
   if (failures) {

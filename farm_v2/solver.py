@@ -46,6 +46,7 @@ from farm_v2.utils.calendar import (
     generate_successions,
     build_phase_table,
     harvest_weeks_of,
+    phase_weeks_of,
 )
 from farm_v2.utils.water import (
     compute_free_water,
@@ -73,9 +74,8 @@ DEMAND_AT_CAP_FRACTION = 0.95   # a week counts as "at cap" in demand_saturation
 # It was written out three times: as a comment on the array, in `cost_split_per_acre`, and again
 # in `variable_cost_split`. The two dicts are both consumer-facing (the contribution tooltip and
 # the P&L) and they had already drifted: the same category was published as "fert" in one and
-# "fertilizer" in the other, so the app labelled one cost two ways. Crop protection is due to
-# become a sixth category (backlog R1); with one tuple that is one edit, not three plus a
-# name-collision to notice.
+# "fertilizer" in the other, so the app labelled one cost two ways. Crop protection became the
+# fifth category (R1) as exactly that: one edit to this tuple, not three plus a name-collision.
 # Labour is NOT here (W12): every listed worker is paid for their stated hours whether or not the
 # crops need them, so wages are a committed weekly cost, not a per-acre one. The marginal crop hour
 # is free and is rationed by C2's capacity rather than by price. See `committed_weekly_wages`.
@@ -128,8 +128,8 @@ OWNED_ASSET_CLASSES = ("harvest_storage", "ambient_storage", "water_storage", "i
 # argument SILENTLY WINS over a zipped key of the same name. So a sixth category called "packaging"
 # or "total" would discard its own column, leave `variable_cost` short of what the objective
 # charged, and pass every reconciliation test — because the total is summed from the same dict.
-# Asserted at import rather than commented about, since the comment above schedules exactly the
-# edit that could trip it (crop protection, backlog R1).
+# Asserted at import rather than commented about: every new category (crop protection was the
+# last, R1) is exactly the edit that could trip it.
 assert not set(VC_CATEGORIES) & {"packaging", "total", "overhead"}, (
     "a VC_CATEGORIES name collides with a keyword used to extend the split dicts; the zipped "
     "column would be silently overwritten"
@@ -662,8 +662,8 @@ def solve_farm_v2(
     # with literal column indices at the write site. That is the W4 defect one layer down: a cost
     # added to the objective's coefficient and missed in the split would make the REPORTED total
     # short of what the optimizer actually charged, silently — the exact failure this fix exists
-    # to remove from the P&L. `VC_CATEGORIES`' own comment schedules that edit (crop protection,
-    # backlog R1), so it would have been three coordinated increments across two sites.
+    # to remove from the P&L. adding a category (crop protection, R1)
+    # would have been three coordinated increments across two sites.
     #
     # Now the charge is written once, in named terms, and every consumer is a sum of it. Adding a
     # category is one entry in VC_CATEGORIES and one line here.
@@ -687,10 +687,14 @@ def solve_farm_v2(
         # Crop protection (R1, Batch 2.3): $/acre per planting, spread evenly over the GROW weeks —
         # when sprays, biologicals and row covers go on. A crop with no grow phase spreads it over
         # every active week instead, so the charge can never vanish for want of a phase.
+        # Deliberately ONE per-planting figure rather than fertilizer's per-phase weekly rates
+        # (PLAN 2.3 said "like fertiliser"): extension budgets quote it per acre per season, and
+        # three weekly rates would ask the grower for numbers they do not have. Known
+        # simplification: an overwintering crop spreads it across dormant weeks too — the total
+        # is right, only the weekly cash timing is approximate.
         protect = crop.get("crop_protection_cost_per_acre", 0.0)
         if protect:
-            grow = [w for w in range(1, N_WEEKS + 1) if phase_table[i][w] == 1]
-            weeks = grow or [w for w in range(1, N_WEEKS + 1) if phase_table[i][w] is not None]
+            weeks = phase_weeks_of(s, 1, N_WEEKS) or phase_weeks_of(s, None, N_WEEKS)
             for w in weeks:
                 vc_weekly_split[i, w, _CAT["crop_protection"]] += total_land * protect / len(weeks)
 
@@ -1637,11 +1641,11 @@ def solve_farm_v2(
             packaging_cost += sold_by_pair[c_idx, ch_idx] * pkg
 
     # Same discipline as fixed_cost_split above: the reported total is summed FROM the
-    # breakdown (W4). `vc_split` has carried the five growing categories since B.1 and was
+    # breakdown (W4). `vc_split` has carried the per-acre categories (VC_CATEGORIES) since B.1 and was
     # never returned, so the P&L's COGS detail rows were blank while the total showed. The trap
     # in "just export vc_split" is PACKAGING: it is charged per pound sold, not per acre, so it
     # lives outside vc_split entirely — 20.5% of variable cost on the shipped farm ($119,633).
-    # A five-row split under this total would have been short by all of it.
+    # A split of the per-acre categories alone would have been short by all of it.
     #
     # var_cost_coeff is untouched: the objective still uses it, so the PLAN cannot move. Only
     # the addition order of the reported figure changes (float noise, ~1e-10).

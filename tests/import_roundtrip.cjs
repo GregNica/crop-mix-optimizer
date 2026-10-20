@@ -390,6 +390,19 @@ if (!csvUS || !csvME) {
     if (c.min_acreage_if_planted !== 0) fail(`crop CSV: stated min_acreage 0 became ${c.min_acreage_if_planted} — the silent 1-acre floor is back`);
     if (c.yield_per_acre !== 0) fail(`crop CSV: stated yield 0 became ${c.yield_per_acre} — a phantom default yield (validation refuses 0 later, with a message)`);
   }
+
+  // R1 — crop protection rides the CSV. Before this column existed an import rebuilt every card at
+  // $0, silently erasing what the grower had typed. In Metric the value converts per area.
+  {
+    const withCol = rows => ['crop_name,channel_name,price_per_lb,demand_cap_type,demand_weekly_lbs,crop_protection_per_ac', ...rows].join('\n');
+    const us = withSystem('us', () => T.parseCropCSV(withCol(['Kale,Direct,2.00,weekly_flat,500,180'])));
+    if (us.crops[0]?.crop_protection_cost_per_acre !== 180) fail(`crop CSV: crop_protection_per_ac 180 imported as ${us.crops[0]?.crop_protection_cost_per_acre}`);
+    const metric = withSystem('metric', () => T.parseCropCSV(withCol(['Kale,Direct,2.00,weekly_flat,500,444.79'])));
+    const got = metric.crops[0]?.crop_protection_cost_per_acre;
+    if (!(Math.abs(got - 180) < 0.01)) fail(`crop CSV (metric): 444.79 $/ha should be ~180 $/acre, got ${got}`);
+    const old = withSystem('us', () => T.parseCropCSV(mkCsv(['Kale,Direct,2.00,weekly_flat,500,0,0,2'])));
+    if (old.crops[0]?.crop_protection_cost_per_acre !== 0) fail('crop CSV: a file WITHOUT the column must import crop protection as $0');
+  }
   const blankDefaults = withSystem('us', () =>
     T.parseCropCSV(mkCsv(['Kale,Direct,2.00,weekly_flat,500,,,'])));
   if (blankDefaults.errors.length) {
@@ -489,7 +502,7 @@ if (!csvUS || !csvME) {
   });
   const row = ['Garlic','10-1','4-30','','','196','1','1','2000','40','5','0.6','5','1','10',
                '8000','6000','5000','0.40','0.20','0.15','4.0','1.5','3.0','150',
-               '16','FALSE','TRUE','90','Wholesale','3.00','0.20','annual','200000','','',''];
+               '16','FALSE','TRUE','90','Wholesale','3.00','0.20','annual','200000','','','','0'];
   if (row.length !== hdr.length) {
     fail(`crop CSV: test row has ${row.length} cells for ${hdr.length} headers — fix the row`);
   } else {
@@ -554,7 +567,7 @@ if (!csvUS || !csvME) {
 
   const row = ['Garlic','10-1','4-30','','','196','1','1','2000','40','5','0.6','5','1','10',
                '8000','6000','5000','0.40','0.20','0.15','4.0','1.5','3.0','150',
-               '16','FALSE','TRUE','90','Wholesale','3.00','0.20','annual','200000','','',''];
+               '16','FALSE','TRUE','90','Wholesale','3.00','0.20','annual','200000','','','','0'];
   const legacyHdr = hdr.map(c => c.replace(/^((?:labor|water|fert|fuel)_(?:plant|grow|harv)_(?:hr|L|lb)_ac)_wk$/, '$1'));
   if (legacyHdr.join(',') === hdr.join(',')) {
     fail('crop CSV: legacy header derivation is a no-op — the rename test is inert');
