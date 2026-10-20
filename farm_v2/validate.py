@@ -56,6 +56,7 @@ def validate_params(
     capital_cost_per_unit: dict | None = None,
     insurance_premium_per_yr: float = 0.0,
     insurance_payment_week: int | None = None,
+    utilities_cost_per_yr: float = 0.0,
     owned_capacity: dict | None = None,   # {asset class: capacity} — the solver's owned-asset table
     **_kwargs,  # absorb unused kwargs for forward-compatibility
 ) -> list[str]:
@@ -128,7 +129,8 @@ def validate_params(
     # floor), so a bad value is refused, never coerced; a week outside 1-52 would index past the year.
     for v, what in ((rented_acres, "rented_acres"), (cash_rent_per_acre_yr, "cash_rent_per_acre_yr"),
                     (ownership_carrying_rate, "ownership_carrying_rate"),
-                    (insurance_premium_per_yr, "insurance_premium_per_yr")):
+                    (insurance_premium_per_yr, "insurance_premium_per_yr"),
+                    (utilities_cost_per_yr, "utilities_cost_per_yr")):
         _check_nonneg(v, what)
     if rented_acres > total_land:
         raise ValueError(f"rented_acres ({rented_acres:g}) cannot exceed total_land ({total_land:g}).")

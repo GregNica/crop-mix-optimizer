@@ -86,6 +86,7 @@ def test_the_cash_floor_sees_a_lump_premium(two_crop_params):
 @pytest.mark.parametrize("bad", [
     dict(rented_acres=-1.0), dict(rented_acres=10_000.0), dict(cash_rent_per_acre_yr=float("nan")),
     dict(ownership_carrying_rate=-0.01), dict(insurance_premium_per_yr=-5.0),
+    dict(utilities_cost_per_yr=-1.0), dict(utilities_cost_per_yr=float("nan")), dict(utilities_cost_per_yr="7800"),
     dict(insurance_payment_week=0), dict(insurance_payment_week=53), dict(insurance_payment_week=12.5),
     dict(capital_cost_per_unit={"harvest_storage": -1.0}),
     # Unknown classes are refused, not ignored: the solver only reads known ones, so a typo
@@ -122,14 +123,16 @@ def test_the_adapter_carries_every_r7_key_to_the_solver():
 
 
 @pytest.mark.parametrize("key", ["rented_acres", "cash_rent_per_acre_yr", "ownership_carrying_rate",
-                                 "insurance_premium_per_yr"])
+                                 "insurance_premium_per_yr", "utilities_cost_per_yr"])
 def test_a_present_null_is_refused_not_read_as_zero(key):
     """The form always sends a number, so a null means a blanked box or NaN crossing the boundary —
     charging $0 for it would invent the value (the _num_no_invent contract)."""
     p = json.loads(GOLDEN_PAYLOAD.read_text())
     p[key] = None
     out = json.loads(run_from_js(json.dumps(p)))
-    assert out.get("status") != "optimal", f"a null {key} was silently read as 0"
+    # The refusal itself — naming the key — not merely "not optimal", which a crash would also be.
+    assert out.get("status") == "error" and key in out.get("error", ""), (
+        f"a null {key} was not refused by name (status={out.get('status')}, error={out.get('error','')[:120]!r})")
 
 
 def test_the_page_and_the_solver_name_the_same_owned_asset_classes():

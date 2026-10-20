@@ -38,7 +38,7 @@ FIXED_COMPONENTS = {
     "harvest_storage", "ambient_storage", "water_storage", "irrigation", "equipment_storage",
     "fuel_storage", "machinery", "property_mortgage_rent", "other_debt_service", "wages",
     # R7 (Batch 2.2): always present, $0 until entered — a configured-but-zero line is information.
-    "land_rent", "ownership_carrying", "insurance",
+    "land_rent", "ownership_carrying", "insurance", "utilities",
 }
 # No `labor` (W12): every listed worker is paid for their stated hours whether the crops need them
 # or not, so wages are a committed weekly cost and live in fixed_cost_split["wages"].

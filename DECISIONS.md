@@ -1045,6 +1045,14 @@ is NOT in this batch; it remains parked.
 
 ---
 
+### W10 sub-question — whole bill or irrigation share (2026-10-19, shipped as WHOLE BILL, disclosed)
+
+PLAN 2.4 asked whether utilities should be the farm's whole electricity bill or only the irrigation
+share. Shipped as the **whole bill** (cooling, pumps, buildings, plus propane/heating fuel), because
+the overhead ledger now tells the grower to take ALL utilities out of overhead: entering only the
+pump share would leave cooling and buildings charged nowhere. The tooltip says so. Reverse this only
+together with putting the non-irrigation share back into the overhead ledger's COVERS.
+
 ## Rulings on the audit's three open questions (2026-07-31, all resolved)
 
 **M9 — volume basis: proceed with the recommended scope.** `STRATEGY.md`'s "volume/pack basis"

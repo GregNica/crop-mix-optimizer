@@ -74,17 +74,32 @@
       chat: { label: "Other debt service", type: "number", unit: "$/week", min: 0,
         description: "Whole weekly PAYMENT on other carried/long-term debt (e.g. equipment loans) — not an interest rate. Convert monthly ÷ 4.33, annual ÷ 52." },
     },
-    // R7 (Batch 2.2) — land tenure, ownership carrying, insurance. No `chat` blocks: the
-    // assistant's allowlist is unchanged until these have defaults and the grower has seen them.
+    // R7 (Batch 2.2) — land tenure, ownership carrying, insurance. With `chat` blocks (W10 review):
+    // the overhead description tells the assistant to take these OUT of overhead, so it must be
+    // able to put them somewhere, or a chat-driven setup charges them nowhere.
     rented_acres: {
       units: { measure: 'area_land' },
+      chat: { label: "Rented acres", type: "number", unit: "acres", min: 0,
+        description: "How much of the farm's land is RENTED (cash rent). 0 if they own all of it. Never more than total land. Hectares × 2.47 = acres." },
     },
     cash_rent_per_acre_yr: {
       units: { measure: 'area_land', inverse: true },   // $/acre/yr
+      chat: { label: "Cash rent", type: "number", unit: "$/acre/year", min: 0,
+        description: "Rent paid per rented acre per YEAR. Convert $/ha ÷ 2.47; a monthly figure × 12. This is NOT the mortgage — that is the property mortgage/rent field (per week) for owned land." },
     },
-    ownership_carrying_pct: {},
-    insurance_premium_per_yr: {},
+    ownership_carrying_pct: {
+      chat: { label: "Ownership carrying %", type: "number", unit: "% of installed cost per year", min: 0, max: 30,
+        description: "Interest + repairs + property tax on owned buildings, storage, tanks and irrigation, as a percent of their installed cost per year (NOT depreciation, NOT insurance, NOT machinery). Extension rules of thumb: repairs 1–1.5% + property tax 1–1.5% + interest at their borrowing rate on about half the cost. If unsure, explain and suggest ~6%, and CONFIRM rather than setting silently." },
+    },
+    insurance_premium_per_yr: {
+      chat: { label: "Farm insurance", type: "number", unit: "$/year", min: 0,
+        description: "TOTAL insurance premiums per YEAR — crop, liability and property (including buildings and equipment). Convert monthly × 12. If their overhead % already includes insurance, it must come out of the overhead figure." },
+    },
     insurance_payment_week: {},
+    utilities_cost_per_yr: {                           // W10
+      chat: { label: "Utilities (electricity)", type: "number", unit: "$/year", min: 0,
+        description: "The farm's whole ELECTRICITY bill per YEAR (plus propane/heating fuel if any) — cooling, irrigation pumps, buildings. NOT city water (its own field). Convert monthly × 12. If their overhead % already includes it, it must come out of the overhead figure." },
+    },
     'pd-harvest-storage': {
       ui: true,
     },
@@ -147,7 +162,7 @@
     },
     overhead_pct: {
       chat: { label: "Overhead % of revenue", type: "number", unit: "%", min: 0, max: 60,
-        description: "Overhead as a percent of REVENUE (not of costs) — land taxes, admin, utilities (incl. pump energy), office/vehicle. EXCLUDES costs itemized elsewhere (land rent/mortgage, the machinery line, labor, seed, water, fertilizer, fuel, packaging, crop protection, irrigation, storage, channel selling costs, other debt service, interest on operating borrowing, city water, farm insurance, and the interest, repairs and property tax on owned buildings, storage and irrigation); if the user's figure includes those, ask them to exclude them. If given in dollars, ask for revenue or the percent — don't guess." },
+        description: "Overhead as a percent of REVENUE (not of costs) — land taxes, admin (incl. phone & internet), office/vehicle. EXCLUDES costs itemized elsewhere (land rent/mortgage, the machinery line, labor, seed, water, fertilizer, fuel, packaging, crop protection, irrigation, storage, channel selling costs, other debt service, interest on operating borrowing, city water, farm insurance, utilities (electricity incl. cooling and pump energy), and the interest, repairs and property tax on owned buildings, storage and irrigation); if the user's figure includes those, ask them to exclude them. If given in dollars, ask for revenue or the percent — don't guess." },
     },
     interest_rate_pct: {
       chat: { label: "Interest APR %", type: "number", unit: "% APR", min: 0, max: 40,
@@ -366,6 +381,7 @@
     ownership_carrying_rate:     { from: ['ownership_carrying_pct'] },   // a FRACTION (pct / 100)
     insurance_premium_per_yr:    { from: ['insurance_premium_per_yr'] },
     insurance_payment_week:      { from: ['insurance_payment_week'] },
+    utilities_cost_per_yr:       { from: ['utilities_cost_per_yr'] },
     // The installed cost per unit of each owned asset class — the base ownership carrying is
     // charged on (the solver multiplies by the capacity it already has).
     capital_cost_per_unit:       { from: ['harvest_storage_cost_per_m3', 'ambient_storage_cost_per_m3',

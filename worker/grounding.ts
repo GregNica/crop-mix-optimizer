@@ -41,6 +41,10 @@ const FARM_FIELDS = (globalThis as unknown as {
 const CHAT_ALLOWLIST = {
   form: ["total_land", "sell_through_pct", "overhead_pct", "interest_rate_pct", "min_viable_margin_pct",
          "payroll_load_pct", "rate_property_mortgage_rent", "other_debt_service_per_week",
+         // Batch 2 (R7, W10): the overhead description tells the model to take these OUT of
+         // overhead, so it must be able to set them — or they are charged nowhere.
+         "rented_acres", "cash_rent_per_acre_yr", "ownership_carrying_pct", "insurance_premium_per_yr",
+         "utilities_cost_per_yr",
          "well_enabled", "well_weekly_cap_L", "catchment_enabled", "catchment_surface_area_m2",
          "city_water_enabled", "city_water_cost_per_L"],
   crop: ["yield_per_acre", "days_to_maturity", "planting_weeks", "harvest_weeks", "min_acreage_if_planted",

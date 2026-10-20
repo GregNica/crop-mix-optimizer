@@ -80,7 +80,7 @@ const PARAMS = {
 // it would pass for any labels at all, which is the vacuous shape this repo has caught twice
 // (T27, T83). These are user-visible copy, so a change to them SHOULD have to be made twice.
 const EXPECT_VARIABLE_LABELS = {
-  water:      'Irrigation Water (on-farm supply — $0 until a pumping cost is entered)',
+  water:      'Irrigation Water (on-farm supply; pump energy belongs in Utilities)',
   fertilizer: 'Fertilizer',
   fuel:       'Fuel',
   seed:       'Seed / Transplants',

@@ -96,13 +96,13 @@ VC_CATEGORIES = ("water", "fertilizer", "fuel", "seed", "crop_protection")
 OVERHEAD_COVERS = {
     "taxes":      ("land taxes", ("land tax",)),       # R7: building/asset property tax is in carrying
     "admin":      ("admin", ("admin",)),
-    "utilities":  ("utilities", ("utilit",)),
     "vehicles":   ("vehicles", ("vehicle",)),
 }
 OVERHEAD_EXCLUDES = {
     "rent":       (("property_mortgage_rent", "land_rent"), ("rent", "mortgage")),
-    # R7 moved these two out of overhead: they are now charged explicitly.
+    # R7 (insurance, ownership) and W10 (utilities) moved these out of overhead: charged explicitly.
     "insurance":  (("insurance",), ("insurance",)),
+    "utilities":  (("utilities",), ("utilit",)),                    # W10
     "ownership":  (("ownership_carrying",), ("repair", "owned")),
     "machinery":  (("machinery",), ("machinery",)),
     "storage":    (("harvest_storage", "ambient_storage", "water_storage", "equipment_storage",
@@ -347,6 +347,7 @@ def solve_farm_v2(
     capital_cost_per_unit: dict | None = None,  # {asset class: installed $ per unit of its capacity} — classes in OWNED_ASSET_CLASSES
     insurance_premium_per_yr: float = 0.0,     # $/yr — all premiums: crop, liability, property (incl. buildings)
     insurance_payment_week: int | None = None,  # 1–52: the whole premium is paid that week (cash curve, C13); None = spread evenly
+    utilities_cost_per_yr: float = 0.0,    # W10 — the farm's electricity bill incl. cooling and pump energy, $/yr (entered, not computed)
     # --- Storage shrink ---
     # Weight lost per week in store: respiration, moisture loss, trimming, sorting out rots.
     # SPEC_v3 §3.4. This is what makes holding COST something — without it a long shelf life is
@@ -521,6 +522,7 @@ def solve_farm_v2(
             capital_cost_per_unit=capital_cost_per_unit,
             insurance_premium_per_yr=insurance_premium_per_yr,
             insurance_payment_week=insurance_payment_week,
+            utilities_cost_per_yr=utilities_cost_per_yr,
             owned_capacity={cls: cap for cls, (cap, _) in owned_assets.items()},
         ) or []
     except ValueError as ve:
@@ -908,11 +910,18 @@ def solve_farm_v2(
     fixed_cost_split["land_rent"] = float(rented_acres * cash_rent_per_acre_yr)
     fixed_cost_split["ownership_carrying"] = float(ownership_carrying_rate * owned_capital)
     fixed_cost_split["insurance"] = float(insurance_premium_per_yr)
+    # W10 (Batch 2.4): utilities as an ENTERED bill — the grower's ruling: an entered bill beats a
+    # computed pump cost. It is the whole bill (cooling, pumps, buildings), so on-farm water
+    # carries no energy charge of its own. (The solver still accepts well_cost_per_L for direct
+    # callers; the app never sends it, so in the app the two cannot double-count.)
+    fixed_cost_split["utilities"] = float(utilities_cost_per_yr)
     fixed_cost = float(sum(fixed_cost_split.values()))
 
     # Fixed cost splits into a genuinely FLAT part and PAYROLL, which is not flat (W12).
     #
-    # Every other fixed line really is the same every week — irrigation, machinery, mortgage,
+    # Every other fixed line is spread flat — exact for depreciation, rent and debt service, and an
+    # approximation for utilities, whose cooling and pumping peak in summer (W10; BACKLOG). Before
+    # that: every other fixed line really is the same every week — irrigation, machinery, mortgage,
     # debt service, storage depreciation — so spreading `fixed_cost / 52` was exact. Wages are the
     # first fixed line with a shape: the shipped farm owes $4,884/wk in the winter and $24,484/wk
     # once the seasonal crews start, against a flat average of $16,445. Flattening them understates

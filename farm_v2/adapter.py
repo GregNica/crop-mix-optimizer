@@ -84,6 +84,7 @@ def run_from_js(params_json):
         ownership_carrying_rate  = _num_no_invent('ownership_carrying_rate', 0.0)
         insurance_premium_per_yr = _num_no_invent('insurance_premium_per_yr', 0.0)
         insurance_payment_week   = p.get('insurance_payment_week')      # None = spread evenly
+        utilities_cost_per_yr    = _num_no_invent('utilities_cost_per_yr', 0.0)     # W10
         capital_cost_per_unit    = p.get('capital_cost_per_unit')       # validated by validate.py
 
         # --- Water ---
@@ -280,6 +281,7 @@ def run_from_js(params_json):
             capital_cost_per_unit=capital_cost_per_unit,
             insurance_premium_per_yr=insurance_premium_per_yr,
             insurance_payment_week=insurance_payment_week,
+            utilities_cost_per_yr=utilities_cost_per_yr,
             equip_storage=equip_storage,
             fuel_storage=fuel_storage,
             water_storage_capacity=water_storage_capacity,
