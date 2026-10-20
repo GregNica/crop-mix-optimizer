@@ -722,7 +722,7 @@ region; same provenance treatment as other benchmarks), prefill the field labell
 correct this", make blank an explicit "infer from my crew" choice rather than the silent default.
 Inference stays as the labelled fallback. Update the $25.33 expectation tests to the new contract.
 
-**2.6 · Re-pin.** One commit. Expect margin to fall from 20.1% toward the 5–15% band; assert
+**2.6 · Re-pin.** ⛔ **HELD 2026-10-19 — the measurement contradicts this step's premise: decomposing overhead moves margin UP (25.4% → 33–37%), because the explicit lines total ~$62–82k against a $386k overhead. Decision with the grower: `DECISIONS.md` GROUP H.** 2.1 R8, 2.2 R7, 2.3 R1 and 2.4 W10 are DONE as mechanisms ($0 defaults); 2.5 W17 SKIPPED (conflicts with GROUP F L8). Original: One commit. Expect margin to fall from 20.1% toward the 5–15% band; assert
 direction; document every line's delta. If it falls BELOW ~5%, stop and re-examine defaults
 before shipping (over-charging is the mirror error; four fixes moved margin wrong by over- or
 mis-charging).

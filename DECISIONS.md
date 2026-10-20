@@ -1053,6 +1053,64 @@ the overhead ledger now tells the grower to take ALL utilities out of overhead: 
 pump share would leave cooling and buildings charged nowhere. The tooltip says so. Reverse this only
 together with putting the non-irrigation share back into the overhead ledger's COVERS.
 
+## GROUP H — The Batch 2 re-pin: the measurement contradicts the plan (2026-10-19; AWAITING THE GROWER)
+
+**Status.** Batch 2's mechanisms are built and committed on `batch2/cost-completeness` — R8 overhead
+ledger, R7 land rent / ownership carrying / insurance (with payment week), R1 crop protection, W10
+utilities — all defaulting to **$0**, so the golden farm has not moved. Step 2.6 (the re-pin) sets
+the defaults, and that is where the plan's premise breaks.
+
+### The finding: decomposing overhead moves margin UP, not down
+
+PLAN Batch 2 expected the missing cost lines to cut **4–9 margin points** toward the 5–15% band.
+That estimate added them ON TOP of the 16% overhead — the double count R8 exists to prevent. Once
+overhead becomes a residual (what is left after the explicit lines), the arithmetic reverses.
+Measured on the golden farm through the real adapter (revenue $2,414,714, 80 acres):
+
+| Scenario | Overhead | New explicit lines | Profit | Net margin |
+|---|---:|---|---:|---:|
+| Today | 16% = $386,354 | all $0 | $612,912 | **25.4%** |
+| Owned land, residual 6% | $144,885 | carrying 6% $46,440 · insurance $12k · utilities $4k | $792,265 | 32.8% |
+| Owned land, residual 4% | $96,582 | same | $840,543 | 34.8% |
+| Owned land, residual 2% | $48,294 | same | $889,073 | 36.8% |
+| Half rented @ $245/ac, residual 4% | $96,582 | same + rent $9,800 | $830,667 | 34.4% |
+| Half rented @ $500/ac, residual 4% | $96,582 | same + rent $20,000 | $820,388 | 34.0% |
+
+**The explicit lines total ~$62–82k. The 16% overhead is $386k.** So either (a) the 16% was standing
+in for far more than insurance, repairs, utilities and admin — and we should find out what — or
+(b) the high margin is not a cost problem at all.
+
+### Evidence for (b): revenue
+
+Revenue is **$30,184 per acre** across all 80 acres. Ownership capital in the model is $774k; seed
+$220k; packaging $195k; payroll $855k. A diversified field-vegetable operation at this scale
+grossing $30k/acre on every acre is at the high end of anything published — which points at the
+revenue side (prices, yields, sell-through), the still-unaudited half that PLAN Batch 3 (M2/M3)
+exists to check. The plan's own audit verdict flagged this: "the revenue side is still unaudited
+… no longer the leading suspect" — this measurement makes it the leading suspect again.
+
+### Proposed defaults, each with its source and confidence
+
+| Line | Proposed default | Source | Confidence |
+|---|---|---|---|
+| Ownership carrying | **6%** of installed cost/yr | repairs 1–1.5% + property tax 1–1.5% (UW Extension building-cost guidance) + interest 7% (the app's APR default) × ½ cost (average investment) | medium |
+| Farm insurance | $12,000/yr | **weak** — no authoritative small-veg-farm premium found; aggregator ranges $1.2–4k for basic cover on <100 ac scale poorly to a $2.4M-revenue farm | low |
+| Utilities | $4,000/yr | the M1 evidence table's ~$4k estimate (unsourced order of magnitude) | low |
+| Cash rent | NASS 2025 irrigated **$245/ac**, row-crop average (understates veg ground; NASS has no veg series) | NASS 2025 Land Values and Cash Rents | medium for the number, low for veg |
+| Rented acres | **0** (demo farm owns its land) — or a share (39% of US farmland is rented, ERS) | a demo-farm choice, not data | — |
+| Crop protection | $0 until Batch 3 sources per-crop budgets | — | — |
+| Residual overhead | **no published source** for admin + land taxes + vehicles once the big lines are explicit; a bottom-up guess for this farm is ~$25–50k (1–2% of revenue); PLAN said 3–6% (unsourced) | none | low |
+
+### Decisions needed
+
+1. **Which way to re-pin:**
+   - **(A) Keep 16% overhead, ship the new lines at $0** (no re-pin; growers who enter lines are told to lower their overhead — the tooltip now says so). Margin stays 25.4%. Honest about what we know; no invented numbers.
+   - **(B) Ship the sourced defaults and a residual overhead** (e.g. 4%). Margin ~34%. Honest about the decomposition, but moves M1 the wrong way and rests on two low-confidence defaults.
+   - **(C) Investigate what the 16% was standing for first.** If the grower's own books show ~16% of revenue in admin/insurance/utilities/repairs at this scale, the explicit lines are UNDER-sized and the residual is genuinely large.
+   *My recommendation: (A) now, and pull Batch 3's revenue audit (M2 prices/yields) forward — it is where this measurement says the margin is.*
+2. **Your farm's overhead composition:** what your books' overhead % actually contains — the same question as the 25% payroll load, and it decides (C).
+3. **W17 (hired-wage prefill) was skipped**: GROUP F's L8 would delete the field it prefills. National figure if wanted: $18.58/hr (NASS, April 2025 field workers).
+
 ## Rulings on the audit's three open questions (2026-07-31, all resolved)
 
 **M9 — volume basis: proceed with the recommended scope.** `STRATEGY.md`'s "volume/pack basis"
