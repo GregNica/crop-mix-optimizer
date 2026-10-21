@@ -731,8 +731,8 @@ mis-charging).
 
 ## Batch L — The labour batch (grower ruling 2026-10-21; runs NEXT, before Batch FX)
 
-**Spec: `SPEC_batchL.md` (DRAFT 2026-10-21 — six open questions Q1–Q6 for the grower, and a
-proposed reorder L.1 → L.5 → L.2 → L.3 → L.4 so overtime is priced once).**
+**Spec: `SPEC_batchL.md` — ✅ RULED 2026-10-21: all six questions as recommended (overtime enters
+the MAIN plan → golden re-pin in L.2), and build order L.1 → L.5 → L.2 → L.3 → L.4.**
 
 One batch for everything that touches the roster, because it all rewrites the same rows and the
 same money path (R10 found GROUP F was never scheduled). Spec first, then build; guardrails 2–5,

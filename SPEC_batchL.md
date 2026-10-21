@@ -1,6 +1,10 @@
 # SPEC — Batch L: the labour batch
 
-**Status:** DRAFT 2026-10-21, written for the grower to rule on the open questions (§2) before
+**Status:** ✅ RULED 2026-10-21 — the grower accepted EVERY recommendation in §2 (Q1(a) overtime
+in the main plan with a golden re-pin in L.2's commit; Q2 keep productivity % + $/head; Q3 extra
+hires What-If only with "Add to roster"; Q4 tags now, 3-pool LP in Batch 3; Q5 8% placeholder
+pending a source; Q6 the "Max week incl. overtime" label) AND the reorder L.1 → L.5 → L.2 → L.3
+→ L.4. Ready to build once Batch 2 has landed. Originally drafted for the grower to rule on before
 any code. Source rulings: `DECISIONS.md` GROUP F (F1 superseded → grower's design, F2, F3, F4),
 GROUP I (I2, I2a, I2b), GROUP H decision 4; `PLAN.md` "Batch L". Reference derivation:
 `toy_models/toy_v11_lp.py` (per-role overtime, extra heads, allowance cap — already built and
@@ -26,7 +30,7 @@ feature off leaves it unguarded" trap (third instance). Hence the flex-ON fixtur
 
 ---
 
-## 2. Open questions — need a grower ruling before build
+## 2. Open questions — ✅ all RULED 2026-10-21 as recommended
 
 **Q1 · Does overtime enter the MAIN plan, or stay in the What-If?** ⭐ the big one.
 F1 says overtime is "genuinely a within-plan flex — your crew staying late, no lead time" and
