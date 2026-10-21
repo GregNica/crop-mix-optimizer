@@ -879,6 +879,14 @@ row, default all on; I3 channel staffing hours + selling cost relabelled as buye
 first (I2 touches the labour money path and GROUP F's roster), then build. Must land BEFORE 3.5 —
 it is the largest known-missing cost the 16% may have been silently absorbing.
 
+**3.8 · GROUP E — loss, storage and shelf life (E3 → E1 → E2; RULED 2026-10-21).** E3: a per-crop
+storage-loss %/week form field wired to the existing `storage_loss_frac_per_week` (sourced
+defaults). E1: sell-through + returns-to-store per crop × channel, market loss occupying storage,
+`market_loss_lbs` reported; defaults 100% until sourced; NO pack-out field (yield = marketable,
+relabel the yield box). E2: per-crop `shelf_life_weeks` with sourced defaults and the +1 week
+correction. Shares Batch 3's single re-pin. Naming of sell-through still open (GROUP E ruling 5).
+Also ships here: the interim headline disclaimer (GROUP I5) if it has not already gone out.
+
 **3.7 · Research — post-harvest throughput and selling staffing defaults (GROUP I4).** Sourced
 per-crop wash/pack rates (lb per person-hour) and typical market/delivery staffing, to the GROUP H
 research standard (cite, state the basis, flag what could not be verified). Feeds 3.6's defaults.

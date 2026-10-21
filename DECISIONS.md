@@ -494,7 +494,23 @@ invite table, so "private" would mean anyone with a Google account who finds the
 
 ---
 
-## GROUP E — Loss, storage and shelf life (proposals, 2026-08-29; awaiting the grower)
+## GROUP E — Loss, storage and shelf life (proposals 2026-08-29; ✅ RULED 2026-10-21)
+
+**✅ RULING (grower, 2026-10-21) — supersedes the open questions below:**
+1. **Structure confirmed:** sell-through lives on each crop × channel row (beside price, packaging,
+   demand), with a companion **returns-to-store %** on the same row (0 = unsold is lost, e.g.
+   spinach; ~1 = it comes home, e.g. cured garlic). Market loss passes THROUGH storage, so room
+   occupancy counts what is taken to market, not just what sells.
+2. **No pack-out field.** Culls/off-grade are netted into YIELD, which is entered as MARKETABLE
+   yield and labelled so (consistent with the shipped sell-through tooltip). E1's `pack_out_fraction`
+   is dropped; revisit only if growers who know only gross yield need it.
+3. **Defaults stay 100%** (returns-to-store per crop by storability) until sourced per crop ×
+   channel rates exist — the uncited 97–99% / 70–90% figures do NOT ship.
+4. **Timing:** E3 → E1 → E2 build together in **Batch 3** beside the crop-data sweep (PLAN 3.8),
+   one re-pin shared with 3.4/3.5/3.6.
+5. **Still OPEN: the name** ("sell-through" vs "market overage"). No recommendation was given, so
+   this was not ruled. If "overage" ships, the label must state that 15% more brought = 13% lost.
+
 
 Raised by the grower reading toy v1: *"does 85% mean the other 15% is not sellable, or that it
 couldn't find sales? If it's the latter, shouldn't that get factored into storage?"* Backlog rows
@@ -1230,7 +1246,7 @@ Interim until Batch 4: one line under the headline, *"Assumes yields as entered 
 failure. Year-to-year risk isn't reflected in this number yet."* (agreed; no Monte Carlo pointer
 while W2 makes it clairvoyant).
 
-**Crop loss — A1–A3 agreed pending the grower's read of E1:** yield is entered as MARKETABLE
+**Crop loss — ✅ RULED 2026-10-21 (A1–A4, with GROUP E):** yield is entered as MARKETABLE
 yield (label to say so; consistent with the shipped sell-through tooltip "grade-out … that is
 yield"); no pack-out field for now; whole-planting failures live in the I5 range, not a headline
 haircut; culls sold to a cheaper channel is a future item.
