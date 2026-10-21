@@ -58,6 +58,30 @@ const ok = (name, cond) => { if (!cond) fail(name); };
     well.checked = true; cw.checked = wasCw; setBox('well_weekly_cap_L', wasCap);
   }
 
+  // 1c. Every water source off is refused at solve time, and the Optimize gate follows the boxes
+  //     LIVE. It used to be re-checked only on section navigation: unticking every source left
+  //     Optimize enabled (a "grow nothing" plan solved optimal), and re-ticking one left it locked.
+  {
+    const src = ['well_enabled', 'catchment_enabled', 'city_water_enabled'].map(id => D.getElementById(id));
+    const was = src.map(e => e.checked);
+    const btn = D.getElementById('btn-optimize-top');
+    const toggle = (e, on) => { e.checked = on; e.dispatchEvent(new W.Event('change', { bubbles: true })); };
+    const settle = () => new Promise(r => setTimeout(r, 5));
+    W.eval("SECTION_ORDER.forEach(id => APP_STATE.visitedSections.add(id)); showSection('water')");
+    await settle();
+    ok('Optimize starts enabled with the shipped water setup', btn && !btn.disabled);
+    src.forEach(e => toggle(e, false));
+    const errs = W.validateParams(W.eval('buildSolveParams()'));
+    ok(`no water source is refused at solve time (got ${JSON.stringify(errs)})`,
+       errs.some(e => e.startsWith('No water source')));
+    await settle();
+    ok('Optimize locks as soon as the last source is unticked', btn.disabled);
+    toggle(src[0], true);
+    await settle();
+    ok('Optimize unlocks as soon as a source is re-ticked, without leaving the section', !btn.disabled);
+    src.forEach((e, i) => toggle(e, was[i]));
+  }
+
   // 2. Monte Carlo draws charge the plan's own fertilizer and fuel prices, even when they are $0.
   setBox('cost_fert_per_lb', '0');
   setBox('cost_fuel_per_L', '0');

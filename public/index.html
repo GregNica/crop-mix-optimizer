@@ -1319,7 +1319,7 @@
         <!-- R7 (Batch 2.2): land tenure, ownership carrying cost, insurance. All $0 until entered;
              the sourced defaults arrive with the Batch 2 re-pin. -->
         <div class="form-group"><label>Rented Land (acres) <span class="tip" data-tip="How much of your land you RENT (cash rent). Charged at the rent per acre below, every year, whether planted or not.&#10;&#10;0 if you own all your ground. Owned land carries no rent — its mortgage or other payment goes in the line above.">?</span></label><input type="number" id="rented_acres" value="0" min="0" step="1"></div>
-        <div class="form-group"><label>Cash Rent per Year ($/acre) <span class="tip" data-tip="What you pay per rented acre per year.&#10;&#10;USDA NASS publishes a row-crop average (2025 irrigated cropland ~$245/acre); good vegetable ground usually rents for more, and NASS publishes no vegetable-specific series — use your own lease if you have one.">?</span></label><input type="number" id="cash_rent_per_acre_yr" value="0" min="0" step="5"></div>
+        <div class="form-group"><label>Rent per Rented Acre, per Year ($/acre) <span class="tip" data-tip="What you pay per rented acre per year.&#10;&#10;USDA NASS publishes a row-crop average (2025 irrigated cropland ~$245/acre); good vegetable ground usually rents for more, and NASS publishes no vegetable-specific series — use your own lease if you have one.">?</span></label><input type="number" id="cash_rent_per_acre_yr" value="0" min="0" step="5"></div>
         <div class="form-group"><label>Ownership Carrying (% of installed cost/yr) <span class="tip" data-tip="The cost of OWNING your buildings, storage, tanks and irrigation beyond depreciation: interest on the money tied up in them, repairs, and property tax — the I-R-T of the standard D-I-R-T-I ownership cost. Applied to the installed cost of each owned asset above.&#10;&#10;Extension rules of thumb: repairs 1–1.5% and property tax 1–1.5% of value per year, plus interest at your borrowing rate on about half the cost (the average investment). Insurance is NOT here — it is its own line.&#10;&#10;Machinery is not included: its line already covers maintenance.">?</span></label><input type="number" id="ownership_carrying_pct" value="0" min="0" max="30" step="0.5"></div>
         <div class="form-group"><label>Farm Insurance ($/yr) <span class="tip" data-tip="Your total insurance premiums for the year — crop, liability and property, including insurance on your buildings and equipment.&#10;&#10;Note: the model has no bad years (yields are fixed), so insurance can only ever look like a cost here. Its benefit — an indemnity in a bad year — is real but not modelled.">?</span></label><input type="number" id="insurance_premium_per_yr" value="0" min="0" step="100"></div>
         <div class="form-group"><label>Insurance Payment Week (1–52) <span class="tip" data-tip="The week your premium is paid. A lump payment pulls cash out in that week, which can matter for your credit line.&#10;&#10;Leave blank to spread it evenly across the year.">?</span></label><input type="number" id="insurance_payment_week" value="" min="1" max="52" step="1" placeholder="spread evenly"></div>
@@ -4631,14 +4631,31 @@ async function signOut() {
   finally { window.location.href = '/'; }
 }
 
+// Re-check the current section and the Optimize gate after an edit, coalesced to once per burst.
+let _revalidateQueued = false;
+function scheduleRevalidate() {
+  if (_revalidateQueued) return;
+  _revalidateQueued = true;
+  setTimeout(() => {
+    _revalidateQueued = false;
+    if (APP_STATE.section) { renderStepper(); renderSectionValidation(APP_STATE.section); }
+    updateOptimizeBtn();
+  }, 0);
+}
+
 // Wire auto-save triggers (called once on load).
 function initAutoSave() {
   // Capture the pristine default form now (before any edits) for "New plan" — a true reset.
   _defaultFormState = serializeFormState();
   const view = document.getElementById('input-view');
   if (view) {
-    view.addEventListener('input', markDirty, true);
-    view.addEventListener('change', markDirty, true);
+    // Revalidate too: the Optimize gate and the section banner were only re-checked on section
+    // navigation, so unticking every water source left Optimize enabled, and re-ticking one left
+    // it locked.
+    for (const ev of ['input', 'change']) {
+      view.addEventListener(ev, markDirty, true);
+      view.addEventListener(ev, scheduleRevalidate, true);
+    }
   }
   // Leaving the tab → flush.
   document.addEventListener('visibilitychange', () => { if (document.hidden) autoSaveFlush(); });
@@ -7561,8 +7578,13 @@ function validateParams(params) {
   if (params.city_water_enabled && !(params.city_water_cost_per_L >= 0)) {
     errors.push('City water cost must be a number ≥ 0 $/L while city water is enabled.');
   }
+  // The Water section's banner says this too, but the banner is advisory: the solve itself must
+  // refuse, or a farm with every source off solves "optimal" by growing nothing.
+  if (!params.well_enabled && !params.catchment_enabled && !params.city_water_enabled) {
+    errors.push('No water source is on — tick Well, Catchment or City Water in the Water section.');
+  }
   if (params.well_enabled && !(params.well_weekly_cap_L > 0)) {
-    errors.push('Well capacity must be > 0 L/wk while the well is enabled — or untick "Well water available".');
+    errors.push('Well capacity must be > 0 L/wk while the well is enabled — or untick "Well Water".');
   }
   // A blank cost box is NOT $0 (/code-review max #4). My Farm Data mode blanks these three by
   // design, and each blank used to solve "optimal" with the cost silently gone — $88k (+14%
@@ -7580,7 +7602,7 @@ function validateParams(params) {
   if (!(params.rented_acres >= 0 && params.rented_acres <= params.total_land)) {
     errors.push('Rented acres must be between 0 and your total land.');
   }
-  if (!(params.cash_rent_per_acre_yr >= 0)) errors.push('Cash rent must be ≥ 0 $/acre/yr.');
+  if (!(params.cash_rent_per_acre_yr >= 0)) errors.push('Rent per rented acre must be ≥ 0 $/acre/yr.');
   if (!(params.ownership_carrying_rate >= 0)) errors.push('Ownership carrying must be ≥ 0%.');
   if (!(params.insurance_premium_per_yr >= 0)) errors.push('Farm insurance must be ≥ 0 $/yr.');
   if (!(params.utilities_cost_per_yr >= 0)) errors.push('Utilities must be ≥ 0 $/yr.');
@@ -8024,7 +8046,7 @@ function renderResults(res, total_land) {
 // the comment above already called it by this name.
 const PL_COST_LABELS = {
   // variable_cost_split
-  water:      'Irrigation Water (on-farm supply; pump energy belongs in Utilities)',
+  water:      'Well & Rain Water (per-litre charge, if any; pumping power is in Utilities)',
   fertilizer: 'Fertilizer',
   fuel:       'Fuel',
   seed:       'Seed / Transplants',
