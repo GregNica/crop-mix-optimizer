@@ -1099,7 +1099,60 @@ exists to check. The plan's own audit verdict flagged this: "the revenue side is
 | Cash rent | NASS 2025 irrigated **$245/ac**, row-crop average (understates veg ground; NASS has no veg series) | NASS 2025 Land Values and Cash Rents | medium for the number, low for veg |
 | Rented acres | **0** (demo farm owns its land) — or a share (39% of US farmland is rented, ERS) | a demo-farm choice, not data | — |
 | Crop protection | $0 until Batch 3 sources per-crop budgets | — | — |
-| Residual overhead | **no published source** for admin + land taxes + vehicles once the big lines are explicit; a bottom-up guess for this farm is ~$25–50k (1–2% of revenue); PLAN said 3–6% (unsourced) | none | low |
+| Residual overhead | ~~no published source~~ **2–6% of revenue, best ~4%** — built up from UC Davis, Census 2022, ARMS, ERS and CIAS (see Research below) | Research 2026-10-21 | low–moderate |
+
+### Research (2026-10-21): where the 16% and the 25% came from, and what the sources say
+
+**Neither default has a source.** The 16% overhead arrived in `bd631fd` (2026-06-13, "realism cost
+model"), chosen so the demo farm's margin landed near the 16% the realism model targeted — it was
+calibrated to an answer, not measured. The 25% payroll load arrived the next day in `ca21965` with
+the description "taxes, workers' comp, benefits" and no citation. Two commissioned research passes
+follow, summarised here with their sources (the raw working notes were not kept).
+
+**Overhead.** No published source supports 16% as a *remainder*. Built up from line items:
+
+| Source | What it covers | Figure (share of revenue) |
+|---|---|---|
+| UC Davis cost studies — mixed veg, small farm (VM-IR-09, 2009); processing tomatoes (2014) | "Office" = supplies, phone, bookkeeping, accounting, legal, shop utilities, misc. admin | office $50–350/ac = 0.5–1.6%; total CASH overhead 3.2–6.6% *including* insurance and repairs |
+| USDA NASS 2022 Census of Agriculture, Table 75 (NAICS 1112, veg & melon) | property taxes; "all other" (mixes in insurance, marketing) | property tax **1.2%**, utilities **3.0%**, all other 5.5%; total expenses 76% of sales |
+| USDA ERS ARMS, specialty crops 2020–21 | other variable = supplies, vehicle registration, transport/storage, accountants, attorneys | other variable 5.2–5.4%, property tax 1.5–1.9%, **insurance 1.7%**, **utilities 3.8–4.4%** (incl. phone) |
+| USDA ERS VGS-328-01 (2008), veg & melon farms 2004–06 | same categories | other variable 6.4%, property tax 1.1%, insurance 1.5%, utilities 2.8% |
+| UW-Madison CIAS *Grower to Grower* (2008), 16-acre farm, $250k sales | auto, taxes, office, professional, training, subscriptions | **4.0%** (n = 1) |
+
+→ **Residual overhead (admin + land tax + vehicle fixed costs) ≈ 2–6% of revenue, best estimate ~4%.**
+Low-to-moderate confidence: no source publishes the remainder directly, and the "other" categories
+overlap lines the app already charges (packaging, storage), so they are upper bounds. These costs
+follow acres and the farm, not sales — a $/acre + $/farm form would be more defensible than a %.
+
+⚠️ **Two of the proposed defaults above are too small by the same sources.** Utilities at $4,000/yr
+is 0.17% of revenue; the Census and ARMS put utilities at **3.0–4.4%** ($72–106k on this farm).
+Insurance at $12,000 is 0.5%; ARMS puts it at **1.7%** (~$41k). Re-run with sourced sizes
+(utilities 3.8%, insurance 1.7%, carrying 6%, residual 2–6%): **net margin 27–33%, mid ~30%** —
+still UP from 25.4%, so the finding stands, by less.
+
+**Payroll load.** A single 25% on all pay — overtime premium included — has no source and
+overcharges every overtime dollar:
+
+| Component | Rate | Applies to | Source |
+|---|---|---|---|
+| FICA (employer) | 7.65% | **all cash pay, OT premium included**; 0% for H-2A | IRS Pub 51 / Form 943; irs.gov/h2a |
+| FUTA | 0.6% | first $7,000 per worker only; 0% for H-2A | UVM Extension Ag Labor Dashboard (2025) |
+| SUTA | ~1–10% by state and experience | capped wage base ($14.3k VT – $42k MN) | UVM (2025) |
+| Workers' comp | CA class 0172: $3.57–3.92 per $100 (pure premium, before insurer expense) | **straight-time pay only** — the OT premium is excluded in most states; not in PA, DE, NV | WCIRB; AZ ICA and ICW Group payroll-audit guides |
+| Health / leave | no sourced figure; 28% of crop workers are offered health insurance | per head, not on OT | DOL NAWS Research Report 17 (2023) |
+| H-2A housing, travel, fees | ~$10k+ per worker per season | per head | AFBF; Roka (SAEA 2017) — advocacy-sourced |
+| UC Davis all-in planning load | **48%** (CA taxes + comp + "other possible benefits") | all labour, flat | UC Davis 2024 strawberry; 2023 romaine studies |
+
+→ **Statutory load ≈ 12–17%** for a typical non-H-2A worker on straight-time pay (≈ 3–6% for H-2A,
+plus per-head costs a percentage cannot represent); **≈ 7.65% on the overtime premium** (FICA
+only). CA's 48% is an upper bound for a high-cost state with benefits. Also: federal FLSA exempts
+farm work from overtime entirely — OT pay applies only under a state law (e.g. CA, fully phased
+in 2022 for 26+ employees), which bears on GROUP F's per-role overtime (F4).
+
+**What this suggests (for the grower to rule on, nothing changed yet):** split the payroll load in
+two — a rate on all pay (FICA, 7.65%) and a rate on straight-time pay (comp + SUTA + benefits) —
+so overtime is not over-burdened; and if (B) is chosen, use the sourced utilities/insurance sizes,
+not the placeholders.
 
 ### Decisions needed
 
@@ -1108,8 +1161,9 @@ exists to check. The plan's own audit verdict flagged this: "the revenue side is
    - **(B) Ship the sourced defaults and a residual overhead** (e.g. 4%). Margin ~34%. Honest about the decomposition, but moves M1 the wrong way and rests on two low-confidence defaults.
    - **(C) Investigate what the 16% was standing for first.** If the grower's own books show ~16% of revenue in admin/insurance/utilities/repairs at this scale, the explicit lines are UNDER-sized and the residual is genuinely large.
    *My recommendation: (A) now, and pull Batch 3's revenue audit (M2 prices/yields) forward — it is where this measurement says the margin is.*
-2. **Your farm's overhead composition:** what your books' overhead % actually contains — the same question as the 25% payroll load, and it decides (C).
+2. **Your farm's overhead composition:** what your books' overhead % actually contains — it decides (C). The research above gives the published range (residual ~2–6%) to compare against.
 3. **W17 (hired-wage prefill) was skipped**: GROUP F's L8 would delete the field it prefills. National figure if wanted: $18.58/hr (NASS, April 2025 field workers).
+4. **Payroll load:** keep the single 25%, or split it into an all-pay rate (FICA 7.65%) and a straight-time rate (comp + SUTA + benefits, ~5–10% non-H-2A)? The split is what makes overtime honest.
 
 ## Rulings on the audit's three open questions (2026-07-31, all resolved)
 
