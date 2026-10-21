@@ -729,6 +729,31 @@ mis-charging).
 
 ---
 
+## Batch L — The labour batch (grower ruling 2026-10-21; runs NEXT, before Batch FX)
+
+One batch for everything that touches the roster, because it all rewrites the same rows and the
+same money path (R10 found GROUP F was never scheduled). Spec first, then build; guardrails 2–5,
+10, 12; a **labour-flex-ON golden fixture in the same commit as L.2** (GROUP F sequencing note —
+the shipped golden farm has flex OFF, so without it none of this has a baseline that can fail).
+
+**L.1 · GROUP F3** — the labour section as named rows (publish the per-role weekly arrays).
+**L.2 · GROUP F2 + F4** — overtime per role, priced at that role's wage × load × multiplier, and
+the overtime CAP derived from the roster. Fixes **L2** (flat 200 h/wk cap > the whole crew's hours
+in 15 of 52 weeks). Ruled 2026-10-21: the allowance is set **per role**, as a cap on TOTAL weekly
+hours relative to regular hours — default **125% = 40 regular + 10 overtime (a 50-hour week)** for
+hourly/seasonal, 100% (none) for salaried. ⚠️ Label it so it cannot be read as 125% ON TOP of
+regular (the grower's first reading: that would be 90 h/wk). Overtime pay multiplier default
+**1.0×** (federal FLSA exempts farm work), tooltip: set 1.5× where state law requires ag overtime.
+**L.3 · GROUP F1 (grower's design)** — `Hire more?` / `Max more` / `EXTRA HIRED` on each roster row.
+**L.4 · GROUP I2/I2a** — task tags (field / post-harvest / selling) per row, default all on; Field %
+→ **Admin %** (inverse) with the load-time migration.
+**L.5 · GROUP I2b** — payroll load split (all-pay FICA 7.65%; straight-time rate sourced), with the
+load-time migration of the single 25%.
+NOT here: piece rate (GROUP F5) → Batch 6 (ruled 2026-10-21). Post-harvest hours (3.6) build ON
+L.4's tags and stay in Batch 3 with their research (3.7).
+
+---
+
 ## Batch FX — The fixed layer (scheduled 2026-10-19; after Batch 2, before Batch 3)
 
 **WHY.** The grower's first page of January (`SPEC_product.md` prompt 1): *"what do you know you
