@@ -420,6 +420,25 @@ constraint CSV. Also from the branch `/simplify`, skipped as optional: the `_ada
 fixture indirection in `test_golden_farm.py`, a shared `reporter()` for the jsdom harnesses, four
 copies of `NODE = shutil.which("node")`, and `test_toy_model.py` hand-building the golden path.
 
+### Grower Batch 1+2 browser check, 2026-10-21 — BC1–BC6
+
+The ONE browser pass covering Batch 1 + Batch 2 (run before the landing review this time — the
+grower's call). Everything passed except the notes below. Fixed in `7166d4e`: D11 (Optimize gate
+only re-checked on section navigation + no-water solve accepted), the rent label, the on-farm
+water row label. What remains:
+
+| ID | Item |
+|---|---|
+| **BC1** | **Batch 2 landing review — DEFERRED until after the 2026-10-23 12pm (KST) weekly usage reset** (the account was at 98%). `/code-review max` (or ultra, if the grower launches it) + `/simplify` across `feat/server-llm-expansion..batch2/cost-completeness`, **including `7166d4e`, which was committed without `/simplify` by grower decision** (hand cleanup pass only). Then a browser re-check of only what the review changes, then fast-forward feat. Batch 2 does NOT merge before this |
+| **BC2** | **Ownership Carrying: name and unit are wrong for the grower.** "Carrying (% of installed cost)" is accountant-speak, and growers hold these as DOLLAR records (interest paid, repairs, property tax), not a rate. 5% on the shipped asset table billed **$38,700** — implies ~$774k installed on an 80-acre farm; sanity-check the asset table when this is reworked. Same ruling as GROUP H (dollars, not %): land it with Batch 3's dollar re-pin (PLAN 3.5) |
+| BC3 | **No visible weekly cash view.** Weekly cash exists (`weekly_cash_flow`) but shows only as a utilization row in the constraint table, and only when opening cash + credit line > 0 — so the insurance payment week has no visible effect. Decide WITH the grower whether a cash-by-week chart earns its place (it would also make C13 legible) |
+| BC4 | **"Don't limit by water" switch.** A grower who does not care about water should be able to drop the constraint (and its cost) rather than type a huge well cap. New feature; spec before building — must not reopen the "no source on → grow nothing" hole D11 just closed |
+| BC5 | **Executive summary prominence.** Net margin IS in the "Projected Profit" line, but the grower first looked for it in the headlines and did not see it. Design pass later, with the grower |
+| BC6 | **The on-farm water per-litre charge is $0 by default and may be dead weight** now that pump energy moved to Utilities (W10). Either source a real default or retire the input; the row stays printed meanwhile (one row per cost component, by design) |
+
+Note for whoever writes the next checklist: fertilizer / fuel / machinery are SEVERAL boxes behind
+SEVERAL collapsed toggles in Fixed Cost Rates — do not describe them as "one field".
+
 ---
 
 ## Tier 7 — Pilot hardening (audit Phase G) — gated on a real user
