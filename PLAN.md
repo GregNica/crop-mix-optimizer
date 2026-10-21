@@ -873,8 +873,15 @@ per-pound objective (it was a 16% sales tax on every lb) — expect the plan, no
 move; measure and record both. Prerequisites: 3.6 and the M2 revenue sweep.
 
 **3.6 · R9 — post-harvest labour (wash/grade/pack, market staffing, delivery).** Grower-raised
-2026-10-21; design answers pending (see the R9 backlog row). Must land BEFORE 3.5 — it is the
-largest known-missing cost the 16% may have been silently absorbing.
+2026-10-21; design RULED in DECISIONS GROUP I (I1 throughput input + the "put 0 if your harvest
+hours already include it" tooltip; I2 labour task tags field/post-harvest/selling on each roster
+row, default all on; I3 channel staffing hours + selling cost relabelled as buyer fees). Spec
+first (I2 touches the labour money path and GROUP F's roster), then build. Must land BEFORE 3.5 —
+it is the largest known-missing cost the 16% may have been silently absorbing.
+
+**3.7 · Research — post-harvest throughput and selling staffing defaults (GROUP I4).** Sourced
+per-crop wash/pack rates (lb per person-hour) and typical market/delivery staffing, to the GROUP H
+research standard (cite, state the basis, flag what could not be verified). Feeds 3.6's defaults.
 
 ---
 
@@ -889,7 +896,9 @@ frozen mode is itself reportable: the value of perfect foresight.
 does not derive the right shift (DECISIONS C5 records the math discussion with the grower).
 **4.3 · W3 — retire the "Fragile/stability" labels** (artifacts of clairvoyance) in the same
 commit as 4.1, replaced by frozen-plan spread.
-**4.4 · C9 — the headline carries the range** ("$X projected — typical range $Y–$Z" from frozen
+**4.4 · C9 — the headline carries the range** (grower ruled the goal 2026-10-21, GROUP I5: the
+main solve stays as is; the range fills in afterwards from 4.1's frozen-plan draws, with an
+instant analytic band as the fallback if those are too slow; interim disclaimer ships earlier) ("$X projected — typical range $Y–$Z" from frozen
 draws) + the assumptions box finally discloses deterministic yields / no crop failure.
 **4.5 · C5 — downside What-Ifs** (−10/−20/−40% and named scenarios like "wholesale halves");
 the scaling machinery already exists, factors just refuse <1 today.

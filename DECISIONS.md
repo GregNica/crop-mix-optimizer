@@ -1182,6 +1182,61 @@ not the placeholders.
 3. **W17 (hired-wage prefill) was skipped**: GROUP F's L8 would delete the field it prefills. National figure if wanted: $18.58/hr (NASS, April 2025 field workers).
 4. **Payroll load:** keep the single 25%, or split it into an all-pay rate (FICA 7.65%) and a straight-time rate (comp + SUTA + benefits, ~5–10% non-H-2A)? The split is what makes overtime honest.
 
+## GROUP I — Post-harvest & selling labour, crop loss on the headline (grower answers, 2026-10-21)
+
+Raised by the grower while ruling GROUP H: *"our labor is based on harvest, but does it include
+processing? … packing, shipping, delivering, selling are all real costs"* and *"crop loss is
+captured in the Monte Carlo and not the headline."* Measured first (BACKLOG R9): harvest hours are
+field PICKING rates; the golden crews are 100% field time; the crew is at capacity 26 of 52 weeks.
+
+**I1 · Post-harvest hours are their own input (RULED).** Per crop, entered as throughput
+("lb washed/packed per person-hour"), sourced defaults. Tooltip, the grower's wording in spirit:
+*if your records only have one per-crop hours figure that already includes washing and packing,
+put 0 here and put all the hours under harvest* — so a grower is never forced to split numbers
+they do not have, and never double-counts.
+
+**I2 · Labour TAGS — task pools a worker can serve (RULED in principle; grower's design).** Three
+tasks: **field work**, **post-harvest processing**, **selling/delivery**. Every roster row carries
+three toggles; a new worker defaults to ALL ON; switching one off stops that row's hours counting
+toward that task. Fits GROUP F's ruled roster shape (columns on the role row; extra hires inherit
+them; zero new rows). Mechanism (for the spec, not ruled): per-task weekly demand rows, and each
+role's weekly hours split across the tasks it is tagged for — `h[role,task,week] ≥ 0`,
+`Σ_task h ≤ role hours`, `Σ_role h[·,task,w] ≥ demand[task,w]`. Small (roles × 3 × 52 continuous
+variables), linear, no binaries. With every tag on, it reduces to today's single pool for field
+work, which is the regression baseline. ⚠️ Open for the spec: how tags relate to the existing
+**Field %** (cap on share of hours for field work) — likely Field % generalises to "share of hours
+available for farm tasks" and tags say which; decide WITH the grower, do not merge silently.
+
+**I3 · Selling labour is hours, selling COST is fees (RULED).** Market and delivery staffing is
+"staff hours per week the channel operates" (e.g. Farmers Market 2 people × 10 h), feeding the
+selling/delivery task pool. The `$ per lb` selling cost is then relabelled explicitly as
+**brokerage commission or fees charged by buyers** — not trucking, not driver time — and the stale
+"set to $0" helper text is corrected in the same change.
+
+**I4 · Default throughput and staffing rates are a RESEARCH item** (grower: *"my starts would be
+guesses"*). Sourced per-crop wash/pack rates and typical market staffing, same standard as the
+GROUP H overhead research. PLAN 3.7.
+
+**I5 · The headline carries a RANGE (RULED as the goal: "does more for user confidence").**
+Grower's constraint: it must not mean running Monte Carlo inside the main solve. It doesn't:
+1. the main solve is unchanged and the headline profit appears exactly as now;
+2. then, in the background, the CHOSEN plan is scored across ~50–100 simulated seasons with the
+   planting fixed and only sales re-allocated (W2(b), PLAN 4.1 — an LP per draw, no binaries, so
+   far cheaper than today's MILP draws; must be MEASURED). The range fills in when ready;
+3. fallback if (2) is too slow: an instant analytic band — each crop's revenue under drawn
+   yield × price, capped at demand, no re-solve (milliseconds; slightly pessimistic, since sales
+   cannot be re-routed between channels).
+Interim until Batch 4: one line under the headline, *"Assumes yields as entered and no crop
+failure. Year-to-year risk isn't reflected in this number yet."* (agreed; no Monte Carlo pointer
+while W2 makes it clairvoyant).
+
+**Crop loss — A1–A3 agreed pending the grower's read of E1:** yield is entered as MARKETABLE
+yield (label to say so; consistent with the shipped sell-through tooltip "grade-out … that is
+yield"); no pack-out field for now; whole-planting failures live in the I5 range, not a headline
+haircut; culls sold to a cheaper channel is a future item.
+
+---
+
 ## Rulings on the audit's three open questions (2026-07-31, all resolved)
 
 **M9 — volume basis: proceed with the recommended scope.** `STRATEGY.md`'s "volume/pack basis"
