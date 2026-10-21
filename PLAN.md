@@ -722,7 +722,7 @@ region; same provenance treatment as other benchmarks), prefill the field labell
 correct this", make blank an explicit "infer from my crew" choice rather than the silent default.
 Inference stays as the labelled fallback. Update the $25.33 expectation tests to the new contract.
 
-**2.6 · Re-pin.** ⛔ **HELD 2026-10-19 — the measurement contradicts this step's premise: decomposing overhead moves margin UP (25.4% → 33–37%), because the explicit lines total ~$62–82k against a $386k overhead. Decision with the grower: `DECISIONS.md` GROUP H.** 2.1 R8, 2.2 R7, 2.3 R1 and 2.4 W10 are DONE as mechanisms ($0 defaults); 2.5 W17 SKIPPED (conflicts with GROUP F L8). Original: One commit. Expect margin to fall from 20.1% toward the 5–15% band; assert
+**2.6 · Re-pin.** ➡️ **RULED 2026-10-21: Option B in DOLLARS, moved to 3.5 (lands with Batch 3's re-pin) — DECISIONS GROUP H.** Was: ⛔ **HELD 2026-10-19 — the measurement contradicts this step's premise: decomposing overhead moves margin UP (25.4% → 33–37%), because the explicit lines total ~$62–82k against a $386k overhead. Decision with the grower: `DECISIONS.md` GROUP H.** 2.1 R8, 2.2 R7, 2.3 R1 and 2.4 W10 are DONE as mechanisms ($0 defaults); 2.5 W17 SKIPPED (conflicts with GROUP F L8). Original: One commit. Expect margin to fall from 20.1% toward the 5–15% band; assert
 direction; document every line's delta. If it falls BELOW ~5%, stop and re-examine defaults
 before shipping (over-charging is the mirror error; four fixes moved margin wrong by over- or
 mis-charging).
@@ -861,7 +861,20 @@ falls out as a structured export**, not a panel.
 
 **3.4 · M3 — adversarial refutation pass** over the refreshed library (agents attack the values;
 the grower's intuition pass on the survivors), then **re-pin once** with the same direction
-protocol as 2.6.
+protocol as 2.6 — and that one re-pin INCLUDES 3.5 and 3.6, so the headline moves once.
+
+**3.5 · Overhead in dollars (from 2.6; grower ruling 2026-10-21, DECISIONS GROUP H).** Replace
+`overhead_pct_of_revenue` with an "everything else" **$/yr** input (sourced default ~4% of a
+typical farm's sales expressed in dollars, or $/acre + $/farm); prefill W10 utilities, R7
+insurance and carrying cost from the GROUP H research (utilities ~3–4%, insurance ~1.7% of
+sales → dollars); show every rate-based line's $ result. Migration: saved plans carrying a %
+convert to dollars on load and say so (E5 load report). ⚠️ This also removes overhead from the
+per-pound objective (it was a 16% sales tax on every lb) — expect the plan, not just the total, to
+move; measure and record both. Prerequisites: 3.6 and the M2 revenue sweep.
+
+**3.6 · R9 — post-harvest labour (wash/grade/pack, market staffing, delivery).** Grower-raised
+2026-10-21; design answers pending (see the R9 backlog row). Must land BEFORE 3.5 — it is the
+largest known-missing cost the 16% may have been silently absorbing.
 
 ---
 

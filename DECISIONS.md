@@ -1053,7 +1053,24 @@ the overhead ledger now tells the grower to take ALL utilities out of overhead: 
 pump share would leave cooling and buildings charged nowhere. The tooltip says so. Reverse this only
 together with putting the non-irrigation share back into the overhead ledger's COVERS.
 
-## GROUP H — The Batch 2 re-pin: the measurement contradicts the plan (2026-10-19; AWAITING THE GROWER)
+## GROUP H — The Batch 2 re-pin: the measurement contradicts the plan (2026-10-19; RULED 2026-10-21)
+
+**✅ RULING (grower, 2026-10-21): Option (B) — itemize overhead — expressed in DOLLARS, not
+percentages.** *"Percentages aren't intuitive. Actual figures are."* Growers know their insurance
+bill and their electric bill; they do not know their "overhead percentage". So:
+- every overhead piece is entered as a **$ figure** ($/yr bill, or $/acre, or $/farm), prefilled
+  with a sourced default the grower can overwrite; the residual becomes **"everything else"
+  ($/yr)**, not a % of revenue. Pieces that are naturally a rate (carrying cost on owned assets)
+  still SHOW their dollar result beside the box;
+- **sequencing (agreed): NOT now.** Re-pinning today would move the headline 25.4% → ~30%, which a
+  grower would rightly distrust, because known-missing costs (post-harvest labour, BACKLOG R9) and
+  the unaudited revenue side come first. Keep 16% until then; the switch lands with **Batch 3's
+  single re-pin** (PLAN 3.5), so the headline moves once, to a defensible number.
+- the grower's guardrail, recorded: margin comes DOWN by adding the costs that are really missing,
+  never by keeping a guess because its answer looks believable (how the 16% was born).
+
+Decisions 2 and 4 below remain open; 3 is closed (W17 skipped, agreed).
+
 
 **Status.** Batch 2's mechanisms are built and committed on `batch2/cost-completeness` — R8 overhead
 ledger, R7 land rent / ownership carrying / insurance (with payment week), R1 crop protection, W10
