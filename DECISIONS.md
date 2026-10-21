@@ -508,8 +508,11 @@ invite table, so "private" would mean anyone with a Google account who finds the
    channel rates exist — the uncited 97–99% / 70–90% figures do NOT ship.
 4. **Timing:** E3 → E1 → E2 build together in **Batch 3** beside the crop-data sweep (PLAN 3.8),
    one re-pin shared with 3.4/3.5/3.6.
-5. **Still OPEN: the name** ("sell-through" vs "market overage"). No recommendation was given, so
-   this was not ruled. If "overage" ships, the label must state that 15% more brought = 13% lost.
+5. **Name: "market overage" (RULED 2026-10-21), with its explanation on the label** — stated the
+   way a grower says it, *"I bring about X% more than I expect to sell"*, and the label/tooltip
+   must state the conversion: bringing 15% more than you sell = losing 13% of what you brought
+   (sell-through = 1 / (1 + overage)). Field key renamed with a FORM_FIELD_RENAMES migration so
+   saved plans keep their value.
 
 
 Raised by the grower reading toy v1: *"does 85% mean the other 15% is not sellable, or that it
@@ -1085,7 +1088,8 @@ bill and their electric bill; they do not know their "overhead percentage". So:
 - the grower's guardrail, recorded: margin comes DOWN by adding the costs that are really missing,
   never by keeping a guess because its answer looks believable (how the 16% was born).
 
-Decisions 2 and 4 below remain open; 3 is closed (W17 skipped, agreed).
+Decision 2 below remains open; 3 is closed (W17 skipped, agreed); **4 is RULED — split the payroll
+load (GROUP I2b).**
 
 
 **Status.** Batch 2's mechanisms are built and committed on `batch2/cost-completeness` — R8 overhead
@@ -1222,6 +1226,19 @@ variables), linear, no binaries. With every tag on, it reduces to today's single
 work, which is the regression baseline. ⚠️ Open for the spec: how tags relate to the existing
 **Field %** (cap on share of hours for field work) — likely Field % generalises to "share of hours
 available for farm tasks" and tags say which; decide WITH the grower, do not merge silently.
+
+**I2a · "Field %" becomes "Admin %", with the reverse meaning (RULED 2026-10-21).** Admin % = the
+share of a role's paid hours that go to admin/management and are NOT available for any farm task
+(field, post-harvest, selling). Admin % = 100 − today's Field %: manager 20%, operators 10%,
+crews 0%. The tags (I2) then say WHICH farm tasks the remaining hours can serve. Migration: saved
+plans' `field_time_pct` converts on load (E5 rename path), reported in the load report.
+
+**I2b · Payroll load is SPLIT (RULED 2026-10-21; GROUP H decision 4).** Two rates: one on ALL pay
+including the overtime premium (FICA, default 7.65%; 0 for H-2A), and one on STRAIGHT-TIME pay only
+(workers' comp + SUTA/FUTA + benefits; sourced default to be set at build from the GROUP H research
+— statutory total ~12–17% non-H-2A, i.e. roughly 5–9% here before benefits). Today's single 25%
+migrates by keeping FICA and putting the remainder in the straight-time rate, so an old plan's
+regular-pay cost is unchanged and only its overtime gets cheaper — say so in the load report.
 
 **I3 · Selling labour is hours, selling COST is fees (RULED).** Market and delivery staffing is
 "staff hours per week the channel operates" (e.g. Farmers Market 2 people × 10 h), feeding the
