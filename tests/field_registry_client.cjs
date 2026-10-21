@@ -128,6 +128,23 @@ const diff = (a, b) => [...a].filter(x => !b.has(x));
   }
 
   W.close();
+
+  // 6. fields.js is a hard boot dependency — if it never arrives (dropped request, or an expired
+  //    session answered with the sign-in HTML), the grower must SEE that, not a blank page with
+  //    errors only in the console (/code-review max).
+  {
+    // The raw page, NOT bootApp's: jsdom has no resource loader, so <script src="fields.js"> never
+    // loads — exactly the failure under test. The guard throws during parsing, synchronously
+    // inside the constructor, so the alert exists on return and Pyodide is never reached.
+    const fs = require('fs'), path = require('path'), { JSDOM, VirtualConsole } = require('jsdom');
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+    const bare = new JSDOM(html, { runScripts: 'dangerously', url: 'http://localhost/', virtualConsole: new VirtualConsole() });
+    const alert = bare.window.document.querySelector('[role=alert]');
+    ok('a missing fields.js shows a visible "could not finish loading" message with a reload link',
+       !!alert && /could not finish loading/.test(alert.textContent) && !!alert.querySelector('a'));
+    bare.window.close();
+  }
+
   if (failures) { console.error(`field registry (client): ${failures} FAILED`); process.exit(1); }
   console.log(`field registry (client): all checks passed (${declared.size} form + ${cropDeclared.size} crop ` +
               `fields, ${Object.keys(F.payload).length} payload keys, views are the registry)`);

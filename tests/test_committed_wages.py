@@ -449,12 +449,10 @@ def test_a_typed_hired_wage_actually_solves_and_carries_the_payroll_load():
     with this field set. This does.
     """
     import json
-    run = run_from_js
-    payload = json.loads(
-        GOLDEN_PAYLOAD.read_text())
+    payload = json.loads(GOLDEN_PAYLOAD.read_text())
     payload["hired_wage_per_hr"] = 19.00
     payload["payroll_load_pct"] = 0.25
-    out = json.loads(run(json.dumps(payload)))
+    out = json.loads(run_from_js(json.dumps(payload)))
     assert out.get("status") == "optimal", (
         f"a typed hired wage did not solve: {out.get('status')} {out.get('error', '')[:400]}"
     )

@@ -36,6 +36,8 @@ def test_the_flag_is_never_configured_where_it_would_persist():
     """It must arrive on the command line only — never in a file a normal run reads."""
     # Wrangler 4 reads local vars from .dev.vars, .dev.vars.<env>, .env and .env.<env> as well as
     # its config — any of them would leave every plain `npm run dev` ungated on localhost.
-    candidates = [*REPO.glob(".dev.vars*"), *REPO.glob(".env*"), *REPO.glob("wrangler.*")]
+    # package.json too: its "dev" script IS what every plain run executes, so a flag added there
+    # ("wrangler dev --var SMOKE_TEST_BYPASS:1") would ungate every local run (/code-review max).
+    candidates = [*REPO.glob(".dev.vars*"), *REPO.glob(".env*"), *REPO.glob("wrangler.*"), REPO / "package.json"]
     leaked = [p.name for p in candidates if p.is_file() and "SMOKE_TEST_BYPASS" in p.read_text(errors="ignore")]
     assert not leaked, f"SMOKE_TEST_BYPASS is set in {leaked}"

@@ -132,7 +132,7 @@
     depreciation_fuel_years: {},
     sell_through_pct: {
       chat: { label: "Sell-through %", type: "number", unit: "%", min: 1, max: 100,
-        description: "Share of harvested produce that converts to cash sales (rest = shrink/spoilage/grade-out). NOT a price discount. If the user describes LOSS ('X% doesn't sell / spoils / is wasted'), this = 100 − X. This is the FARM-WIDE default; per-crop sell-through is set on each crop in the form." },
+        description: "Of what is TAKEN TO MARKET, the share that converts to cash — losses between field and sale only: display shrink at a stall, samples, damage in transit, a rejected load (grower ruling, DECISIONS E1). NOT grade-out at harvest (that belongs in the yield figure — never lower both), NOT spoilage in storage (the app has no input for that yet — say so rather than putting it here), NOT a price discount. Defaults to 100%: deliveries against an order and crops that store lose nothing here. Only if the user describes loss AT MARKET ('X% of what I bring to market doesn't sell') is it 100 − X. FARM-WIDE default; per-crop values are set on each crop." },
     },
     overhead_pct: {
       chat: { label: "Overhead % of revenue", type: "number", unit: "%", min: 0, max: 60,
@@ -228,7 +228,7 @@
       units: { measure: 'area_land' },   // acres
     },
     sell_through_pct: {
-      chat: { label: "Per-crop sell-through %", type: "number", unit: "%", min: 1, max: 100, description: "Share of THIS crop's harvest that sells (overrides the farm default). '15% doesn't sell' => 85." },
+      chat: { label: "Per-crop sell-through %", type: "number", unit: "%", min: 1, max: 100, description: "For THIS crop, of what is taken to market, the share that converts to cash (overrides the farm default). Market losses only — not grade-out (that is in yield), not storage spoilage (no input yet). A crop that stores or is delivered against an order stays at 100: what does not sell comes home and sells later. '15% of what I bring to market doesn't sell' => 85." },
     },
     sales_spread_weeks: {
       chat: { label: "Sellable weeks", type: "number", min: 1, max: 52, description: "Weeks the crop can be sold in, counting the harvest week (1 = must sell the week it is picked)." },

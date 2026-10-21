@@ -10,11 +10,10 @@ per line in the repo (audit Part 7).
 """
 import json
 import re
-import pathlib
 import pytest
 
-REPO = pathlib.Path(__file__).resolve().parent.parent
-INDEX = REPO / "public" / "index.html"
+from tests.helpers import INDEX, REPO
+
 PREFIX = "const FARM_V2_FILES = "
 
 
@@ -51,16 +50,9 @@ class TestBlobSync:
     def test_blob_covers_all_solver_modules(self):
         """Every farm_v2 *.py that the solver imports should be embedded."""
         blob = _embedded_blob()
-        required = {
-            "farm_v2/solver.py",
-            "farm_v2/validate.py",
-            "farm_v2/adapter.py",
-            "farm_v2/charts.py",
-            "farm_v2/utils/calendar.py",
-            "farm_v2/utils/demand.py",
-            "farm_v2/utils/labor.py",
-            "farm_v2/utils/water.py",
-        }
+        # Derived, not hand-listed: a new module under farm_v2/ is required the moment it exists.
+        required = {str(f.relative_to(REPO)) for f in (REPO / "farm_v2").rglob("*.py")
+                    if f.name != "__init__.py"}
         missing = required - set(blob.keys())
         assert not missing, f"solver modules missing from the embedded blob: {sorted(missing)}"
 

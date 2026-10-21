@@ -13,7 +13,7 @@ Two properties make this different from test_regression.py:
      (tests/golden/default_farm_payload.json) — the ~80-acre demo farm, not a synthetic
      fixture. What it pins is what the landing screen claims.
 
-  2. It runs through run_from_js, the Python adapter embedded in public/index.html, not
+  2. It runs through run_from_js, the Python adapter (farm_v2/adapter.py), not
      solve_farm_v2 directly. The adapter is money-path code in its own right: it nets
      variable selling cost into price, derives cash_constraint_enabled, and deducts channel
      fixed selling from the reported profit. Calling the solver directly would skip all of

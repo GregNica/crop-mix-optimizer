@@ -382,6 +382,44 @@ U1, since the same panel is being redesigned.
 
 ---
 
+### Batch-1 `/code-review max` leftovers, 2026-10-21 — K1–K15, none blocking the landing
+
+The max review of `feat/server-llm-expansion...batch1/e2-adapter` returned 15 findings plus 12 cut
+by its cap. Fixed before landing (each with a mutation-verified guard): the plan-switch save race
+that could overwrite a plan with defaults (#1), the stale `data-shown` marker (#2), the
+un-autosaved draft restore (#3), blank fert/fuel/machinery solving as $0 (#4), Monte Carlo's
+`|| 0.82` (#5), the assistant's broad sell-through definition (#6), gap_note vs chart caveat (#7),
+blank boxes for an OFF water source blocking the solve (#8), rejected-value loss (#10), same-name
+row matching (#12), the fields.js boot guard (#13) and the bypass guard skipping package.json (#15).
+What remains:
+
+| ID | Item |
+|---|---|
+| **K1** | **Toy piece-rate is off by `n_harvest_weeks` (#9).** `toy_v11_lp.py:381`, `build_toy_v11.py:446/480` and `verify_toy_v11.py:303` all divide the WHOLE-season yield by `labor_harv`, which is hours per acre per HARVEST WEEK — so all three agree on a wrong number and the toy's second-derivation purpose cannot catch it. Measured by the reviewer: Spinach 100 lb/h vs 50, Kale 363.6 vs 90.9; re-solved consistently the toy optimum moves $480,661 → $518,840 and garlic piece-picking goes to 0, reversing the documented "3.6× spread" and "garlic is the cheaper relief". Toy track only — the app has no piece rate |
+| **K2** | **W8's tests guard less than they claim (#11).** `test_total_cost_is_summed_from_its_parts…` restates the solver's two lines on a fixture where overtime and city water are $0; `test_revenue_is_pounds_sold_times_the_typed_price` runs sell-through 1.0. Mutations dropping overtime or city water from `total_cost`, or multiplying price by sell-through, survive ALL solver tests. Fix: a stressed fixture with both bought-capacity terms on and sell-through < 1 |
+| **K3** | **matplotlib is still in `PYODIDE_PACKAGES` (#14),** and `loadPackagesVerified` import-probes it in the 3-attempt boot loop — so E2's "a chart failure costs the drawing, not the plan" fallback is unreachable for almost every matplotlib failure (a failed kiwisolver/pillow wheel fails the BOOT). Load matplotlib lazily on the first draw |
+| K4 | `CHART_TIMEOUT_MS` is inert — it cannot interrupt a synchronous draw; its comment and `617cc53` claim otherwise. Delete or reword |
+| K5 | The `KNOWN_FAILING` ratchet in `browser_smoke.mjs` keys on test id only; 4 of the 34 are test-ORDER pollution from T63/T82, and T170 is dead (`#farm-basics`). Fold into T8's triage |
+| K6 | Smoke harness orphan: a SIGKILL, or a SIGHUP during startup, leaves the detached wrangler on 8799 with the bypass on (self-heals on its second logged request). Kill by process group on every exit path |
+| K7 | `createAuth` runs before the smoke bypass, so the smoke test 500s without `DATABASE_URL` — the same blocker as T9 |
+| K8 | `sync_solver_blob --check` compares parsed content and ignores escaping (the writer path does compare the rendered line) |
+| K9 | The adapter turns a blank `ambient_storage_cap` into 0 instead of refusing it as `_num_no_invent` does for the other capacities. Low today (validateParams refuses 0 only when a crop is routed to ambient) |
+| K10 | A plan load that FAILS partway can leave a hybrid form that then autosaves over the previous plan. The #1 fix makes the switch wait for the old plan's save; it does not make the load atomic |
+| K11 | The waterfall drops bars under $5,000, so the drawn bars no longer sum to Net Profit, contrary to W8's claim. Draw them, or add an "other" bar |
+| K12 | `fixed_selling_per_week` is a second, unfiltered sum rather than derived from the total W8 made authoritative |
+| K13 | Three toy structural tests can never fail (inert guards — see the toy-track lessons) |
+| K14 | Employee numerics are not checked for finiteness in `validate.py` (non-browser callers only — the form cannot send Infinity) |
+| K16 | The keys whose blank is REFUSED live in three hand-kept places: `validateParams`' tuple, the adapter's `_num_no_invent`/`_num_if_on` calls, and `tests/blank_cost_client.cjs`. Give `public/fields.js` a `blankRefused: {label, panel}` flag, iterate it in `validateParams` (the panel name then cannot go stale either), and assert in `test_field_registry.py` that it equals the adapter's refusing readers (its AST walker already collects them) |
+| K15 | Process: E5a's guards were mutation-tested BEFORE `/simplify` ran, and Q3 was committed without `/simplify` — both against CLAUDE.md's order. Recorded, not fixable after the fact |
+
+Out of scope, pre-existing in code the branch did not touch: the `=== 'optimal'` checks in the
+What-If/labour sweeps (a time-limited incumbent is discarded), and the Cash/Credit row of the
+constraint CSV. Also from the branch `/simplify`, skipped as optional: the `_adapter_run_from_js`
+fixture indirection in `test_golden_farm.py`, a shared `reporter()` for the jsdom harnesses, four
+copies of `NODE = shutil.which("node")`, and `test_toy_model.py` hand-building the golden path.
+
+---
+
 ## Tier 7 — Pilot hardening (audit Phase G) — gated on a real user
 
 Pull the whole of this forward **the moment a pilot user is imminent**. These are about other

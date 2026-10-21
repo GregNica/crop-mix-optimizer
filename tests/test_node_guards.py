@@ -10,7 +10,9 @@ The four older harnesses each have their own ~40-line wrapper (test_canon_flows.
 test_canon_invariant.py, test_import_roundtrip.py, test_units_js.py). This file covers the new
 ones with one parametrised case rather than copying that boilerplate a fifth and sixth time.
 """
+import json
 import os
+import re
 import shutil
 import subprocess
 import pathlib
@@ -106,6 +108,12 @@ GUARDS = [
         "reverse), a form field feeds no payload key (a dead input), or a view the page reads "
         "(units registries, BENCHMARK_DEFAULTS) is no longer built from the registry",
     ),
+    (
+        "blank-cost-client",
+        ["tests/blank_cost_client.cjs"],
+        "a blank fertilizer/fuel/machinery box reaches the solver as $0 again (My Farm Data mode "
+        "blanks all three), or Monte Carlo swaps a $0 price for the benchmark in every draw",
+    ),
 ]
 
 
@@ -128,3 +136,21 @@ def test_node_guard(label, argv, why):
     proc = subprocess.run([NODE, *argv], capture_output=True, text=True,
                           timeout=180, cwd=str(REPO))
     assert proc.returncode == 0, why + ":\n" + proc.stdout + proc.stderr
+
+
+# The four older harnesses run from their own wrappers (see the module docstring).
+_OWN_WRAPPER = {"tests/units_selftest.cjs", "tests/import_roundtrip.cjs",
+                "tests/canon_invariant.cjs", "tests/canon_flows.cjs"}
+
+
+def test_npm_test_and_GUARDS_list_the_same_harnesses():
+    """`npm test` and GUARDS are two hand-kept lists of the same harnesses, and a harness in only
+    one of them runs in only that runner — the exact failure this file exists to stop. Every
+    harness added on the batch-1 branch was added to both by hand; this makes forgetting one loud."""
+    npm = set(re.findall(r"node (tests/\S+\.cjs)",
+                         json.loads((REPO / "package.json").read_text())["scripts"]["test"]))
+    guarded = {argv[0] for _, argv, _ in GUARDS if argv[0].startswith("tests/")}
+    assert npm - _OWN_WRAPPER == guarded, (
+        f"in `npm test` only: {sorted(npm - _OWN_WRAPPER - guarded)}; "
+        f"in GUARDS only: {sorted(guarded - npm)}")
+    assert _OWN_WRAPPER <= npm, f"a legacy harness left `npm test`: {sorted(_OWN_WRAPPER - npm)}"

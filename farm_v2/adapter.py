@@ -47,6 +47,13 @@ def run_from_js(params_json):
                 raise ValueError(f"{key} is blank in the payload: the value would be invented")
             return float(p.get(key, default))
 
+        # A source's size is only a value while the source is ON. With it off the solver never
+        # reads the number, so a blank box (My Farm Data mode blanks every benchmark) must not
+        # block the solve — refusing it made a farm with no well type a number into a box that
+        # does nothing (/code-review max #8). While ON, a blank is still refused, as above.
+        def _num_if_on(enabled, key, default):
+            return _num_no_invent(key, default) if enabled else _num(key, 0.0)
+
         # --- Farm infrastructure ---
         total_land               = _num('total_land', 150)
         # Cash floor (C13) is only enforced when the UI cash toggle is on, which
@@ -66,7 +73,7 @@ def run_from_js(params_json):
         rate_equip_storage       = _num('rate_equip_storage', 0.0)
         rate_fuel_storage        = _num('rate_fuel_storage', 0.0)
         rate_water_storage       = _num('rate_water_storage', 0.00360)
-        rate_machinery           = _num('rate_machinery', 0.0)
+        rate_machinery           = _num_no_invent('rate_machinery', 0.0)   # blank refused — see cost_fert_per_lb
         rate_property_mortgage_rent = _num('rate_property_mortgage_rent', 0.0)
         other_debt_service_per_week = _num('other_debt_service_per_week', 0.0)
 
@@ -76,21 +83,26 @@ def run_from_js(params_json):
         # No 2,500,000 fallback. That figure was a California water PERMIT used as a pump
         # capacity, retired in 667301d; leaving it as a default meant a payload without the key
         # silently got a farm that cannot irrigate itself. Same reasoning as TestNoPhantomFarm.
-        if p.get('well_weekly_cap_L') in (None, ''):
+        # Required while the well is on — ABSENT too, unlike _num_if_on, which would default an
+        # absent key: there is no honest default pump capacity. Off, the box is never read.
+        if well_enabled and p.get('well_weekly_cap_L') in (None, ''):
             raise ValueError("no well_weekly_cap_L in payload: irrigation capacity would be invented")
-        well_weekly_cap_L        = float(p['well_weekly_cap_L'])
+        well_weekly_cap_L        = _num('well_weekly_cap_L', 0.0)
         catchment_enabled        = bool(p.get('catchment_enabled', False))
-        catchment_surface_area_m2 = _num_no_invent('catchment_surface_area_m2', 5000)
+        catchment_surface_area_m2 = _num_if_on(catchment_enabled, 'catchment_surface_area_m2', 5000)
         city_water_enabled       = bool(p.get('city_water_enabled', False))
-        city_water_cost_per_L    = _num_no_invent('city_water_cost_per_L', 0.003)
+        city_water_cost_per_L    = _num_if_on(city_water_enabled, 'city_water_cost_per_L', 0.003)
         # No form input exists for the standing charge yet, but the solver models it, the P&L
         # labels it, and imported/server payloads may carry it — without this line the feature
         # was silently $0 on every browser solve while its label and test made it look live.
         city_water_fixed_fee     = _num('city_water_fixed_fee_per_week', 0.0)
 
         # --- Variable costs ---
-        cost_fert_per_lb         = _num('cost_fert_per_lb', 0.0)
-        cost_fuel_per_L          = _num('cost_fuel_per_L', 0.0)
+        # Refused when blank, not $0 (/code-review max #4): My Farm Data mode blanks both, and a
+        # blank silently dropped $35k of cost from the golden farm with no warning. A typed 0 is
+        # still a legal answer (a farm that buys no fertilizer).
+        cost_fert_per_lb         = _num_no_invent('cost_fert_per_lb', 0.0)
+        cost_fuel_per_L          = _num_no_invent('cost_fuel_per_L', 0.0)
 
         # --- Realism factors (sell-through in-objective; overhead & interest below the line) ---
         sell_through_fraction    = _num('sell_through_fraction', 1.0)

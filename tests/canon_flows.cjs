@@ -597,7 +597,12 @@ const near = (name, got, want, rel) => {
   {
     const src = require('fs').readFileSync(
       require('path').join(ROOT, 'public', 'index.html'), 'utf8');
-    const gap = src.indexOf('if (res.gap_note) showError');
+    // The gap note now goes out in ONE combined warning with the chart caveat (a second showError
+    // used to overwrite it). Locate that combined call, and require the note is part of it.
+    const gap = src.indexOf('if (warnings.length) showError(errBox');
+    if (!src.includes('if (res.gap_note) warnings.push(res.gap_note)')) {
+      fail('gap_note: the "not proven optimal" note is no longer part of the post-solve warning');
+    }
     const swi = src.indexOf('switchToResults(params, res);');
     if (gap < 0 || swi < 0) {
       fail('gap_note ordering: could not locate both call sites to compare');

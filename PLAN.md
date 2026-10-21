@@ -225,9 +225,9 @@ Carry forward:
   adapter's blanket `except` and cost the grower the whole plan; it now costs the drawing.
   Plus a `requestAnimationFrame` yield before the draw — `stopProgress` had already marked the
   bar complete, so without it the grower saw a finished bar over a frozen tab.
-- ⚠️ **NOT verified: the Pyodide boot path.** pytest proves the module imports under CPython and
-  the blob check proves it ships, but nothing executes `from farm_v2.adapter import run_from_js`
-  in a browser — jsdom cannot run Pyodide. **Browser QA must confirm boot + a drawn waterfall.**
+- ✅ ~~NOT verified: the Pyodide boot path.~~ Resolved twice: the grower's browser QA
+  (2026-10-19: boot + a drawn waterfall) and T4 (`npm run test:smoke`, `930542a`), which boots
+  the shipped page in a real browser and runs `from farm_v2.adapter import run_from_js` on every run.
 
 Original attack plan, for history:
 WHY: ~340 lines of money-affecting Python in a JS template literal, testable only by regex
@@ -280,10 +280,8 @@ explicit migrations, and **reports** unknown ids (G6's say-do rule) instead of s
 GUARDS: round-trip test: save under version N−1 fixture → load → every field lands or is loudly
 listed. A completeness assert: every payload key the adapter reads has a registry entry (the
 E5b concern — solver-vocabulary keys — is satisfied by keying on payload, per the E5b row).
-⚠️ That assert needs an exemption list for payload keys that are not farm facts: `skip_charts`
-(E8) is the first, and asking "what does a farmer have readily available" of it is a category
-error. If the exemption list grows past a couple of entries, that is the signal the payload is
-carrying two different kinds of thing and wants splitting.
+✅ (resolved by E5b) The exemption-list worry is moot: `skip_charts` was deleted by E2, and
+fields that are not farm facts are marked `unsent` in `public/fields.js`, so no separate list exists.
 DONE = one source of truth, three views, versioned migration path, silent-drop impossible.
 
 **1.4 · T4 — the headless-browser smoke test (scheduled 2026-08-29; BACKLOG row T4, previously ❓).** ✅ **DONE 2026-10-19** — `npm run test:smoke`. Two spec corrections, both measured: profit cannot match the pin 'to the dollar' (two correct HiGHS builds differ inside the MIP gap), and a real hidden tab cannot be produced headlessly (simulated instead, and said so). See BACKLOG T4/T8/T9.

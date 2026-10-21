@@ -117,11 +117,7 @@ def main() -> int:
     if not drift and not missing and lines[idx] == rendered:
         print("\nAlready in sync; nothing written.")
         return 0
-    # Escape every `</` as `<\/`. The blob lives inside an inline <script>, and json.dumps does
-    # NOT escape `/` — so a `</script` anywhere in farm_v2/*.py (a docstring, a comment about the
-    # HTML embed, a URL) would close the tag early and blank the page. `\/` is a legal JSON
-    # escape that decodes to `/`, so json.loads round-trips it and the drift check is unaffected.
-    #
+    # render_blob_line escapes every `<` (its docstring says why `</` alone was not enough).
     # This is the backtick hazard, relocated. E2 retired the "no backticks in PYTHON_CODE" guard
     # because the adapter stopped living in a JS template literal — correct for backticks, but
     # the CLASS is "embedded Python breaks out of its JS container", and that moved rather than

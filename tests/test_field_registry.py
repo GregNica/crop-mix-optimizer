@@ -24,7 +24,7 @@ from tests.helpers import GOLDEN_PAYLOAD, REPO
 NODE = shutil.which("node")
 pytestmark = pytest.mark.skipif(NODE is None, reason="node not installed")
 
-READERS = {"_num", "_num_no_invent"}
+READERS = {"_num", "_num_no_invent", "_num_if_on"}
 
 
 @pytest.fixture(scope="module")
@@ -41,9 +41,12 @@ def _adapter_payload_keys():
     """Every literal top-level key run_from_js reads off the payload `p`."""
     keys = set()
     for n in ast.walk(ast.parse((REPO / "farm_v2" / "adapter.py").read_text())):
-        if (isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in READERS
-                and n.args and isinstance(n.args[0], ast.Constant)):
-            keys.add(n.args[0].value)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in READERS:
+            # The key is the first string argument (_num_if_on takes the on/off flag first).
+            key = next((a.value for a in n.args
+                        if isinstance(a, ast.Constant) and isinstance(a.value, str)), None)
+            if key is not None:
+                keys.add(key)
         elif (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "get"
               and isinstance(n.func.value, ast.Name) and n.func.value.id == "p"
               and n.args and isinstance(n.args[0], ast.Constant)):
@@ -146,3 +149,20 @@ def test_every_chat_spec_is_well_formed(registry):
             if "min" in c and "max" in c and c["min"] > c["max"]:
                 bad.append(f"{fid}: min > max")
     assert not bad, bad
+
+
+def test_the_assistant_defines_sell_through_as_the_grower_ruled(registry):
+    """DECISIONS E1: sell-through is loss between field and sale ONLY. The UI tooltip was narrowed
+    on 2026-08-30 but the assistant kept the broad text ("X% spoils / grades out → 100 − X") and
+    E5b copied it into the registry — so the assistant double-counted grade-out against yield.
+    (/code-review max.) Every text the model reads must exclude grade-out and storage spoilage."""
+    texts = {
+        "farm-wide description": registry["form"]["sell_through_pct"]["chat"]["description"],
+        "per-crop description": registry["crop"]["sell_through_pct"]["chat"]["description"],
+        "system prompt": (REPO / "worker" / "grounding.ts").read_text(),
+    }
+    for name, text in texts.items():
+        low = text.lower()
+        assert "not grade-out" in low, f"the {name} no longer excludes grade-out from sell-through"
+        assert "spoils / grades out" not in low and "rest = shrink/spoilage/grade-out" not in low, (
+            f"the {name} maps grade-out/spoilage into sell-through again")

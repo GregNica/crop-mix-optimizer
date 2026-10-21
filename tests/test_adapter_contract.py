@@ -117,7 +117,7 @@ def test_the_result_does_not_echo_cash_inputs_back():
     assert not echoed, f"the adapter echoes cash inputs back into its result again: {echoed}"
 
 
-@pytest.mark.parametrize("key", ["credit_line", "cost_fert_per_lb",
+@pytest.mark.parametrize("key", ["credit_line", "other_debt_service_per_week",
                                  "overhead_pct_of_revenue"])
 def test_a_blanked_numeric_field_is_a_status_not_a_traceback(key):
     """parseFloat('') is NaN, JSON.stringify(NaN) is 'null', so a blanked box arrives as a
@@ -133,7 +133,10 @@ def test_a_blanked_numeric_field_is_a_status_not_a_traceback(key):
     )
 
 
-@pytest.mark.parametrize("key", ["harvest_storage_cap", "water_storage_capacity"])
+@pytest.mark.parametrize("key", ["harvest_storage_cap", "water_storage_capacity",
+                                 # /code-review max #4: My Farm Data mode blanks these three, and a
+                                 # blank solved "optimal" with the cost gone — $88k on this farm.
+                                 "cost_fert_per_lb", "cost_fuel_per_L", "rate_machinery"])
 def test_a_blanked_capacity_field_is_refused_not_invented(key):
     """The first version of the present-None fix defaulted these too — and a blanked storage
     box then solved 'optimal' while charging depreciation on the 1e9 no-constraint default
@@ -148,6 +151,28 @@ def test_a_blanked_capacity_field_is_refused_not_invented(key):
         f"a blanked {key} was not refused — the solve ran on an invented value "
         f"(status={out.get('status')}, profit={out.get('profit')})"
     )
+
+
+def test_a_blank_box_for_a_water_source_that_is_OFF_does_not_block_the_solve():
+    """/code-review max #8. With a source off the solver never reads its size, but the adapter
+    refused the blank anyway — so a farm with no well (My Farm Data blanks the benchmark well cap)
+    could not get a plan without typing a number into a box that does nothing. One solve covers
+    all three: the well and catchment are off and blank, city water carries the farm."""
+    p = _payload(well_enabled=False, well_weekly_cap_L=None,
+                 catchment_enabled=False, catchment_surface_area_m2=None,
+                 city_water_enabled=True, city_water_cost_per_L=0.003)
+    out = json.loads(run_from_js(json.dumps(p)))
+    assert out.get("status") == "optimal", out.get("error", "")[:300]
+
+
+@pytest.mark.parametrize("on,key", [("well_enabled", "well_weekly_cap_L"),
+                                    ("catchment_enabled", "catchment_surface_area_m2"),
+                                    ("city_water_enabled", "city_water_cost_per_L")])
+def test_a_blank_box_for_a_water_source_that_is_ON_is_still_refused(on, key):
+    """The other half, so #8's fix cannot be 'stop refusing water blanks altogether'."""
+    out = json.loads(run_from_js(json.dumps(_payload(**{on: True, key: None}))))
+    assert out.get("status") == "error" and key in out.get("error", ""), (
+        f"a blank {key} with the source ON was not refused (status={out.get('status')})")
 
 
 def test_the_payroll_load_reaches_a_hired_hour_through_the_adapter():

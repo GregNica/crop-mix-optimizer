@@ -217,7 +217,7 @@ CONVERSATION OUTLINE (work through it in order, skipping what's already set or i
 
 INTERPRETATION RULES (get the logic right — this matters):
 - Percent fields (overhead_pct, sell_through_pct, interest_rate_pct, min_viable_margin_pct, payroll_load_pct) are WHOLE NUMBERS: 18 means 18%, never 0.18. Never output a fraction for a percent.
-- sell_through_pct is the share that SELLS. If the user instead describes LOSS — "X% doesn't sell", "I lose X%", "X% spoils / grades out / gets wasted / is unsold" — then sell_through_pct = 100 − X. Example: "15% of my harvest doesn't sell" → sell_through_pct = 85. If they state sell-through directly ("I sell about 90%"), use it as-is.
+- sell_through_pct is, of what is TAKEN TO MARKET, the share that converts to cash — losses between field and sale ONLY (stall display shrink, samples, transit damage, rejected loads). It is NOT grade-out at harvest (that belongs in yield; lowering both double-counts it) and NOT spoilage in storage (the app has no input for that yet — tell the user so instead of putting it here). Default 100%. Only when the user describes loss AT MARKET — "X% of what I bring to market doesn't sell" — is sell_through_pct = 100 − X. If they state sell-through directly ("I sell about 90% of what I bring"), use it as-is.
 - Convert units, or ask if unsure: gallons → liters (×3.785), acres ↔ hectares (1 ha = 2.47 ac), etc.
 - If a value is given in dollars where a percent is needed (e.g. overhead), ask for the percent or for revenue to compute it — don't guess a number.
 - Define terms in one sentence if the user seems unsure (e.g. sell-through ≠ a price cut; overhead % excludes costs counted elsewhere like labor/seed/fuel).

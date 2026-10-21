@@ -8,7 +8,7 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
-    "test": "node tests/units_selftest.cjs && node tests/import_roundtrip.cjs && node tests/canon_invariant.cjs && node tests/canon_flows.cjs && node tests/channel_sales_client.cjs && node tests/demand_saturation_client.cjs && node tests/cost_splits_client.cjs && node tests/csv_safety_client.cjs && node tests/escaping_client.cjs && node tests/demo_derivation.cjs && node tests/labor_ui_client.cjs && node tests/yield_client.cjs && node tests/form_state_client.cjs && node tests/field_registry_client.cjs",
+    "test": "node tests/units_selftest.cjs && node tests/import_roundtrip.cjs && node tests/canon_invariant.cjs && node tests/canon_flows.cjs && node tests/channel_sales_client.cjs && node tests/demand_saturation_client.cjs && node tests/cost_splits_client.cjs && node tests/csv_safety_client.cjs && node tests/escaping_client.cjs && node tests/demo_derivation.cjs && node tests/labor_ui_client.cjs && node tests/yield_client.cjs && node tests/form_state_client.cjs && node tests/field_registry_client.cjs && node tests/blank_cost_client.cjs",
     "test:blob": "python3 scripts/sync_solver_blob.py --check",
     "test:payload": "node scripts/capture_golden_payload.cjs --check",
     "test:smoke": "node tests/browser_smoke.mjs",
