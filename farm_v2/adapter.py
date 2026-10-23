@@ -62,8 +62,9 @@ def run_from_js(params_json):
         opening_cash             = _num('opening_cash', 0)
         credit_line              = _num('credit_line', 0)
         harvest_storage_cap      = _num_no_invent('harvest_storage_cap', 1e9)  # huge default = no constraint when toggle off
-        equip_storage            = _num('equip_storage', 0)
-        fuel_storage             = _num('fuel_storage', 0)
+        # Carrying-cost bases since R7, so a blanked box is refused, never read as 0 (/code-review max #2).
+        equip_storage            = _num_no_invent('equip_storage', 0)
+        fuel_storage             = _num_no_invent('fuel_storage', 0)
         water_storage_capacity   = _num_no_invent('water_storage_capacity', 500000)
         operating_weeks          = int(_num('operating_weeks', 52))   # deprecated: solver ignores it
 

@@ -465,5 +465,19 @@
  "well_enabled": true,
  "well_weekly_cap_L": 8700000,
  "ambient_storage_cap": 150,
- "rate_ambient_storage": 0.09615384615384616
+ "rate_ambient_storage": 0.09615384615384616,
+ "rented_acres": 0,
+ "cash_rent_per_acre_yr": 0,
+ "ownership_carrying_rate": 0,
+ "capital_cost_per_unit": {
+  "harvest_storage": 500,
+  "ambient_storage": 150,
+  "water_storage": 0.5,
+  "irrigation": 2000,
+  "equipment_storage": 500,
+  "fuel_storage": 13
+ },
+ "insurance_premium_per_yr": 0,
+ "insurance_payment_week": null,
+ "utilities_cost_per_yr": 0
 }

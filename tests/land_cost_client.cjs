@@ -35,7 +35,7 @@ const ok = (name, cond) => { if (!cond) { failures++; console.error('  x ' + nam
   ok('a mortgage alone counts as a land cost', entered() === true);
   set('rate_property_mortgage_rent', 0);
   ok('the nudge banner no longer tells a renter to use the mortgage box alone',
-     /Rented Land and Rent per Rented Acre/.test(D.getElementById('land-rent-nudge').textContent));
+     /Rented Land and Rent on Rented Land/.test(D.getElementById('land-rent-nudge').textContent));
 
   // 2. Labels carry their unit as the trailing bracket, so Metric relabels them — and keeps "per Year".
   const label = id => D.getElementById(id).closest('.form-group').querySelector('label').firstChild.textContent;
@@ -44,6 +44,21 @@ const ok = (name, cond) => { if (!cond) { failures++; console.error('  x ' + nam
   ok(`cash rent stays per YEAR, per hectare in Metric (got "${label('cash_rent_per_acre_yr')}")`,
      /per Year/.test(label('cash_rent_per_acre_yr')) && /\/ha/.test(label('cash_rent_per_acre_yr')));
   W.eval('setUnitSystem')('us');
+
+  // 2b. The VALUES buildSolveParams sends (/code-review max #12): nothing else pins them, and each
+  //     of these mutations survived the whole suite — drop the /100, send the depreciation rate
+  //     instead of the installed cost, or shift the payment week.
+  {
+    const set = (id, v) => { D.getElementById(id).value = v; };
+    set('ownership_carrying_pct', '6'); set('insurance_payment_week', '10');
+    const b = W.eval('buildSolveParams()');
+    ok(`6% carrying is sent as the fraction 0.06 (got ${b.ownership_carrying_rate})`, b.ownership_carrying_rate === 0.06);
+    ok(`the payment week is sent as typed (got ${b.insurance_payment_week})`, b.insurance_payment_week === 10);
+    const irr = parseFloat(D.getElementById('irrigation_cost_per_acre').value);
+    ok(`capital_cost_per_unit carries the INSTALLED cost per unit (got ${b.capital_cost_per_unit.irrigation}, box ${irr})`,
+       b.capital_cost_per_unit.irrigation === irr);
+    set('ownership_carrying_pct', '0'); set('insurance_payment_week', '');
+  }
 
   // 3. +20% land grows rented land by the same share.
   const scaled = W.eval('scaleParamsForScenario')({ total_land: 80, rented_acres: 40, crops: [], employees: [] },

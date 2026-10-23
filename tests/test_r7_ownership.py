@@ -94,6 +94,9 @@ def test_the_cash_floor_sees_a_lump_premium(two_crop_params):
     dict(capital_cost_per_unit={"equip_storage": 500.0}),
     dict(capital_cost_per_unit={"machinery": 80_000.0}),
     dict(capital_cost_per_unit="500"),
+    dict(ownership_carrying_rate=6.0),      # "6" meaning 6% — a fraction, refused (#10)
+    # A negative capacity is a carrying base that pays the farm (/code-review max #2).
+    dict(fuel_storage=-13_000.0, ownership_carrying_rate=0.06, capital_cost_per_unit=CAPITAL),
     # Carrying on the 'no constraint' capacity sentinel would bill a billion cubic metres.
     dict(harvest_storage_cap=1e9, ownership_carrying_rate=0.05, capital_cost_per_unit={"harvest_storage": 500.0}),
 ])

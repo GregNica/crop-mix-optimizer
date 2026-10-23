@@ -134,6 +134,10 @@ def validate_params(
                     (insurance_premium_per_yr, "insurance_premium_per_yr"),
                     (utilities_cost_per_yr, "utilities_cost_per_yr")):
         _check_nonneg(v, what)
+    # A FRACTION, while every human-facing box is in percent — so 6 meaning 6% would bill 600% of
+    # installed cost (/code-review max #10). 30% matches the form's max; real I-R-T is ~4-8%.
+    if ownership_carrying_rate > 0.30:
+        raise ValueError(f"ownership_carrying_rate is a fraction (0.06 = 6%) and at most 0.30, got {ownership_carrying_rate:g}.")
     if rented_acres > total_land:
         raise ValueError(f"rented_acres ({rented_acres:g}) cannot exceed total_land ({total_land:g}).")
     if insurance_payment_week is not None and not (
@@ -144,6 +148,10 @@ def validate_params(
     # silently ignored by the solver and charge nothing — the silent-drop class.
     if not isinstance(capital_cost_per_unit or {}, dict):
         raise ValueError(f"capital_cost_per_unit must be a mapping of asset class to $ per unit, got {capital_cost_per_unit!r}.")
+    # Every owned capacity is a depreciation base and (R7) a carrying base: a negative one is a
+    # building that pays the farm (/code-review max #2).
+    for cls, cap in (owned_capacity or {}).items():
+        _check_nonneg(cap, f"{cls} capacity")
     for cls, v in (capital_cost_per_unit or {}).items():
         if cls not in (owned_capacity or {}):
             raise ValueError(f"capital_cost_per_unit: unknown asset class {cls!r}; expected one of {sorted(owned_capacity or {})}.")
@@ -323,7 +331,8 @@ def _check_nonneg(val, name: str) -> None:
 
 
 def _check_positive(val: float, name: str) -> None:
-    if val is None or val <= 0:
+    # _is_number, not `val <= 0`: NaN compares False to everything, so it passed (/code-review max #9).
+    if not (_is_number(val) and val > 0):
         raise ValueError(f"{name} must be positive, got {val!r}.")
 
 
@@ -334,7 +343,7 @@ def _require_employee_numbers(emp: dict, keys: tuple, kind: str, i: int) -> None
     # which for a wage means the number is invented downstream.
     for key in keys:
         v = emp.get(key)
-        if isinstance(v, bool) or not isinstance(v, (int, float)):
+        if not _is_number(v):   # NaN/inf too: the bounds checks below are False for NaN (#8)
             raise ValueError(
                 f"{kind} employee '{emp.get('position', i)}' {key} must be a number, got {v!r}."
             )
@@ -344,7 +353,7 @@ def _require_employee_numbers(emp: dict, keys: tuple, kind: str, i: int) -> None
     for key in ("benefits_pct", "field_time_pct"):
         if key in emp:
             v = emp[key]
-            if isinstance(v, bool) or not isinstance(v, (int, float)):
+            if not _is_number(v):
                 raise ValueError(
                     f"{kind} employee '{emp.get('position', i)}' {key} must be a number, "
                     f"got {v!r}."

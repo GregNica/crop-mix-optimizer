@@ -26,7 +26,12 @@ const ok = (name, cond) => { if (!cond) fail(name); };
     e.value = v;
     e.dispatchEvent(new W.Event('input', { bubbles: true }));
   };
-  const COSTS = { cost_fert_per_lb: 'Fertilizer price', cost_fuel_per_L: 'Fuel price', rate_machinery: 'Machinery cost' };
+  const COSTS = { cost_fert_per_lb: 'Fertilizer price', cost_fuel_per_L: 'Fuel price', rate_machinery: 'Machinery cost',
+    // R7/W10 (/code-review max #1): these were read through numOr(…, 0), so a cleared box was $0.
+    rented_acres: 'Rented land', cash_rent_per_acre_yr: 'Rent on rented land',
+    ownership_carrying_pct: 'Ownership carrying', insurance_premium_per_yr: 'Farm insurance',
+    utilities_cost_per_yr: 'Utilities',
+    equip_storage: 'Equip. Storage', fuel_storage: 'Fuel Storage' };   // carrying bases (#2)
 
   // 1. Each blank cost box is refused by name; the defaults are not.
   ok('the shipped form validates clean', W.validateParams(W.eval('buildSolveParams()')).length === 0);

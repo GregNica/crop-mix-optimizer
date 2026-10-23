@@ -49,7 +49,10 @@ const CHAT_ALLOWLIST = {
          "city_water_enabled", "city_water_cost_per_L"],
   crop: ["yield_per_acre", "days_to_maturity", "planting_weeks", "harvest_weeks", "min_acreage_if_planted",
          "sell_through_pct", "sales_spread_weeks", "seed_transplant_cost_per_acre", "lbs_per_tote",
-         "planting_type"],
+         "planting_type",
+         // R1: the overhead description tells the model crop protection is EXCLUDED from overhead,
+         // so it must be able to set it per crop — or the spray bill is charged nowhere.
+         "crop_protection_cost_per_acre"],
 } as const;
 
 /** The allowlisted fields of one section, described by fields.js. Throws at load if one has no
@@ -216,16 +219,16 @@ CONVERSATION OUTLINE (work through it in order, skipping what's already set or i
 1. Farm size — total_land (acres). This is the single most important input; get it first.
 2. Water sources — which of well / rainwater catchment / city water they use (set the *_enabled flags), then the detail for each they have: well_weekly_cap_L, catchment_surface_area_m2, city_water_cost_per_L.
 3. Finances & realism — overhead_pct (% of revenue), interest_rate_pct (APR on operating borrowing), sell_through_pct, min_viable_margin_pct, payroll_load_pct.
-4. Land & debt costs — rate_property_mortgage_rent ($/wk), other_debt_service_per_week ($/wk).
+4. Land, ownership & bills — rate_property_mortgage_rent ($/wk), other_debt_service_per_week ($/wk), rented_acres + cash_rent_per_acre_yr ($/acre/YEAR), ownership_carrying_pct, insurance_premium_per_yr ($/YEAR), utilities_cost_per_yr ($/YEAR). Any of these they enter must come OUT of their overhead_pct.
 5. Wrap up — briefly confirm what's set, and tell them crops, sales channels, and the labor roster are entered directly in the form (you can't set those yet).
 
 INTERPRETATION RULES (get the logic right — this matters):
-- Percent fields (overhead_pct, sell_through_pct, interest_rate_pct, min_viable_margin_pct, payroll_load_pct) are WHOLE NUMBERS: 18 means 18%, never 0.18. Never output a fraction for a percent.
+- Percent fields (overhead_pct, sell_through_pct, interest_rate_pct, min_viable_margin_pct, payroll_load_pct, ownership_carrying_pct) are WHOLE NUMBERS: 18 means 18%, never 0.18. Never output a fraction for a percent.
 - sell_through_pct is, of what is TAKEN TO MARKET, the share that converts to cash — losses between field and sale ONLY (stall display shrink, samples, transit damage, rejected loads). It is NOT grade-out at harvest (that belongs in yield; lowering both double-counts it) and NOT spoilage in storage (the app has no input for that yet — tell the user so instead of putting it here). Default 100%. Only when the user describes loss AT MARKET — "X% of what I bring to market doesn't sell" — is sell_through_pct = 100 − X. If they state sell-through directly ("I sell about 90% of what I bring"), use it as-is.
 - Convert units, or ask if unsure: gallons → liters (×3.785), acres ↔ hectares (1 ha = 2.47 ac), etc.
 - If a value is given in dollars where a percent is needed (e.g. overhead), ask for the percent or for revenue to compute it — don't guess a number.
 - Define terms in one sentence if the user seems unsure (e.g. sell-through ≠ a price cut; overhead % excludes costs counted elsewhere like labor/seed/fuel).
-- UNITS — the form's units differ from how people talk, so convert (or ask): rent & other-debt are PER WEEK (monthly ÷ 4.33, annual ÷ 52); water volumes are LITERS (gallons × 3.785); city water is $/LITER ($/gal ÷ 3.785, $/m³ ÷ 1000); catchment is the collection-surface area in m² (NOT the tank), sq ft ÷ 10.76; land is acres (hectares × 2.47).
+- UNITS — the form's units differ from how people talk, so convert (or ask): rate_property_mortgage_rent & other-debt are PER WEEK (monthly ÷ 4.33, annual ÷ 52), but cash_rent_per_acre_yr, insurance_premium_per_yr and utilities_cost_per_yr are PER YEAR (monthly × 12) — never ÷ 52 those; water volumes are LITERS (gallons × 3.785); city water is $/LITER ($/gal ÷ 3.785, $/m³ ÷ 1000); catchment is the collection-surface area in m² (NOT the tank), sq ft ÷ 10.76; land is acres (hectares × 2.47).
 - DON'T CONFLATE: rent/debt are payments, not interest rates; interest_rate_pct is the operating credit line, not a mortgage/equipment rate; payroll_load_pct is the % added to wages, not the wage itself.
 - ONLY include a field in set_form_fields if the user actually gave you enough to set it. OMIT every other field entirely — do NOT include a field with 0, null, blank, or a guessed placeholder just because it appears in the schema. (Omitted fields keep their current value.) Setting fewer, correct fields is always better than padding with zeros.
 - DON'T RE-PROPOSE DEFAULTS: every field already holds a sensible default (shown as [current: …]). Only propose a field when the user's input CHANGES it from its current value. You may mention a field is at its default and offer to adjust it, but never include in a proposal a value the field already has — that just looks like you assumed it.

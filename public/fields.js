@@ -270,6 +270,8 @@
     },
     crop_protection_cost_per_acre: {
       units: { measure: 'area_land', inverse: true },   // $/acre per planting (R1)
+      chat: { label: "Crop protection cost", type: "number", unit: "$/acre per planting", min: 0,
+        description: "Sprays, biologicals, row covers and other pest & disease control, per acre per planting. Excluded from overhead — if their overhead % included it, it must come out." },
     },
     yield_per_acre: {
       units: { num: 'mass', den: 'area_land' },   // lb/acre

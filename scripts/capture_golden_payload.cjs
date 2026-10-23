@@ -28,7 +28,11 @@ const CHECK = process.argv.includes('--check');
 // staleness this script exists to prevent.
 const OWNED = ['crops', 'ambient_storage_cap', 'rate_ambient_storage',
                'harvest_storage_cap', 'rate_harvest_storage', 'well_weekly_cap_L',
-               'climate_zone'];
+               'climate_zone',
+               // R7/W10 — every solve sends them, so the golden farm must too (/code-review max #12),
+               // or the Batch 3 re-pin that switches their defaults on moves nothing here.
+               'rented_acres', 'cash_rent_per_acre_yr', 'ownership_carrying_rate', 'capital_cost_per_unit',
+               'insurance_premium_per_yr', 'insurance_payment_week', 'utilities_cost_per_yr'];
 
 bootApp().then(({ window: w }) => {
   const payload = JSON.parse(fs.readFileSync(PAYLOAD, 'utf8'));

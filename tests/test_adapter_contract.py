@@ -315,3 +315,17 @@ def test_the_overhead_ledger_reaches_the_page(golden_out):
     from farm_v2.solver import OVERHEAD_COVERS
     assert golden_out["overhead_covers"] == [short for short, _ in OVERHEAD_COVERS.values()]
     assert "overhead_excludes" not in golden_out, "nothing in the page reads it — do not send it"
+
+
+@pytest.mark.parametrize("where", ["wage", "hours_per_week", "count", "total_land"])
+def test_nan_is_refused_not_solved(where):
+    """/code-review max #8/#9: NaN compares False to every bound, so a wage of NaN solved 'optimal'
+    with profit NaN, and NaN hours or land reached HiGHS as a model error. A server caller can send
+    the NaN literal (Python's json accepts it), so Step 0 must refuse it."""
+    p = golden_payload()
+    if where == "total_land":
+        p["total_land"] = float("nan")
+    else:
+        p["employees"][0][where] = float("nan")
+    out = json.loads(run_from_js(json.dumps(p)))
+    assert out.get("status") == "invalid_input", (out.get("status"), out.get("error", "")[:200])
