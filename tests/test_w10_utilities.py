@@ -11,11 +11,11 @@ import pytest
 
 from farm_v2.adapter import run_from_js
 from farm_v2.solver import solve_farm_v2
-from tests.helpers import GOLDEN_PAYLOAD
+from tests.helpers import golden_payload
 
 
-def test_the_bill_is_charged_as_entered(two_crop_params):
-    base = solve_farm_v2(**copy.deepcopy(two_crop_params))
+def test_the_bill_is_charged_as_entered(two_crop_params, solved_two_crop):
+    base, _ = solved_two_crop
     p = copy.deepcopy(two_crop_params)
     p["utilities_cost_per_yr"] = 7_800.0
     r = solve_farm_v2(**p)
@@ -27,7 +27,5 @@ def test_the_bill_is_charged_as_entered(two_crop_params):
 
 def test_the_adapter_forwards_it():
     """Guardrail 10. (Null and bad-value refusal are in tests/test_r7_ownership.py's lists.)"""
-    p = json.loads(GOLDEN_PAYLOAD.read_text())
-    p["utilities_cost_per_yr"] = 4_000.0
-    out = json.loads(run_from_js(json.dumps(p)))
+    out = json.loads(run_from_js(json.dumps(golden_payload(utilities_cost_per_yr=4_000.0))))
     assert out["fixed_cost_split"]["utilities"] == pytest.approx(4_000.0)

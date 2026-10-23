@@ -35,7 +35,7 @@ const ok = (name, cond) => { if (!cond) { failures++; console.error('  x ' + nam
   ok('a mortgage alone counts as a land cost', entered() === true);
   set('rate_property_mortgage_rent', 0);
   ok('the nudge banner no longer tells a renter to use the mortgage box alone',
-     /Rented Acres and Cash Rent/.test(D.getElementById('land-rent-nudge').textContent));
+     /Rented Land and Rent per Rented Acre/.test(D.getElementById('land-rent-nudge').textContent));
 
   // 2. Labels carry their unit as the trailing bracket, so Metric relabels them — and keeps "per Year".
   const label = id => D.getElementById(id).closest('.form-group').querySelector('label').firstChild.textContent;

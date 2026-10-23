@@ -39,13 +39,11 @@ class TestValidParamsPass:
         warnings = validate_params(**p)
         assert any("employee" in w.lower() or "labor" in w.lower() for w in warnings)
 
-    def test_no_water_source_produces_warning(self, minimal_params):
-        p = copy.deepcopy(minimal_params)
-        p["well_enabled"] = False
-        p["catchment_enabled"] = False
-        p["city_water_enabled"] = False
-        warnings = validate_params(**p)
-        assert any("water" in w.lower() for w in warnings)
+    def test_no_water_source_is_refused(self, minimal_params):
+        """D11: a warning let the solve come back "optimal" by growing nothing. Refused here so
+        every caller (the assistant, a direct solve) gets it, not only the app's form."""
+        with pytest.raises(ValueError, match="No water source"):
+            _call(minimal_params, well_enabled=False, catchment_enabled=False, city_water_enabled=False)
 
 
 # ---------------------------------------------------------------------------

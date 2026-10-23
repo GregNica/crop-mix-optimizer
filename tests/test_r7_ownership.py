@@ -14,7 +14,7 @@ import pytest
 
 from farm_v2.adapter import run_from_js
 from farm_v2.solver import OWNED_ASSET_CLASSES, solve_farm_v2
-from tests.helpers import GOLDEN_PAYLOAD
+from tests.helpers import REPO, golden_payload
 from tests.test_cash_floor_guards import _cash_bound
 
 CAPITAL = {"harvest_storage": 500.0, "ambient_storage": 150.0, "water_storage": 0.5,
@@ -45,9 +45,9 @@ def test_ownership_carrying_is_the_rate_on_installed_cost(two_crop_params):
     assert r["fixed_cost_split"]["ownership_carrying"] == pytest.approx(want, rel=1e-12)
 
 
-def test_every_line_is_zero_by_default(two_crop_params):
+def test_every_line_is_zero_by_default(solved_two_crop):
     """The golden farm must not move until the Batch 2 re-pin switches the defaults on."""
-    _, r = _solve(two_crop_params)
+    r, _ = solved_two_crop
     assert {k: r["fixed_cost_split"][k] for k in ("land_rent", "ownership_carrying", "insurance")} == \
         {"land_rent": 0.0, "ownership_carrying": 0.0, "insurance": 0.0}
 
@@ -105,9 +105,8 @@ def test_bad_inputs_are_refused(two_crop_params, bad):
 
 def test_the_adapter_carries_every_r7_key_to_the_solver():
     """Guardrail 10: a payload key the adapter does not forward is a feature with no path in."""
-    p = json.loads(GOLDEN_PAYLOAD.read_text())
-    p.update(rented_acres=10.0, cash_rent_per_acre_yr=250.0, ownership_carrying_rate=0.05,
-             capital_cost_per_unit=CAPITAL, insurance_premium_per_yr=4_000.0, insurance_payment_week=10)
+    p = golden_payload(rented_acres=10.0, cash_rent_per_acre_yr=250.0, ownership_carrying_rate=0.05,
+                       capital_cost_per_unit=CAPITAL, insurance_premium_per_yr=4_000.0, insurance_payment_week=10)
     out = json.loads(run_from_js(json.dumps(p)))
     assert out["status"] == "optimal", out.get("error", "")[:300]
     split = out["fixed_cost_split"]
@@ -127,8 +126,7 @@ def test_the_adapter_carries_every_r7_key_to_the_solver():
 def test_a_present_null_is_refused_not_read_as_zero(key):
     """The form always sends a number, so a null means a blanked box or NaN crossing the boundary —
     charging $0 for it would invent the value (the _num_no_invent contract)."""
-    p = json.loads(GOLDEN_PAYLOAD.read_text())
-    p[key] = None
+    p = golden_payload(**{key: None})
     out = json.loads(run_from_js(json.dumps(p)))
     # The refusal itself — naming the key — not merely "not optimal", which a crash would also be.
     assert out.get("status") == "error" and key in out.get("error", ""), (
@@ -142,3 +140,9 @@ def test_the_page_and_the_solver_name_the_same_owned_asset_classes():
     from tests.helpers import index_src
     block = re.search(r"const OWNED_CAPITAL = \{(.*?)\n\};", index_src(), re.S).group(1)
     assert tuple(re.findall(r"^\s+(\w+):", block, re.M)) == OWNED_ASSET_CLASSES
+    # ...and the registry's payload entry names the same installed-cost fields, in the same order
+    # (a third hand-kept copy of the list, which nothing else checks).
+    cost_fields = re.findall(r"^\s+\w+:\s+\['(\w+)'", block, re.M)
+    fields_js = (REPO / "public" / "fields.js").read_text()
+    from_list = re.search(r"capital_cost_per_unit:\s*\{ from: \[(.*?)\]", fields_js, re.S).group(1)
+    assert re.findall(r"'(\w+)'", from_list) == cost_fields

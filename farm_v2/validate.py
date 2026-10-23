@@ -91,10 +91,12 @@ def validate_params(
         raise ValueError("rainfall_weekly_L_per_acre contains negative values.")
 
     # 3. Water sources
+    # Refused, not warned (D11): with every source off the solve came back "optimal" by growing
+    # nothing. Here, the one check every caller passes through — not only the app's form.
     if not city_water_enabled and not well_enabled and not catchment_enabled:
-        warnings.append(
-            "No water source enabled (city_water, well, catchment are all disabled). "
-            "Crops with water needs will be infeasible."
+        raise ValueError(
+            "No water source enabled (city_water, well, catchment are all disabled) — "
+            "turn on at least one."
         )
     if catchment_enabled and catchment_surface_area_m2 <= 0:
         raise ValueError(

@@ -487,15 +487,15 @@ def solve_farm_v2(
     # The six OWNED asset classes, ONE table: (the capacity this solve uses, the weekly
     # depreciation per unit of it). Both the depreciation lines below and R7's ownership-carrying
     # base read it — the capacities used to be paired with their class names twice.
-    owned_assets = {
-        "harvest_storage":   (harvest_storage_cap, rate_harvest_storage),
-        "ambient_storage":   (ambient_storage_cap, rate_ambient_storage),
-        "water_storage":     (water_storage_capacity, rate_water_storage),
-        "irrigation":        (total_land, rate_irrigation),
-        "equipment_storage": (equip_storage, rate_equip_storage),
-        "fuel_storage":      (fuel_storage, rate_fuel_storage),
-    }
-    assert tuple(owned_assets) == OWNED_ASSET_CLASSES
+    # In OWNED_ASSET_CLASSES order, so the class names are written once.
+    owned_assets = dict(zip(OWNED_ASSET_CLASSES, (
+        (harvest_storage_cap, rate_harvest_storage),
+        (ambient_storage_cap, rate_ambient_storage),
+        (water_storage_capacity, rate_water_storage),
+        (total_land, rate_irrigation),
+        (equip_storage, rate_equip_storage),
+        (fuel_storage, rate_fuel_storage),
+    ), strict=True))
 
     try:
         validation_warnings = validate_params(
@@ -664,8 +664,8 @@ def solve_farm_v2(
     # with literal column indices at the write site. That is the W4 defect one layer down: a cost
     # added to the objective's coefficient and missed in the split would make the REPORTED total
     # short of what the optimizer actually charged, silently — the exact failure this fix exists
-    # to remove from the P&L. adding a category (crop protection, R1)
-    # would have been three coordinated increments across two sites.
+    # to remove from the P&L. Adding a category (crop protection, R1) would have been three
+    # coordinated increments across two sites.
     #
     # Now the charge is written once, in named terms, and every consumer is a sum of it. Adding a
     # category is one entry in VC_CATEGORIES and one line here.
@@ -920,10 +920,8 @@ def solve_farm_v2(
     # Fixed cost splits into a genuinely FLAT part and PAYROLL, which is not flat (W12).
     #
     # Every other fixed line is spread flat — exact for depreciation, rent and debt service, and an
-    # approximation for utilities, whose cooling and pumping peak in summer (W10; BACKLOG). Before
-    # that: every other fixed line really is the same every week — irrigation, machinery, mortgage,
-    # debt service, storage depreciation — so spreading `fixed_cost / 52` was exact. Wages are the
-    # first fixed line with a shape: the shipped farm owes $4,884/wk in the winter and $24,484/wk
+    # approximation for utilities, whose cooling and pumping peak in summer (W10; BACKLOG). Wages
+    # were the first fixed line with a shape: the shipped farm owes $4,884/wk in the winter and $24,484/wk
     # once the seasonal crews start, against a flat average of $16,445. Flattening them understates
     # the cash floor exactly when payroll peaks — measured, cumulative payroll through week 42 is
     # $806,313 against the $690,698 a flat spread charges, so the floor was letting a farm plan

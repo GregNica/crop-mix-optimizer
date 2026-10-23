@@ -21,6 +21,14 @@ INDEX = REPO / "public" / "index.html"
 GOLDEN_PAYLOAD = REPO / "tests" / "golden" / "default_farm_payload.json"
 
 
+def golden_payload(**overrides) -> dict:
+    """The shipped farm's payload with `overrides` applied — a fresh dict each call."""
+    import json
+    p = json.loads(GOLDEN_PAYLOAD.read_text())
+    p.update(overrides)
+    return p
+
+
 def index_src() -> str:
     """The app's single HTML file, as text."""
     return INDEX.read_text()

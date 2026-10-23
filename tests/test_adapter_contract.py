@@ -16,20 +16,14 @@ import pytest
 
 import farm_v2.adapter
 from farm_v2.adapter import run_from_js
-from tests.helpers import GOLDEN_PAYLOAD, REPO, index_src
-
-
-def _payload(**overrides):
-    p = json.loads(GOLDEN_PAYLOAD.read_text())
-    p.update(overrides)
-    return p
+from tests.helpers import REPO, golden_payload, index_src
 
 
 @pytest.fixture(scope="module")
 def golden_out():
     """One solve of the unmodified golden payload, shared by every read-only assertion —
     three tests solved the identical payload independently at ~2.7s each."""
-    return json.loads(run_from_js(json.dumps(_payload())))
+    return json.loads(run_from_js(json.dumps(golden_payload())))
 
 
 def test_gap_note_survives_the_adapter(monkeypatch):
@@ -52,7 +46,7 @@ def test_gap_note_survives_the_adapter(monkeypatch):
         return r
 
     monkeypatch.setattr(farm_v2.adapter, "solve_farm_v2", truncated_solve)
-    out = json.loads(run_from_js(json.dumps(_payload())))
+    out = json.loads(run_from_js(json.dumps(golden_payload())))
     assert out.get("status") == "time_limit_feasible", (
         f"the adapter no longer passes a time-limited solve through its success path: "
         f"{out.get('status')} {out.get('error', '')[:200]}"
@@ -82,7 +76,7 @@ def test_fractional_headcount_survives_the_adapter(golden_out):
 
     The adapter used int(), which truncated 2.2 back to 2 — reintroducing the rounding no-op
     one layer below the fix. A fractional count must change the wage bill it produces."""
-    p = _payload()
+    p = golden_payload()
     emp = next(e for e in p["employees"] if e["type"] != "salary")
     # Precondition, so roster drift cannot make this guard silently inert: the int()
     # truncation is only distinguishable from correct behavior when the truncated scaled
@@ -109,7 +103,7 @@ def test_the_result_does_not_echo_cash_inputs_back():
     keeps paying for. Held out of E2 only because removing keys would have forfeited its
     byte-equivalence proof. The solver's own result still carries `opening_cash` (the cash
     curve's basis); this pins the ADAPTER's dict only."""
-    p = _payload()
+    p = golden_payload()
     p.update(opening_cash=300_000.0, credit_line=800_000.0)
     out = json.loads(run_from_js(json.dumps(p)))
     assert out.get("status") == "optimal", out.get("error", "")[:300]
@@ -125,7 +119,7 @@ def test_a_blanked_numeric_field_is_a_status_not_a_traceback(key):
     raw TypeError traceback instead of a plan. For genuinely optional/rate fields the adapter
     treats present-None as absent (the documented default). Whatever the solve concludes, it
     must be a status dict, never the blanket-except 'error' path."""
-    p = _payload()
+    p = golden_payload()
     p[key] = None
     out = json.loads(run_from_js(json.dumps(p)))
     assert out.get("status") != "error", (
@@ -144,7 +138,7 @@ def test_a_blanked_capacity_field_is_refused_not_invented(key):
     and price boxes that are always sent must be REFUSED when blanked, loudly, same contract
     as well_weekly_cap_L ('the value would be invented'). Absent stays the documented default
     for toggle-off/server callers — only present-None is refused."""
-    p = _payload()
+    p = golden_payload()
     p[key] = None
     out = json.loads(run_from_js(json.dumps(p)))
     assert out.get("status") == "error" and key in out.get("error", ""), (
@@ -158,7 +152,7 @@ def test_a_blank_box_for_a_water_source_that_is_OFF_does_not_block_the_solve():
     refused the blank anyway — so a farm with no well (My Farm Data blanks the benchmark well cap)
     could not get a plan without typing a number into a box that does nothing. One solve covers
     all three: the well and catchment are off and blank, city water carries the farm."""
-    p = _payload(well_enabled=False, well_weekly_cap_L=None,
+    p = golden_payload(well_enabled=False, well_weekly_cap_L=None,
                  catchment_enabled=False, catchment_surface_area_m2=None,
                  city_water_enabled=True, city_water_cost_per_L=0.003)
     out = json.loads(run_from_js(json.dumps(p)))
@@ -170,7 +164,7 @@ def test_a_blank_box_for_a_water_source_that_is_OFF_does_not_block_the_solve():
                                     ("city_water_enabled", "city_water_cost_per_L")])
 def test_a_blank_box_for_a_water_source_that_is_ON_is_still_refused(on, key):
     """The other half, so #8's fix cannot be 'stop refusing water blanks altogether'."""
-    out = json.loads(run_from_js(json.dumps(_payload(**{on: True, key: None}))))
+    out = json.loads(run_from_js(json.dumps(golden_payload(**{on: True, key: None}))))
     assert out.get("status") == "error" and key in out.get("error", ""), (
         f"a blank {key} with the source ON was not refused (status={out.get('status')})")
 
@@ -182,7 +176,7 @@ def test_the_payroll_load_reaches_a_hired_hour_through_the_adapter():
     tests asserting the load called compute_labor_arrays directly, so removing the kwarg
     would silently resurrect the 25% hire under-pricing for every browser caller with the
     whole suite green. This runs the REAL adapter with flex on and pins the published rate."""
-    p = _payload(labor_flex_enabled=True, hire_enabled=True, max_hire_hrs_per_week=400.0,
+    p = golden_payload(labor_flex_enabled=True, hire_enabled=True, max_hire_hrs_per_week=400.0,
                  hire_wage_markup=0.0, hired_wage_per_hr=19.0, payroll_load_pct=0.25)
     out = json.loads(run_from_js(json.dumps(p)))
     assert out.get("status") == "optimal", out.get("error", "")[:300]
@@ -200,7 +194,7 @@ def test_city_water_fixed_fee_reaches_the_solver_through_the_adapter():
     tests/cost_splits_client.cjs fed it through a fixture the adapter could never emit. This
     runs the fee through the real adapter and requires the solver to charge it.
     """
-    out = json.loads(run_from_js(json.dumps(_payload(
+    out = json.loads(run_from_js(json.dumps(golden_payload(
         city_water_enabled=True,
         city_water_cost_per_L=0.003,
         city_water_fixed_fee_per_week=400.0,

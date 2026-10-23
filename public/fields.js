@@ -84,7 +84,7 @@
     },
     cash_rent_per_acre_yr: {
       units: { measure: 'area_land', inverse: true },   // $/acre/yr
-      chat: { label: "Cash rent", type: "number", unit: "$/acre/year", min: 0,
+      chat: { label: "Rent per rented acre", type: "number", unit: "$/acre/year", min: 0,
         description: "Rent paid per rented acre per YEAR. Convert $/ha ÷ 2.47; a monthly figure × 12. This is NOT the mortgage — that is the property mortgage/rent field (per week) for owned land." },
     },
     ownership_carrying_pct: {

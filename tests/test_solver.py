@@ -61,26 +61,17 @@ class TestSolverStatus:
         result = _solve(two_crop_params)
         assert result["status"] == "optimal"
 
-    def test_infeasible_when_no_water_no_city_water(self, minimal_params):
-        """Zero water supply with crops that need water → infeasible."""
+    def test_refused_when_no_water_source_is_on(self, minimal_params):
+        """D11: with every water source off this used to come back "optimal" by growing nothing
+        (the old version of this test accepted that). Now refused before the solve."""
         import copy
         p = copy.deepcopy(minimal_params)
         p["well_enabled"] = False
         p["catchment_enabled"] = False
         p["city_water_enabled"] = False
-        # Keep rainfall at zero via fixture override
-        p["rainfall_weekly_L_per_acre"] = np.zeros(52)
-        # Reduce credit so cash floor triggers if no revenue
-        p["opening_cash"] = 10_000.0
-        p["credit_line"] = 10_000.0
         result = _solve(p)
-        # With no water the farm can't irrigate; solver should find no feasible plan
-        # or produce zero profit (zero planting)
-        assert result["status"] in ("optimal", "infeasible")
-        if result["status"] == "optimal":
-            # If somehow feasible, profit must be ≤ 0 (no revenue from unirrigated crops)
-            # or x is zero — acceptable either way
-            pass
+        assert result["status"] == "invalid_input"
+        assert any("No water source" in e for e in result.get("errors", []))
 
     def test_zero_credit_line_tight_cash_infeasible(self, minimal_params):
         """With zero credit and very low opening cash, solver may be infeasible."""

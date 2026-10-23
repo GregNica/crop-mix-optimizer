@@ -66,7 +66,7 @@ const ok = (name, cond) => { if (!cond) fail(name); };
     const was = src.map(e => e.checked);
     const btn = D.getElementById('btn-optimize-top');
     const toggle = (e, on) => { e.checked = on; e.dispatchEvent(new W.Event('change', { bubbles: true })); };
-    const settle = () => new Promise(r => setTimeout(r, 5));
+    const settle = () => new Promise(r => setTimeout(r, W.eval('REVALIDATE_DEBOUNCE_MS') + 20));   // the gate is debounced
     W.eval("SECTION_ORDER.forEach(id => APP_STATE.visitedSections.add(id)); showSection('water')");
     await settle();
     ok('Optimize starts enabled with the shipped water setup', btn && !btn.disabled);
