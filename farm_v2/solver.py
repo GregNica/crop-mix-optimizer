@@ -321,9 +321,12 @@ def solve_farm_v2(
     # --- Labor ---
     year_round_employees: list | None = None,
     seasonal_employees: list | None = None,
+    # Overtime per role (L.2): each hourly/seasonal role's cap and price come from its own row
+    # (max_week_pct, wage, fica_pct, benefits_pct) — see labor._role. The app's adapter turns it
+    # ON for the main plan; off here so a direct caller opts in. Multiplier default 1.0× (FLSA
+    # exempts farm work; 1.5× where state law requires ag overtime).
     overtime_enabled: bool = False,
-    overtime_rate_multiplier: float = 1.5,
-    max_overtime_hrs_per_week: float | None = None,
+    overtime_rate_multiplier: float = 1.0,
     hire_enabled: bool = False,
     max_hire_hrs_per_week: float = 0.0,
     hire_wage_markup: float = 0.0,
@@ -573,9 +576,13 @@ def solve_farm_v2(
         year_round_employees, seasonal_employees, N_WEEKS,
         hired_wage_per_hr=hired_wage_per_hr,
         hired_wage_load_pct=hired_wage_load_pct,
+        overtime_rate_multiplier=overtime_rate_multiplier,
     )
     labor_capacity         = labor_result["labor_capacity"]          # (52,)
-    overtime_hour_wage     = labor_result["overtime_hour_wage"]      # (52,) your crew, late
+    # Roles that can work overtime this plan (hourly, paid, allowance > 100%), each with its own
+    # weekly cap and $/hr (labor._role). One ot[k][w] variable block per role.
+    ot_roles = ([r for r in labor_result["labor_by_role"] if float(r["ot_cap"].max()) > 0]
+                if overtime_enabled else [])
     hire_hour_wage         = labor_result["hire_hour_wage"]          # (52,) a new person
     committed_weekly_wages = labor_result["committed_weekly_wages"]  # (52,) wages owed regardless
 
@@ -588,24 +595,10 @@ def solve_farm_v2(
     # before the fix: hired labour at the shipped default markup of 0% was literally FREE —
     # 2,080 hired hours at $0.00, worth +$965,177 of phantom profit on a 200-acre fixture.
     #
-    # NOT A DOUBLE-CHARGE, and the arithmetic is worth stating because it is the step that looks
-    # wrong: C2 measures bought hours against `labor_capacity`, so an overtime hour is genuinely
-    # an hour beyond what the crew can give. One worker, 40 h/wk at $20 at 100% field time, asked
-    # for 50 h: $800 committed + 10 x $20 x 1.5 = $1,100, which is 40 straight plus 10 at
-    # time-and-a-half. Pinned in test_committed_wages.py.
-    #
-    # ⚠️ EXACT ONLY AT field_time_pct = 100, and the shipped farm is not: its manager is 80% and
-    # both operators 90%, so 17 h/wk are paid by the committed bill and invisible to C2. Overtime
-    # can therefore be bought while those paid hours are unspent. That is the DELIBERATE reading
-    # of `field_time_pct` — it is a cap on crop-available time, not an average (see labor.py) —
-    # so the unspent hours are admin and maintenance rather than idle capacity. But it means the
-    # clean identity above is the 100% case, not the general one. Do not quote it as general.
-    #
-    # ⚠️ Rate/quantity asymmetry, deliberate: capacity is TOTAL (salaried + hourly + seasonal) but
-    # the price is the hourly blend, so a salaried worker's overflow is priced at the hourly rate.
-    # That is the defensible direction — you send overtime to the hourly crew, and salaried staff
-    # generally cannot be paid overtime at all.
-    overtime_rate_full = overtime_hour_wage * overtime_rate_multiplier
+    # NOT A DOUBLE-CHARGE: C2 measures bought hours against `labor_capacity`, so an overtime hour
+    # is genuinely an hour beyond what the crew can give. One worker, 40 h/wk at $20 at 100% field
+    # time, asked for 50 h at 1.5×: $800 committed + 10 x $20 x 1.5 = $1,100. Pinned in
+    # test_committed_wages.py.
     hire_rate_full     = hire_hour_wage * (1.0 + hire_wage_markup)
 
     # A bought hour must have a real price before the optimizer may buy one. Both rates above
@@ -618,17 +611,19 @@ def solve_farm_v2(
     # rather than handing out free hours. Checked per-enabled-lever so a fixed-staff solve of
     # an unpaid crew (a legitimate farm) still runs.
     _flex_rate_errors = []
+    # Refused, not clamped: an overtime hour paid below straight time is not a thing, and a
+    # multiplier of 0 would hand out free hours (the W12b class). NaN fails this too.
+    if overtime_enabled and not float(overtime_rate_multiplier) >= 1.0:
+        _flex_rate_errors.append(
+            f"Overtime pay multiplier must be at least 1.0 (straight time), got "
+            f"{overtime_rate_multiplier}. Use 1.5 where state law requires ag overtime."
+        )
     if hire_enabled and not float(hire_rate_full.min()) > 0:
         _flex_rate_errors.append(
             "Hiring is enabled, but the model has no price for a hired hour: no listed role "
             "has a wage above $0 and no hired wage was given. Enter 'Hired wage $/hr' in the "
             "labor-flexibility settings, or set a wage on your crew — otherwise hired labour "
             "would be free and the plan meaningless."
-        )
-    if overtime_enabled and not float(overtime_rate_full.min()) > 0:
-        _flex_rate_errors.append(
-            "Overtime is enabled, but every listed role's wage is $0, so an overtime hour "
-            "would cost nothing. Set a wage on your crew, or disable overtime for this solve."
         )
     if _flex_rate_errors:
         return _invalid(_flex_rate_errors)
@@ -976,8 +971,8 @@ def solve_farm_v2(
     if city_water_enabled:
         idx_cw_start = _next; _next += N_WEEKS
     idx_ot_start = None
-    if overtime_enabled:
-        idx_ot_start = _next; _next += N_WEEKS
+    if ot_roles:
+        idx_ot_start = _next; _next += len(ot_roles) * N_WEEKS
     idx_hire_start = None
     if hire_enabled:
         idx_hire_start = _next; _next += N_WEEKS
@@ -986,6 +981,10 @@ def solve_farm_v2(
     # which keeps ONE water balance in the code instead of a tank path and a no-tank path.
     idx_ws_start = _next; _next += N_WEEKS
     n_vars = _next
+
+    def _ot(k: int, w0: int) -> int:
+        """Column of ot[role k][week index w0] (0-indexed week)."""
+        return idx_ot_start + k * N_WEEKS + w0
 
     # -----------------------------------------------------------------------
     # Step 6 — Objective (scipy.milp minimises, so negate profit)
@@ -1057,9 +1056,9 @@ def solve_farm_v2(
     # here would be incoherent. Minimum-storage is now strictly optimal.
     c_obj[idx_ws_start : idx_ws_start + N_WEEKS] += WATER_LEVEL_TIE_BREAK_PER_L_WEEK
 
-    # Bought hours cost their FULL rate — see overtime_rate_full / hire_rate_full above.
-    if overtime_enabled and idx_ot_start is not None:
-        c_obj[idx_ot_start : idx_ot_start + N_WEEKS] = overtime_rate_full
+    # Bought hours cost their FULL rate — each role's own ot_rate; hire_rate_full above.
+    for k, r in enumerate(ot_roles):
+        c_obj[_ot(k, 0) : _ot(k, 0) + N_WEEKS] = r["ot_rate"]
     if hire_enabled and idx_hire_start is not None:
         c_obj[idx_hire_start : idx_hire_start + N_WEEKS] = hire_rate_full
 
@@ -1082,8 +1081,9 @@ def solve_farm_v2(
     ub[idx_ws_start : idx_ws_start + N_WEEKS] = float(water_storage_capacity)
 
     # Per-week caps on the labor-flex levers (the "max additional capacity by period").
-    if overtime_enabled and idx_ot_start is not None and max_overtime_hrs_per_week is not None:
-        ub[idx_ot_start : idx_ot_start + N_WEEKS] = max_overtime_hrs_per_week
+    # Overtime: each role's derived cap, (allowance − 1) × its field hours, 0 outside its window.
+    for k, r in enumerate(ot_roles):
+        ub[_ot(k, 0) : _ot(k, 0) + N_WEEKS] = r["ot_cap"]
     if hire_enabled and idx_hire_start is not None:
         ub[idx_hire_start : idx_hire_start + N_WEEKS] = max_hire_hrs_per_week
 
@@ -1162,8 +1162,9 @@ def solve_farm_v2(
     for w in range(1, N_WEEKS + 1):
         cols = list(labor_cols_by_week[w - 1])
         rhs = labor_capacity[w - 1]
-        if overtime_enabled and idx_ot_start is not None:
-            cols.append((idx_ot_start + w - 1, -1.0))
+        for k, r in enumerate(ot_roles):
+            if r["ot_cap"][w - 1] > 0:
+                cols.append((_ot(k, w - 1), -1.0))
         if hire_enabled and idx_hire_start is not None:
             cols.append((idx_hire_start + w - 1, -1.0))
         add_row(cols, -np.inf, rhs)
@@ -1477,7 +1478,7 @@ def solve_farm_v2(
     #   v[c,ch,w] for all w ≤ W  (coefficient: +net_price[c,ch])
     #   x[i]                     (coefficient: -cum_var[i,W])
     #   city_water[w] for w ≤ W  (coefficient: -city_water_cost_per_L)
-    #   overtime[w]   for w ≤ W  (coefficient: -overtime_rate_full[w-1])
+    #   ot[k][w]      for w ≤ W  (coefficient: -ot_rate of role k)
     floor = -(opening_cash + credit_line)
 
     # Skip the cash floor entirely when disabled (UI "cash off" → optimize
@@ -1506,9 +1507,10 @@ def solve_farm_v2(
             for w in range(W):
                 cols.append((idx_cw_start + w, -city_water_cost_per_L))
         # Overtime cost up to W
-        if overtime_enabled and idx_ot_start is not None:
+        for k, r in enumerate(ot_roles):
             for w in range(W):
-                cols.append((idx_ot_start + w, -overtime_rate_full[w]))
+                if r["ot_cap"][w] > 0:
+                    cols.append((_ot(k, w), -r["ot_rate"]))
         # Hired-labor markup cost up to W
         if hire_enabled and idx_hire_start is not None:
             for w in range(W):
@@ -1853,8 +1855,13 @@ def solve_farm_v2(
     # The solved bought-hours, sliced ONCE. Two consumers — the reported hire/overtime split here
     # and `capacity_series` below — and the defect this replaced was exactly two sites disagreeing
     # about the same quantity, so a second copy of the slice would be the wrong way to fix it.
-    ot_weekly   = (z[idx_ot_start   : idx_ot_start   + N_WEEKS]
-                   if (overtime_enabled and idx_ot_start is not None) else np.zeros(N_WEEKS))
+    # Overtime by role (who stays late, which week) and its cost — the per-role rates differ, so
+    # the farm's weekly overtime cost is summed per role, never hours × one blended rate.
+    ot_by_role = [np.array(z[_ot(k, 0) : _ot(k, 0) + N_WEEKS], dtype=float)
+                  for k in range(len(ot_roles))]
+    ot_weekly = np.sum(ot_by_role, axis=0) if ot_roles else np.zeros(N_WEEKS)
+    ot_cost_weekly = (np.sum([h * r["ot_rate"] for h, r in zip(ot_by_role, ot_roles)], axis=0)
+                      if ot_roles else np.zeros(N_WEEKS))
     hire_weekly = (z[idx_hire_start : idx_hire_start + N_WEEKS]
                    if (hire_enabled and idx_hire_start is not None) else np.zeros(N_WEEKS))
 
@@ -1879,9 +1886,7 @@ def solve_farm_v2(
     hired_hours_weekly    = np.array(hire_weekly, dtype=float)
     overtime_hours_weekly = np.array(ot_weekly, dtype=float)
 
-    overtime_cost = float(np.dot(overtime_hours_weekly,
-                                 overtime_rate_full)) \
-                    if overtime_enabled else 0.0
+    overtime_cost = float(ot_cost_weekly.sum())
     hire_cost     = float(np.dot(hired_hours_weekly,
                                  hire_rate_full)) \
                     if hire_enabled else 0.0
@@ -1936,7 +1941,7 @@ def solve_farm_v2(
     for w in range(1, N_WEEKS + 1):
         weekly_other[w] = (
             (cw_weekly[w - 1] * city_water_cost_per_L if cw_weekly is not None else 0.0)
-            + overtime_hours_weekly[w - 1] * overtime_rate_full[w - 1]
+            + ot_cost_weekly[w - 1]
             + hired_hours_weekly[w - 1]    * hire_rate_full[w - 1]
             + overhead_pct_of_revenue  * weekly_gross_rev[w]
             + fixed_selling_per_week
@@ -2060,7 +2065,7 @@ def solve_farm_v2(
         "city_water_cost":  bought_capacity_split["city_water"],
         "overtime_cost":    bought_capacity_split["overtime"],
         "hire_cost":        bought_capacity_split["hire"],
-        "labor_flex_enabled": bool(overtime_enabled or hire_enabled),
+        "labor_flex_enabled": bool(hire_enabled),
         "total_hired_hours":    float(hired_hours_weekly.sum()),
         "total_overtime_hours": float(overtime_hours_weekly.sum()),
         "hired_hours_weekly":    hired_hours_weekly,
@@ -2075,7 +2080,10 @@ def solve_farm_v2(
         # hired-wage box blank, no surface could show what an hour would be bought for, so the
         # grower had no number to check against their local labour market.
         "hire_rate_full_weekly":     hire_rate_full,
-        "overtime_rate_full_weekly": overtime_rate_full,
+        # Overtime per role (L.2): who stays late, which weeks, at what $/hr. 52 entries, 0-indexed.
+        "overtime_by_role": [{"position": r["position"], "rate": float(r["ot_rate"]),
+                              "cap": r["ot_cap"], "hours": h}
+                             for r, h in zip(ot_roles, ot_by_role)],
         "weekly_cash_flow": weekly_cash_flow,
         "peak_borrowing":   peak_borrowing,
         "opening_cash":     opening_cash,

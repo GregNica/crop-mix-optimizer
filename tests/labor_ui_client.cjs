@@ -132,6 +132,30 @@ bootApp().then(({ window: w }) => {
   }
   hwBox.value = hwSaved;
 
+  // 6b — L.2: the allowance is a TOTAL week, shown in hours so 125% cannot read as on top
+  // (the grower's first reading was 90 h/wk). Live: typing into the row updates its readout.
+  {
+    const r125 = w.otReadout({ type: 'hourly', hours_per_week: 40, max_week_pct: 125 });
+    if (!r125.includes('50 h/wk') || !r125.includes('40 regular + 10 OT')) {
+      fail(`otReadout(125% of 40 h) printed "${r125}" — must read "50 h/wk (40 regular + 10 OT)"`);
+    }
+    if (!/no overtime/.test(w.otReadout({ type: 'salary', hours_per_week: 45, max_week_pct: 125 }))) {
+      fail('otReadout: a salaried row must say it gets no overtime');
+    }
+    const row = w.document.querySelector('#labor-list .labor-row:nth-child(2)');
+    const box = row && row.querySelector('[data-lf="max_week_pct"]');
+    if (!box) fail('the roster row has no "Max week incl. overtime" box');
+    else {
+      box.value = '150';
+      box.dispatchEvent(new w.Event('input', { bubbles: true }));
+      const txt = row.querySelector('.ot-readout').textContent;
+      if (!txt.includes('60 h/wk')) fail(`readout did not follow the box live: "${txt}"`);
+      const sent = w.getLaborFromForm()[1].max_week_pct;
+      if (sent !== 150) fail(`the payload carries max_week_pct=${sent}, typed 150`);
+      box.value = '125'; box.dispatchEvent(new w.Event('input', { bubbles: true }));
+    }
+  }
+
   // 7 — the printed bought-hour price must weight hours against the RIGHT weeks. Both
   // series are 52 entries, 0-indexed (L.1) — an off-by-one
   // would print a wrong dollar figure to the grower with everything green. Synthetic plan:
@@ -151,8 +175,13 @@ bootApp().then(({ window: w }) => {
        + `hours/rates week alignment is wrong (got: `
        + `${(planHtml.match(/~\$[\d.]+\/hr/g) || []).join(', ')})`);
   }
-  if (!planHtml.includes('$30.00')) {
-    fail('renderLaborPlan: with zero OT hours the OT price must fall back to the annual mean ($30.00)');
+  // L.2: overtime is priced per role, so its printed price is cost ÷ hours from the solve.
+  const otHours = new Array(52).fill(0); otHours[5] = 10;
+  const otHtml = w.renderLaborPlan({ ...sr, overtime_hours_weekly: otHours, total_overtime_hours: 10,
+      bought_capacity_split: { overtime: 300, hire: 0, city_water: 0 } }, { profit: 100000 },
+    { hire_wage_markup: 0, overtime_rate_multiplier: 1.5, fica_pct: 0.0765, straight_time_load_pct: 0.1735, hired_wage_per_hr: null });
+  if (!otHtml.includes('$30.00')) {
+    fail('renderLaborPlan: 10 OT hours costing $300 must print ~$30.00/hr (cost ÷ hours)');
   }
 
   // 7b — the printed price must SHOW ITS ARITHMETIC. Grower QA 2026-07-31: with $15.00 typed

@@ -196,7 +196,7 @@ class TestBoughtHoursCarryTheirFullWage:
 
     def test_overtime_costs_the_multiplier_on_the_whole_wage(self, minimal_params):
         p = dict(self._needs_help(minimal_params),
-                 overtime_enabled=True, max_overtime_hrs_per_week=2_000.0,
+                 overtime_enabled=True,
                  overtime_rate_multiplier=1.5)
         r = solve_farm_v2(**p)
         assert r["status"] == "optimal"
@@ -220,14 +220,13 @@ class TestBoughtHoursCarryTheirFullWage:
                  seasonal_employees=[],
                  hire_enabled=True, max_hire_hrs_per_week=2_000.0, hire_wage_markup=0.0)
         lab = compute_labor_arrays(p["year_round_employees"], [], 52)
-        assert float(lab["hourly_labor_rate"].max()) == 0.0, "fixture has an hourly crew after all"
-        # No hourly role exists at all, so there is no cheapest wage to infer a hire from and no
-        # blend to price overtime with — both fall back to the farm's own average paid wage.
-        assert float(lab["hire_hour_wage"][0]) == pytest.approx(1_000.0 / 40.0)
-        assert float(lab["overtime_hour_wage"][0]) == pytest.approx(1_000.0 / 40.0), (
-            "with no hourly crew, both bases must fall back to the average paid wage: "
+        # No hourly role exists at all, so there is no wage to infer a hire from — it falls back
+        # to the farm's own average paid wage. (Overtime: none — salaried roles get none, L.2.)
+        assert float(lab["hire_hour_wage"][0]) == pytest.approx(1_000.0 / 40.0), (
+            "with no hourly crew, the hire base must fall back to the average paid wage: "
             "$52,000/yr over 40 h/wk"
         )
+        assert float(lab["labor_by_role"][0]["ot_cap"].max()) == 0.0, "a salaried role got overtime"
         r = solve_farm_v2(**p)
         assert r["status"] == "optimal"
         assert r["total_hired_hours"] > 0, (
@@ -273,7 +272,7 @@ def test_overtime_does_not_double_charge_the_base_wage(minimal_params):
                                     "wage": 20.0, "hours_per_week": 40.0,
                                     "benefits_pct": 0.0, "field_time_pct": 100}],
              seasonal_employees=[],
-             overtime_enabled=True, max_overtime_hrs_per_week=100.0,
+             overtime_enabled=True,
              overtime_rate_multiplier=1.5)
     r = solve_farm_v2(**p)
     assert r["status"] == "optimal", r["status"]
@@ -316,8 +315,8 @@ class TestHireIsPricedForTheMarketNotTheCrew:
         assert float(lab["hire_hour_wage"][0]) == pytest.approx(17.5), (
             "the grower said what a hand costs; nothing should be inferred over the top of it"
         )
-        # ...and it must NOT bleed into overtime, which is the existing crew's own rate.
-        assert float(lab["overtime_hour_wage"][0]) == pytest.approx(40.0)
+        # ...and it must NOT bleed into overtime, which is each role's own rate (L.2).
+        assert lab["labor_by_role"][1]["ot_rate"] == pytest.approx(40.0)
 
     def test_without_one_the_proxy_is_an_hours_weighted_average_of_PAID_hourly_roles(self):
         """Third answer to "what does a hired hand cost", and the first that is robust both ways.
@@ -371,13 +370,12 @@ class TestHireIsPricedForTheMarketNotTheCrew:
             f"a $0/hr role set the hired rate to ${float(lab['hire_hour_wage'][0]):.2f}"
         )
         assert float(lab["hire_hour_wage"].min()) > 0.0, "hired labour is free in some week"
-        # EXACT, not merely positive: this crew used to price overtime at $4.00/hr — the $0
-        # roles stayed in the blend's denominator, so "> 0" passed while time-and-a-half on a
-        # $20 hand cost $6. Unpaid roles must not set the overtime price either.
-        assert float(lab["overtime_hour_wage"][0]) == pytest.approx(20.0), (
-            f"$0/hr roles diluted the overtime blend to "
-            f"${float(lab['overtime_hour_wage'][0]):.2f} against the only real wage of $20.00"
-        )
+        # Overtime is per role (L.2): the hand's own $20, and the unpaid pickers get NONE — an
+        # hour nobody pays for cannot be bought, and at $0 it would be free labour (this crew
+        # once priced blended overtime at $4.00/hr).
+        hand, pickers = lab["labor_by_role"]
+        assert hand["ot_rate"] == pytest.approx(20.0)
+        assert float(pickers["ot_cap"].max()) == 0.0 and pickers["ot_rate"] == 0.0
 
     def test_unpaid_roles_do_not_dilute_the_average_in_their_absence_either(self):
         """The other half of the dilution: `average_paid_wage` (the fallback for weeks with no
@@ -390,10 +388,10 @@ class TestHireIsPricedForTheMarketNotTheCrew:
             [{"position": "Picker", "count": 2, "type": "FT", "wage": 18.0,
               "hours_per_week": 40.0, "benefits_pct": 0.0,
               "start_week": 20, "end_week": 30}], 52)
-        # Crew weeks: the blend is the pickers' wage, undiluted by the owner's 50 free hours.
-        assert float(lab["overtime_hour_wage"][22]) == pytest.approx(18.0)
-        # Owner-only weeks: the fallback average is the only wage anyone is paid, not $4.55.
-        assert float(lab["overtime_hour_wage"][0]) == pytest.approx(18.0)
+        # Per role (L.2): the pickers' own wage, and no overtime at all for the unpaid owner.
+        owner, picker = lab["labor_by_role"]
+        assert picker["ot_rate"] == pytest.approx(18.0)
+        assert float(owner["ot_cap"].max()) == 0.0
         # Capacity still counts the unpaid hours — they are real hours, just not a price.
         assert float(lab["labor_capacity"][0]) == pytest.approx(50.0)
         assert float(lab["labor_capacity"][22]) == pytest.approx(50.0 + 80.0)
@@ -508,11 +506,12 @@ def test_an_extra_way_to_buy_labour_can_never_make_the_plan_worse(minimal_params
     total_cost, operating_profit, the cash curve, the P&L rows) inherited it, and the P&L's
     UNRECONCILED tripwire could not fire because both sides came from the same guess.
     """
+    # 300% week: overtime room enough that the $60 hire is never needed (L.2 caps per role).
     crew = [{"position": "Hand", "count": 1, "type": "hourly", "wage": 20.0,
-             "hours_per_week": 40.0, "benefits_pct": 0.0}]
+             "hours_per_week": 40.0, "benefits_pct": 0.0, "max_week_pct": 300}]
     base = dict(minimal_params, opening_cash=5_000_000.0, credit_line=5_000_000.0,
                 year_round_employees=crew, seasonal_employees=[],
-                overtime_enabled=True, max_overtime_hrs_per_week=2_000.0,
+                overtime_enabled=True,
                 overtime_rate_multiplier=1.5)
     ot_only = solve_farm_v2(**base)
     with_costly_hire = solve_farm_v2(**dict(

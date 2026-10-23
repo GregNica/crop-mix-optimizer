@@ -131,10 +131,11 @@ def run_from_js(params_json):
         max_hire_hrs_per_week    = _num('max_hire_hrs_per_week', 0.0)
         hire_wage_markup         = _num('hire_wage_markup', 0.0)
         # None means infer from the listed crew; 0 would mean free help (W15).
-        overtime_flex_enabled    = labor_flex_enabled and bool(p.get('overtime_enabled', True))
-        overtime_rate_multiplier = _num('overtime_rate_multiplier', 1.5)
-        _max_ot                  = p.get('max_overtime_hrs_per_week', None)
-        max_overtime_hrs_per_week = float(_max_ot) if _max_ot not in (None, '') else None
+        # Overtime is part of the MAIN plan (L.2, Q1a), capped per role by its row's
+        # max_week_pct — a grower who wants none sets every row to 100%. `overtime_enabled`
+        # stays as an off-switch for server callers; the form never sends it.
+        overtime_enabled         = bool(p.get('overtime_enabled', True))
+        overtime_rate_multiplier = _num('overtime_rate_multiplier', 1.0)
 
         # Payroll load: employer burden on top of wages (payroll taxes, workers' comp,
         # benefits, unemployment), split in two (I2b, L.5): FICA rides on EVERY dollar paid,
@@ -193,6 +194,8 @@ def run_from_js(params_json):
                 "wage":          _e_val(e, 'wage', 0),
                 "hours_per_week": _e_val(e, 'hours_per_week', 40),
                 "field_time_pct": _e_val(e, 'field_time_pct', 100),
+                # Max week INCLUDING overtime, % of regular hours (L.2): 125 = 40 + 10 OT.
+                "max_week_pct":  _e_val(e, 'max_week_pct', 100 if t == 'salary' else 125),
             }
             if t == 'seasonal':
                 pos['start_week'] = _e_val(e, 'start_week', 1, conv=int)
@@ -317,9 +320,8 @@ def run_from_js(params_json):
             hire_wage_markup=hire_wage_markup,
             hired_wage_per_hr=hired_wage_per_hr,
             hired_wage_load_pct=payroll_load,
-            overtime_enabled=overtime_flex_enabled,
+            overtime_enabled=overtime_enabled,
             overtime_rate_multiplier=overtime_rate_multiplier,
-            max_overtime_hrs_per_week=max_overtime_hrs_per_week,
             crops=crops,
             channels=channels,
             solver_time_limit=75.0,
@@ -508,7 +510,12 @@ def run_from_js(params_json):
             # 0-indexed. Forwarded so renderLaborPlan can print a number the grower can check
             # against their local market instead of a description of an inference.
             'hire_rate_full_weekly':     [round(float(v), 2) for v in result.get('hire_rate_full_weekly', [])],
-            'overtime_rate_full_weekly': [round(float(v), 2) for v in result.get('overtime_rate_full_weekly', [])],
+            # Who stays late, which weeks, at what $/hr (L.2) — 52 entries each, 0-indexed.
+            'overtime_by_role': [
+                {'position': r['position'], 'rate': round(float(r['rate']), 2),
+                 'hours': [round(float(v), 1) for v in r['hours']],
+                 'cap':   [round(float(v), 1) for v in r['cap']]}
+                for r in result.get('overtime_by_role', [])],
             'peak_borrowing': peak_borrow,
             'succession_schedule': sched,
             'crop_names':          crop_names,

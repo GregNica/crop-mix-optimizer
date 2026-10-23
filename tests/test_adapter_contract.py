@@ -65,7 +65,6 @@ def test_bought_hour_rate_arrays_survive_the_adapter(golden_out):
     """52 entries each, so renderLaborPlan can print the price a bought hour carries."""
     assert golden_out.get("status") == "optimal"
     assert len(golden_out.get("hire_rate_full_weekly", [])) == 52
-    assert len(golden_out.get("overtime_rate_full_weekly", [])) == 52
     assert min(golden_out["hire_rate_full_weekly"]) > 0, (
         "a published hire rate of $0 is the free-labour defect showing through the display"
     )
@@ -83,9 +82,10 @@ def test_labor_by_role_survives_the_adapter_and_sums_to_the_farm(golden_out):
         assert r["position"]
         for k in ("heads", "paid_hours", "task_hours", "cost"):
             assert len(r[k]) == 52, (r["position"], k)
-    supply = golden_out["weekly_labor_supply"]
+    # supply = crew capacity + the overtime bought that week (L.2 puts overtime in the plan).
+    supply, ot = golden_out["weekly_labor_supply"], golden_out["overtime_hours_weekly"]
     for i in range(52):
-        assert abs(sum(r["task_hours"][i] for r in rows) - supply[i]) < 0.05 * len(rows), i
+        assert abs(sum(r["task_hours"][i] for r in rows) + ot[i] - supply[i]) < 0.05 * len(rows), i
     # A seasonal role is OFF outside its window (week indices 0-based), on inside it.
     assert any(min(r["heads"]) == 0 < max(r["heads"]) for r in rows), "no windowed role"
     # One basis for every weekly labour series (the 52/53 split produced a false finding).

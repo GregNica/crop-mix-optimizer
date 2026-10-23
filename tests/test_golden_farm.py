@@ -50,15 +50,28 @@ pytestmark = pytest.mark.skipif(not PAYLOAD.exists(), reason="golden payload mis
 # re-captured to the CENT on 2026-07-30 so the five plan-determined lines can be pinned tightly
 # (see CASH_TIMED_LINES below for why the other two cannot be).
 GOLDEN = {
-    "revenue":          2_414_713.78,
-    "variable_cost":      450_550.46,
+    "revenue":          2_510_379.95,
+    "variable_cost":      466_693.60,
     "fixed_cost":         949_497.22,
-    "overhead_cost":      386_354.21,
-    "interest_cost":        2_399.70,
-    "profit":             612_912.19,
-    "operating_profit": 1_014_666.10,
+    "overhead_cost":      401_660.79,
+    "interest_cost":        2_282.33,
+    "profit":             652_876.15,
+    "operating_profit": 1_069_819.27,
 }
 # Baseline history — re-pin ONLY with a reason, and record it here.
+#   2026-10-23 (Batch L.2: overtime enters the MAIN plan, per role — grower ruling Q1(a)):
+#     revenue 2,414,714 -> 2,510,380 (+4.0%), variable_cost 450,550 -> 466,694, fixed_cost
+#     UNCHANGED 949,497 (committed wages untouched), overhead 386,354 -> 401,661, interest
+#     2,400 -> 2,282, profit 612,912 -> 652,876 (+$39,964, +6.5%). NET MARGIN 25.4% -> 26.0%.
+#     Acres planted 229.8 -> 234.7. Overtime bought: 979 h for $24,370 — Harvest Crew 501 h
+#     ($23.75/h, 8 wks), Seasonal Field Crew 408 h ($25.00/h, 6 wks), Equipment Operator 70 h
+#     ($32.50/h, 6 wks); the salaried manager none. Each role capped at its 125% week
+#     (40 + 10 OT) and priced at its own wage × (1.0× + FICA) + straight-time load = the old 25%.
+#     Wholesale revenue +$87,502: the extra hours went to the pounds the crew could not pick.
+#     ⚠️ Moves M1 the wrong way again (6th time) and is the ruled change: every farm pulls this
+#     lever, and with the cap derived from the roster it can no longer run wild (L2: the old flat
+#     200 h/wk cap exceeded the whole crew in 15 of 52 weeks). With overtime OFF the golden farm
+#     is byte-identical to the pre-L.2 baseline (measured).
 #   2026-08-30 (sell-through now defaults to 100%; grower ruling):
 #     revenue 2,134,530 -> 2,414,714 (+13.1%), variable_cost 398,858 -> 450,550,
 #     overhead 341,525 -> 386,354, interest 3,104 -> 2,400, profit 428,547 -> 612,912 (+43.0%).
@@ -608,7 +621,11 @@ class TestCropContribution:
         # No labour term of any kind (W12): wages are a committed weekly cost inside `fixed_cost`,
         # and no per-crop `growing_cost` carries labour at all, so the identity is back to the
         # plain form it had before W9 introduced a credit to undo a double charge.
-        rebuilt = total - r["fixed_cost"] - r["fixed_selling_cost"] - r["interest_cost"]
+        # Bought capacity (city water, overtime, hire) is plan-level too — an overtime hour serves
+        # whichever crop the crew is short on that week, so no crop carries it (L.2 made it nonzero
+        # on the golden farm, which is how this identity was found to omit it).
+        rebuilt = (total - r["fixed_cost"] - r["fixed_selling_cost"] - r["interest_cost"]
+                   - sum(r["bought_capacity_split"].values()))
         assert rebuilt == pytest.approx(r["profit"], abs=1.0), (
             f"per-crop contributions do not rebuild net profit: {rebuilt:,.2f} vs {r['profit']:,.2f}. "
             "A cost line is missing, doubled, or in the wrong bucket."
@@ -793,9 +810,10 @@ class TestValidationRunsOnTheSolverPath:
 # the client stopped reconstructing them from demand x price and started reading the solver's
 # own `v`. These are the numbers under the Revenue line in the exported P&L.
 GOLDEN_CHANNEL_REVENUE = {
-    "Farmers Market": 1_301_600,
-    "Wholesale":      1_113_114,
+    "Farmers Market": 1_309_764,
+    "Wholesale":      1_200_616,
 }
+# Re-pinned 2026-10-23 with L.2's overtime (see GOLDEN's history): FM +8,164, Wholesale +87,502.
 # Re-pinned 2026-08-30 with the sell-through default (see GOLDEN's history). Wholesale moves
 # most (+30%): it takes 57% of the farm's pounds, so it wore most of the haircut that was being
 # charged against deliveries made against a purchase order.

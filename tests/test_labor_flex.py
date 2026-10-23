@@ -48,7 +48,7 @@ def test_flex_never_lowers_profit_and_accounts_consistently(two_crop_params):
     flex = solve_farm_v2(
         **p,
         hire_enabled=True, max_hire_hrs_per_week=2000.0, hire_wage_markup=0.0,
-        overtime_enabled=True, overtime_rate_multiplier=1.5, max_overtime_hrs_per_week=1000.0,
+        overtime_enabled=True, overtime_rate_multiplier=1.5,
     )
     assert flex["status"] == "optimal"
     assert flex["operating_profit"] >= base["operating_profit"] - 1.0
@@ -66,7 +66,7 @@ def test_hired_labor_used_before_overtime(two_crop_params):
     flex = solve_farm_v2(
         **p,
         hire_enabled=True, max_hire_hrs_per_week=5000.0, hire_wage_markup=0.0,
-        overtime_enabled=True, overtime_rate_multiplier=1.5, max_overtime_hrs_per_week=5000.0,
+        overtime_enabled=True, overtime_rate_multiplier=1.5,
     )
     assert flex["status"] == "optimal"
     assert flex["total_hired_hours"] > 0.0
@@ -79,7 +79,7 @@ def test_hire_cap_forces_overtime_overflow(two_crop_params):
     flex = solve_farm_v2(
         **p,
         hire_enabled=True, max_hire_hrs_per_week=20.0, hire_wage_markup=0.0,
-        overtime_enabled=True, overtime_rate_multiplier=1.5, max_overtime_hrs_per_week=5000.0,
+        overtime_enabled=True, overtime_rate_multiplier=1.5,
     )
     assert flex["status"] == "optimal"
     assert max(flex["hired_hours_weekly"]) <= 20.0 + 1e-6
@@ -111,11 +111,13 @@ def test_hire_on_an_unpaid_crew_is_refused_not_free(two_crop_params):
     assert r["profit"] is None
 
 
-def test_overtime_on_an_unpaid_crew_is_refused_not_free(two_crop_params):
+def test_overtime_on_an_unpaid_crew_is_never_bought_free(two_crop_params):
+    """L.2: an unpaid role gets NO overtime (an hour nobody pays for cannot be bought), so an
+    all-unpaid crew solves on its stated hours alone instead of buying free overtime."""
     r = solve_farm_v2(**_all_unpaid_crew(two_crop_params),
-                      overtime_enabled=True, max_overtime_hrs_per_week=1000.0)
-    assert r["status"] == "invalid_input"
-    assert any("overtime" in e.lower() for e in r["errors"])
+                      overtime_enabled=True)
+    assert r["status"] == "optimal"
+    assert r["total_overtime_hours"] == 0.0 and r["overtime_by_role"] == []
 
 
 def test_flex_on_an_empty_crew_is_refused_not_free(two_crop_params):
@@ -153,19 +155,18 @@ def test_bought_hour_prices_are_published(two_crop_params):
         **p,
         hire_enabled=True, max_hire_hrs_per_week=2000.0, hire_wage_markup=0.25,
         hired_wage_per_hr=20.0,
-        overtime_enabled=True, overtime_rate_multiplier=1.5, max_overtime_hrs_per_week=1000.0,
+        overtime_enabled=True, overtime_rate_multiplier=1.5,
     )
     assert r["status"] == "optimal"
     assert len(r["hire_rate_full_weekly"]) == 52
-    assert len(r["overtime_rate_full_weekly"]) == 52
     assert float(r["hire_rate_full_weekly"][0]) == pytest.approx(20.0 * 1.25), (
         "hire_wage_markup is not in the published hire rate — either the markup fell out of "
         "the pricing (the mutation every test used to miss, because every test set it to 0) "
         "or the published rate is not the rate the objective charges"
     )
-    # Overtime prices off the crew's blend × multiplier: the fixture's crew is $18/hr seasonal
-    # (weeks 8–46), so an in-season week must read 18 × 1.5.
-    assert float(r["overtime_rate_full_weekly"][10]) == pytest.approx(18.0 * 1.5)
+    # Overtime is priced per role (L.2): the fixture's $18/hr seasonal crew at 1.5×.
+    (crew,) = r["overtime_by_role"]
+    assert crew["rate"] == pytest.approx(18.0 * 1.5)
     # And the published price is the price actually paid, wherever hours were bought.
     if r["total_hired_hours"] > 0:
         implied = r["hire_cost"] / r["total_hired_hours"]
@@ -204,7 +205,7 @@ def test_payroll_load_flows_into_bought_labor(two_crop_params):
     p = _labor_bound(two_crop_params)
     flex_kwargs = dict(
         hire_enabled=True, max_hire_hrs_per_week=2000.0, hire_wage_markup=0.0,
-        overtime_enabled=True, overtime_rate_multiplier=1.5, max_overtime_hrs_per_week=2000.0,
+        overtime_enabled=True, overtime_rate_multiplier=1.5,
     )
     no_load = solve_farm_v2(**_with_payroll_load(p, 0.0),  **flex_kwargs)
     loaded  = solve_farm_v2(**_with_payroll_load(p, 0.30), **flex_kwargs)
@@ -260,3 +261,11 @@ def test_hiring_more_crew_than_the_plan_needs_costs_money(two_crop_params):
         f"over-hiring cost ${drop:,.0f} against ${extra_wages:,.0f} of extra wages. The extra "
         f"crew can always sit idle, so the loss cannot exceed what they are paid."
     )
+
+
+@pytest.mark.parametrize("mult", [0.0, 0.5, float("nan")])
+def test_an_overtime_multiplier_below_straight_time_is_refused(two_crop_params, mult):
+    """L.2: refused, not clamped — 0× would be free overtime."""
+    r = solve_farm_v2(**two_crop_params, overtime_enabled=True, overtime_rate_multiplier=mult)
+    assert r["status"] == "invalid_input"
+    assert any("multiplier" in e.lower() for e in r["errors"])

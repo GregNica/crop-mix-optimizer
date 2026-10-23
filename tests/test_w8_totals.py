@@ -75,8 +75,7 @@ def test_total_cost_is_summed_from_its_parts_and_closes_operating_profit(two_cro
     from tests.test_labor_flex import _labor_bound
     r = solve_farm_v2(**_labor_bound(two_crop_params),
                       hire_enabled=True, max_hire_hrs_per_week=2000.0, hire_wage_markup=0.0,
-                      overtime_enabled=True, overtime_rate_multiplier=1.5,
-                      max_overtime_hrs_per_week=1000.0)
+                      overtime_enabled=True, overtime_rate_multiplier=1.5)
     assert r["status"] == "optimal"
     split = r["bought_capacity_split"]
     assert sum(split.values()) > 0, "fixture bought nothing — a dropped term would be invisible"

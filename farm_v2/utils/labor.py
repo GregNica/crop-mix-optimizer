@@ -18,8 +18,8 @@ Derived arrays (all 52-element, 0-indexed for weeks 1..52):
   committed_weekly_wages[w]  $/week owed to EVERY listed worker (W12) — the wage bill, charged
                               on full hours regardless of how much the crops use
   labor_capacity[w]          total available hours in week w (salaried + hourly)
-  overtime_hour_wage[w]      $/hour for your own crew staying late (blend of PAID roles,
-                              which already carries each role's benefits_pct)
+  labor_by_role[r]           the roster as named weekly rows, incl. each role's overtime
+                              cap and rate (L.2) — see _role
   hire_hour_wage[w]          $/hour for a NEW hire (W15), LOAD-INCLUSIVE: an explicit wage
                               has hired_wage_load_pct applied here; an inferred one carries
                               each role's benefits_pct. Only the hire markup is applied
@@ -56,6 +56,7 @@ def compute_labor_arrays(
     n_weeks: int = 52,
     hired_wage_per_hr: float | None = None,
     hired_wage_load_pct: float = 0.0,
+    overtime_rate_multiplier: float = 1.0,
 ) -> dict:
     """
     Compute all derived labor arrays from employee configuration.
@@ -89,12 +90,9 @@ def compute_labor_arrays(
     Returns
     -------
     dict with keys:
-        "labor_capacity"            np.ndarray shape (n_weeks,) — total hrs/week (1-indexed)
-        "hourly_labor_rate"         np.ndarray shape (n_weeks,) — blended $/hr
+        "labor_capacity"            np.ndarray shape (n_weeks,) — total hrs/week (0-indexed)
         "committed_weekly_wages"    np.ndarray shape (n_weeks,) — $/week owed to ALL listed staff
-        "overtime_hour_wage"        np.ndarray shape (n_weeks,) — $/hr for YOUR crew staying
-                                    late (paid-roles blend, load-inclusive); never zero
-                                    while anyone is paid
+        "labor_by_role"             list[dict] — per-role weekly rows + overtime cap/rate (_role)
         "hire_hour_wage"            np.ndarray shape (n_weeks,) — LOAD-INCLUSIVE $/hr for a
                                     NEW hire: `hired_wage_per_hr` × (1+hired_wage_load_pct),
                                     else hours-weighted over paid roles (already loaded).
@@ -103,8 +101,6 @@ def compute_labor_arrays(
         "piece_rate_workers"        list[dict] — seasonal workers with piece_rate_per_lb set
     """
     labor_capacity        = np.zeros(n_weeks, dtype=float)
-    hourly_weighted_wages = np.zeros(n_weeks, dtype=float)   # sum(count × hrs × rate)
-    hourly_weighted_hours = np.zeros(n_weeks, dtype=float)   # sum(count × hrs)
 
     # Wages the farm has COMMITTED to, per week, across every listed worker (W12). A worker on
     # the payroll is paid for their stated hours over their stated weeks whether or not the crops
@@ -114,8 +110,8 @@ def compute_labor_arrays(
     committed_weekly_wages = np.zeros(n_weeks, dtype=float)
     # THE UNPAID-ROLES RULE, stated once (the accumulations below just point here): a role at
     # $0/hr — piece-rate picker, unpaid family, a blank wage box — provides CAPACITY but never
-    # sets a PRICE. Unpaid hours are excluded from the blend, from the paid-hours denominator
-    # below, and (via the w > 0 filter) from the hire inference; left in, they drag every
+    # sets a PRICE. Unpaid hours are excluded from the paid-hours denominator below, from the
+    # hire inference (the w > 0 filter), and from overtime (see _role); left in, they drag every
     # bought-labour price below any real wage (measured: a $20 hand + two unpaid family priced
     # overtime at $10.00/hr; an owner at $0 beside an $18 crew averaged $4.55/hr), which is the
     # UNSAFE direction — the optimizer buys help the grower cannot get.
@@ -147,7 +143,7 @@ def compute_labor_arrays(
         weekly_cost = (count * wage * (1 + bene) / 52 if emp_type == "salary"
                        else count * hrs * (wage * (1 + bene)))
         labor_by_role.append(_role(emp, emp_type == "hourly", count, hrs, field, weekly_cost,
-                                   range(n_weeks), n_weeks))
+                                   range(n_weeks), n_weeks, overtime_rate_multiplier))
 
         if emp_type == "salary":
             if wage > 0:
@@ -159,8 +155,6 @@ def compute_labor_arrays(
             # Unpaid roles: capacity, never a price — see the rule at total_paid_hours.
             if wage > 0:
                 total_paid_hours += count * hrs * n_weeks
-                hourly_weighted_wages += total_hrs_per_week * effective_rate
-                hourly_weighted_hours += total_hrs_per_week
 
     # --- Seasonal employees ---
     for emp in seasonal_employees:
@@ -205,17 +199,11 @@ def compute_labor_arrays(
         hourly_wages.append((effective_rate, count * hrs * (end_w - start_w + 1) / n_weeks))
         total_hrs_per_week = count * hrs * field
         labor_by_role.append(_role(emp, True, count, hrs, field, count * hrs * effective_rate,
-                                   range(start_w - 1, end_w), n_weeks))
+                                   range(start_w - 1, end_w), n_weeks, overtime_rate_multiplier))
 
         # Unpaid roles: capacity, never a price — see the rule at total_paid_hours.
         if wage > 0:
             total_paid_hours += count * hrs * (end_w - start_w + 1)
-
-        # Week indices are 0-based internally (week w → index w-1)
-        for w_idx in range(start_w - 1, end_w):
-            if wage > 0:
-                hourly_weighted_wages[w_idx] += total_hrs_per_week * effective_rate
-                hourly_weighted_hours[w_idx] += total_hrs_per_week
 
 
     # The farm totals are the SUMS of the per-role rows (F3) — one derivation, not two.
@@ -223,29 +211,11 @@ def compute_labor_arrays(
         labor_capacity         += role["task_hours"]
         committed_weekly_wages += role["cost"]
 
-    # --- Blended hourly rate ---
-    # Where no hourly employees are available, rate = 0 (no variable labor cost)
-    with np.errstate(invalid="ignore", divide="ignore"):
-        hourly_labor_rate = np.where(
-            hourly_weighted_hours > 0,
-            hourly_weighted_wages / hourly_weighted_hours,
-            0.0,
-        )
-
-    # THE PRICE OF AN HOUR BOUGHT BEYOND THE COMMITTED CREW — published as one array, so no
-    # caller has to reason about wage semantics to get it right.
-    #
-    # `hourly_labor_rate` is the blend of the EXISTING hourly staff, so it is 0 in any week they
-    # are not on. Once W12 stopped charging base wages through the crop coefficients, a zero blend
-    # meant a bought hour was FREE — measured at 80 hired hours for $0.00 on a farm whose only
-    # hourly crew is seasonal. That trap belongs here, next to the code that CREATES the zero,
-    # rather than in the solver: a future caller reading `hourly_labor_rate` directly would
-    # re-create the defect with nothing to warn them.
+    # THE PRICE OF A HIRED HOUR (overtime is priced per role, in _role — L.2).
     #
     # The fallback is the farm's own average paid wage — what it actually pays for an hour of
     # work, inferred from the crew it described. ⚠️ It is an AVERAGE standing in for a MARGINAL
-    # price, and it is shared by overtime (existing crew, where the blend is genuinely right) and
-    # hire (a new person from the local market, where it is only a proxy). On a farm whose only
+    # price for a new person from the local market, where it is only a proxy. On a farm whose only
     # worker is a $95k manager it prices a hired field hand at $40.60/hr. The error direction is
     # SAFE — it over-prices bought labour, and the defect it replaced was free labour. The
     # explicit "what does a hand cost around here" input exists now (`hired_wage_per_hr`,
@@ -254,10 +224,7 @@ def compute_labor_arrays(
     average_paid_wage = (float(committed_weekly_wages.sum()) / total_paid_hours
                          if total_paid_hours > 0 else 0.0)
 
-    # TWO prices, because overtime and hire are different transactions (W15).
-    #
-    #   overtime — your OWN crew, staying late. The blend of the hourly staff actually present
-    #              that week is exactly right.
+    # Hire is a different transaction from overtime (W15):
     #   hire     — a NEW person from the local labour market. The existing crew's blend is only a
     #              proxy for that, and a poor one when the crew is unrepresentative: sharing one
     #              price meant a farm whose only worker is a $95k manager valued a hired field
@@ -321,44 +288,49 @@ def compute_labor_arrays(
         else:
             hire_base = average_paid_wage
 
-    # Never zero while anyone is paid: a zero blend means "no hourly crew this week", not "labour
-    # is free". Getting that wrong is what let 2,080 hired hours cost $0.00.
-    #   overtime — the weekly blend of PAID roles, or the average paid wage where none are on
-    #   hire     — validated (> 0) if explicit, else a weighted mean of POSITIVE rates
-    # ⚠️ "While anyone is paid" is load-bearing: a crew with NO paid role at all (every wage $0 —
-    # blank boxes, unpaid family) makes average_paid_wage 0 and BOTH prices 0. No statistic over
-    # an unpaid crew can price a bought hour, so no floor here can fix that case honestly — the
-    # solver refuses to sell flex hours at a non-positive price instead (its Step-2 gate), which
-    # is the point of consumption and holds for every inference past and future.
-    # A separate "floor" block used to sit here re-applying np.where to its own output. It was
-    # inert on every reachable path — deleting it failed no behavioural test — and where it could
-    # have fired (this all-unpaid case) it floored with zero and its promise of "never free" was
-    # false anyway.
-    overtime_hour_wage = np.where(hourly_labor_rate > 0, hourly_labor_rate, average_paid_wage)
+    # Never zero while anyone is paid: validated (> 0) if explicit, else a weighted mean of
+    # POSITIVE rates. A crew with NO paid role makes it 0, and the solver refuses to sell hired
+    # hours at a non-positive price (its Step-2 gate).
     hire_hour_wage     = np.full(n_weeks, float(hire_base), dtype=float)
 
 
     return {
         "committed_weekly_wages": committed_weekly_wages,
-        "overtime_hour_wage":     overtime_hour_wage,
         "hire_hour_wage":         hire_hour_wage,
         "labor_capacity":         labor_capacity,
-        "hourly_labor_rate":      hourly_labor_rate,
         "piece_rate_workers":     piece_rate_workers,
         "labor_by_role":          labor_by_role,
     }
 
 
 def _role(emp: dict, is_hourly: bool, count: float, hrs: float, field: float,
-          weekly_cost: float, weeks: range, n_weeks: int) -> dict:
+          weekly_cost: float, weeks: range, n_weeks: int,
+          overtime_rate_multiplier: float = 1.0) -> dict:
     """One roster line as named weekly arrays (F3), all n_weeks long and 0-indexed.
 
     paid_hours is what the wage bill pays for; task_hours is the share available to crop work
     (field %). The farm totals in compute_labor_arrays are the sums of these rows.
+
+    Overtime (F2/F4, L.2), per role:
+      ot_cap[w] = (max_week_pct/100 − 1) × count × hours × field   — the cap is DERIVED from the
+                  roster; a flat farm-wide cap once let 15 of 52 weeks buy more overtime than the
+                  whole crew's regular hours. max_week_pct is the TOTAL week incl. overtime
+                  (125 = 40 regular + 10 OT), never an amount on top.
+      ot_rate   = wage × (multiplier × (1 + fica) + straight-time load) — the premium carries
+                  FICA only (I2b). straight-time load = benefits_pct − fica_pct.
+    Salaried roles get none (cannot be paid overtime), and nor does an UNPAID role: an hour
+    nobody pays for cannot be bought, and at $0 it would be free labour (W12b).
     """
     on = np.zeros(n_weeks, dtype=float)
     on[list(weeks)] = 1.0
+    wage = float(emp.get("wage", 0.0))
+    ot_ok = is_hourly and wage > 0
+    allowance = max(0.0, float(emp.get("max_week_pct", 125.0 if is_hourly else 100.0)) / 100.0 - 1.0)
+    fica = float(emp.get("fica_pct", 0.0))
+    straight = float(emp.get("benefits_pct", 0.0)) - fica
     return {
+        "ot_cap":     on * (allowance * count * hrs * field) if ot_ok else np.zeros(n_weeks),
+        "ot_rate":    wage * (overtime_rate_multiplier * (1.0 + fica) + straight) if ot_ok else 0.0,
         "position":   emp.get("position", ""),
         "is_hourly":  bool(is_hourly),
         "heads":      on * count,

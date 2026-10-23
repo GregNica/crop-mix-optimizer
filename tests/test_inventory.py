@@ -598,7 +598,6 @@ class TestCapacitySeriesIsTheConstraints:
                                              well_enabled=False, well_weekly_cap_L=0.0)),
         ("overtime + hire",             dict(overtime_enabled=True,
                                              overtime_rate_multiplier=1.5,
-                                             max_overtime_hrs_per_week=400.0,
                                              hire_enabled=True,
                                              max_hire_hrs_per_week=400.0,
                                              hire_wage_markup=0.2)),

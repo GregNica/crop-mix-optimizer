@@ -223,9 +223,7 @@
     max_hire_hrs_per_week: {},
     hired_wage_per_hr: {},
     hire_wage_markup_pct: {},
-    labor_flex_overtime: {},
     overtime_rate_multiplier: {},
-    max_overtime_hrs_per_week: {},
     'pd-ch-vardetail': {
       ui: true,
     },
@@ -400,11 +398,10 @@
     max_hire_hrs_per_week:       { sentBy: 'what-if', from: ['max_hire_hrs_per_week'] },
     hire_wage_markup:            { sentBy: 'what-if', from: ['hire_wage_markup_pct'] },
     hired_wage_per_hr:           { sentBy: 'what-if', from: ['hired_wage_per_hr'] },
-    overtime_enabled:            { sentBy: 'what-if', from: ['labor_flex_overtime'] },
-    overtime_rate_multiplier:    { sentBy: 'what-if', from: ['overtime_rate_multiplier'] },
-    max_overtime_hrs_per_week:   { sentBy: 'what-if', from: ['max_overtime_hrs_per_week'] },
+    overtime_rate_multiplier:    { from: ['overtime_rate_multiplier'] },
     rainfall_weekly_multipliers: { sentBy: 'monte-carlo', from: [] },
     // Read by the adapter, sent by nothing. Each is a decision, not an oversight — say which.
+    overtime_enabled:            { unsent: 'server off-switch for overtime; the form caps it per role (max_week_pct = 100 means none)' },
     payroll_load_pct:            { unsent: 'legacy single payroll load (pre-L.5 server callers); the adapter splits it into fica + straight-time' },
     operating_weeks:             { unsent: 'deprecated; the solver ignores it (cost-accounting basis)' },
     storage_loss_frac_per_week:  { unsent: 'solver supports in-store shrink; no input yet — DECISIONS GROUP E3' },

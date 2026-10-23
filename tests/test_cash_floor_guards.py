@@ -111,11 +111,17 @@ def test_bought_labor_is_real_money_in_the_cash_floor(two_crop_params):
     recipe is in this docstring's history).
     """
     p = _cash_bound(
-        two_crop_params, crew=0, opening_cash=600_000.0, credit_line=115_000.0,
+        two_crop_params, crew=0, opening_cash=600_000.0, credit_line=140_000.0,
         hire_enabled=True, max_hire_hrs_per_week=20.0, hire_wage_markup=0.0,
-        overtime_enabled=True, overtime_rate_multiplier=1.5, max_overtime_hrs_per_week=5000.0,
+        overtime_enabled=True, overtime_rate_multiplier=1.5,
     )
     p["seasonal_employees"] = []
+    # L.2: overtime is per role, so the fixture needs an hourly role that may work it (a 200%
+    # week = up to 40 OT h/wk each). Re-derived frontier: cash binds below ~$149k credit; at
+    # $140k profit $300,894 vs $302,588 unconstrained — cash costs profit, so the floor binds.
+    p["year_round_employees"] = p["year_round_employees"] + [
+        {"position": "Hand", "count": 2, "type": "hourly", "wage": 18.0, "hours_per_week": 40,
+         "max_week_pct": 200}]
     r = solve_farm_v2(**p)
     assert r["status"] == "optimal", f"fixture must remain solvable: {r['status']} {r.get('errors')}"
     assert r["total_hired_hours"] > 100.0, "fixture stopped hiring — the hire coefficient is untested"
