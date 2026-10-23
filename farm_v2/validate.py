@@ -58,6 +58,11 @@ def validate_params(
     insurance_payment_week: int | None = None,
     utilities_cost_per_yr: float = 0.0,
     owned_capacity: dict | None = None,   # {asset class: capacity} — the solver's owned-asset table
+    overtime_enabled: bool = False,
+    overtime_rate_multiplier: float = 1.0,
+    hire_enabled: bool = False,
+    hire_productivity_pct: float = 70.0,
+    hire_cost_per_head: float = 800.0,
     **_kwargs,  # absorb unused kwargs for forward-compatibility
 ) -> list[str]:
     """
@@ -289,6 +294,15 @@ def validate_params(
             "The solver will produce zero revenue (no harvest scheduled)."
         )
 
+    # Labour flex terms (L.2 / L.3), refused rather than clamped. Checked only when the lever is
+    # on, so a caller that never hires is not rejected for a hiring default.
+    if overtime_enabled and not (_is_number(overtime_rate_multiplier) and overtime_rate_multiplier >= 1.0):
+        raise ValueError(f"Overtime pay multiplier must be at least 1.0 (straight time), got "
+                         f"{overtime_rate_multiplier!r}. Use 1.5 where state law requires ag overtime.")
+    if hire_enabled:
+        _check_positive(hire_productivity_pct, "New-hire productivity (%)")
+        _check_nonneg(hire_cost_per_head, "One-off cost per new hire ($)")
+
     return warnings
 
 
@@ -336,6 +350,16 @@ def _require_employee_numbers(emp: dict, keys: tuple, kind: str, i: int) -> None
                     f"{kind} employee '{emp.get('position', i)}' {key} must be a number, "
                     f"got {v!r}."
                 )
+    # Batch L roster columns: refused out of range, never clamped downstream.
+    who = f"{kind} employee '{emp.get('position', i)}'"
+    for key in ("admin_pct", "field_time_pct"):
+        if key in emp and not 0 <= emp[key] <= 100:
+            raise ValueError(f"{who} {key} must be between 0 and 100, got {emp[key]!r}.")
+    if "max_week_pct" in emp and not emp["max_week_pct"] >= 100:
+        raise ValueError(f"{who} 'Max week incl. overtime' must be at least 100% (100% = no "
+                         f"overtime), got {emp['max_week_pct']!r}.")
+    if "max_more" in emp and not (emp["max_more"] >= 0 and float(emp["max_more"]).is_integer()):
+        raise ValueError(f"{who} 'Max more' must be a whole number ≥ 0, got {emp['max_more']!r}.")
 
 
 def _require_employee_bounds(emp: dict, kind: str, i: int) -> None:

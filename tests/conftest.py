@@ -524,3 +524,13 @@ def solved_two_crop(two_crop_params):
     """
     from tests.helpers import solved_once
     return solved_once("two_crop", two_crop_params)
+
+
+@pytest.fixture(scope="session")
+def golden_out():
+    """ONE solve of the unmodified golden payload through the app's adapter, shared read-only by
+    every module that needs it (each private copy cost ~3 s)."""
+    import json
+    from farm_v2.adapter import run_from_js
+    from tests.helpers import golden_payload
+    return json.loads(run_from_js(json.dumps(golden_payload())))

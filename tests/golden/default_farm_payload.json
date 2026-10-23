@@ -414,12 +414,12 @@
    "wage": 95000,
    "hours_per_week": 45,
    "admin_pct": 20,
+   "max_week_pct": 100,
+   "max_more": 0,
    "task_field": true,
    "task_postharvest": true,
    "task_selling": true,
-   "max_week_pct": 100,
-   "hire_more": false,
-   "max_more": 0
+   "hire_more": false
   },
   {
    "position": "Equipment Operator",
@@ -428,12 +428,12 @@
    "wage": 26,
    "hours_per_week": 40,
    "admin_pct": 10,
+   "max_week_pct": 125,
+   "max_more": 0,
    "task_field": true,
    "task_postharvest": true,
    "task_selling": true,
-   "max_week_pct": 125,
-   "hire_more": false,
-   "max_more": 0
+   "hire_more": false
   },
   {
    "position": "Seasonal Field Crew",
@@ -442,12 +442,12 @@
    "wage": 20,
    "hours_per_week": 40,
    "admin_pct": 0,
+   "max_week_pct": 125,
+   "max_more": 0,
    "task_field": true,
    "task_postharvest": true,
    "task_selling": true,
-   "max_week_pct": 125,
    "hire_more": false,
-   "max_more": 0,
    "start_week": 10,
    "end_week": 42
   },
@@ -458,12 +458,12 @@
    "wage": 19,
    "hours_per_week": 40,
    "admin_pct": 0,
+   "max_week_pct": 125,
+   "max_more": 0,
    "task_field": true,
    "task_postharvest": true,
    "task_selling": true,
-   "max_week_pct": 125,
    "hire_more": false,
-   "max_more": 0,
    "start_week": 14,
    "end_week": 40
   }

@@ -15,7 +15,7 @@ import pytest
 
 from farm_v2.adapter import run_from_js
 from farm_v2.solver import solve_farm_v2
-from tests.test_golden_farm import PAYLOAD
+from tests.helpers import golden_payload
 from tests.test_labor_flex import _labor_bound
 
 WEEKS = 46 - 8 + 1                     # 39-week window
@@ -129,8 +129,7 @@ def test_extra_hires_are_real_money_in_the_cash_floor(two_crop_params):
 def test_the_adapter_carries_the_row_through_and_back(two_crop_params):
     """hire_more / max_more ride on the roster row; the result names the FORM row index so
     'Add to roster' adds the heads to the right line."""
-    p = json.loads(PAYLOAD.read_text())
-    p["labor_flex_enabled"] = True
+    p = golden_payload(labor_flex_enabled=True)
     for e in p["employees"]:
         e["max_week_pct"] = 100                           # no overtime: make hiring the lever
     rows = {e["position"]: i for i, e in enumerate(p["employees"])}

@@ -185,18 +185,17 @@ def run_from_js(params_json):
                 "type":          t if t != 'seasonal' else 'FT',
                 "wage":          _e_val(e, 'wage', 0),
                 "hours_per_week": _e_val(e, 'hours_per_week', 40),
-                # Admin % (L.4): share of paid hours that is NOT task work. A pre-L.4 payload's
-                # field_time_pct is its inverse.
-                "admin_pct":     (_e_val(e, 'admin_pct', 0) if 'admin_pct' in e or 'field_time_pct' not in e
-                                  else (None if e['field_time_pct'] is None
-                                        else 100 - float(e['field_time_pct']))),
+                # Admin % (L.4): share of paid hours that is NOT task work. labor._field_share is
+                # the ONE reader, and also accepts a pre-L.4 payload's field_time_pct.
+                **{k: _e_val(e, k, None) for k in ('admin_pct', 'field_time_pct') if k in e},
                 # Task tags (L.4): which work this row does. Only `field` has demand until
                 # Batch 3 (post-harvest / selling hours) — stored and round-tripped meanwhile.
                 "task_field":       bool(e.get('task_field', True)),
                 "task_postharvest": bool(e.get('task_postharvest', True)),
                 "task_selling":     bool(e.get('task_selling', True)),
-                # Max week INCLUDING overtime, % of regular hours (L.2): 125 = 40 + 10 OT.
-                "max_week_pct":  _e_val(e, 'max_week_pct', 100 if t == 'salary' else 125),
+                # Max week INCLUDING overtime, % of regular hours (L.2): 125 = 40 + 10 OT. Its
+                # default lives in labor._role; only a value the caller sent is passed.
+                **({'max_week_pct': _e_val(e, 'max_week_pct', None)} if 'max_week_pct' in e else {}),
                 # Extra hires on this row (L.3, What-If only): may it add heads, and at most how many.
                 "hire_more":     bool(e.get('hire_more', False)),
                 "max_more":      _e_val(e, 'max_more', 0),
@@ -508,9 +507,6 @@ def run_from_js(params_json):
                  **{k: [round(float(v), 2) for v in r[k]]
                     for k in ('heads', 'paid_hours', 'task_hours', 'cost')}}
                 for r in result.get('labor_by_role', [])],
-            # The prices those hours were (or would be) bought at, $/hr all-in — 52 entries,
-            # 0-indexed. Forwarded so renderLaborPlan can print a number the grower can check
-            # against their local market instead of a description of an inference.
             # Extra heads per row (L.3): taken, allowed, $/head for the season, hours/head.
             'extra_hires': [
                 {'position': r['position'], 'row': r['row'], 'extra': int(r['extra']),

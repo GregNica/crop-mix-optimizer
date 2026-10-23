@@ -15,7 +15,8 @@ import json
 import pytest
 
 from farm_v2.adapter import run_from_js
-from tests.test_golden_farm import PAYLOAD
+from farm_v2.utils.labor import compute_labor_arrays
+from tests.helpers import golden_payload
 
 # Shipped roster at 125% (40 + 10 OT): cap = 0.25 × count × 40 × field%.
 EXPECTED_CAP = {"Equipment Operator": 0.25 * 2 * 40 * 0.90,   # 18 h/wk, weeks 1-52
@@ -29,16 +30,14 @@ EXPECTED_HOURS = {"Equipment Operator": 70.2, "Seasonal Field Crew": 407.9, "Har
 
 
 def _solve(**over):
-    p = json.loads(PAYLOAD.read_text())
-    p.update(over)
-    out = json.loads(run_from_js(json.dumps(p)))
+    out = json.loads(run_from_js(json.dumps(golden_payload(**over))))
     assert out["status"] == "optimal", out.get("error", "")[:300]
     return out
 
 
-@pytest.fixture(scope="module")
-def golden():
-    return _solve()
+@pytest.fixture
+def golden(golden_out):
+    return golden_out
 
 
 def _roles(out):
@@ -114,7 +113,7 @@ def test_the_premium_carries_fica_only(golden):
 
 def test_a_100pct_week_means_no_overtime_and_restores_the_pre_L2_farm():
     """The grower's off-switch: every row at 100%. Byte-equal to the pre-L.2 baseline profit."""
-    p = json.loads(PAYLOAD.read_text())
+    p = golden_payload()
     for e in p["employees"]:
         e["max_week_pct"] = 100
     out = json.loads(run_from_js(json.dumps(p)))
@@ -123,25 +122,29 @@ def test_a_100pct_week_means_no_overtime_and_restores_the_pre_L2_farm():
     assert out["profit"] == pytest.approx(612_912.19, abs=0.01)
 
 
+# Which roles may work overtime is decided in labor._role before any solve (the solver's ot_roles
+# is exactly the rows with ot_cap > 0), so these two are checked there — no 3 s solve each.
+_SHIPPED_ROLES = [dict(position="Farm Manager", count=1, type="salary", wage=95_000.0,
+                       hours_per_week=45, admin_pct=20),
+                  dict(position="Harvest Crew", count=8, type="hourly", wage=19.0,
+                       hours_per_week=40, admin_pct=0)]
+
+
 def test_an_unpaid_hourly_role_gets_no_overtime():
-    p = json.loads(PAYLOAD.read_text())
-    emp = next(e for e in p["employees"] if e["position"] == "Harvest Crew")
-    emp["wage"] = 0
-    out = json.loads(run_from_js(json.dumps(p)))
-    assert out["status"] == "optimal"
-    assert "Harvest Crew" not in _roles(out), "an hour nobody pays for was bought (free labour)"
+    roles = [dict(r) for r in _SHIPPED_ROLES]
+    roles[1]["wage"] = 0.0
+    hc = compute_labor_arrays(roles, [])["labor_by_role"][1]
+    assert float(hc["ot_cap"].max()) == 0.0 and hc["ot_rate"] == 0.0, (
+        "an hour nobody pays for was made buyable (free labour)")
 
 
 def test_a_salaried_row_typed_above_100pct_still_gets_no_overtime():
-    """Salaried staff cannot be paid overtime. The 100% default hides a regression — a salaried
-    row TYPED at 125% would otherwise be priced per hour at its annual salary."""
-    p = json.loads(PAYLOAD.read_text())
-    for e in p["employees"]:
-        if e["type"] == "salary":
-            e["max_week_pct"] = 125
-    out = json.loads(run_from_js(json.dumps(p)))
-    assert out["status"] == "optimal"
-    assert "Farm Manager" not in _roles(out)
+    """Salaried staff cannot be paid overtime. A salaried row TYPED at 125% would otherwise be
+    priced per hour at its annual salary."""
+    roles = [dict(r, max_week_pct=125) for r in _SHIPPED_ROLES]
+    mgr, hc = compute_labor_arrays(roles, [])["labor_by_role"]
+    assert float(mgr["ot_cap"].max()) == 0.0 and mgr["ot_rate"] == 0.0
+    assert float(hc["ot_cap"].max()) > 0, "fixture inert: the hourly row got no overtime either"
 
 
 def test_overtime_is_real_money_in_the_cash_floor():

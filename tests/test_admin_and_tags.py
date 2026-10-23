@@ -9,11 +9,11 @@ import json
 import pytest
 
 from farm_v2.adapter import run_from_js
-from tests.test_golden_farm import PAYLOAD
+from tests.helpers import golden_payload
 
 
 def _solve(edit=None):
-    p = json.loads(PAYLOAD.read_text())
+    p = golden_payload()
     if edit:
         edit(p)
     out = json.loads(run_from_js(json.dumps(p)))
@@ -21,9 +21,9 @@ def _solve(edit=None):
     return out
 
 
-@pytest.fixture(scope="module")
-def golden():
-    return _solve()
+@pytest.fixture
+def golden(golden_out):
+    return golden_out
 
 
 def _role(out, name):

@@ -71,8 +71,7 @@ def compute_labor_arrays(
     overtime_rate_multiplier : float
         Overtime pay as a multiple of each role's own wage (1.0 = straight time, FLSA).
 
-    Note: `min_guaranteed_hours` is ACCEPTED AND IGNORED (W11/W14).
-It can never bind: committed
+    Note: `min_guaranteed_hours` is ACCEPTED AND IGNORED (W11/W14). It can never bind: committed
         wages already pay count x hours_per_week, which is >= count x min(min_guaranteed, hours)
         for every input. Wiring it back would put a floor underneath a floor and double-charge.
 
@@ -93,7 +92,7 @@ It can never bind: committed
     # Wages the farm has COMMITTED to, per week, across every listed worker (W12). A worker on
     # the payroll is paid for their stated hours over their stated weeks whether or not the crops
     # need them — the same basis the salaried line has always used, now applied to hourly and
-    # seasonal staff too. Charged on FULL hours: Admin % (the field share) limits how much of a worker's
+    # seasonal staff too. Charged on FULL hours: the field share (100 − Admin %) limits how much of a worker's
     # time is available to crops, not how much of their wage the farm owes.
     committed_weekly_wages = np.zeros(n_weeks, dtype=float)
     # THE UNPAID-ROLES RULE: a role at $0/hr — piece-rate picker, unpaid family, a blank wage
@@ -218,14 +217,16 @@ def _role(emp: dict, is_hourly: bool, count: float, hrs: float, field: float,
     on = np.zeros(n_weeks, dtype=float)
     on[list(weeks)] = 1.0
     wage = float(emp.get("wage", 0.0))
+    # Salaried and unpaid roles: allowance 0, so no cap and no rate. One default (125%) for all
+    # rows — a salaried row's value is moot.
     ot_ok = is_hourly and wage > 0
-    allowance = max(0.0, float(emp.get("max_week_pct", 125.0 if is_hourly else 100.0)) / 100.0 - 1.0)
+    allowance = max(0.0, float(emp.get("max_week_pct", 125.0)) / 100.0 - 1.0) if ot_ok else 0.0
     fica = float(emp.get("fica_pct", 0.0))
     straight = float(emp.get("benefits_pct", 0.0)) - fica
     return {
-        "ot_cap":     on * (allowance * count * hrs * field) if ot_ok else np.zeros(n_weeks),
+        "ot_cap":     on * (allowance * count * hrs * field),
         "ot_rate":    wage * (overtime_rate_multiplier * (1.0 + fica) + straight) if ot_ok else 0.0,
-        "allowance":  allowance if ot_ok else 0.0,
+        "allowance":  allowance,
         "head_task":  on * (hrs * field),
         "head_cost":  on * (weekly_cost / count) if count > 0 else np.zeros(n_weeks),
         "start":      weeks.start,

@@ -19,13 +19,6 @@ from farm_v2.adapter import run_from_js
 from tests.helpers import REPO, golden_payload, index_src
 
 
-@pytest.fixture(scope="module")
-def golden_out():
-    """One solve of the unmodified golden payload, shared by every read-only assertion —
-    three tests solved the identical payload independently at ~2.7s each."""
-    return json.loads(run_from_js(json.dumps(golden_payload())))
-
-
 def test_gap_note_survives_the_adapter(monkeypatch):
     """A time-limited solve must carry its own health warning to the browser.
 
