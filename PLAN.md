@@ -757,6 +757,24 @@ L.4's tags and stay in Batch 3 with their research (3.7).
 
 ---
 
+## Batch W — Water mode (scheduled 2026-10-23; right AFTER Batch L, before Batch FX)
+
+BACKLOG **BC4** as ruled 2026-10-23 (grower: option C; absorbs `/code-review max` #15). One
+up-front question in the Water section: **Irrigated** (tick ≥1 source, as today) / **Rain-fed
+only** / **Don't limit by water**. Nothing ticked AND no mode chosen stays refused.
+
+Why: rain offsets 65% of crop water need whatever is ticked, so "no source" means "rain only" —
+the golden farm solves identically with every source off, and today's refusal makes a rain-fed
+farm enter a fictitious well. Small, but it goes before Batch 3, whose re-pin runs many solves
+where water settings matter.
+
+Steps: (1) one-page spec for the grower — the two traps: "Don't limit by water" must drop the
+water limit AND its cost without reopening D11's "nothing ticked" hole, and "Rain-fed only" must
+SAY the plan assumes rain alone; (2) build on its own branch; (3) `/simplify` + a `/code-review`
+(not max — small diff); (4) into the next combined browser check.
+
+---
+
 ## Batch FX — The fixed layer (scheduled 2026-10-19; after Batch 2, before Batch 3)
 
 **WHY.** The grower's first page of January (`SPEC_product.md` prompt 1): *"what do you know you
