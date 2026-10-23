@@ -364,7 +364,7 @@ put(r, 1, "   ⚠️ If the weeks you could hire for DIFFER from this row's wind
 put(r, 1, "   No committed staff of a role, but curious? Put Count 0, Hire more Y, and set the "
           "weeks. That asks \"should I have this crew at all?\"", font=F_NOTE); r += 1
 put(r, 1, "Payroll load %", font=F_BOLD)
-put(r, 2, LP.PAYLOAD.get("payroll_load_pct", 0.0), fill=IN_FILL, fmt="0%", border=True)
+put(r, 2, LP.payroll_load(), fill=IN_FILL, fmt="0%", border=True)
 ROW_LOAD = r
 put(r, 3, "employer taxes, workers' comp, benefits — applied to EVERY wage, salaried included",
     font=F_NOTE); r += 1

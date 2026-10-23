@@ -17,6 +17,10 @@ import traceback
 from farm_v2.solver import PLAN_STATUSES, solve_farm_v2
 from farm_v2.utils.water import get_rainfall_weekly
 
+# Employer FICA (Social Security 6.2% + Medicare 1.45%) as a fraction — the all-pay part of the
+# payroll load. H-2A wages are exempt; not modelled yet.
+FICA_DEFAULT = 0.0765
+
 # numpy is NOT imported here: the deleted heatmap was this file's only user of it, and the
 # solver's arrays are read element-wise through float() below. The solver still needs numpy,
 # and Pyodide still loads it — this adapter just does not touch it.
@@ -133,10 +137,19 @@ def run_from_js(params_json):
         max_overtime_hrs_per_week = float(_max_ot) if _max_ot not in (None, '') else None
 
         # Payroll load: employer burden on top of wages (payroll taxes, workers' comp,
-        # benefits, unemployment). Applied to every employee below as benefits_pct, so it
-        # lifts both salaried fixed cost and the blended hourly rate — which means hired
-        # and overtime hours inherit it automatically.
-        payroll_load = max(0.0, _num('payroll_load_pct', 0.0))
+        # benefits, unemployment), split in two (I2b, L.5): FICA rides on EVERY dollar paid,
+        # the straight-time load (benefits, workers' comp, UI) on regular hours only — an
+        # overtime premium carries FICA alone. A regular hour costs wage × (1 + fica + straight),
+        # applied below as each employee's benefits_pct.
+        # Legacy single `payroll_load_pct` (saved plans, server callers): FICA takes the first
+        # 7.65 points, the rest is straight-time — regular pay unchanged to the cent.
+        if p.get('fica_pct') is None and p.get('payroll_load_pct') is not None:
+            _legacy = max(0.0, _num('payroll_load_pct', 0.0))
+            fica_pct, straight_load = min(FICA_DEFAULT, _legacy), max(0.0, _legacy - FICA_DEFAULT)
+        else:
+            fica_pct      = max(0.0, _num('fica_pct', FICA_DEFAULT))
+            straight_load = max(0.0, _num('straight_time_load_pct', 0.0))
+        payroll_load = fica_pct + straight_load
 
         # A BASE wage, the same basis every other wage box uses. The payroll load is applied in
         # labor.py via hired_wage_load_pct (passed below), next to where every other wage gets
@@ -199,6 +212,7 @@ def run_from_js(params_json):
         # Apply the farm-wide payroll load to every position (UI-defined and fallback).
         for _e in year_round_employees + seasonal_employees:
             _e["benefits_pct"] = payroll_load
+            _e["fica_pct"]     = fica_pct
 
         # --- Channels from UI ---
         channels_from_ui = p.get('channels', None)

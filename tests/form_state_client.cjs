@@ -86,6 +86,26 @@ const ok = (name, cond) => { if (!cond) fail(name); };
     reset();
   }
 
+  // 3b. L.5 (I2b): an old single payroll load splits into FICA + the rest, summing to the old
+  // load (regular pay unchanged), is reported, and an already-split plan is left alone.
+  {
+    const s = clone(base);
+    delete s.fields.fica_pct; delete s.fields.straight_time_load_pct;
+    s.fields.payroll_load_pct = '25';
+    const r = apply(s);
+    const f = Number(W.document.getElementById('fica_pct').value);
+    const st = Number(W.document.getElementById('straight_time_load_pct').value);
+    ok(`25% load split into 7.65 + 17.35 (got ${f} + ${st})`, f === 7.65 && Math.abs(st - 17.35) < 1e-9);
+    ok('the split is named in the load report', r.notes.some(n => n.includes('FICA 7.65%')));
+    ok('the retired id is not reported as lost', !r.dropped.some(d => d.includes('payroll_load_pct')));
+    const s2 = clone(base); s2.fields.payroll_load_pct = '40';   // both present: split wins
+    const r2 = apply(s2);
+    ok('an already-split plan is not re-migrated',
+       Number(W.document.getElementById('fica_pct').value) === Number(base.fields.fica_pct)
+       && !r2.notes.some(n => n.includes('FICA')));
+    reset();
+  }
+
   // 4. Collections: an unknown key on a row, and per-channel data for a channel that is gone.
   {
     const s = clone(base);

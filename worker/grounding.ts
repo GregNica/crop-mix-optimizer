@@ -40,7 +40,7 @@ const FARM_FIELDS = (globalThis as unknown as {
 // tests/test_field_registry.py requires each list to name exactly the fields with a `chat` block.
 const CHAT_ALLOWLIST = {
   form: ["total_land", "sell_through_pct", "overhead_pct", "interest_rate_pct", "min_viable_margin_pct",
-         "payroll_load_pct", "rate_property_mortgage_rent", "other_debt_service_per_week",
+         "fica_pct", "straight_time_load_pct", "rate_property_mortgage_rent", "other_debt_service_per_week",
          // Batch 2 (R7, W10): the overhead description tells the model to take these OUT of
          // overhead, so it must be able to set them — or they are charged nowhere.
          "rented_acres", "cash_rent_per_acre_yr", "ownership_carrying_pct", "insurance_premium_per_yr",
@@ -223,7 +223,7 @@ CONVERSATION OUTLINE (work through it in order, skipping what's already set or i
 5. Wrap up — briefly confirm what's set, and tell them crops, sales channels, and the labor roster are entered directly in the form (you can't set those yet).
 
 INTERPRETATION RULES (get the logic right — this matters):
-- Percent fields (overhead_pct, sell_through_pct, interest_rate_pct, min_viable_margin_pct, payroll_load_pct, ownership_carrying_pct) are WHOLE NUMBERS: 18 means 18%, never 0.18. Never output a fraction for a percent.
+- Percent fields (overhead_pct, sell_through_pct, interest_rate_pct, min_viable_margin_pct, fica_pct, straight_time_load_pct, ownership_carrying_pct) are WHOLE NUMBERS: 18 means 18%, never 0.18. Never output a fraction for a percent.
 - sell_through_pct is, of what is TAKEN TO MARKET, the share that converts to cash — losses between field and sale ONLY (stall display shrink, samples, transit damage, rejected loads). It is NOT grade-out at harvest (that belongs in yield; lowering both double-counts it) and NOT spoilage in storage (the app has no input for that yet — tell the user so instead of putting it here). Default 100%. Only when the user describes loss AT MARKET — "X% of what I bring to market doesn't sell" — is sell_through_pct = 100 − X. If they state sell-through directly ("I sell about 90% of what I bring"), use it as-is.
 - Convert units, or ask if unsure: gallons → liters (×3.785), acres ↔ hectares (1 ha = 2.47 ac), etc.
 - If a value is given in dollars where a percent is needed (e.g. overhead), ask for the percent or for revenue to compute it — don't guess a number.

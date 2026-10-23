@@ -32,7 +32,9 @@ const OWNED = ['crops', 'ambient_storage_cap', 'rate_ambient_storage',
                // R7/W10 — every solve sends them, so the golden farm must too (/code-review max #12),
                // or the Batch 3 re-pin that switches their defaults on moves nothing here.
                'rented_acres', 'cash_rent_per_acre_yr', 'ownership_carrying_rate', 'capital_cost_per_unit',
-               'insurance_premium_per_yr', 'insurance_payment_week', 'utilities_cost_per_yr'];
+               'insurance_premium_per_yr', 'insurance_payment_week', 'utilities_cost_per_yr',
+               // L.5 — the split payroll load (replaces payroll_load_pct, dropped below).
+               'fica_pct', 'straight_time_load_pct'];
 
 bootApp().then(({ window: w }) => {
   const payload = JSON.parse(fs.readFileSync(PAYLOAD, 'utf8'));
@@ -44,6 +46,7 @@ bootApp().then(({ window: w }) => {
 
   const before = JSON.stringify(OWNED.map(k => payload[k]));
   OWNED.forEach(k => { payload[k] = fresh[k]; });
+  delete payload.payroll_load_pct;   // retired by L.5; the split keys above carry it
   const after = JSON.stringify(OWNED.map(k => payload[k]));
 
   if (before === after) { console.log('golden payload: already current'); process.exit(0); }

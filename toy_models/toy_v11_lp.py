@@ -109,6 +109,13 @@ def load():
 
 PAYLOAD, CROPS, CH_ORDER, SUCCS = load()
 
+
+def payroll_load():
+    """The regular-hour payroll load: FICA + straight-time (L.5 split), or the legacy single key."""
+    if "fica_pct" in PAYLOAD:
+        return PAYLOAD["fica_pct"] + PAYLOAD.get("straight_time_load_pct", 0.0)
+    return PAYLOAD.get("payroll_load_pct", 0.0)
+
 # ⚠️ PIECE RATES ARE PER CROP, and the research says why: a piece-rate worker must still earn
 # the minimum wage for hours worked, so the FLOOR in $/lb is set by how fast the crop picks —
 # a 3.6x spread here. Entered the way a contract actually reads ($ per container) and converted
@@ -201,7 +208,7 @@ def positions():
     The honest cost: this is O(number of roster rows) where the mask was O(1). Four positions
     is a clear win; a farm with twenty roles would want the aggregate form back.
     """
-    load = 1.0 + PAYLOAD.get("payroll_load_pct", 0.0)
+    load = 1.0 + payroll_load()
     out = []
     for e in PAYLOAD.get("employees", []):
         a, b = e.get("start_week", 1), e.get("end_week", N_WEEKS)
@@ -273,7 +280,7 @@ def overtime_rate(overtime_multiplier=1.5):
     a hired hand's wage is now typed on a roster row like every other wage, so there is nothing
     left to infer.
     """
-    load = 1.0 + PAYLOAD.get("payroll_load_pct", 0.0)
+    load = 1.0 + payroll_load()
     ot = np.zeros(N_WEEKS + 1)
     hourly = [p_ for p_ in positions() if p_["hourly"]]
     for w in range(1, N_WEEKS + 1):
@@ -354,7 +361,7 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
     # The nominated window. Everything about the advisory crew is derived from it, so the
     # window is stated ONCE and never re-derived — v8's labour bugs were all a quantity
     # recomputed in a second place.
-    load = 1.0 + PAYLOAD.get("payroll_load_pct", 0.0)
+    load = 1.0 + payroll_load()
     # Per-role overtime rate: a CONSTANT, because the wage is an input.
     ot_rate_role = [p_["wage"] * load * overtime_multiplier if p_["hourly"] else 0.0
                     for p_ in POS]

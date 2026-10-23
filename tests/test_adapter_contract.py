@@ -209,6 +209,20 @@ def test_the_payroll_load_reaches_a_hired_hour_through_the_adapter():
     )
 
 
+def test_a_legacy_single_payroll_load_solves_exactly_like_its_split():
+    """L.5: a pre-split caller's payroll_load_pct = 0.25 is FICA 7.65% + 17.35% straight-time,
+    so the solve is identical to the split payload — regular pay unchanged to the cent."""
+    split = golden_payload()
+    legacy = golden_payload()
+    legacy.pop("fica_pct"); legacy.pop("straight_time_load_pct")
+    legacy["payroll_load_pct"] = split["fica_pct"] + split["straight_time_load_pct"]
+    a = json.loads(run_from_js(json.dumps(split)))
+    b = json.loads(run_from_js(json.dumps(legacy)))
+    assert a["status"] == b["status"] == "optimal"
+    assert a["fixed_cost_split"]["wages"] == pytest.approx(b["fixed_cost_split"]["wages"], abs=1e-6)
+    assert a["profit"] == pytest.approx(b["profit"], abs=1e-6)
+
+
 def test_city_water_fixed_fee_reaches_the_solver_through_the_adapter():
     """The standing charge was a solver feature + P&L label + green pytest with NO path in.
 

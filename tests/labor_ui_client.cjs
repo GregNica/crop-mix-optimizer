@@ -145,7 +145,7 @@ bootApp().then(({ window: w }) => {
     hire_rate_full_weekly: hireRates, overtime_rate_full_weekly: new Array(52).fill(30),
   };
   const planHtml = w.renderLaborPlan(sr, { profit: 100000 },
-    { hire_wage_markup: 0, overtime_rate_multiplier: 1.5, payroll_load_pct: 0.25, hired_wage_per_hr: null });
+    { hire_wage_markup: 0, overtime_rate_multiplier: 1.5, fica_pct: 0.0765, straight_time_load_pct: 0.1735, hired_wage_per_hr: null });
   if (!planHtml.includes('$35.00')) {
     fail(`renderLaborPlan priced 10h@$20 + 30h@$40 as something other than $35.00 — the `
        + `hours/rates week alignment is wrong (got: `
@@ -163,7 +163,7 @@ bootApp().then(({ window: w }) => {
   const typedRates = new Array(52).fill(18.75);
   const typedSr = { ...sr, hire_rate_full_weekly: typedRates };
   const typedHtml = w.renderLaborPlan(typedSr, { profit: 100000 },
-    { hire_wage_markup: 0, overtime_rate_multiplier: 1.5, payroll_load_pct: 0.25, hired_wage_per_hr: 15 });
+    { hire_wage_markup: 0, overtime_rate_multiplier: 1.5, fica_pct: 0.0765, straight_time_load_pct: 0.1735, hired_wage_per_hr: 15 });
   if (!typedHtml.includes('$18.75/hr all-in')) fail('renderLaborPlan: typed-wage all-in price missing');
   if (!/\$15\.00\/hr/.test(typedHtml) || !/25% payroll load/.test(typedHtml)) {
     fail('renderLaborPlan: a typed wage must show its derivation inline ("your $15.00/hr '
@@ -175,7 +175,7 @@ bootApp().then(({ window: w }) => {
   }
   // With a markup set, BOTH multipliers are named.
   const markedUp = w.renderLaborPlan(typedSr, { profit: 100000 },
-    { hire_wage_markup: 0.2, overtime_rate_multiplier: 1.5, payroll_load_pct: 0.25, hired_wage_per_hr: 15 });
+    { hire_wage_markup: 0.2, overtime_rate_multiplier: 1.5, fica_pct: 0.0765, straight_time_load_pct: 0.1735, hired_wage_per_hr: 15 });
   if (!/25% payroll load/.test(markedUp) || !/20% hiring markup/.test(markedUp)) {
     fail('renderLaborPlan: with a markup set, both the payroll load and the markup must be named');
   }

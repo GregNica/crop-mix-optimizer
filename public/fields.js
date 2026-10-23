@@ -208,9 +208,13 @@
       units: { measure: 'vol_liquid', inverse: true },   // $/L (capital)
     },
     depreciation_water_years: {},
-    payroll_load_pct: {
-      chat: { label: "Payroll load %", type: "number", unit: "%", min: 0, max: 80,
-        description: "Percent ADDED on top of wages for employer burden (payroll taxes, benefits, workers' comp, insurance) — NOT the wage itself and NOT labor's share of revenue. Typical 15–35%. Explain if the user is unsure." },
+    fica_pct: {
+      chat: { label: "FICA %", type: "number", unit: "%", min: 0, max: 20,
+        description: "Employer Social Security + Medicare, percent of ALL pay (overtime included). 7.65 in the US; 0 only for H-2A-only crews. NOT the rest of the payroll burden — that is straight_time_load_pct." },
+    },
+    straight_time_load_pct: {
+      chat: { label: "Other payroll load %", type: "number", unit: "%", min: 0, max: 80,
+        description: "Percent ADDED on top of wages for the employer burden OTHER than FICA (benefits, workers' comp, unemployment insurance, paid leave), charged on regular hours only. NOT the wage itself and NOT labor's share of revenue. Total burden incl. FICA is typically 15–35%, so this is typically ~8–27%. Explain if the user is unsure." },
     },
     labor_flex_enabled: {
       ui: true,
@@ -361,7 +365,8 @@
     city_water_enabled:          { from: ['city_water_enabled'] },
     city_water_cost_per_L:       { from: ['city_water_cost_per_L'] },
     employees:                   { from: ['@labor'] },
-    payroll_load_pct:            { from: ['payroll_load_pct'] },
+    fica_pct:                    { from: ['fica_pct'] },
+    straight_time_load_pct:      { from: ['straight_time_load_pct'] },
     channels:                    { from: ['@channels'] },
     crops:                       { from: ['@crops'] },
     harvest_storage_cap:         { from: ['harvest_storage_cap'] },
@@ -400,6 +405,7 @@
     max_overtime_hrs_per_week:   { sentBy: 'what-if', from: ['max_overtime_hrs_per_week'] },
     rainfall_weekly_multipliers: { sentBy: 'monte-carlo', from: [] },
     // Read by the adapter, sent by nothing. Each is a decision, not an oversight — say which.
+    payroll_load_pct:            { unsent: 'legacy single payroll load (pre-L.5 server callers); the adapter splits it into fica + straight-time' },
     operating_weeks:             { unsent: 'deprecated; the solver ignores it (cost-accounting basis)' },
     storage_loss_frac_per_week:  { unsent: 'solver supports in-store shrink; no input yet — DECISIONS GROUP E3' },
     city_water_fixed_fee_per_week: { unsent: 'solver + P&L carry a city-water standing charge; no input yet (found by E5b)' },

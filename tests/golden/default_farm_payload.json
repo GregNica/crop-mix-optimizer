@@ -451,7 +451,6 @@
  "min_viable_margin_pct": 0,
  "other_debt_service_per_week": 0,
  "overhead_pct_of_revenue": 0.16,
- "payroll_load_pct": 0.25,
  "rate_equip_storage": 0.32051282051282054,
  "rate_fuel_storage": 0.020833333333333332,
  "rate_harvest_storage": 0.4807692307692308,
@@ -479,5 +478,7 @@
  },
  "insurance_premium_per_yr": 0,
  "insurance_payment_week": null,
- "utilities_cost_per_yr": 0
+ "utilities_cost_per_yr": 0,
+ "fica_pct": 0.0765,
+ "straight_time_load_pct": 0.17350000000000002
 }

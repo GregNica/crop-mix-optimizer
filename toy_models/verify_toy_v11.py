@@ -248,7 +248,7 @@ def simulate(acres, offered, packout=None, shrink=None, caps=None,
     # whole of v10 — checking only CREW CAPACITY would leave the change itself unverified.
     pos = LP.positions()
     adv = adv or {}
-    load = 1.0 + LP.PAYLOAD.get("payroll_load_pct", 0.0)
+    load = 1.0 + LP.payroll_load()
     prod = float(adv.get("productivity_pct", 70.0)) / 100.0
     head_cost = float(adv.get("cost_per_head", 800.0))
     allowance = float(adv.get("allowance", 1.25))
