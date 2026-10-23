@@ -20,19 +20,17 @@ Derived arrays (all 52-element, 0-indexed for weeks 1..52):
   labor_capacity[w]          total available hours in week w (salaried + hourly)
   labor_by_role[r]           the roster as named weekly rows, incl. each role's overtime
                               cap and rate (L.2) — see _role
-  hire_hour_wage[w]          $/hour for a NEW hire (W15), LOAD-INCLUSIVE: an explicit wage
-                              has hired_wage_load_pct applied here; an inferred one carries
-                              each role's benefits_pct. Only the hire markup is applied
-                              downstream. Regular hours are already paid by the committed
-                              wage bill, so bought hours are charged in FULL
   piece_rate_per_lb[c][ch]   $/lb harvest cost per crop/channel — sourced from crop defs,
                               not computed here, but the module documents the pattern.
 
-Overtime / hired labour (if enabled):
+Overtime and extra hires (L.2 / L.3), both per role — see _role:
   Bought beyond TOTAL labor_capacity, not beyond the hourly-only part — measuring against
   hourly-only was the bug that removed C14, because it let flexibility buy back capacity the
   farm already had. Bought hours carry their FULL wage: the committed bill pays for the crew's
-  stated hours, and these are extra (W12).
+  stated hours, and these are extra (W12). An extra head INHERITS its row — wage, hours,
+  field %, window, overtime allowance — so no hired-wage statistic is inferred any more (the
+  three that stood here were each a statistic over internal payroll posing as a market price;
+  W15/W17 retired with them).
 """
 
 from __future__ import annotations
@@ -54,8 +52,6 @@ def compute_labor_arrays(
     year_round_employees: list[dict],
     seasonal_employees: list[dict],
     n_weeks: int = 52,
-    hired_wage_per_hr: float | None = None,
-    hired_wage_load_pct: float = 0.0,
     overtime_rate_multiplier: float = 1.0,
 ) -> dict:
     """
@@ -72,15 +68,11 @@ def compute_labor_arrays(
         start_week, end_week, wage ($/hour), hours_per_week, benefits_pct,
         and optionally: piece_rate_per_lb (float).
 
-    hired_wage_per_hr : float | None
-        BASE $/hr for a hired hand on the local market. None (blank) = infer an
-        hours-weighted mean over the farm's PAID hourly roles. 0 or negative is refused.
+    overtime_rate_multiplier : float
+        Overtime pay as a multiple of each role's own wage (1.0 = straight time, FLSA).
 
-    hired_wage_load_pct : float
-        Employer payroll load applied to an EXPLICIT hired wage, here, next to where every
-        other wage gets its load via benefits_pct. The inferred branch needs none — each
-        role's wage already carries its own load.
-        ⚠️ `min_guaranteed_hours` is ACCEPTED AND IGNORED (W11/W14). It can never bind: committed
+    Note: `min_guaranteed_hours` is ACCEPTED AND IGNORED (W11/W14).
+It can never bind: committed
         wages already pay count x hours_per_week, which is >= count x min(min_guaranteed, hours)
         for every input. Wiring it back would put a floor underneath a floor and double-charge.
 
@@ -92,12 +84,8 @@ def compute_labor_arrays(
     dict with keys:
         "labor_capacity"            np.ndarray shape (n_weeks,) — total hrs/week (0-indexed)
         "committed_weekly_wages"    np.ndarray shape (n_weeks,) — $/week owed to ALL listed staff
-        "labor_by_role"             list[dict] — per-role weekly rows + overtime cap/rate (_role)
-        "hire_hour_wage"            np.ndarray shape (n_weeks,) — LOAD-INCLUSIVE $/hr for a
-                                    NEW hire: `hired_wage_per_hr` × (1+hired_wage_load_pct),
-                                    else hours-weighted over paid roles (already loaded).
-                                    Only the hire markup is applied downstream — treating
-                                    this as a "base" rate double-applies the payroll load
+        "labor_by_role"             list[dict] — per-role weekly rows, overtime cap/rate and
+                                    extra-head terms (_role)
         "piece_rate_workers"        list[dict] — seasonal workers with piece_rate_per_lb set
     """
     labor_capacity        = np.zeros(n_weeks, dtype=float)
@@ -108,17 +96,9 @@ def compute_labor_arrays(
     # seasonal staff too. Charged on FULL hours: `field_time_pct` limits how much of a worker's
     # time is available to crops, not how much of their wage the farm owes.
     committed_weekly_wages = np.zeros(n_weeks, dtype=float)
-    # THE UNPAID-ROLES RULE, stated once (the accumulations below just point here): a role at
-    # $0/hr — piece-rate picker, unpaid family, a blank wage box — provides CAPACITY but never
-    # sets a PRICE. Unpaid hours are excluded from the paid-hours denominator below, from the
-    # hire inference (the w > 0 filter), and from overtime (see _role); left in, they drag every
-    # bought-labour price below any real wage (measured: a $20 hand + two unpaid family priced
-    # overtime at $10.00/hr; an owner at $0 beside an $18 crew averaged $4.55/hr), which is the
-    # UNSAFE direction — the optimizer buys help the grower cannot get.
-    # Annual hours of roles the farm actually PAYS, not field-adjusted; feeds only
-    # `average_paid_wage`.
-    total_paid_hours = 0.0
-    hourly_wages          = []          # (effective $/hr, weekly hours) per hourly role (W15)
+    # THE UNPAID-ROLES RULE: a role at $0/hr — piece-rate picker, unpaid family, a blank wage
+    # box — provides CAPACITY but can never be BOUGHT: no overtime, no extra heads (see _role).
+    # At $0 either would be free labour (W12b).
     piece_rate_workers    = []
     labor_by_role         = []          # F3: one named row per roster line, see _role
 
@@ -133,7 +113,6 @@ def compute_labor_arrays(
         # A farm manager might cap at ~80% in slow weeks; field crew ~100%. Default 100%.
         field      = max(0.0, min(1.0, emp.get("field_time_pct", 100.0) / 100.0))
 
-        total_hrs_per_week = count * hrs * field
         if emp_type not in ("salary", "hourly"):
             raise ValueError(
                 f"Year-round employee '{emp.get('position', '?')}' has unknown type "
@@ -144,17 +123,6 @@ def compute_labor_arrays(
                        else count * hrs * (wage * (1 + bene)))
         labor_by_role.append(_role(emp, emp_type == "hourly", count, hrs, field, weekly_cost,
                                    range(n_weeks), n_weeks, overtime_rate_multiplier))
-
-        if emp_type == "salary":
-            if wage > 0:
-                total_paid_hours += count * hrs * n_weeks
-
-        elif emp_type == "hourly":
-            effective_rate = wage * (1 + bene)
-            hourly_wages.append((effective_rate, count * hrs))
-            # Unpaid roles: capacity, never a price — see the rule at total_paid_hours.
-            if wage > 0:
-                total_paid_hours += count * hrs * n_weeks
 
     # --- Seasonal employees ---
     for emp in seasonal_employees:
@@ -195,108 +163,16 @@ def compute_labor_arrays(
         if piece_rate is not None:
             piece_rate_workers.append(emp)
 
-        effective_rate = wage * (1 + bene)
-        hourly_wages.append((effective_rate, count * hrs * (end_w - start_w + 1) / n_weeks))
-        total_hrs_per_week = count * hrs * field
-        labor_by_role.append(_role(emp, True, count, hrs, field, count * hrs * effective_rate,
+        labor_by_role.append(_role(emp, True, count, hrs, field, count * hrs * (wage * (1 + bene)),
                                    range(start_w - 1, end_w), n_weeks, overtime_rate_multiplier))
-
-        # Unpaid roles: capacity, never a price — see the rule at total_paid_hours.
-        if wage > 0:
-            total_paid_hours += count * hrs * (end_w - start_w + 1)
-
 
     # The farm totals are the SUMS of the per-role rows (F3) — one derivation, not two.
     for role in labor_by_role:
         labor_capacity         += role["task_hours"]
         committed_weekly_wages += role["cost"]
 
-    # THE PRICE OF A HIRED HOUR (overtime is priced per role, in _role — L.2).
-    #
-    # The fallback is the farm's own average paid wage — what it actually pays for an hour of
-    # work, inferred from the crew it described. ⚠️ It is an AVERAGE standing in for a MARGINAL
-    # price for a new person from the local market, where it is only a proxy. On a farm whose only
-    # worker is a $95k manager it prices a hired field hand at $40.60/hr. The error direction is
-    # SAFE — it over-prices bought labour, and the defect it replaced was free labour. The
-    # explicit "what does a hand cost around here" input exists now (`hired_wage_per_hr`,
-    # W15 closed); this fallback covers only the blank-box case, and which statistic should
-    # stand here is the OPEN decision. See backlog W17.
-    average_paid_wage = (float(committed_weekly_wages.sum()) / total_paid_hours
-                         if total_paid_hours > 0 else 0.0)
-
-    # Hire is a different transaction from overtime (W15):
-    #   hire     — a NEW person from the local labour market. The existing crew's blend is only a
-    #              proxy for that, and a poor one when the crew is unrepresentative: sharing one
-    #              price meant a farm whose only worker is a $95k manager valued a hired field
-    #              hand at $40.60/hr, and the demo crew priced one at $22.08 against a real
-    #              harvest wage of $19 — so the optimizer refused hires it should have taken.
-    #
-    # `hired_wage_per_hr` is the honest answer and the caller supplies it. Without it the model
-    # infers one from the hourly roles the farm lists — see the `else` branch below for what that
-    # statistic is, why it has been wrong twice, and why no statistic over internal payroll is
-    # really a market price.
-    # An explicit wage must be a real wage. 0 is not "infer" — it is free labour, the defect
-    # W12b closed — and a negative rate is a coefficient the optimizer drives to the hiring cap
-    # for phantom profit. Blank reaches here as None, from the adapter; anything else is refused
-    # HERE rather than trusted to a caller, because the caller is exactly who got it wrong before.
-    if hired_wage_per_hr is not None:
-        try:
-            hire_base = float(hired_wage_per_hr)
-        except (TypeError, ValueError):
-            raise ValueError(
-                f"hired_wage_per_hr must be a number or None (blank), got "
-                f"{hired_wage_per_hr!r}."
-            )
-        if not hire_base > 0:
-            raise ValueError(
-                f"hired_wage_per_hr must be greater than 0, got {hire_base}. Leave it blank to "
-                f"infer a rate from the crew; 0 would price hired labour at nothing."
-            )
-        # The typed value is a BASE wage — the same basis as every employee wage box — so it
-        # carries the employer payroll load here, where every other wage gets its load (via
-        # benefits_pct above). This used to live in the app's adapter, which made the solver
-        # parameter secretly mean "all-in wage": a direct or server caller passing the grower's
-        # typed base under-priced every hired hour by the load (25% at shipped defaults) — the
-        # under-priced-bought-labour class, one layer down. The inferred branch below needs no
-        # load: each role's wage already carries its own.
-        hire_base *= 1.0 + max(0.0, hired_wage_load_pct)
-    else:
-        # Inferred from the roles the farm PAYS BY THE HOUR, weighted by their hours.
-        #
-        # ⚠️ THREE answers have stood here, and the first two were wrong in opposite
-        # directions. The average over ALL paid hours dragged the price up toward salaried staff
-        # who would never do the work ($40.60/hr for a field hand on a manager-only farm). An
-        # unweighted `min` then dragged it down to the least representative role — a single
-        # 2 h/wk helper at $12 priced all 20,800 potential hired hours — and that direction is the
-        # UNSAFE one, because under-pricing makes the optimizer buy help the grower cannot get.
-        #
-        # This one is hours-weighted over PAID hourly roles: robust to both tails, with salaried
-        # staff absent from the list entirely. Roles at $0/hr are EXCLUDED — piece-rate pickers,
-        # unpaid family and a blank wage box all land there, and one of them set the price to zero
-        # for every week, which was W12b reopened.
-        #
-        # ⚠️ It is still a statistic over INTERNAL PAYROLL standing in for a MARKET price, and no
-        # reduction of internal payroll is a market price. A crew of two mechanics and one picker
-        # prices its hires as mechanics. The honest answer is the explicit input above; this is
-        # what the model can infer when the grower leaves it blank, not what a hire costs. See
-        # backlog W17.
-        # The weight is ANNUAL paid hours: a year-round role works all 52 weeks (factor 1) and a
-        # seasonal role its window, so the 1/n_weeks cancels in the mean.
-        paid = [(w, h) for w, h in hourly_wages if w > 0 and h > 0]
-        if paid:
-            hire_base = sum(w * h for w, h in paid) / sum(h for _w, h in paid)
-        else:
-            hire_base = average_paid_wage
-
-    # Never zero while anyone is paid: validated (> 0) if explicit, else a weighted mean of
-    # POSITIVE rates. A crew with NO paid role makes it 0, and the solver refuses to sell hired
-    # hours at a non-positive price (its Step-2 gate).
-    hire_hour_wage     = np.full(n_weeks, float(hire_base), dtype=float)
-
-
     return {
         "committed_weekly_wages": committed_weekly_wages,
-        "hire_hour_wage":         hire_hour_wage,
         "labor_capacity":         labor_capacity,
         "piece_rate_workers":     piece_rate_workers,
         "labor_by_role":          labor_by_role,
@@ -320,6 +196,11 @@ def _role(emp: dict, is_hourly: bool, count: float, hrs: float, field: float,
                   FICA only (I2b). straight-time load = benefits_pct − fica_pct.
     Salaried roles get none (cannot be paid overtime), and nor does an UNPAID role: an hour
     nobody pays for cannot be bought, and at $0 it would be free labour (W12b).
+
+    Extra heads (F1, L.3) — one more person on THIS row, inheriting everything:
+      head_task[w] = hours × field in the window (× new-hire productivity, applied by the solver)
+      head_cost[w] = the row's weekly cost ÷ count — full pay every window week (committed, W12)
+      hire_more / max_more — whether the What-If may add heads here, and at most how many.
     """
     on = np.zeros(n_weeks, dtype=float)
     on[list(weeks)] = 1.0
@@ -331,7 +212,15 @@ def _role(emp: dict, is_hourly: bool, count: float, hrs: float, field: float,
     return {
         "ot_cap":     on * (allowance * count * hrs * field) if ot_ok else np.zeros(n_weeks),
         "ot_rate":    wage * (overtime_rate_multiplier * (1.0 + fica) + straight) if ot_ok else 0.0,
+        "allowance":  allowance if ot_ok else 0.0,
+        "head_task":  on * (hrs * field),
+        "head_cost":  on * (weekly_cost / count) if count > 0 else np.zeros(n_weeks),
+        "start":      weeks.start,
+        "paid":       wage > 0,
+        "hire_more":  bool(emp.get("hire_more", False)),
+        "max_more":   max(0, int(emp.get("max_more", 0) or 0)),
         "position":   emp.get("position", ""),
+        "row":        emp.get("row"),   # the caller's roster index, so a result can point back
         "is_hourly":  bool(is_hourly),
         "heads":      on * count,
         "paid_hours": on * (count * hrs),

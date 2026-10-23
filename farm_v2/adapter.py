@@ -125,12 +125,12 @@ def run_from_js(params_json):
         overhead_pct_of_revenue  = _num('overhead_pct_of_revenue', 0.0)
         interest_rate_apr        = _num('interest_rate_apr', 0.0)
 
-        # --- Labor flexibility (Phase 5, Advanced; off by default = labor is fixed) ---
+        # --- Extra hires (L.3): What-If only. Each row's hire_more / max_more say where and how
+        # many; these two farm-wide terms say how fast a new head works and what one costs to
+        # bring on. Out-of-range values are refused by the solver, not clamped here.
         labor_flex_enabled       = bool(p.get('labor_flex_enabled', False))
-        hire_enabled             = labor_flex_enabled and bool(p.get('hire_enabled', True))
-        max_hire_hrs_per_week    = _num('max_hire_hrs_per_week', 0.0)
-        hire_wage_markup         = _num('hire_wage_markup', 0.0)
-        # None means infer from the listed crew; 0 would mean free help (W15).
+        hire_productivity_pct    = _num('hire_productivity_pct', 70.0)
+        hire_cost_per_head       = _num('hire_cost_per_head', 800.0)
         # Overtime is part of the MAIN plan (L.2, Q1a), capped per role by its row's
         # max_week_pct — a grower who wants none sets every row to 100%. `overtime_enabled`
         # stays as an off-switch for server callers; the form never sends it.
@@ -152,15 +152,6 @@ def run_from_js(params_json):
             straight_load = max(0.0, _num('straight_time_load_pct', 0.0))
         payroll_load = fica_pct + straight_load
 
-        # A BASE wage, the same basis every other wage box uses. The payroll load is applied in
-        # labor.py via hired_wage_load_pct (passed below), next to where every other wage gets
-        # its load — this adapter used to multiply it here, which made the solver parameter
-        # secretly mean 'all-in wage' and set up any direct/server caller to under-price hires.
-        # Blank means infer. A typed 0/negative is refused — by the form validator before the
-        # solve, and by validate_params for any non-browser caller. Neither silently rewrites it
-        # to "infer", which is what this path used to do.
-        _hw_raw                  = p.get('hired_wage_per_hr', None)
-        hired_wage_per_hr        = None if _hw_raw in (None, '') else float(_hw_raw)
 
         rainfall = get_rainfall_weekly(climate_zone=climate_zone)
 
@@ -182,9 +173,10 @@ def run_from_js(params_json):
 
         year_round_employees = []
         seasonal_employees   = []
-        for e in p.get('employees', []):
+        for _row, e in enumerate(p.get('employees', [])):
             t = e.get('type', 'hourly')
             pos = {
+                "row":           _row,   # form order, so results can name the roster line
                 "position":      str(e.get('position', 'Worker')),
                 # float, not int: the What-If labor lever scales counts fractionally (+10% of
                 # a 2-person crew is 2.2 workers-worth of hours). int() truncated 2.2 back to
@@ -196,6 +188,9 @@ def run_from_js(params_json):
                 "field_time_pct": _e_val(e, 'field_time_pct', 100),
                 # Max week INCLUDING overtime, % of regular hours (L.2): 125 = 40 + 10 OT.
                 "max_week_pct":  _e_val(e, 'max_week_pct', 100 if t == 'salary' else 125),
+                # Extra hires on this row (L.3, What-If only): may it add heads, and at most how many.
+                "hire_more":     bool(e.get('hire_more', False)),
+                "max_more":      _e_val(e, 'max_more', 0),
             }
             if t == 'seasonal':
                 pos['start_week'] = _e_val(e, 'start_week', 1, conv=int)
@@ -315,11 +310,9 @@ def run_from_js(params_json):
             cost_fuel_per_L=cost_fuel_per_L,
             year_round_employees=year_round_employees,
             seasonal_employees=seasonal_employees,
-            hire_enabled=hire_enabled,
-            max_hire_hrs_per_week=max_hire_hrs_per_week,
-            hire_wage_markup=hire_wage_markup,
-            hired_wage_per_hr=hired_wage_per_hr,
-            hired_wage_load_pct=payroll_load,
+            hire_enabled=labor_flex_enabled,
+            hire_productivity_pct=hire_productivity_pct,
+            hire_cost_per_head=hire_cost_per_head,
             overtime_enabled=overtime_enabled,
             overtime_rate_multiplier=overtime_rate_multiplier,
             crops=crops,
@@ -509,7 +502,13 @@ def run_from_js(params_json):
             # The prices those hours were (or would be) bought at, $/hr all-in — 52 entries,
             # 0-indexed. Forwarded so renderLaborPlan can print a number the grower can check
             # against their local market instead of a description of an inference.
-            'hire_rate_full_weekly':     [round(float(v), 2) for v in result.get('hire_rate_full_weekly', [])],
+            # Extra heads per row (L.3): taken, allowed, $/head for the season, hours/head.
+            'extra_hires': [
+                {'position': r['position'], 'row': r['row'], 'extra': int(r['extra']),
+                 'max_more': int(r['max_more']),
+                 'cost_per_head': round(float(r['cost_per_head']), 2),
+                 'hours_per_head': round(float(r['hours_per_head']), 1)}
+                for r in result.get('extra_hires', [])],
             # Who stays late, which weeks, at what $/hr (L.2) — 52 entries each, 0-indexed.
             'overtime_by_role': [
                 {'position': r['position'], 'rate': round(float(r['rate']), 2),

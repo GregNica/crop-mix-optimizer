@@ -9,7 +9,7 @@ Variable layout (all collected into one flat vector ``z`` for scipy.milp):
   2*N_S .. 2*N_S+V_off-1   v[c,ch,w]      — channel sales in lbs (continuous)
   next n_crops*52          inv[c,w]       — lbs held at END of week w (continuous)
   next n_crops*52          waste[c,w]     — lbs discarded in week w (continuous)
-  then, when enabled:      city_water[w], overtime[w], hire[w]  — 52 each
+  then, when enabled:      city_water[w] (52), ot[role][w] (52 per role), extra[role] (int)
   then always:             wstore[w]                            — 52 each
 
 Constraint order (rows of A):
@@ -327,16 +327,14 @@ def solve_farm_v2(
     # exempts farm work; 1.5× where state law requires ag overtime).
     overtime_enabled: bool = False,
     overtime_rate_multiplier: float = 1.0,
+    # Extra hires (F1, L.3): the What-If "Plan optimal labor" turns this on. Each roster row with
+    # hire_more set may add up to max_more INTEGER heads that inherit the row (labor._role). A new
+    # head works at hire_productivity_pct of the crew's pace and costs hire_cost_per_head once,
+    # in the row's first week (recruiting/onboarding). Off in the main plan: hiring is decided
+    # before the season (60-75 days lead), so it is advice, not a decision the plan makes.
     hire_enabled: bool = False,
-    max_hire_hrs_per_week: float = 0.0,
-    hire_wage_markup: float = 0.0,
-    # What a HIRED hand costs per hour on the local market (W15) — a BASE wage, the same basis
-    # as every employee wage box; the employer payroll load is applied via hired_wage_load_pct
-    # below, in labor.py, next to where every other wage gets its load. Left None, the model
-    # infers an hours-weighted mean of the wages the farm already pays its hourly roles — a proxy
-    # that is wrong whenever the listed crew is unrepresentative of who you would bring in.
-    hired_wage_per_hr: float | None = None,
-    hired_wage_load_pct: float = 0.0,
+    hire_productivity_pct: float = 70.0,
+    hire_cost_per_head: float = 800.0,
     # --- Equipment proxy ---
     max_plant_acres_per_week: float = 1e9,
     max_harvest_acres_per_week: float = 1e9,
@@ -518,7 +516,6 @@ def solve_farm_v2(
             catchment_surface_area_m2=catchment_surface_area_m2,
             well_weekly_cap_L=well_weekly_cap_L,
             year=year,
-            hired_wage_per_hr=hired_wage_per_hr,
             rented_acres=rented_acres,
             cash_rent_per_acre_yr=cash_rent_per_acre_yr,
             ownership_carrying_rate=ownership_carrying_rate,
@@ -574,8 +571,6 @@ def solve_farm_v2(
     # Labor
     labor_result = compute_labor_arrays(
         year_round_employees, seasonal_employees, N_WEEKS,
-        hired_wage_per_hr=hired_wage_per_hr,
-        hired_wage_load_pct=hired_wage_load_pct,
         overtime_rate_multiplier=overtime_rate_multiplier,
     )
     labor_capacity         = labor_result["labor_capacity"]          # (52,)
@@ -583,33 +578,21 @@ def solve_farm_v2(
     # weekly cap and $/hr (labor._role). One ot[k][w] variable block per role.
     ot_roles = ([r for r in labor_result["labor_by_role"] if float(r["ot_cap"].max()) > 0]
                 if overtime_enabled else [])
-    hire_hour_wage         = labor_result["hire_hour_wage"]          # (52,) a new person
     committed_weekly_wages = labor_result["committed_weekly_wages"]  # (52,) wages owed regardless
 
-    # What an hour BOUGHT beyond the committed crew costs, in full (W12 follow-up).
-    #
-    # These used to carry only the increment above base pay, because every crop hour — bought or
-    # not — was charged at the blend inside `var_cost_coeff`. W12 removed that charge: the crew's
-    # hours are paid through the committed wage bill instead. Bought hours are NOT in that bill,
-    # so charging them the premium alone left the base wage charged nowhere at all. Measured
-    # before the fix: hired labour at the shipped default markup of 0% was literally FREE —
-    # 2,080 hired hours at $0.00, worth +$965,177 of phantom profit on a 200-acre fixture.
+    # What labour BOUGHT beyond the committed crew costs, in full (W12 follow-up): bought hours
+    # are NOT in the committed wage bill, so charging only a premium left the base wage charged
+    # nowhere (measured once: 2,080 hired hours at $0.00, +$965,177 of phantom profit).
     #
     # NOT A DOUBLE-CHARGE: C2 measures bought hours against `labor_capacity`, so an overtime hour
     # is genuinely an hour beyond what the crew can give. One worker, 40 h/wk at $20 at 100% field
     # time, asked for 50 h at 1.5×: $800 committed + 10 x $20 x 1.5 = $1,100. Pinned in
     # test_committed_wages.py.
-    hire_rate_full     = hire_hour_wage * (1.0 + hire_wage_markup)
+    # Rows that may add extra heads in this solve (What-If only).
+    ex_roles = ([r for r in labor_result["labor_by_role"] if r["hire_more"] and r["max_more"] > 0]
+                if hire_enabled else [])
+    hire_prod = max(0.0, float(hire_productivity_pct)) / 100.0
 
-    # A bought hour must have a real price before the optimizer may buy one. Both rates above
-    # are INFERRED from the crew when the hired-wage box is blank, and a crew with no paid role
-    # (every wage $0 — blank boxes, unpaid family) infers $0 for both: the free-labour defect
-    # (W12b) reopened through a third door, measured at 76,000 hired hours for $0.00 and
-    # +$106,832 of phantom profit on the two-crop fixture, with every validator green. No
-    # markup or multiplier rescues a zero base. This is the point of consumption — whatever
-    # statistic produced the rate, a flex solve at a non-positive price is refused, loudly,
-    # rather than handing out free hours. Checked per-enabled-lever so a fixed-staff solve of
-    # an unpaid crew (a legitimate farm) still runs.
     _flex_rate_errors = []
     # Refused, not clamped: an overtime hour paid below straight time is not a thing, and a
     # multiplier of 0 would hand out free hours (the W12b class). NaN fails this too.
@@ -618,12 +601,17 @@ def solve_farm_v2(
             f"Overtime pay multiplier must be at least 1.0 (straight time), got "
             f"{overtime_rate_multiplier}. Use 1.5 where state law requires ag overtime."
         )
-    if hire_enabled and not float(hire_rate_full.min()) > 0:
+    # A ticked 'Hire more?' on an unpaid row would add free heads (W12b) — refused, not ignored.
+    for r in ex_roles:
+        if not r["paid"]:
+            _flex_rate_errors.append(
+                f"'{r['position']}' has 'Hire more?' ticked but a wage of $0, so an extra head "
+                f"would cost nothing. Set its wage, or untick 'Hire more?'."
+            )
+    if not (float(hire_productivity_pct) > 0 and float(hire_cost_per_head) >= 0):
         _flex_rate_errors.append(
-            "Hiring is enabled, but the model has no price for a hired hour: no listed role "
-            "has a wage above $0 and no hired wage was given. Enter 'Hired wage $/hr' in the "
-            "labor-flexibility settings, or set a wage on your crew — otherwise hired labour "
-            "would be free and the plan meaningless."
+            f"New-hire productivity must be above 0% and the one-off cost per head at least $0 "
+            f"(got {hire_productivity_pct}%, ${hire_cost_per_head})."
         )
     if _flex_rate_errors:
         return _invalid(_flex_rate_errors)
@@ -973,9 +961,7 @@ def solve_farm_v2(
     idx_ot_start = None
     if ot_roles:
         idx_ot_start = _next; _next += len(ot_roles) * N_WEEKS
-    idx_hire_start = None
-    if hire_enabled:
-        idx_hire_start = _next; _next += N_WEEKS
+    idx_ex_start = _next; _next += len(ex_roles)
     # wstore[w] — litres held in the on-farm tank at the END of week w. Always allocated: when
     # water_storage_capacity is 0 the whole block is bounded to 0 and presolve removes it,
     # which keeps ONE water balance in the code instead of a tank path and a no-tank path.
@@ -1056,11 +1042,13 @@ def solve_farm_v2(
     # here would be incoherent. Minimum-storage is now strictly optimal.
     c_obj[idx_ws_start : idx_ws_start + N_WEEKS] += WATER_LEVEL_TIE_BREAK_PER_L_WEEK
 
-    # Bought hours cost their FULL rate — each role's own ot_rate; hire_rate_full above.
+    # Bought hours cost their FULL rate — each role's own ot_rate; extra heads below.
     for k, r in enumerate(ot_roles):
         c_obj[_ot(k, 0) : _ot(k, 0) + N_WEEKS] = r["ot_rate"]
-    if hire_enabled and idx_hire_start is not None:
-        c_obj[idx_hire_start : idx_hire_start + N_WEEKS] = hire_rate_full
+    # An extra head costs its row's full weekly pay in every window week (committed, W12) plus
+    # the one-off cost per head.
+    for j, r in enumerate(ex_roles):
+        c_obj[idx_ex_start + j] = float(r["head_cost"].sum()) + float(hire_cost_per_head)
 
     # -----------------------------------------------------------------------
     # Step 7 — Bounds
@@ -1084,14 +1072,22 @@ def solve_farm_v2(
     # Overtime: each role's derived cap, (allowance − 1) × its field hours, 0 outside its window.
     for k, r in enumerate(ot_roles):
         ub[_ot(k, 0) : _ot(k, 0) + N_WEEKS] = r["ot_cap"]
-    if hire_enabled and idx_hire_start is not None:
-        ub[idx_hire_start : idx_hire_start + N_WEEKS] = max_hire_hrs_per_week
+    for j, r in enumerate(ex_roles):
+        ub[idx_ex_start + j] = r["max_more"]
+    # A role that can also hire: its overtime cap grows with its heads, so the per-week cap
+    # becomes a ROW (below) and the bound is lifted to the most it could ever reach.
+    _ex_of = {id(r): j for j, r in enumerate(ex_roles)}
+    for k, r in enumerate(ot_roles):
+        if id(r) in _ex_of:
+            ub[_ot(k, 0) : _ot(k, 0) + N_WEEKS] = (r["ot_cap"]
+                + r["allowance"] * hire_prod * r["head_task"] * r["max_more"])
 
     # -----------------------------------------------------------------------
     # Step 8 — Integrality
     # -----------------------------------------------------------------------
     integrality = np.zeros(n_vars, dtype=int)
     integrality[idx_y_start : idx_y_start + N_S] = 1  # y[i] binary
+    integrality[idx_ex_start : idx_ex_start + len(ex_roles)] = 1  # extra heads are people
 
     # -----------------------------------------------------------------------
     # Step 9 — Constraints
@@ -1165,9 +1161,22 @@ def solve_farm_v2(
         for k, r in enumerate(ot_roles):
             if r["ot_cap"][w - 1] > 0:
                 cols.append((_ot(k, w - 1), -1.0))
-        if hire_enabled and idx_hire_start is not None:
-            cols.append((idx_hire_start + w - 1, -1.0))
+        for j, r in enumerate(ex_roles):
+            if r["head_task"][w - 1] > 0:
+                cols.append((idx_ex_start + j, -hire_prod * r["head_task"][w - 1]))
         add_row(cols, -np.inf, rhs)
+
+    # Overtime cap of a role that can hire: ot[k][w] ≤ cap[w] + allowance × prod × head_task[w]
+    # × extra — the new heads may stay late too, at the pace they work (toy v11's form).
+    for k, r in enumerate(ot_roles):
+        j = _ex_of.get(id(r))
+        if j is None:
+            continue
+        for w0 in range(N_WEEKS):
+            if r["ot_cap"][w0] > 0:
+                add_row([(_ot(k, w0), 1.0),
+                         (idx_ex_start + j, -r["allowance"] * hire_prod * r["head_task"][w0])],
+                        -np.inf, r["ot_cap"][w0])
 
     # C3 — Water, with the tank actually storing something (audit B7)
     #
@@ -1511,10 +1520,12 @@ def solve_farm_v2(
             for w in range(W):
                 if r["ot_cap"][w] > 0:
                     cols.append((_ot(k, w), -r["ot_rate"]))
-        # Hired-labor markup cost up to W
-        if hire_enabled and idx_hire_start is not None:
-            for w in range(W):
-                cols.append((idx_hire_start + w, -hire_rate_full[w]))
+        # Extra heads: their pay up to W, plus the one-off cost once their window has started.
+        for j, r in enumerate(ex_roles):
+            paid = float(r["head_cost"][:W].sum()) + (float(hire_cost_per_head)
+                                                      if r["start"] < W else 0.0)
+            if paid:
+                cols.append((idx_ex_start + j, -paid))
 
         # Fixed selling (stall fees/retainers) is a steady weekly cash outflow → in the floor.
         rhs_lo = (floor + W * (fixed_weekly + fixed_selling_per_week)
@@ -1862,34 +1873,23 @@ def solve_farm_v2(
     ot_weekly = np.sum(ot_by_role, axis=0) if ot_roles else np.zeros(N_WEEKS)
     ot_cost_weekly = (np.sum([h * r["ot_rate"] for h, r in zip(ot_by_role, ot_roles)], axis=0)
                       if ot_roles else np.zeros(N_WEEKS))
-    hire_weekly = (z[idx_hire_start : idx_hire_start + N_WEEKS]
-                   if (hire_enabled and idx_hire_start is not None) else np.zeros(N_WEEKS))
+    # Extra heads (L.3): integers, rounded off the solver's tolerance. Their hours and their pay
+    # (full window pay + the one-off cost in the row's first week), by week.
+    extra_heads = [float(round(z[idx_ex_start + j])) for j in range(len(ex_roles))]
+    hire_weekly = np.zeros(N_WEEKS)
+    hire_cost_weekly = np.zeros(N_WEEKS)
+    for n, r in zip(extra_heads, ex_roles):
+        hire_weekly += n * hire_prod * r["head_task"]
+        hire_cost_weekly += n * r["head_cost"]
+        hire_cost_weekly[r["start"]] += n * float(hire_cost_per_head)
 
-    # Read the SOLVED split, do not reconstruct it. 52 entries, 0-indexed — the same basis as
-    # every other weekly labour array in the result (L.1; a 53-long 1-indexed copy beside the
-    # 52-long rate arrays once produced a false finding).
-    #
-        #
-        # This used to fill hired labour to its cap first and give the remainder to overtime, on
-        # the reasoning that hire is the cheaper of the two. W15 decoupled the two prices — a
-        # hired hand is bought at a market wage, overtime at your own crew's rate x a multiplier —
-        # so "hire is cheaper" became an assumption rather than a fact, and it is false whenever
-        # the hired wage exceeds the overtime rate. Measured with a $20/hr crew, 1.5x overtime and
-        # a $60/hr hired wage: the same 105.52 bought hours were reported as hire, so ENABLING an
-        # extra, more expensive option made reported profit $3,165.71 WORSE than not having it —
-        # which no correct model can do. `hire_cost`, `overtime_cost`, `total_cost`,
-        # `operating_profit`, the cash curve and the P&L rows all inherited it, and the P&L's
-        # UNRECONCILED tripwire could not catch it because both sides came from the same guess.
-        #
-        # The objective already chose the split on the real prices. `capacity_series` 120 lines
-    # below has always read these same variables; this now agrees with it.
+    # Read the SOLVED quantities, never reconstruct them: a reconstructed hire/overtime split once
+    # made enabling a dearer option report a WORSE profit (W15). 52 entries, 0-indexed (L.1).
     hired_hours_weekly    = np.array(hire_weekly, dtype=float)
     overtime_hours_weekly = np.array(ot_weekly, dtype=float)
 
     overtime_cost = float(ot_cost_weekly.sum())
-    hire_cost     = float(np.dot(hired_hours_weekly,
-                                 hire_rate_full)) \
-                    if hire_enabled else 0.0
+    hire_cost     = float(hire_cost_weekly.sum())
 
     # The three costs bought OUTSIDE both totals above, as a split the P&L iterates (W8) — the
     # exporter used to hand-name these three keys, the last hand-named list in the money path,
@@ -1942,7 +1942,7 @@ def solve_farm_v2(
         weekly_other[w] = (
             (cw_weekly[w - 1] * city_water_cost_per_L if cw_weekly is not None else 0.0)
             + ot_cost_weekly[w - 1]
-            + hired_hours_weekly[w - 1]    * hire_rate_full[w - 1]
+            + hire_cost_weekly[w - 1]
             + overhead_pct_of_revenue  * weekly_gross_rev[w]
             + fixed_selling_per_week
         )
@@ -2074,12 +2074,13 @@ def solve_farm_v2(
         # task_hours, cost — each 52 long, 0-indexed. labor_capacity and the committed wage
         # bill are the sums of these.
         "labor_by_role":         labor_result["labor_by_role"],
-        # The all-in $/hr a bought hour actually costs, by week (markup / multiplier applied) —
-        # 52 entries, 0-indexed, like the two hour series above. Published so the
-        # UI can PRINT the price instead of describing the statistic that produced it: with the
-        # hired-wage box blank, no surface could show what an hour would be bought for, so the
-        # grower had no number to check against their local labour market.
-        "hire_rate_full_weekly":     hire_rate_full,
+        # Extra heads per row the What-If may hire on (L.3): how many it took (0 is an answer),
+        # of how many allowed, and what one head costs for the season incl. the one-off cost.
+        "extra_hires": [{"position": r["position"], "row": r["row"], "extra": n,
+                         "max_more": r["max_more"],
+                         "cost_per_head": float(r["head_cost"].sum()) + float(hire_cost_per_head),
+                         "hours_per_head": float(hire_prod * r["head_task"].sum())}
+                        for n, r in zip(extra_heads, ex_roles)],
         # Overtime per role (L.2): who stays late, which weeks, at what $/hr. 52 entries, 0-indexed.
         "overtime_by_role": [{"position": r["position"], "rate": float(r["ot_rate"]),
                               "cap": r["ot_cap"], "hours": h}

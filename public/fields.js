@@ -219,11 +219,9 @@
     labor_flex_enabled: {
       ui: true,
     },
-    labor_flex_hire: {},
-    max_hire_hrs_per_week: {},
-    hired_wage_per_hr: {},
-    hire_wage_markup_pct: {},
     overtime_rate_multiplier: {},
+    hire_productivity_pct: {},
+    hire_cost_per_head: {},
     'pd-ch-vardetail': {
       ui: true,
     },
@@ -394,10 +392,8 @@
                                           'equip_storage_cost_per_m3', 'fuel_storage_cost_per_L'] },
     // The What-If "Plan optimal labor" tool (buildLaborFlexParams) — never the main solve.
     labor_flex_enabled:          { sentBy: 'what-if', from: [] },
-    hire_enabled:                { sentBy: 'what-if', from: ['labor_flex_hire'] },
-    max_hire_hrs_per_week:       { sentBy: 'what-if', from: ['max_hire_hrs_per_week'] },
-    hire_wage_markup:            { sentBy: 'what-if', from: ['hire_wage_markup_pct'] },
-    hired_wage_per_hr:           { sentBy: 'what-if', from: ['hired_wage_per_hr'] },
+    hire_productivity_pct:       { sentBy: 'what-if', from: ['hire_productivity_pct'] },
+    hire_cost_per_head:          { sentBy: 'what-if', from: ['hire_cost_per_head'] },
     overtime_rate_multiplier:    { from: ['overtime_rate_multiplier'] },
     rainfall_weekly_multipliers: { sentBy: 'monte-carlo', from: [] },
     // Read by the adapter, sent by nothing. Each is a decision, not an oversight — say which.

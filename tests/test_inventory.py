@@ -596,11 +596,9 @@ class TestCapacitySeriesIsTheConstraints:
         ("city water, no well",         dict(city_water_enabled=True,
                                              city_water_cost_per_L=0.0005,
                                              well_enabled=False, well_weekly_cap_L=0.0)),
-        ("overtime + hire",             dict(overtime_enabled=True,
+        ("overtime + extra hires",      dict(overtime_enabled=True,
                                              overtime_rate_multiplier=1.5,
-                                             hire_enabled=True,
-                                             max_hire_hrs_per_week=400.0,
-                                             hire_wage_markup=0.2)),
+                                             hire_enabled=True)),
     ])
     def test_caps_hold_when_a_row_buys_extra_headroom(self, full_params, tag, extra):
         """C2 and C3 are satisfied against capacity PLUS what the plan purchased, so `cap`
@@ -608,7 +606,13 @@ class TestCapacitySeriesIsTheConstraints:
         exceed `cap` (water ranked #1 wrongly, labor shown over-subscribed in the very
         scenario that bought the hours) or makes it zero (well off + city on: every consumer
         guards `cap > 0` and the row vanishes from the bottleneck ranking entirely)."""
-        r = _solve({**full_params, "sell_through_fraction": 0.85}, **extra)
+        params = {**full_params, "sell_through_fraction": 0.85}
+        if extra.get("hire_enabled"):   # extra heads ride on roster rows (L.3); a 1-person crew needs them
+            params["seasonal_employees"] = [dict(e, count=1, hire_more=True, max_more=10)
+                                            for e in full_params["seasonal_employees"]]
+        r = _solve(params, **extra)
+        if extra.get("hire_enabled"):
+            assert r["total_hired_hours"] > 0, f"[{tag}] hired nobody — the cap's hire term is untested"
         _assert_within_caps(r, tag)
         for name in ("labor", "water"):
             assert max(r["capacity_series"][name]["cap"]) > 0, (

@@ -107,30 +107,15 @@ bootApp().then(({ window: w }) => {
     ['Overtime is used beyond the hiring cap',   'the pre-W15 fill order (overtime as overflow)'],
     ['not tracked against crop-phase demand',    'salaried hours DO feed weekly labor capacity'],
     ['perfectly divisible — fractional headcount-weeks', 'the retired usage-billed labor model'],
+    ['Hired wage',                               'the retired spot-market hire (L.3: a head inherits its row)'],
+    ['hiring markup',                            'the retired spot-market hire (L.3)'],
+    ['Max extra labor (hrs/week)',               'the retired spot-market hire (L.3)'],
   ];
   for (const [phrase, why] of deadPhrases) {
     if (html.includes(phrase)) {
       fail(`dead copy is back: "${phrase}" — this describes ${why}, which the solver does not do`);
     }
   }
-
-  // 6 — readHiredWageBox is THE definition of blank-vs-typed for the hired wage (a typed $0
-  // was silently reinterpreted as blank once; that bug shipped). Pin the classification.
-  const hwBox = doc.getElementById('hired_wage_per_hr');
-  const hwSaved = hwBox.value;
-  hwBox.value = '';
-  let hw = w.readHiredWageBox();
-  if (!hw.blank) fail('readHiredWageBox: an empty box must classify as blank (= infer)');
-  hwBox.value = '19';
-  hw = w.readHiredWageBox();
-  if (hw.blank || hw.wage !== 19) fail(`readHiredWageBox: typed 19 gave blank=${hw.blank} wage=${hw.wage}`);
-  hwBox.value = '0';
-  hw = w.readHiredWageBox();
-  if (hw.blank || hw.wage !== 0) {
-    fail(`readHiredWageBox: typed 0 gave blank=${hw.blank} wage=${hw.wage} — a typed 0 is a `
-       + `refusable VALUE, not blank; classifying it blank is the silent-reinterpretation bug`);
-  }
-  hwBox.value = hwSaved;
 
   // 6b — L.2: the allowance is a TOTAL week, shown in hours so 125% cannot read as on top
   // (the grower's first reading was 90 h/wk). Live: typing into the row updates its readout.
@@ -156,57 +141,39 @@ bootApp().then(({ window: w }) => {
     }
   }
 
-  // 7 — the printed bought-hour price must weight hours against the RIGHT weeks. Both
-  // series are 52 entries, 0-indexed (L.1) — an off-by-one
-  // would print a wrong dollar figure to the grower with everything green. Synthetic plan:
-  // 10 hrs at $20 (week 1) + 30 hrs at $40 (week 52) → weighted $35.00; zero OT hours →
-  // fallback to the annual mean of the OT rate array ($30.00).
-  const hireHours = new Array(52).fill(0); hireHours[0] = 10; hireHours[51] = 30;
-  const hireRates = new Array(52).fill(0); hireRates[0] = 20; hireRates[51] = 40;
-  const sr = {
-    profit: 120000,
-    hired_hours_weekly: hireHours, overtime_hours_weekly: new Array(52).fill(0),
-    hire_rate_full_weekly: hireRates, overtime_rate_full_weekly: new Array(52).fill(30),
-  };
-  const planHtml = w.renderLaborPlan(sr, { profit: 100000 },
-    { hire_wage_markup: 0, overtime_rate_multiplier: 1.5, fica_pct: 0.0765, straight_time_load_pct: 0.1735, hired_wage_per_hr: null });
-  if (!planHtml.includes('$35.00')) {
-    fail(`renderLaborPlan priced 10h@$20 + 30h@$40 as something other than $35.00 — the `
-       + `hours/rates week alignment is wrong (got: `
-       + `${(planHtml.match(/~\$[\d.]+\/hr/g) || []).join(', ')})`);
-  }
-  // L.2: overtime is priced per role, so its printed price is cost ÷ hours from the solve.
-  const otHours = new Array(52).fill(0); otHours[5] = 10;
-  const otHtml = w.renderLaborPlan({ ...sr, overtime_hours_weekly: otHours, total_overtime_hours: 10,
-      bought_capacity_split: { overtime: 300, hire: 0, city_water: 0 } }, { profit: 100000 },
-    { hire_wage_markup: 0, overtime_rate_multiplier: 1.5, fica_pct: 0.0765, straight_time_load_pct: 0.1735, hired_wage_per_hr: null });
-  if (!otHtml.includes('$30.00')) {
-    fail('renderLaborPlan: 10 OT hours costing $300 must print ~$30.00/hr (cost ÷ hours)');
-  }
-
-  // 7b — the printed price must SHOW ITS ARITHMETIC. Grower QA 2026-07-31: with $15.00 typed
-  // and a 25% payroll load the footer read "~$18.75/hr all-in (your typed wage +0% markup)" —
-  // the figure is 25% above what they typed, the only term naming that 25% sat in a separate
-  // trailing sentence, and the "+0%" made the load look like the markup. Every term that
-  // moved the number is named inline now, and zero terms are omitted rather than printed.
-  const typedRates = new Array(52).fill(18.75);
-  const typedSr = { ...sr, hire_rate_full_weekly: typedRates };
-  const typedHtml = w.renderLaborPlan(typedSr, { profit: 100000 },
-    { hire_wage_markup: 0, overtime_rate_multiplier: 1.5, fica_pct: 0.0765, straight_time_load_pct: 0.1735, hired_wage_per_hr: 15 });
-  if (!typedHtml.includes('$18.75/hr all-in')) fail('renderLaborPlan: typed-wage all-in price missing');
-  if (!/\$15\.00\/hr/.test(typedHtml) || !/25% payroll load/.test(typedHtml)) {
-    fail('renderLaborPlan: a typed wage must show its derivation inline ("your $15.00/hr '
-       + '+25% payroll load") — the grower could not see where the extra 25% came from');
-  }
-  if (/\+0%/.test(typedHtml)) {
-    fail('renderLaborPlan: a 0% term is printed ("+0%") — that is what made the payroll load '
-       + 'read as the markup; omit zero terms instead');
-  }
-  // With a markup set, BOTH multipliers are named.
-  const markedUp = w.renderLaborPlan(typedSr, { profit: 100000 },
-    { hire_wage_markup: 0.2, overtime_rate_multiplier: 1.5, fica_pct: 0.0765, straight_time_load_pct: 0.1735, hired_wage_per_hr: 15 });
-  if (!/25% payroll load/.test(markedUp) || !/20% hiring markup/.test(markedUp)) {
-    fail('renderLaborPlan: with a markup set, both the payroll load and the markup must be named');
+  // 7 — L.3: extra hires per roster row. The panel names each row's heads, prices them, offers the
+  // round trip, and says WHY when the answer is zero (the shipped farm's answer — F1).
+  {
+    const sp = { hire_productivity_pct: 70 };
+    const none = w.renderLaborPlan({ profit: 1, extra_hires: [] }, { profit: 1 }, sp);
+    if (!/Hire more\?/.test(none)) fail('renderLaborPlan: with no row ticked it must say to tick "Hire more?"');
+    const zeroRows = [{ position: 'Harvest Crew', row: 3, extra: 0, max_more: 5, cost_per_head: 26450, hours_per_head: 756 }];
+    const zero = w.renderLaborPlan({ profit: 100, extra_hires: zeroRows }, { profit: 100 }, sp);
+    if (!/No extra hire pays for itself/.test(zero) || !zero.includes('Harvest Crew') || !zero.includes('26,450')) {
+      fail('renderLaborPlan: a zero answer must say no hire pays AND show each row\'s cost per head');
+    }
+    // A hostile position name must not become markup (escaping on the new surface).
+    const evil = w.renderLaborPlan({ profit: 100, extra_hires: [{ ...zeroRows[0], position: '<img src=x onerror=1>' }] },
+                                   { profit: 100 }, sp);
+    if (evil.includes('<img')) fail('renderLaborPlan: a position name reached the page unescaped');
+    // The round trip: +2 on the roster's 4th row → its Count goes up by 2.
+    const rowEls = doc.querySelectorAll('#labor-list .labor-row');
+    const countBox = rowEls[3].querySelector('[data-lf="count"]');
+    const before = parseInt(countBox.value, 10);
+    const took = [{ ...zeroRows[0], extra: 2 }];
+    const yes = w.renderLaborPlan({ profit: 150, extra_hires: took }, { profit: 100 }, sp);
+    if (!/\+2 Harvest Crew/.test(yes) || !/Add to roster/.test(yes)) fail('renderLaborPlan: taken heads must be named with an "Add to roster" action');
+    w.addExtraToRoster(0);
+    if (parseInt(countBox.value, 10) !== before + 2) {
+      fail(`addExtraToRoster: Count went ${before} → ${countBox.value}, expected ${before + 2} (wrong row or no-op)`);
+    }
+    countBox.value = String(before);
+    // The row's own hire columns reach the payload.
+    const hm = rowEls[3].querySelector('[data-lf="hire_more"]'), mm = rowEls[3].querySelector('[data-lf="max_more"]');
+    hm.checked = true; mm.value = '4';
+    const e3 = w.getLaborFromForm()[3];
+    if (e3.hire_more !== true || e3.max_more !== 4) fail(`getLaborFromForm: hire_more/max_more sent as ${e3.hire_more}/${e3.max_more}`);
+    hm.checked = false; mm.value = '0';
   }
 
   if (failures) { console.error(`labor_ui_client: ${failures} FAILURE(S)`); process.exit(1); }

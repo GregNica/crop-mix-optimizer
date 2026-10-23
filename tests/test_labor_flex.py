@@ -42,48 +42,10 @@ def test_flex_off_is_baseline(minimal_params):
     assert base["overtime_cost"] == 0.0
 
 
-def test_flex_never_lowers_profit_and_accounts_consistently(two_crop_params):
-    p = _labor_bound(two_crop_params)
-    base = solve_farm_v2(**p)
-    flex = solve_farm_v2(
-        **p,
-        hire_enabled=True, max_hire_hrs_per_week=2000.0, hire_wage_markup=0.0,
-        overtime_enabled=True, overtime_rate_multiplier=1.5,
-    )
-    assert flex["status"] == "optimal"
-    assert flex["operating_profit"] >= base["operating_profit"] - 1.0
-    # P&L identity holds with the new cost lines included.
-    recomputed = flex["revenue"] - (
-        flex["fixed_cost"] + flex["variable_cost"] + flex["city_water_cost"]
-        + flex["overtime_cost"] + flex["hire_cost"]
-    )
-    assert recomputed == pytest.approx(flex["operating_profit"], abs=1.0)
 
 
-def test_hired_labor_used_before_overtime(two_crop_params):
-    # Labor genuinely binds; generous hire cap @ 0 markup → lean on hiring, not overtime.
-    p = _labor_bound(two_crop_params)
-    flex = solve_farm_v2(
-        **p,
-        hire_enabled=True, max_hire_hrs_per_week=5000.0, hire_wage_markup=0.0,
-        overtime_enabled=True, overtime_rate_multiplier=1.5,
-    )
-    assert flex["status"] == "optimal"
-    assert flex["total_hired_hours"] > 0.0
-    assert flex["total_overtime_hours"] == pytest.approx(0.0, abs=1e-6)
 
 
-def test_hire_cap_forces_overtime_overflow(two_crop_params):
-    # Tight hire cap on a labor-bound farm → the overflow must spill into overtime.
-    p = _labor_bound(two_crop_params)
-    flex = solve_farm_v2(
-        **p,
-        hire_enabled=True, max_hire_hrs_per_week=20.0, hire_wage_markup=0.0,
-        overtime_enabled=True, overtime_rate_multiplier=1.5,
-    )
-    assert flex["status"] == "optimal"
-    assert max(flex["hired_hours_weekly"]) <= 20.0 + 1e-6
-    assert flex["total_overtime_hours"] > 0.0
 
 
 # ── A bought hour must have a real price (W-review 2026-07-31) ────────────────
@@ -103,12 +65,6 @@ def _all_unpaid_crew(two_crop_params):
     return p
 
 
-def test_hire_on_an_unpaid_crew_is_refused_not_free(two_crop_params):
-    r = solve_farm_v2(**_all_unpaid_crew(two_crop_params),
-                      hire_enabled=True, max_hire_hrs_per_week=2000.0)
-    assert r["status"] == "invalid_input"
-    assert any("hired" in e.lower() for e in r["errors"])
-    assert r["profit"] is None
 
 
 def test_overtime_on_an_unpaid_crew_is_never_bought_free(two_crop_params):
@@ -120,12 +76,6 @@ def test_overtime_on_an_unpaid_crew_is_never_bought_free(two_crop_params):
     assert r["total_overtime_hours"] == 0.0 and r["overtime_by_role"] == []
 
 
-def test_flex_on_an_empty_crew_is_refused_not_free(two_crop_params):
-    p = copy.deepcopy(two_crop_params)
-    p["year_round_employees"] = []
-    p["seasonal_employees"] = []
-    r = solve_farm_v2(**p, hire_enabled=True, max_hire_hrs_per_week=2000.0)
-    assert r["status"] == "invalid_input"
 
 
 def test_fixed_staff_solve_of_an_unpaid_crew_still_runs(two_crop_params):
@@ -135,42 +85,8 @@ def test_fixed_staff_solve_of_an_unpaid_crew_still_runs(two_crop_params):
     assert r["fixed_cost_split"]["wages"] == pytest.approx(0.0, abs=1e-9)
 
 
-def test_an_explicit_hired_wage_rescues_an_unpaid_crew(two_crop_params):
-    r = solve_farm_v2(**_all_unpaid_crew(two_crop_params),
-                      hire_enabled=True, max_hire_hrs_per_week=2000.0,
-                      hired_wage_per_hr=18.0, hire_wage_markup=0.0)
-    assert r["status"] == "optimal"
-    # Whatever it buys, it pays for: the typed wage, not the crew's $0.
-    assert r["hire_cost"] == pytest.approx(r["total_hired_hours"] * 18.0, rel=1e-6)
 
 
-def test_bought_hour_prices_are_published(two_crop_params):
-    """The all-in $/hr for a bought hour is a RETURNED number, not a described statistic.
-
-    With the hired-wage box blank no UI surface could print what an hour would be bought for,
-    so the grower had nothing to check against their local market. These keys also pin the
-    markup arithmetic itself: $20 typed × (1+0.25) must be $25.00 in the published rate."""
-    p = _labor_bound(two_crop_params)
-    r = solve_farm_v2(
-        **p,
-        hire_enabled=True, max_hire_hrs_per_week=2000.0, hire_wage_markup=0.25,
-        hired_wage_per_hr=20.0,
-        overtime_enabled=True, overtime_rate_multiplier=1.5,
-    )
-    assert r["status"] == "optimal"
-    assert len(r["hire_rate_full_weekly"]) == 52
-    assert float(r["hire_rate_full_weekly"][0]) == pytest.approx(20.0 * 1.25), (
-        "hire_wage_markup is not in the published hire rate — either the markup fell out of "
-        "the pricing (the mutation every test used to miss, because every test set it to 0) "
-        "or the published rate is not the rate the objective charges"
-    )
-    # Overtime is priced per role (L.2): the fixture's $18/hr seasonal crew at 1.5×.
-    (crew,) = r["overtime_by_role"]
-    assert crew["rate"] == pytest.approx(18.0 * 1.5)
-    # And the published price is the price actually paid, wherever hours were bought.
-    if r["total_hired_hours"] > 0:
-        implied = r["hire_cost"] / r["total_hired_hours"]
-        assert implied == pytest.approx(25.0, rel=1e-6)
 
 
 # ── Payroll load (employer burden on wages) ───────────────────────────────────
@@ -201,16 +117,6 @@ def test_payroll_load_reduces_profit(minimal_params):
     assert loaded["operating_profit"] <= no_load["operating_profit"] + 1.0
 
 
-def test_payroll_load_flows_into_bought_labor(two_crop_params):
-    p = _labor_bound(two_crop_params)
-    flex_kwargs = dict(
-        hire_enabled=True, max_hire_hrs_per_week=2000.0, hire_wage_markup=0.0,
-        overtime_enabled=True, overtime_rate_multiplier=1.5,
-    )
-    no_load = solve_farm_v2(**_with_payroll_load(p, 0.0),  **flex_kwargs)
-    loaded  = solve_farm_v2(**_with_payroll_load(p, 0.30), **flex_kwargs)
-    assert no_load["status"] == "optimal" and loaded["status"] == "optimal"
-    assert loaded["operating_profit"] <= no_load["operating_profit"] + 1.0
 
 
 # ── Field-time cap + overhead internalization ─────────────────────────────────

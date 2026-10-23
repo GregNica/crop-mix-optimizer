@@ -61,13 +61,6 @@ def test_an_untruncated_solve_carries_no_gap_note(golden_out):
     assert not golden_out.get("gap_note"), "an optimal solve must not warn about a time limit"
 
 
-def test_bought_hour_rate_arrays_survive_the_adapter(golden_out):
-    """52 entries each, so renderLaborPlan can print the price a bought hour carries."""
-    assert golden_out.get("status") == "optimal"
-    assert len(golden_out.get("hire_rate_full_weekly", [])) == 52
-    assert min(golden_out["hire_rate_full_weekly"]) > 0, (
-        "a published hire rate of $0 is the free-labour defect showing through the display"
-    )
 
 
 def test_labor_by_role_survives_the_adapter_and_sums_to_the_farm(golden_out):
@@ -191,22 +184,6 @@ def test_a_blank_box_for_a_water_source_that_is_ON_is_still_refused(on, key):
         f"a blank {key} with the source ON was not refused (status={out.get('status')})")
 
 
-def test_the_payroll_load_reaches_a_hired_hour_through_the_adapter():
-    """Kills deleting the hired_wage_load_pct kwarg from the adapter's solve call.
-
-    The /simplify pass moved the load multiplication from the adapter into labor.py; the only
-    tests asserting the load called compute_labor_arrays directly, so removing the kwarg
-    would silently resurrect the 25% hire under-pricing for every browser caller with the
-    whole suite green. This runs the REAL adapter with flex on and pins the published rate."""
-    p = golden_payload(labor_flex_enabled=True, hire_enabled=True, max_hire_hrs_per_week=400.0,
-                 hire_wage_markup=0.0, hired_wage_per_hr=19.0, payroll_load_pct=0.25)
-    out = json.loads(run_from_js(json.dumps(p)))
-    assert out.get("status") == "optimal", out.get("error", "")[:300]
-    assert out["hire_rate_full_weekly"][0] == pytest.approx(19.0 * 1.25), (
-        f"typed $19.00 at 25% payroll load published as "
-        f"${out['hire_rate_full_weekly'][0]}/hr — the load fell out of the adapter→labor.py "
-        f"hand-off (19.00 = zero-applied, 29.6875 = double-applied)"
-    )
 
 
 def test_a_legacy_single_payroll_load_solves_exactly_like_its_split():

@@ -73,12 +73,13 @@ def test_direct_caller_and_adapter_report_the_same_profit(golden_both):
 
 def test_total_cost_is_summed_from_its_parts_and_closes_operating_profit(two_crop_params):
     from tests.test_labor_flex import _labor_bound
-    r = solve_farm_v2(**_labor_bound(two_crop_params),
-                      hire_enabled=True, max_hire_hrs_per_week=2000.0, hire_wage_markup=0.0,
-                      overtime_enabled=True, overtime_rate_multiplier=1.5)
+    p = _labor_bound(two_crop_params)
+    p["seasonal_employees"][0].update(hire_more=True, max_more=20)
+    r = solve_farm_v2(**p, hire_enabled=True, overtime_enabled=True, overtime_rate_multiplier=1.5)
     assert r["status"] == "optimal"
     split = r["bought_capacity_split"]
-    assert sum(split.values()) > 0, "fixture bought nothing — a dropped term would be invisible"
+    assert split["hire"] > 0 and split["overtime"] > 0, (
+        "fixture bought no hire or no overtime — a dropped term would be invisible")
     assert set(split) == {"city_water", "overtime", "hire"}
     assert r["total_cost"] == pytest.approx(
         r["fixed_cost"] + r["variable_cost"] + sum(split.values()), abs=1e-6)

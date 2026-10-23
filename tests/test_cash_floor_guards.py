@@ -112,7 +112,6 @@ def test_bought_labor_is_real_money_in_the_cash_floor(two_crop_params):
     """
     p = _cash_bound(
         two_crop_params, crew=0, opening_cash=600_000.0, credit_line=140_000.0,
-        hire_enabled=True, max_hire_hrs_per_week=20.0, hire_wage_markup=0.0,
         overtime_enabled=True, overtime_rate_multiplier=1.5,
     )
     p["seasonal_employees"] = []
@@ -124,7 +123,7 @@ def test_bought_labor_is_real_money_in_the_cash_floor(two_crop_params):
          "max_week_pct": 200}]
     r = solve_farm_v2(**p)
     assert r["status"] == "optimal", f"fixture must remain solvable: {r['status']} {r.get('errors')}"
-    assert r["total_hired_hours"] > 100.0, "fixture stopped hiring — the hire coefficient is untested"
+    # Extra hires' C13 column is guarded in test_extra_hires.py (L.3 retired the spot market).
     assert r["total_overtime_hours"] > 100.0, "fixture stopped buying overtime — the OT coefficient is untested"
     cum = _cum_net(r)
     floor = -p["credit_line"]
