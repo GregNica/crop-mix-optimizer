@@ -484,6 +484,12 @@ def run_from_js(params_json):
             'total_overtime_hours': float(result.get('total_overtime_hours', 0.0)),
             'hired_hours_weekly':    [round(float(v), 1) for v in result.get('hired_hours_weekly', [])],
             'overtime_hours_weekly': [round(float(v), 1) for v in result.get('overtime_hours_weekly', [])],
+            # The roster as named weekly rows (F3), 52 entries each, 0-indexed.
+            'labor_by_role': [
+                {'position': r['position'], 'is_hourly': bool(r['is_hourly']),
+                 **{k: [round(float(v), 2) for v in r[k]]
+                    for k in ('heads', 'paid_hours', 'task_hours', 'cost')}}
+                for r in result.get('labor_by_role', [])],
             # The prices those hours were (or would be) bought at, $/hr all-in — 52 entries,
             # 0-indexed. Forwarded so renderLaborPlan can print a number the grower can check
             # against their local market instead of a description of an inference.

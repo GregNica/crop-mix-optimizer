@@ -71,6 +71,28 @@ def test_bought_hour_rate_arrays_survive_the_adapter(golden_out):
     )
 
 
+def test_labor_by_role_survives_the_adapter_and_sums_to_the_farm(golden_out):
+    """F3 (L.1): the roster as named weekly rows, one per employee row, 52 entries, 0-indexed.
+
+    The farm's capacity is DERIVED from these rows, so their task hours must sum to the weekly
+    supply the page charts (flex is off on the golden farm, so supply = capacity). A key added
+    to the solver but not the adapter is the W6 failure; this executes the adapter."""
+    rows = golden_out.get("labor_by_role")
+    assert rows and len(rows) == len(golden_payload()["employees"])
+    for r in rows:
+        assert r["position"]
+        for k in ("heads", "paid_hours", "task_hours", "cost"):
+            assert len(r[k]) == 52, (r["position"], k)
+    supply = golden_out["weekly_labor_supply"]
+    for i in range(52):
+        assert abs(sum(r["task_hours"][i] for r in rows) - supply[i]) < 0.05 * len(rows), i
+    # A seasonal role is OFF outside its window (week indices 0-based), on inside it.
+    assert any(min(r["heads"]) == 0 < max(r["heads"]) for r in rows), "no windowed role"
+    # One basis for every weekly labour series (the 52/53 split produced a false finding).
+    assert len(golden_out["overtime_hours_weekly"]) == 52
+    assert len(golden_out["hired_hours_weekly"]) == 52
+
+
 def test_fractional_headcount_survives_the_adapter(golden_out):
     """The What-If labor lever scales counts fractionally (+10% of 2 workers = 2.2).
 

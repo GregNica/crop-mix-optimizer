@@ -124,6 +124,7 @@ def compute_labor_arrays(
     total_paid_hours = 0.0
     hourly_wages          = []          # (effective $/hr, weekly hours) per hourly role (W15)
     piece_rate_workers    = []
+    labor_by_role         = []          # F3: one named row per roster line, see _role
 
     # --- Year-round employees (available every week) ---
     for emp in year_round_employees:
@@ -137,30 +138,29 @@ def compute_labor_arrays(
         field      = max(0.0, min(1.0, emp.get("field_time_pct", 100.0) / 100.0))
 
         total_hrs_per_week = count * hrs * field
-        labor_capacity += total_hrs_per_week
+        if emp_type not in ("salary", "hourly"):
+            raise ValueError(
+                f"Year-round employee '{emp.get('position', '?')}' has unknown type "
+                f"'{emp_type}'. Expected 'salary' or 'hourly'."
+            )
+        # Annual wage → weekly cost (salary); count × hours × loaded rate (hourly).
+        weekly_cost = (count * wage * (1 + bene) / 52 if emp_type == "salary"
+                       else count * hrs * (wage * (1 + bene)))
+        labor_by_role.append(_role(emp, emp_type == "hourly", count, hrs, field, weekly_cost,
+                                   range(n_weeks), n_weeks))
 
         if emp_type == "salary":
-            # Annual wage → weekly cost
-            weekly_cost = count * wage * (1 + bene) / 52
-            committed_weekly_wages += weekly_cost
             if wage > 0:
                 total_paid_hours += count * hrs * n_weeks
 
         elif emp_type == "hourly":
             effective_rate = wage * (1 + bene)
             hourly_wages.append((effective_rate, count * hrs))
-            committed_weekly_wages += count * hrs * effective_rate
             # Unpaid roles: capacity, never a price — see the rule at total_paid_hours.
             if wage > 0:
                 total_paid_hours += count * hrs * n_weeks
                 hourly_weighted_wages += total_hrs_per_week * effective_rate
                 hourly_weighted_hours += total_hrs_per_week
-
-        else:
-            raise ValueError(
-                f"Year-round employee '{emp.get('position', '?')}' has unknown type "
-                f"'{emp_type}'. Expected 'salary' or 'hourly'."
-            )
 
     # --- Seasonal employees ---
     for emp in seasonal_employees:
@@ -204,6 +204,8 @@ def compute_labor_arrays(
         effective_rate = wage * (1 + bene)
         hourly_wages.append((effective_rate, count * hrs * (end_w - start_w + 1) / n_weeks))
         total_hrs_per_week = count * hrs * field
+        labor_by_role.append(_role(emp, True, count, hrs, field, count * hrs * effective_rate,
+                                   range(start_w - 1, end_w), n_weeks))
 
         # Unpaid roles: capacity, never a price — see the rule at total_paid_hours.
         if wage > 0:
@@ -211,12 +213,15 @@ def compute_labor_arrays(
 
         # Week indices are 0-based internally (week w → index w-1)
         for w_idx in range(start_w - 1, end_w):
-            committed_weekly_wages[w_idx] += count * hrs * effective_rate
-            labor_capacity[w_idx]        += total_hrs_per_week
             if wage > 0:
                 hourly_weighted_wages[w_idx] += total_hrs_per_week * effective_rate
                 hourly_weighted_hours[w_idx] += total_hrs_per_week
 
+
+    # The farm totals are the SUMS of the per-role rows (F3) — one derivation, not two.
+    for role in labor_by_role:
+        labor_capacity         += role["task_hours"]
+        committed_weekly_wages += role["cost"]
 
     # --- Blended hourly rate ---
     # Where no hourly employees are available, rate = 0 (no variable labor cost)
@@ -340,6 +345,26 @@ def compute_labor_arrays(
         "labor_capacity":         labor_capacity,
         "hourly_labor_rate":      hourly_labor_rate,
         "piece_rate_workers":     piece_rate_workers,
+        "labor_by_role":          labor_by_role,
+    }
+
+
+def _role(emp: dict, is_hourly: bool, count: float, hrs: float, field: float,
+          weekly_cost: float, weeks: range, n_weeks: int) -> dict:
+    """One roster line as named weekly arrays (F3), all n_weeks long and 0-indexed.
+
+    paid_hours is what the wage bill pays for; task_hours is the share available to crop work
+    (field %). The farm totals in compute_labor_arrays are the sums of these rows.
+    """
+    on = np.zeros(n_weeks, dtype=float)
+    on[list(weeks)] = 1.0
+    return {
+        "position":   emp.get("position", ""),
+        "is_hourly":  bool(is_hourly),
+        "heads":      on * count,
+        "paid_hours": on * (count * hrs),
+        "task_hours": on * (count * hrs * field),
+        "cost":       on * weekly_cost,
     }
 
 

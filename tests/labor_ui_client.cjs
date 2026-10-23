@@ -132,23 +132,23 @@ bootApp().then(({ window: w }) => {
   }
   hwBox.value = hwSaved;
 
-  // 7 — the printed bought-hour price must weight hours against the RIGHT weeks. The hour
-  // series is 1-indexed (53 entries) and the rate arrays 0-indexed (52) — an off-by-one
+  // 7 — the printed bought-hour price must weight hours against the RIGHT weeks. Both
+  // series are 52 entries, 0-indexed (L.1) — an off-by-one
   // would print a wrong dollar figure to the grower with everything green. Synthetic plan:
   // 10 hrs at $20 (week 1) + 30 hrs at $40 (week 52) → weighted $35.00; zero OT hours →
   // fallback to the annual mean of the OT rate array ($30.00).
-  const hireHours = new Array(53).fill(0); hireHours[1] = 10; hireHours[52] = 30;
+  const hireHours = new Array(52).fill(0); hireHours[0] = 10; hireHours[51] = 30;
   const hireRates = new Array(52).fill(0); hireRates[0] = 20; hireRates[51] = 40;
   const sr = {
     profit: 120000,
-    hired_hours_weekly: hireHours, overtime_hours_weekly: new Array(53).fill(0),
+    hired_hours_weekly: hireHours, overtime_hours_weekly: new Array(52).fill(0),
     hire_rate_full_weekly: hireRates, overtime_rate_full_weekly: new Array(52).fill(30),
   };
   const planHtml = w.renderLaborPlan(sr, { profit: 100000 },
     { hire_wage_markup: 0, overtime_rate_multiplier: 1.5, payroll_load_pct: 0.25, hired_wage_per_hr: null });
   if (!planHtml.includes('$35.00')) {
     fail(`renderLaborPlan priced 10h@$20 + 30h@$40 as something other than $35.00 — the `
-       + `1-indexed hours / 0-indexed rates offset is wrong (got: `
+       + `hours/rates week alignment is wrong (got: `
        + `${(planHtml.match(/~\$[\d.]+\/hr/g) || []).join(', ')})`);
   }
   if (!planHtml.includes('$30.00')) {

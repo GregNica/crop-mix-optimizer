@@ -1858,10 +1858,10 @@ def solve_farm_v2(
     hire_weekly = (z[idx_hire_start : idx_hire_start + N_WEEKS]
                    if (hire_enabled and idx_hire_start is not None) else np.zeros(N_WEEKS))
 
-    hired_hours_weekly    = np.zeros(N_WEEKS + 1)
-    overtime_hours_weekly = np.zeros(N_WEEKS + 1)
-    if overtime_enabled or hire_enabled:
-        # Read the SOLVED split, do not reconstruct it.
+    # Read the SOLVED split, do not reconstruct it. 52 entries, 0-indexed — the same basis as
+    # every other weekly labour array in the result (L.1; a 53-long 1-indexed copy beside the
+    # 52-long rate arrays once produced a false finding).
+    #
         #
         # This used to fill hired labour to its cap first and give the remainder to overtime, on
         # the reasoning that hire is the cheaper of the two. W15 decoupled the two prices — a
@@ -1875,14 +1875,14 @@ def solve_farm_v2(
         # UNRECONCILED tripwire could not catch it because both sides came from the same guess.
         #
         # The objective already chose the split on the real prices. `capacity_series` 120 lines
-        # below has always read these same variables; this now agrees with it.
-        hired_hours_weekly[1:]    = hire_weekly
-        overtime_hours_weekly[1:] = ot_weekly
+    # below has always read these same variables; this now agrees with it.
+    hired_hours_weekly    = np.array(hire_weekly, dtype=float)
+    overtime_hours_weekly = np.array(ot_weekly, dtype=float)
 
-    overtime_cost = float(np.dot(overtime_hours_weekly[1:],
+    overtime_cost = float(np.dot(overtime_hours_weekly,
                                  overtime_rate_full)) \
                     if overtime_enabled else 0.0
-    hire_cost     = float(np.dot(hired_hours_weekly[1:],
+    hire_cost     = float(np.dot(hired_hours_weekly,
                                  hire_rate_full)) \
                     if hire_enabled else 0.0
 
@@ -1936,8 +1936,8 @@ def solve_farm_v2(
     for w in range(1, N_WEEKS + 1):
         weekly_other[w] = (
             (cw_weekly[w - 1] * city_water_cost_per_L if cw_weekly is not None else 0.0)
-            + overtime_hours_weekly[w] * overtime_rate_full[w - 1]
-            + hired_hours_weekly[w]    * hire_rate_full[w - 1]
+            + overtime_hours_weekly[w - 1] * overtime_rate_full[w - 1]
+            + hired_hours_weekly[w - 1]    * hire_rate_full[w - 1]
             + overhead_pct_of_revenue  * weekly_gross_rev[w]
             + fixed_selling_per_week
         )
@@ -2065,8 +2065,12 @@ def solve_farm_v2(
         "total_overtime_hours": float(overtime_hours_weekly.sum()),
         "hired_hours_weekly":    hired_hours_weekly,
         "overtime_hours_weekly": overtime_hours_weekly,
+        # The roster as named weekly rows (F3): position, is_hourly, heads, paid_hours,
+        # task_hours, cost — each 52 long, 0-indexed. labor_capacity and the committed wage
+        # bill are the sums of these.
+        "labor_by_role":         labor_result["labor_by_role"],
         # The all-in $/hr a bought hour actually costs, by week (markup / multiplier applied) —
-        # 52 entries, 0-indexed, unlike the two 1-indexed hour series above. Published so the
+        # 52 entries, 0-indexed, like the two hour series above. Published so the
         # UI can PRINT the price instead of describing the statistic that produced it: with the
         # hired-wage box blank, no surface could show what an hour would be bought for, so the
         # grower had no number to check against their local labour market.
