@@ -328,7 +328,7 @@ def _require_employee_numbers(emp: dict, keys: tuple, kind: str, i: int) -> None
     # Optional keys labor.py does arithmetic on the moment they are present — a None or
     # string there raises TypeError in Step 2, OUTSIDE the Step-0 try, handing a caller a
     # traceback where every other bad input gets invalid_input.
-    for key in ("benefits_pct", "fica_pct", "field_time_pct", "max_week_pct", "max_more"):
+    for key in ("benefits_pct", "fica_pct", "field_time_pct", "admin_pct", "max_week_pct", "max_more"):
         if key in emp:
             v = emp[key]
             if not _is_number(v):

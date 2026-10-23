@@ -408,40 +408,64 @@
  ],
  "employees": [
   {
-   "count": 1,
-   "field_time_pct": 80,
-   "hours_per_week": 45,
    "position": "Farm Manager",
    "type": "salary",
-   "wage": 95000
+   "count": 1,
+   "wage": 95000,
+   "hours_per_week": 45,
+   "admin_pct": 20,
+   "task_field": true,
+   "task_postharvest": true,
+   "task_selling": true,
+   "max_week_pct": 100,
+   "hire_more": false,
+   "max_more": 0
   },
   {
-   "count": 2,
-   "field_time_pct": 90,
-   "hours_per_week": 40,
    "position": "Equipment Operator",
    "type": "hourly",
-   "wage": 26
+   "count": 2,
+   "wage": 26,
+   "hours_per_week": 40,
+   "admin_pct": 10,
+   "task_field": true,
+   "task_postharvest": true,
+   "task_selling": true,
+   "max_week_pct": 125,
+   "hire_more": false,
+   "max_more": 0
   },
   {
-   "count": 12,
-   "end_week": 42,
-   "field_time_pct": 100,
-   "hours_per_week": 40,
    "position": "Seasonal Field Crew",
-   "start_week": 10,
    "type": "seasonal",
-   "wage": 20
+   "count": 12,
+   "wage": 20,
+   "hours_per_week": 40,
+   "admin_pct": 0,
+   "task_field": true,
+   "task_postharvest": true,
+   "task_selling": true,
+   "max_week_pct": 125,
+   "hire_more": false,
+   "max_more": 0,
+   "start_week": 10,
+   "end_week": 42
   },
   {
-   "count": 8,
-   "end_week": 40,
-   "field_time_pct": 100,
-   "hours_per_week": 40,
    "position": "Harvest Crew",
-   "start_week": 14,
    "type": "seasonal",
-   "wage": 19
+   "count": 8,
+   "wage": 19,
+   "hours_per_week": 40,
+   "admin_pct": 0,
+   "task_field": true,
+   "task_postharvest": true,
+   "task_selling": true,
+   "max_week_pct": 125,
+   "hire_more": false,
+   "max_more": 0,
+   "start_week": 14,
+   "end_week": 40
   }
  ],
  "equip_storage": 300,
@@ -480,5 +504,6 @@
  "insurance_payment_week": null,
  "utilities_cost_per_yr": 0,
  "fica_pct": 0.0765,
- "straight_time_load_pct": 0.17350000000000002
+ "straight_time_load_pct": 0.17350000000000002,
+ "overtime_rate_multiplier": 1
 }

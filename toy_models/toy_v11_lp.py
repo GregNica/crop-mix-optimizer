@@ -217,7 +217,9 @@ def positions():
         # field% reduces capacity without reducing the wage — that asymmetry is the whole
         # reason both numbers have to exist.
         contract = e["count"] * e["hours_per_week"]
-        field = contract * e.get("field_time_pct", 100) / 100.0
+        # Admin % (L.4) is the inverse of the old Field %; a pre-L.4 payload still sends Field %.
+        field_pct = 100 - e["admin_pct"] if "admin_pct" in e else e.get("field_time_pct", 100)
+        field = contract * field_pct / 100.0
         per_wk = (e["wage"] / N_WEEKS * e["count"] * load if salaried
                   else e["wage"] * e["hours_per_week"] * e["count"] * load)
         f_h = np.zeros(N_WEEKS + 1); c_h = np.zeros(N_WEEKS + 1); cost = np.zeros(N_WEEKS + 1)

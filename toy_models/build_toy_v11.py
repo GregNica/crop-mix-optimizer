@@ -338,7 +338,7 @@ for e in LP.PAYLOAD.get("employees", []):
     put(r, 3, e["type"], border=True)
     put(r, 4, e["wage"], fill=IN_FILL, fmt="$#,##0", border=True)
     put(r, 5, e["hours_per_week"], fill=IN_FILL, fmt="0", border=True)
-    put(r, 6, e.get("field_time_pct", 100), fill=IN_FILL, fmt="0", border=True)
+    put(r, 6, (100 - e["admin_pct"] if "admin_pct" in e else e.get("field_time_pct", 100)), fill=IN_FILL, fmt="0", border=True)
     put(r, 7, e.get("start_week", 1), fill=IN_FILL, fmt="0", border=True)
     put(r, 8, e.get("end_week", 52), fill=IN_FILL, fmt="0", border=True)
     # v11: hiring MORE of a role you already listed. Nothing new is entered — the extra heads

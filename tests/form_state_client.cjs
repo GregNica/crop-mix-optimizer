@@ -106,6 +106,23 @@ const ok = (name, cond) => { if (!cond) fail(name); };
     reset();
   }
 
+  // 3c. L.4 (I2a): a roster row saved with Field % comes back as Admin % (its inverse), reported,
+  // and the tags default ON for a row saved before they existed.
+  {
+    const s = clone(base);
+    const row = s.labor[0];
+    delete row.admin_pct; delete row.task_field; delete row.task_postharvest; delete row.task_selling;
+    row.field_time_pct = '80';
+    const r = apply(s);
+    const el = W.document.querySelector('#labor-list .labor-row [data-lf="admin_pct"]');
+    ok(`Field 80% restored as Admin 20% (got ${el && el.value})`, el && Number(el.value) === 20);
+    ok('the Field→Admin conversion is named in the load report', r.notes.some(n => n.includes('Admin %')));
+    ok('field_time_pct is not reported as lost', !r.dropped.some(d => d.includes('field_time_pct')));
+    const tag = W.document.querySelector('#labor-list .labor-row [data-lf="task_field"]');
+    ok('a pre-tag row restores with Field ticked', tag && tag.checked === true);
+    reset();
+  }
+
   // 4. Collections: an unknown key on a row, and per-channel data for a channel that is gone.
   {
     const s = clone(base);

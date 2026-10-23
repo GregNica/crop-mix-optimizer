@@ -185,7 +185,16 @@ def run_from_js(params_json):
                 "type":          t if t != 'seasonal' else 'FT',
                 "wage":          _e_val(e, 'wage', 0),
                 "hours_per_week": _e_val(e, 'hours_per_week', 40),
-                "field_time_pct": _e_val(e, 'field_time_pct', 100),
+                # Admin % (L.4): share of paid hours that is NOT task work. A pre-L.4 payload's
+                # field_time_pct is its inverse.
+                "admin_pct":     (_e_val(e, 'admin_pct', 0) if 'admin_pct' in e or 'field_time_pct' not in e
+                                  else (None if e['field_time_pct'] is None
+                                        else 100 - float(e['field_time_pct']))),
+                # Task tags (L.4): which work this row does. Only `field` has demand until
+                # Batch 3 (post-harvest / selling hours) — stored and round-tripped meanwhile.
+                "task_field":       bool(e.get('task_field', True)),
+                "task_postharvest": bool(e.get('task_postharvest', True)),
+                "task_selling":     bool(e.get('task_selling', True)),
                 # Max week INCLUDING overtime, % of regular hours (L.2): 125 = 40 + 10 OT.
                 "max_week_pct":  _e_val(e, 'max_week_pct', 100 if t == 'salary' else 125),
                 # Extra hires on this row (L.3, What-If only): may it add heads, and at most how many.

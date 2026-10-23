@@ -102,7 +102,7 @@ function fixtures(NAME) {
     // `position` left five of those attributes escaped but unpinned; with the payload in `wage`
     // alone, the summary pane still swallowed it (fmtN turns it into NaN → '—').
     employees: [{ position: NAME, type: 'seasonal', count: NAME, wage: NAME,
-                  hours_per_week: NAME, field_time_pct: NAME,
+                  hours_per_week: NAME, admin_pct: NAME,
                   start_week: NAME, end_week: NAME }],
     crops: [{ name: NAME, yield_per_acre: 5000, harvest_weeks: 1,
               channels_data: { [NAME]: { price: 4.0, demand_value: 99999 } },

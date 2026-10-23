@@ -93,7 +93,7 @@ It can never bind: committed
     # Wages the farm has COMMITTED to, per week, across every listed worker (W12). A worker on
     # the payroll is paid for their stated hours over their stated weeks whether or not the crops
     # need them — the same basis the salaried line has always used, now applied to hourly and
-    # seasonal staff too. Charged on FULL hours: `field_time_pct` limits how much of a worker's
+    # seasonal staff too. Charged on FULL hours: Admin % (the field share) limits how much of a worker's
     # time is available to crops, not how much of their wage the farm owes.
     committed_weekly_wages = np.zeros(n_weeks, dtype=float)
     # THE UNPAID-ROLES RULE: a role at $0/hr — piece-rate picker, unpaid family, a blank wage
@@ -109,9 +109,7 @@ It can never bind: committed
         wage       = emp["wage"]
         hrs        = emp["hours_per_week"]
         bene       = emp.get("benefits_pct", 0.0)
-        # Max share of this worker's hours available for crop field work (cap, not average).
-        # A farm manager might cap at ~80% in slow weeks; field crew ~100%. Default 100%.
-        field      = max(0.0, min(1.0, emp.get("field_time_pct", 100.0) / 100.0))
+        field      = _field_share(emp)
 
         if emp_type not in ("salary", "hourly"):
             raise ValueError(
@@ -134,7 +132,7 @@ It can never bind: committed
         hrs        = emp["hours_per_week"]
         bene       = emp.get("benefits_pct", 0.0)
         piece_rate = emp.get("piece_rate_per_lb", None)
-        field      = max(0.0, min(1.0, emp.get("field_time_pct", 100.0) / 100.0))
+        field      = _field_share(emp)
 
         if emp_type not in SEASONAL_TYPES:
             raise ValueError(
@@ -177,6 +175,21 @@ It can never bind: committed
         "piece_rate_workers":     piece_rate_workers,
         "labor_by_role":          labor_by_role,
     }
+
+
+def _field_share(emp: dict) -> float:
+    """Share of a worker's paid hours available for crop FIELD work (a cap, not an average).
+
+    L.4 (I2/I2a): entered as Admin % — the share that is NOT task work (a manager ~20%, crews 0)
+    — so field = (100 − admin) / 100. A row whose field tag is off adds no field capacity at
+    all; its post-harvest / selling tags get demand in Batch 3. A legacy `field_time_pct`
+    (direct callers, pre-L.4 payloads) is read as the field share it always meant.
+    """
+    if not emp.get("task_field", True):
+        return 0.0
+    if "admin_pct" in emp:
+        return max(0.0, min(1.0, (100.0 - float(emp["admin_pct"])) / 100.0))
+    return max(0.0, min(1.0, float(emp.get("field_time_pct", 100.0)) / 100.0))
 
 
 def _role(emp: dict, is_hourly: bool, count: float, hrs: float, field: float,
