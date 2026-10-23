@@ -300,7 +300,9 @@ def validate_params(
         raise ValueError(f"Overtime pay multiplier must be at least 1.0 (straight time), got "
                          f"{overtime_rate_multiplier!r}. Use 1.5 where state law requires ag overtime.")
     if hire_enabled:
-        _check_positive(hire_productivity_pct, "New-hire productivity (%)")
+        if not (_is_number(hire_productivity_pct) and 0 < hire_productivity_pct <= 100):
+            raise ValueError(f"New-hire productivity must be above 0% and at most 100% (a new hand "
+                             f"is not faster than your crew), got {hire_productivity_pct!r}.")
         _check_nonneg(hire_cost_per_head, "One-off cost per new hire ($)")
 
     return warnings
@@ -355,9 +357,14 @@ def _require_employee_numbers(emp: dict, keys: tuple, kind: str, i: int) -> None
     for key in ("admin_pct", "field_time_pct"):
         if key in emp and not 0 <= emp[key] <= 100:
             raise ValueError(f"{who} {key} must be between 0 and 100, got {emp[key]!r}.")
-    if "max_week_pct" in emp and not emp["max_week_pct"] >= 100:
-        raise ValueError(f"{who} 'Max week incl. overtime' must be at least 100% (100% = no "
-                         f"overtime), got {emp['max_week_pct']!r}.")
+    if "max_week_pct" in emp and not 100 <= emp["max_week_pct"] <= 200:
+        raise ValueError(f"{who} 'Max week incl. overtime' must be between 100% (no overtime) "
+                         f"and 200% (a double week), got {emp['max_week_pct']!r}.")
+    # FICA is the all-pay PART of the load (benefits_pct = fica + straight-time); more FICA than
+    # load would make the straight-time part negative and under-price every overtime hour.
+    if "fica_pct" in emp and not 0 <= emp["fica_pct"] <= emp.get("benefits_pct", 0.0):
+        raise ValueError(f"{who} fica_pct ({emp['fica_pct']!r}) must be between 0 and its total "
+                         f"payroll load benefits_pct ({emp.get('benefits_pct', 0.0)!r}).")
     if "max_more" in emp and not (emp["max_more"] >= 0 and float(emp["max_more"]).is_integer()):
         raise ValueError(f"{who} 'Max more' must be a whole number ≥ 0, got {emp['max_more']!r}.")
 

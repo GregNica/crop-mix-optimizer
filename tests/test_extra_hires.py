@@ -142,3 +142,19 @@ def test_the_adapter_carries_the_row_through_and_back(two_crop_params):
     for name, r in got.items():
         assert r["row"] == rows[name], "the result points at the wrong roster line"
         assert r["extra"] >= 1, f"{name} cut to one person hired nobody — fixture inert"
+
+
+@pytest.mark.parametrize("key,val", [("hire_enabled", True), ("max_hire_hrs_per_week", 400),
+                                     ("hired_wage_per_hr", 18), ("hire_wage_markup", 0.2),
+                                     ("max_overtime_hrs_per_week", 200)])
+def test_retired_labour_inputs_are_refused_by_name(key, val):
+    """Batch L retired the spot-hire market and the flat overtime cap. A caller still sending
+    them must hear so — not read 'no hire pays for itself' as the answer."""
+    out = json.loads(run_from_js(json.dumps(golden_payload(**{key: val}))))
+    assert out["status"] != "optimal" and key in json.dumps(out)
+
+
+def test_new_hire_productivity_above_100pct_is_refused(two_crop_params):
+    """A typo of 700 for 70 would give each head 7× its row's hours — phantom profit."""
+    r = solve_farm_v2(**_fixture(two_crop_params), hire_enabled=True, hire_productivity_pct=700.0)
+    assert r["status"] == "invalid_input"

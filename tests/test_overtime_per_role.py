@@ -164,3 +164,22 @@ def test_overtime_is_real_money_in_the_cash_floor():
         f"the plan breaches its credit line by ${-95_000.0 - min(cash):,.2f} — overtime is being "
         f"bought with cash the farm does not have (its cost fell out of C13)"
     )
+
+
+@pytest.mark.parametrize("pct", [1000, 90])
+def test_a_max_week_out_of_range_is_refused(pct):
+    """Refused, not clamped: 1000% is a 400 h overtime cap per worker; below 100% means nothing."""
+    p = golden_payload()
+    next(e for e in p["employees"] if e["position"] == "Harvest Crew")["max_week_pct"] = pct
+    out = json.loads(run_from_js(json.dumps(p)))
+    assert out["status"] != "optimal" and "Max week" in json.dumps(out)
+
+
+def test_fica_above_the_whole_load_is_refused(minimal_params):
+    """benefits_pct is the whole load (FICA + straight-time). More FICA than load makes the
+    straight-time part negative and under-prices every overtime hour — a direct-caller trap."""
+    from farm_v2.solver import solve_farm_v2
+    p = dict(minimal_params, year_round_employees=[
+        dict(position="Hand", count=1, type="hourly", wage=20.0, hours_per_week=40,
+             fica_pct=0.0765, benefits_pct=0.0)], seasonal_employees=[])
+    assert solve_farm_v2(**p, overtime_enabled=True)["status"] == "invalid_input"

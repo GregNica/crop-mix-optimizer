@@ -1862,19 +1862,18 @@ def solve_farm_v2(
     # the farm's weekly overtime cost is summed per role, never hours × one blended rate.
     ot_by_role = [np.array(z[_ot(k, 0) : _ot(k, 0) + N_WEEKS], dtype=float)
                   for k in range(len(ot_roles))]
-    ot_weekly = np.sum(ot_by_role, axis=0) if ot_roles else np.zeros(N_WEEKS)
+    overtime_hours_weekly = np.sum(ot_by_role, axis=0) if ot_roles else np.zeros(N_WEEKS)
     ot_cost_weekly = (np.sum([h * r["ot_rate"] for h, r in zip(ot_by_role, ot_roles)], axis=0)
                       if ot_roles else np.zeros(N_WEEKS))
     # Extra heads (L.3): integers, rounded off the solver's tolerance. Their hours and their pay
     # (full window pay + the one-off cost in the row's first week), by week.
     extra_heads = [float(round(z[idx_ex_start + j])) for j in range(len(ex_roles))]
-    hire_weekly = np.zeros(N_WEEKS)
+    hired_hours_weekly = np.zeros(N_WEEKS)
     hire_cost_weekly = np.zeros(N_WEEKS)
     for n, r in zip(extra_heads, ex_roles):
-        hire_weekly += n * hire_prod * r["head_task"]
+        hired_hours_weekly += n * hire_prod * r["head_task"]
         hire_cost_weekly += n * r["head_cost"]
         hire_cost_weekly[r["start"]] += n * float(hire_cost_per_head)
-    hired_hours_weekly, overtime_hours_weekly = hire_weekly, ot_weekly
 
     overtime_cost = float(ot_cost_weekly.sum())
     hire_cost     = float(hire_cost_weekly.sum())
@@ -1997,7 +1996,7 @@ def solve_farm_v2(
 
     capacity_series = {
         "labor":   {"used": [float(v) for v in labor_used_weekly[1:]],
-                    "cap":  [float(labor_capacity[w] + ot_weekly[w] + hire_weekly[w])
+                    "cap":  [float(labor_capacity[w] + overtime_hours_weekly[w] + hired_hours_weekly[w])
                              for w in range(N_WEEKS)]},
         # The tank's OPENING level is part of the week's supply (B7): a week may legitimately
         # draw more than that week's inflow by emptying stored water. Leaving it out made the

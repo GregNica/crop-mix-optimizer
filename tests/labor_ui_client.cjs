@@ -141,6 +141,22 @@ bootApp().then(({ window: w }) => {
     }
   }
 
+  // 6c — a row restored without max_week_pct (a pre-L.2 plan) must show the overtime the
+  // payload will actually send (125%), not 'no overtime' (/code-review).
+  {
+    const html = w.renderLaborRow({ position: 'Old Crew', type: 'seasonal', count: 2, wage: 18,
+                                    hours_per_week: 40, start_week: 10, end_week: 40 }, 99);
+    if (!html.includes('50 h/wk')) fail('a row with no saved max_week_pct reads "no overtime" while 125% is sent');
+  }
+  // 6d — a blank FICA box is refused, not sent as 0 (/code-review).
+  {
+    const fb = doc.getElementById('fica_pct'), keep = fb.value;
+    fb.value = '';
+    const errs = w.validateParams(w.buildSolveParams());
+    fb.value = keep;
+    if (!errs.some(e => /FICA/.test(e))) fail('a blank FICA box was not refused');
+  }
+
   // 7 — L.3: extra hires per roster row. The panel names each row's heads, prices them, offers the
   // round trip, and says WHY when the answer is zero (the shipped farm's answer — F1).
   {

@@ -129,6 +129,17 @@ def run_from_js(params_json):
         # many; these two farm-wide terms say how fast a new head works and what one costs to
         # bring on. Out-of-range values are refused by the solver, not clamped here.
         labor_flex_enabled       = bool(p.get('labor_flex_enabled', False))
+        # Retired by Batch L: refused BY NAME, never silently ignored — a caller still sending
+        # them would otherwise read 'no hire pays for itself' as an answer to a question it
+        # did not ask.
+        _retired = [k for k in ('hire_enabled', 'max_hire_hrs_per_week', 'hired_wage_per_hr',
+                                'hire_wage_markup', 'max_overtime_hrs_per_week')
+                    if p.get(k) not in (None, '')]
+        if _retired:
+            raise ValueError(
+                f"retired labour inputs {_retired}: hiring is now per roster row (hire_more / "
+                f"max_more, with hire_productivity_pct and hire_cost_per_head), and overtime is "
+                f"capped per row by max_week_pct.")
         hire_productivity_pct    = _num('hire_productivity_pct', 70.0)
         hire_cost_per_head       = _num('hire_cost_per_head', 800.0)
         # Overtime is part of the MAIN plan (L.2, Q1a), capped per role by its row's
