@@ -4877,7 +4877,7 @@ function renderSectionValidation(sectionId) {
   } else {
     el.classList.add('visible');
     el.innerHTML = `<strong>Required fields have issues — fix before running Optimize:</strong>
-      <ul>${errs.map(e => `<li>${e}</li>`).join('')}</ul>`;
+      <ul>${errs.map(e => `<li>${escHtml(e)}</li>`).join('')}</ul>`;   // messages carry crop names
   }
 }
 
@@ -6889,6 +6889,11 @@ function getBootstrapRainfallFactor(week) {
  * Phase 4.2: Enable Optimize only when ALL sections visited AND all required fields pass.
  * Benchmark-strict: section visitation is still required even with preloaded defaults.
  */
+// True while runOptimizer is solving. The live gate (scheduleRevalidate) must not re-enable the
+// buttons mid-run: setRunning(true) is runOptimizer's re-entrancy guard, and a blur that landed
+// as the click started used to undo it 150 ms later, so a double-click ran two solves.
+let _optimizeInFlight = false;
+
 function updateOptimizeBtn() {
   const allVisited = SECTION_ORDER.every(id => APP_STATE.visitedSections.has(id));
   // Collect all cross-section errors (only run full validation when all visited)
@@ -6899,7 +6904,7 @@ function updateOptimizeBtn() {
   const hint   = document.getElementById('hub-optimize-hint');
 
   if (btnTop) {
-    btnTop.disabled = !ready;
+    btnTop.disabled = !ready || _optimizeInFlight;
     btnTop.setAttribute('aria-disabled', ready ? 'false' : 'true');
     btnTop.title = ready ? '' : (
       !allVisited
@@ -6921,7 +6926,7 @@ function updateOptimizeBtn() {
 
   // Phase 4.3.2: sync all per-section Optimize buttons
   document.querySelectorAll('.section-opt-btn').forEach(btn => {
-    btn.disabled = !ready;
+    btn.disabled = !ready || _optimizeInFlight;
     btn.setAttribute('aria-disabled', ready ? 'false' : 'true');
   });
   SECTION_ORDER.forEach(id => {
@@ -7776,6 +7781,7 @@ function buildSolveParams() {
 }
 
 async function runOptimizer() {
+  if (_optimizeInFlight) return;   // a second click (Enter, or a button the gate re-enabled)
   if (!pyReady) {
     alert('Pyodide is still loading. Please wait.');
     return;
@@ -7791,6 +7797,7 @@ async function runOptimizer() {
   const labelEl  = document.getElementById('progress-label');
 
   const setRunning = (running) => {
+    _optimizeInFlight = running;
     // ALL of them. `btn`/`btnTop` are two of six: each input section carries its own
     // `.section-opt-btn`, and those stayed enabled and still reading "Optimize" for the whole
     // solve. Survivable while the post-solve path was one uninterrupted task; E2 added an await

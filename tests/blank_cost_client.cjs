@@ -80,6 +80,12 @@ const ok = (name, cond) => { if (!cond) fail(name); };
     await settle();
     ok('Optimize unlocks as soon as a source is re-ticked, without leaving the section', !btn.disabled);
     src.forEach((e, i) => toggle(e, was[i]));
+    // ...but never DURING a solve: the live gate re-enabling the buttons mid-run let a double-click
+    // start a second solve (/code-review max #7).
+    await settle();
+    W.eval('_optimizeInFlight = true; updateOptimizeBtn()');
+    ok('the live gate does not re-enable Optimize while a solve is running', btn.disabled);
+    W.eval('_optimizeInFlight = false; updateOptimizeBtn()');
   }
 
   // 2. Monte Carlo draws charge the plan's own fertilizer and fuel prices, even when they are $0.

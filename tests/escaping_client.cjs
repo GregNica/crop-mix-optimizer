@@ -141,6 +141,14 @@ function surfaces(W, RES, PARAMS) {
                                            msg: PARAMS.crops[0].name }])],
     ['renderHub',                () => W.renderHub()],
     ['renderStepper',            () => W.renderStepper()],
+    // The section banner quotes crop names in its messages, and the live gate (scheduleRevalidate)
+    // re-renders it after any edit. Zero one yield so the crops section has a message to show.
+    ['renderSectionValidation',  () => {
+      const card = W.document.querySelector('#crop-list .crop-detail');
+      card.querySelector('.crop-name-inline').value = PARAMS.crops[0].name;
+      W.writeFieldCanonical(card.querySelector('.cf[data-f="yield_per_acre"]'), 0);
+      W.renderSectionValidation('crops');
+    }],
   ];
 }
 
