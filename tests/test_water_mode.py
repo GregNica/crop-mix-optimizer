@@ -11,6 +11,8 @@ from functools import lru_cache
 import pytest
 
 from farm_v2.adapter import run_from_js
+from farm_v2.utils.calendar import generate_successions
+from farm_v2.utils.water import compute_net_water_rates, get_rainfall_weekly
 from farm_v2.validate import validate_params
 from tests.helpers import golden_payload
 
@@ -41,6 +43,12 @@ def test_absent_mode_is_irrigated_to_the_cent(golden_out):
     out = json.loads(run_from_js(json.dumps(absent)))
     assert out["status"] == golden_out["status"] == "optimal"
     assert out["profit"] == golden_out["profit"]
+    # Profit alone cannot tell: water never binds on the golden farm, so "unlimited" solves to
+    # within float noise of it. The echo and D11 can — an absent mode must still refuse no source.
+    assert out["water_mode"] == "irrigated"
+    absent["well_enabled"] = False
+    refused = json.loads(run_from_js(json.dumps(absent)))
+    assert refused["status"] == "invalid_input" and "No water source" in " ".join(refused["errors"])
 
 
 def test_unlimited_lifts_the_water_limit_where_it_binds():
@@ -81,7 +89,14 @@ def test_rainfed_grows_only_what_rain_waters():
     Northeast normals) — otherwise the filter is either everything or a refusal."""
     out = solve(water_mode="rainfed", rainfall_weekly_multipliers=[2.6] * 52)
     assert out["status"] == "optimal"
-    assert any("Rain-fed only" in w and "of 132" in w for w in out["warnings"]), out["warnings"]
+    # The count, derived the OTHER way — zero net need in every week, which is what C3 solves
+    # against — so the refusal's coverage walk cannot drift from the constraint.
+    p = golden_payload()
+    succ = generate_successions(p["crops"], 2024)
+    rain = get_rainfall_weekly(p["climate_zone"]) * 2.6
+    n_ok = int((~compute_net_water_rates(succ, p["crops"], rain).any(axis=1)).sum())
+    assert 0 < n_ok < len(succ)
+    assert any(f"{n_ok} of {len(succ)} possible" in w for w in out["warnings"]), (n_ok, out["warnings"])
     planted = {s["crop"] for s in out["succession_schedule"] if s["acres"] > 0.01}
     assert planted and not planted & {"Tomatoes", "Hot Peppers", "Garlic"}, planted
 

@@ -1104,7 +1104,9 @@ def solve_farm_v2(
     # the documented semantics.
     ub[idx_y_start : idx_y_start + N_S] = 1.0
     # The tank holds at most its capacity. At 0 this pins the block and presolve drops it.
-    ub[idx_ws_start : idx_ws_start + N_WEEKS] = float(water_storage_capacity)
+    # Unlimited (Batch W) writes no C3 row, so the tank would be a free column whose level means
+    # nothing; pinning it to 0 also makes the published water cap 0 without a special case.
+    ub[idx_ws_start : idx_ws_start + N_WEEKS] = float(water_storage_capacity) if water_limited else 0.0
 
     # Per-week caps on the labor-flex levers (the "max additional capacity by period").
     # Overtime: each role's derived cap (labor._role: count × OT hours × field share, 0 outside its
@@ -2051,11 +2053,10 @@ def solve_farm_v2(
         # draw more than that week's inflow by emptying stored water. Leaving it out made the
         # published cap smaller than the row actually solved against, so `used` exceeded `cap`
         # and the bottleneck ranking would have called water saturated when it was not.
-        # "unlimited" (Batch W) has no C3 row, so no ceiling: cap 0, which every consumer reads
-        # as "not a constraint" (cap > 0 guards) — water is never ranked, used stays honest.
+        # Unlimited (Batch W) publishes cap 0 with no special case — no source, no city water,
+        # tank pinned to 0 — which every consumer reads as "not a constraint" (cap > 0 guards).
         "water":   {"used": water_used_weekly,
                     "cap":  [float(free_water[w] + city_weekly[w] + wstore_opening[w])
-                             if water_limited else 0.0
                              for w in range(N_WEEKS)]},
         "storage_ambient": {"used": ambient_m3_weekly,
                             "cap":  [float(ambient_storage_cap)] * N_WEEKS},
