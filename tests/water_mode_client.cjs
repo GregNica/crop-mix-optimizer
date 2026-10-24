@@ -85,6 +85,32 @@ const ok = (name, cond) => { if (!cond) fail(name); };
   ok('a result from before Batch W (no water_mode) still ranks water', hasWater(res));
   for (const mode of ['rainfed', 'unlimited']) ok(`${mode} offers no water card`, !hasWater({ ...res, water_mode: mode }));
 
+  // 7. /code-review fixes. A params object with NO water_mode is irrigated: D11 still refuses it.
+  {
+    const q = params();
+    delete q.water_mode;
+    SRC.forEach(k => { q[k] = false; });
+    ok('a payload with no water_mode and no source is refused (it reads as irrigated)',
+       W.validateParams(q).some(e => e.startsWith('No water source')));
+  }
+  // The Well Cap sweep is offered only while the well is actually sent.
+  const sweeps = p => { W._lastParams = p; return W.eval('availableSensVars()').map(v => v.key); };
+  change(el('water_mode'), 'irrigated');
+  change(el('well_enabled'), true);
+  ok('Irrigated with the well on offers the Well Cap sweep', sweeps(params()).includes('well_weekly_cap_L'));
+  change(el('water_mode'), 'unlimited');
+  ok('Unlimited does not offer a sweep of a cap the solver never reads', !sweeps(params()).includes('well_weekly_cap_L'));
+  // Monte Carlo: every draw solves a too-dry rain-fed year instead of being refused and skipped.
+  W._lastParams = params();
+  el('mc-n-sims').value = '5';
+  W.MessageChannel = MessageChannel;
+  W.eval(`window.__draws = [];
+          solveForNumbers = async q => { __draws.push(q); return { profit: 1, revenue: 1, variable_cost: 0 }; };`);
+  await W.eval('runMonteCarlo()');
+  ok(`every Monte Carlo draw asks for the dry year, not a refusal (${W.__draws.length} draws)`,
+     W.__draws.length > 0 && W.__draws.every(q => q.refuse_rain_short === false));
+  change(el('water_mode'), 'irrigated');
+
   SRC.forEach((id, i) => change(el(id), was[i]));
   if (failures) { console.error(`water_mode_client: ${failures} failure(s)`); process.exit(1); }
   console.log('water_mode_client: all checks passed');

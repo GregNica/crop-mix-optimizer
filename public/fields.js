@@ -402,6 +402,7 @@
     hire_cost_per_head:          { sentBy: 'what-if', from: ['hire_cost_per_head'] },
     overtime_rate_multiplier:    { from: ['overtime_rate_multiplier'] },
     rainfall_weekly_multipliers: { sentBy: 'monte-carlo', from: [] },
+    refuse_rain_short:           { sentBy: 'monte-carlo', from: [] },
     // Read by the adapter, sent by nothing. Each is a decision, not an oversight — say which.
     overtime_enabled:            { unsent: 'server off-switch for overtime; the form caps it per role (max_ot_hrs = 0 means none)' },
     payroll_load_pct:            { unsent: 'legacy single payroll load (pre-L.5 server callers); the adapter splits it into fica + straight-time' },

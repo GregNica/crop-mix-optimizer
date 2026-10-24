@@ -147,3 +147,23 @@ def test_one_list_of_modes_in_python_the_registry_and_the_form():
     assert enum and re.findall(r'"([a-z]+)"', enum.group(1)) == list(WATER_MODES)
     select = re.search(r'<select id="water_mode">(.*?)</select>', index_src(), re.S)
     assert select and re.findall(r'value="([a-z]+)"', select.group(1)) == list(WATER_MODES)
+
+
+def test_a_crop_rain_cannot_water_says_so_not_outcompeted():
+    """/code-review: with C3's supply at zero the cause is physical; 'outcompeted' told the grower
+    the crop lost on economics."""
+    out = solve(water_mode="rainfed", rainfall_weekly_multipliers=[2.6] * 52)
+    why = {r["crop"]: r for r in out["unplanted_crops"]}
+    for crop in ("Tomatoes", "Hot Peppers", "Garlic"):
+        assert why[crop]["reason"] == "rain_short", why[crop]
+        assert 0 < why[crop]["rain_coverage"] < 1
+
+
+def test_a_monte_carlo_draw_too_dry_for_any_crop_is_a_real_loss_not_a_dropped_draw():
+    """/code-review: refused draws were skipped, so the dry tail vanished from the distribution.
+    A draw (refuse_rain_short=False) solves the year it is: nothing planted, fixed costs carried."""
+    out = solve(water_mode="rainfed", refuse_rain_short=False)
+    assert out["status"] == "optimal", out.get("errors")
+    assert out["profit"] < -900_000 and out["revenue"] == 0
+    assert {r["reason"] for r in out["unplanted_crops"]} == {"rain_short"}
+    assert any("0 of 132" in w for w in out["warnings"]), out["warnings"]

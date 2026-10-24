@@ -356,6 +356,8 @@ def run_from_js(params_json):
             city_water_cost_per_L=city_water_cost_per_L,
             city_water_fixed_fee_per_week=city_water_fixed_fee,
             water_mode=water_mode,
+            # Monte Carlo draws send False: a rain-fed dry year is a real (grow-nothing) outcome.
+            refuse_rain_short=bool(p.get('refuse_rain_short', True)),
             cost_fert_per_lb=cost_fert_per_lb,
             cost_fuel_per_L=cost_fuel_per_L,
             year_round_employees=year_round_employees,

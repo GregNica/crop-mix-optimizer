@@ -228,7 +228,7 @@ def _rain_short_message(successions, crops, cover) -> str:
 
 def _diagnose_unplanted_crops(
     crops, successions, crop_contribution, annual_caps, demand_table, excluded_channels,
-    capacity_series, phase_table, n_weeks,
+    capacity_series, phase_table, n_weeks, rain_short_crops=None,
 ):
     """Say WHY each crop got zero acres — as DATA, not as sentences.
 
@@ -279,6 +279,14 @@ def _diagnose_unplanted_crops(
         if sellable <= 0.0 and c_idx not in annual_crops:
             rec["reason"] = ("all_channels_excluded" if rec["excluded_channels"]
                              else "no_demand")
+            out.append(rec)
+            continue
+
+        # Rain-fed (Batch W): no succession of this crop is fully rain-watered, so C3 with zero
+        # supply forbade it — a physical cause, not economics, and it must not read "outcompeted".
+        if c_idx in (rain_short_crops or {}):
+            rec["reason"] = "rain_short"
+            rec["rain_coverage"] = rain_short_crops[c_idx]
             out.append(rec)
             continue
 
@@ -336,6 +344,10 @@ def solve_farm_v2(
     # "unlimited" — water is not a constraint (no C3 rows, no city water). Outside "irrigated"
     # every source must be off — validate_params refuses the ambiguity.
     water_mode: str = "irrigated",
+    # A Monte Carlo DRAW passes False: a dry year in which rain waters nothing is that year's real
+    # outcome (grow nothing, carry the fixed costs) and belongs in the distribution — refused, the
+    # draw was silently dropped and the dry tail vanished (/code-review). A PLAN is still refused.
+    refuse_rain_short: bool = True,
     # --- Labor ---
     year_round_employees: list | None = None,
     seasonal_employees: list | None = None,
@@ -601,11 +613,19 @@ def solve_farm_v2(
     # back "optimal" growing nothing (−$997k on the golden farm), the hole D11 closed. Refuse
     # that case with the reason; solve, and say so, when some successions are rain-plantable.
     water_limited = water_mode != "unlimited"
+    rain_short_crops: dict = {}     # crop index -> best coverage, for crops rain cannot water at all
     if water_mode == "rainfed":
+        # Plantable is decided by net_water_rate — exactly what C3 solves against with zero
+        # supply. Coverage only words the answer, so a ratio rounding to 1.0 cannot disagree.
+        plantable = ~net_water_rate[:, 1:].any(axis=1)
         cover = rain_coverage(successions, crops, np.asarray(rainfall_weekly_L_per_acre, dtype=float),
                               rainfall_offset_fraction)
-        n_ok = int((cover >= 1.0).sum())
-        if not n_ok:
+        for c_idx in {s["crop"] for s in successions}:
+            idx = [i for i, s in enumerate(successions) if s["crop"] == c_idx]
+            if not plantable[idx].any():
+                rain_short_crops[c_idx] = float(cover[idx].max())
+        n_ok = int(plantable.sum())
+        if not n_ok and refuse_rain_short:
             return _invalid([_rain_short_message(successions, crops, cover)], successions)
         validation_warnings.append(
             f"Rain-fed only: this plan assumes rain alone waters the crops — no irrigation. "
@@ -2147,7 +2167,7 @@ def solve_farm_v2(
         # Carlo never touch the browser's reporting code.
         "unplanted_crops":  _diagnose_unplanted_crops(
             crops, successions, crop_contribution, annual_caps, demand_table,
-            excluded_channels, capacity_series, phase_table, N_WEEKS,
+            excluded_channels, capacity_series, phase_table, N_WEEKS, rain_short_crops,
         ),
         "storage_peak_m3":  max(storage_m3_weekly) if storage_m3_weekly else 0.0,
         "ambient_peak_m3":  max(ambient_m3_weekly) if ambient_m3_weekly else 0.0,

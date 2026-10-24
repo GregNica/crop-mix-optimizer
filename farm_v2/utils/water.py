@@ -264,9 +264,9 @@ def rain_coverage(
     """
     Per succession, the share of its need rain covers in its DRIEST active week (capped at 1.0).
 
-    1.0 exactly when ``compute_net_water_rates`` gives it zero net need in every week — i.e. it
-    can be grown rain-fed. ONE walk, so the rain-fed planting filter and the refusal's quoted
-    percentage cannot disagree.
+    For WORDING only (how close rain gets). Whether a succession can be grown rain-fed is decided
+    by ``compute_net_water_rates`` (zero net need every week) — the quantity C3 solves against —
+    so a ratio that rounds to 1.0 cannot make a different call.
     """
     cover = np.ones(len(successions))
     for i, s in enumerate(successions):
