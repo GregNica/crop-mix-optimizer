@@ -118,6 +118,26 @@ const ok = (name, cond) => { if (!cond) fail(name); };
     ok(`Field 80% restored as Admin 20% (got ${el && el.value})`, el && Number(el.value) === 20);
     ok('the Field→Admin conversion is named in the load report', r.notes.some(n => n.includes('Admin %')));
     ok('field_time_pct is not reported as lost', !r.dropped.some(d => d.includes('field_time_pct')));
+    reset();
+  }
+  // 3d. A row saved with 'Max week %' (before 2026-10-24) comes back as OT hours, reported, not lost.
+  {
+    const s = clone(base);
+    const row = s.labor[1];
+    delete row.max_ot_hrs; row.max_week_pct = '150'; row.hours_per_week = '40';
+    const r = apply(s);
+    const el = W.document.querySelectorAll('#labor-list .labor-row')[1].querySelector('[data-lf="max_ot_hrs"]');
+    ok(`Max week 150% of 40 h restored as 20 OT h (got ${el && el.value})`, el && Number(el.value) === 20);
+    ok('the conversion is named in the load report', r.notes.some(n => n.includes('Max OT hrs/wk')));
+    ok('max_week_pct is not reported as lost', !r.dropped.some(d => d.includes('max_week_pct')));
+    reset();
+  }
+  {
+    const s = clone(base);
+    const row = s.labor[0];
+    delete row.admin_pct; delete row.task_field; delete row.task_postharvest; delete row.task_selling;
+    row.field_time_pct = '80';
+    apply(s);
     const tag = W.document.querySelector('#labor-list .labor-row [data-lf="task_field"]');
     ok('a pre-tag row restores with Field ticked', tag && tag.checked === true);
     reset();

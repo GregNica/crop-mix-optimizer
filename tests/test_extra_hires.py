@@ -82,7 +82,7 @@ def test_productivity_decides_how_many_heads(two_crop_params):
 
 
 def test_new_heads_may_work_overtime_too(two_crop_params):
-    """The row's overtime cap grows with its heads: (allowance − 1) × (count + extra × pace) ×
+    """The row's overtime cap grows with its heads: OT hrs × (count + extra × pace) ×
     hours × field. The fixture must buy MORE overtime in some week than the original two could
     give (0.25 × 2 × 40 = 20 h), or a cap frozen at the original crew would pass unseen."""
     p = _fixture(two_crop_params)
@@ -131,7 +131,7 @@ def test_the_adapter_carries_the_row_through_and_back(two_crop_params):
     'Add to roster' adds the heads to the right line."""
     p = golden_payload(labor_flex_enabled=True)
     for e in p["employees"]:
-        e["max_week_pct"] = 100                           # no overtime: make hiring the lever
+        e["max_ot_hrs"] = 0                               # no overtime: make hiring the lever
     rows = {e["position"]: i for i, e in enumerate(p["employees"])}
     for name in ("Seasonal Field Crew", "Harvest Crew"):          # both crews cut to one person
         p["employees"][rows[name]].update(count=1, hire_more=True, max_more=10)
@@ -158,3 +158,24 @@ def test_new_hire_productivity_above_100pct_is_refused(two_crop_params):
     """A typo of 700 for 70 would give each head 7× its row's hours — phantom profit."""
     r = solve_farm_v2(**_fixture(two_crop_params), hire_enabled=True, hire_productivity_pct=700.0)
     assert r["status"] == "invalid_input"
+
+
+def test_one_more_head_is_measured_both_ways(two_crop_params):
+    """next_head_deltas re-solves with one head more than chosen (grower QA 2026-10-24: a bare
+    'no extra hire pays' hid a −$1.3k-ish margin). Within Max more the extra head must COST
+    money — that is why the optimizer stopped; capped below its optimum (3 heads, Max more 1)
+    it must ADD money, which says Max more, not money, was the limit."""
+    from farm_v2.solver import next_head_deltas
+    p = _fixture(two_crop_params)
+    free = solve_farm_v2(**p, hire_enabled=True)
+    (d_free,) = next_head_deltas(dict(p, hire_enabled=True), free)
+    assert d_free is not None and d_free < 0, d_free
+    capped_kw = dict(_fixture(two_crop_params, max_more=1), hire_enabled=True)
+    capped = solve_farm_v2(**capped_kw)
+    assert capped["extra_hires"][0]["extra"] == 1
+    (d_capped,) = next_head_deltas(capped_kw, capped)
+    assert d_capped is not None and d_capped > 0, d_capped
+    # The forced solve really has one more head (min_more is a floor, not a hint).
+    assert d_capped == pytest.approx(
+        solve_farm_v2(**dict(_fixture(two_crop_params, max_more=2), hire_enabled=True))["profit"]
+        - capped["profit"], abs=1.0)

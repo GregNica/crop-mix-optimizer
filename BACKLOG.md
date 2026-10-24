@@ -440,6 +440,21 @@ water row label. What remains:
 Note for whoever writes the next checklist: fertilizer / fuel / machinery are SEVERAL boxes behind
 SEVERAL collapsed toggles in Fixed Cost Rates — do not describe them as "one field".
 
+### Grower Batch L browser check, 2026-10-24 — LB1–LB5
+
+Batch L + BC7 passed ("everything working") via `python3 -m http.server` on the WSL IP — sign-in
+and chat NOT exercised (Windows→WSL `localhost` broken again; Google sign-in from the IP gives
+`state_mismatch` because its callback is `localhost:8787` — environment, not app; re-check both
+once `localhost` works). Four notes; LB1–LB3 fixed on `batchL/labour` the same day.
+
+| ID | Item |
+|---|---|
+| LB1 | **✅ FIXED.** Roster row: the Tasks checkboxes overflowed — Batch L added four cells to a grid still sized for 7/9 tracks, and the row-wide `input { width:100% }` stretched the checkboxes. The Batch L settings now sit on a second line per row (`.labor-row-extra`) |
+| LB2 | **✅ FIXED (grower ruling).** Confusing labels: overtime is now entered as **"Max OT hrs/wk allowable per person"** (hours, default 10; `max_ot_hrs`, legacy `max_week_pct` converted) and FICA is **"Payroll taxes (% of all pay)"**, the other box **"Benefits & insurance (% of regular pay)"** |
+| LB3 | **✅ FIXED (grower ruling: build it now).** Harvest Crew cut to 1 + Hire more? still said "No extra hire pays" — CORRECT at 70% new-hire pace + $800 (100% pace hires 2), but the panel gave no size. `next_head_deltas` now re-solves once per ticked row with one more head than chosen and the panel shows it ("One more head would change profit by −$754"; a GAIN means Max more, not money, was the limit). Cost: one extra solve per ticked row in the What-If (27 s total on the golden farm natively; slower in Pyodide) |
+| **LB4** | **⏸ TABLED (grower, 2026-10-24) — rethink the hiring UX, likely with the UI overhaul.** Having to tick "Hire more?" on roster rows before "Plan optimal labor" does anything is unintuitive and messy. Do NOT redesign now; the ask is that the MECHANICS stay solid and adaptable. They are: the solver takes per-row candidates (`hire_more` / `max_more` / `min_more` on any employee dict) + two farm-wide terms, and returns `extra_hires` with `next_head_delta` per row — so a new UI can, e.g., offer every paid row by default (What-If sets `hire_more` on all rows itself), keep the roster columns as overrides, or move the whole question into the wizard/chat, without solver changes. Open design questions to bring back: (a) should the What-If consider ALL rows by default? (b) where do Max more / productivity / per-head cost live? (c) see LB5 |
+| **LB5** | **⏸ TABLED with LB4 — the What-If can only ADD people, and the shipped farm is over-staffed.** Measured 2026-10-24: Harvest Crew 8 → 1 RAISES golden profit $652,876 → $672,722 (+$19.8k); typing 2 gives $682,998. A grower-facing "you have more X than pays" answer needs extra heads that can go NEGATIVE (fewer committed staff, decided pre-season) — a mechanic change (`extra ∈ [−count, max_more]`, wages saved instead of paid) to design with LB4, plus a sanity look at the demo roster itself (it is the golden farm, so any change is a re-pin) |
+
 ---
 
 ## Tier 7 — Pilot hardening (audit Phase G) — gated on a real user

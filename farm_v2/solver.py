@@ -322,7 +322,7 @@ def solve_farm_v2(
     year_round_employees: list | None = None,
     seasonal_employees: list | None = None,
     # Overtime per role (L.2): each hourly/seasonal role's cap and price come from its own row
-    # (max_week_pct, wage, fica_pct, benefits_pct) — see labor._role. The app's adapter turns it
+    # (max_ot_hrs, wage, fica_pct, benefits_pct) — see labor._role. The app's adapter turns it
     # ON for the main plan; off here so a direct caller opts in. Multiplier default 1.0× (FLSA
     # exempts farm work; 1.5× where state law requires ag overtime).
     overtime_enabled: bool = False,
@@ -579,7 +579,7 @@ def solve_farm_v2(
         overtime_rate_multiplier=overtime_rate_multiplier,
     )
     labor_capacity         = labor_result["labor_capacity"]          # (52,)
-    # Roles that can work overtime this plan (hourly, paid, allowance > 100%), each with its own
+    # Roles that can work overtime this plan (hourly, paid, max_ot_hrs > 0), each with its own
     # weekly cap and $/hr (labor._role). One ot[k][w] variable block per role.
     ot_roles = ([r for r in labor_result["labor_by_role"] if float(r["ot_cap"].max()) > 0]
                 if overtime_enabled else [])
@@ -1064,14 +1064,15 @@ def solve_farm_v2(
     ub[idx_ws_start : idx_ws_start + N_WEEKS] = float(water_storage_capacity)
 
     # Per-week caps on the labor-flex levers (the "max additional capacity by period").
-    # Overtime: each role's derived cap (labor._role: allowance × its field hours, 0 outside its
+    # Overtime: each role's derived cap (labor._role: count × OT hours × field share, 0 outside its
     # window). A role that can also hire gets a bigger cap as heads are added, so for it the
     # per-week cap becomes a ROW (Step 9) and the bound is lifted to the most it could reach.
     for j, r in enumerate(ex_roles):
-        ub[idx_ex_start + j] = r["max_more"]
+        ub[idx_ex_start + j] = max(r["max_more"], r["min_more"])
+        lb[idx_ex_start + j] = r["min_more"]
     _ex_of = {id(r): j for j, r in enumerate(ex_roles)}
     for k, r in enumerate(ot_roles):
-        grow = (r["allowance"] * hire_prod * r["head_task"] * r["max_more"]
+        grow = (hire_prod * r["ot_per_head"] * r["max_more"]
                 if id(r) in _ex_of else 0.0)
         ub[_ot(k, 0) : _ot(k, 0) + N_WEEKS] = r["ot_cap"] + grow
 
@@ -1159,7 +1160,7 @@ def solve_farm_v2(
                 cols.append((idx_ex_start + j, -hire_prod * r["head_task"][w - 1]))
         add_row(cols, -np.inf, rhs)
 
-    # Overtime cap of a role that can hire: ot[k][w] ≤ cap[w] + allowance × prod × head_task[w]
+    # Overtime cap of a role that can hire: ot[k][w] ≤ cap[w] + prod × ot_per_head[w]
     # × extra — the new heads may stay late too, at the pace they work (toy v11's form).
     for k, r in enumerate(ot_roles):
         j = _ex_of.get(id(r))
@@ -1168,7 +1169,7 @@ def solve_farm_v2(
         for w0 in range(N_WEEKS):
             if r["ot_cap"][w0] > 0:
                 add_row([(_ot(k, w0), 1.0),
-                         (idx_ex_start + j, -r["allowance"] * hire_prod * r["head_task"][w0])],
+                         (idx_ex_start + j, -hire_prod * r["ot_per_head"][w0])],
                         -np.inf, r["ot_cap"][w0])
 
     # C3 — Water, with the tank actually storing something (audit B7)
@@ -2101,3 +2102,34 @@ def solve_farm_v2(
         "crops":            crops,
         "channels":         channels,
     }
+
+
+def next_head_deltas(solve_kwargs: dict, result: dict) -> list:
+    """What ONE more head on each hireable row would add to (or take from) profit.
+
+    For every row in `result["extra_hires"]`, re-solve with that row forced to one head more than
+    the What-If chose (the rest of the plan free to re-adjust), and return profit(forced) −
+    profit(chosen), in the same order — None where the forced solve did not produce a plan.
+    Negative within the row's Max more is the optimizer's own reason for stopping there; positive
+    means Max more is what stopped it. The zero answer ("no extra hire pays") gets its size this
+    way (grower QA 2026-10-24: −$1.3k at 70% pace read as a flat no). One extra solve per row.
+    """
+    deltas = []
+    for hire in result.get("extra_hires", []):
+        kw = dict(solve_kwargs)
+        kw["year_round_employees"] = [dict(e) for e in solve_kwargs.get("year_round_employees") or []]
+        kw["seasonal_employees"] = [dict(e) for e in solve_kwargs.get("seasonal_employees") or []]
+        rows = kw["year_round_employees"] + kw["seasonal_employees"]
+        # The caller's roster index when it gave one (the adapter does), else the first row
+        # with this name that may hire — the same row labor._role built the result from.
+        emp = next((e for e in rows if hire.get("row") is not None and e.get("row") == hire["row"]),
+                   None) or next(e for e in rows if e.get("position", "") == hire["position"]
+                                 and e.get("hire_more"))
+        n = int(hire["extra"]) + 1
+        emp["min_more"] = n
+        emp["max_more"] = max(int(emp.get("max_more", 0) or 0), n)
+        forced = solve_farm_v2(**kw)
+        deltas.append(float(forced["profit"]) - float(result["profit"])
+                      if forced.get("status") in PLAN_STATUSES and forced.get("profit") is not None
+                      else None)
+    return deltas

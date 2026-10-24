@@ -5,7 +5,7 @@ buys 979 h across three roles, binds caps in several weeks, and has two hourly r
 DIFFERENT wages on in the same short weeks — the two conditions the cap and the price tests need
 (the shelf-life lesson: a guard needs every condition its effect depends on, not one).
 
-  cap[r][w]  = (max_week_pct/100 − 1) × count × hours × field%    in r's window, else 0
+  cap[r][w]  = count × max_ot_hrs × field%    in r's window, else 0
   rate[r]    = wage × (multiplier × (1 + fica) + straight-time load)
   salaried and unpaid roles: no overtime at all
 """
@@ -18,7 +18,7 @@ from farm_v2.adapter import run_from_js
 from farm_v2.utils.labor import compute_labor_arrays
 from tests.helpers import golden_payload
 
-# Shipped roster at 125% (40 + 10 OT): cap = 0.25 × count × 40 × field%.
+# Shipped roster at 10 OT h/wk per person: cap = count × 10 × field%.
 EXPECTED_CAP = {"Equipment Operator": 0.25 * 2 * 40 * 0.90,   # 18 h/wk, weeks 1-52
                 "Seasonal Field Crew": 0.25 * 12 * 40,         # 120 h/wk, weeks 10-42
                 "Harvest Crew": 0.25 * 8 * 40}                 # 80 h/wk, weeks 14-40
@@ -51,7 +51,7 @@ def test_only_paid_hourly_roles_can_work_overtime(golden):
 
 
 def test_each_cap_is_derived_from_its_own_row_and_window(golden):
-    """Catches `allowance` for `allowance − 1` (a 125% week would allow 50 OT hours, not 10),
+    """Catches a cap built from the regular hours instead of the OT hours (50 h, not 10),
     a dropped field %, and a cap leaking outside the role's window."""
     for name, r in _roles(golden).items():
         lo, hi = WINDOW[name]
@@ -111,11 +111,11 @@ def test_the_premium_carries_fica_only(golden):
         assert r["rate"] == pytest.approx(WAGE[name] * (1.5 * (1 + FICA) + STRAIGHT), abs=0.01), name
 
 
-def test_a_100pct_week_means_no_overtime_and_restores_the_pre_L2_farm():
-    """The grower's off-switch: every row at 100%. Byte-equal to the pre-L.2 baseline profit."""
+def test_zero_ot_hours_means_no_overtime_and_restores_the_pre_L2_farm():
+    """The grower's off-switch: every row at 0 OT h. Byte-equal to the pre-L.2 baseline profit."""
     p = golden_payload()
     for e in p["employees"]:
-        e["max_week_pct"] = 100
+        e["max_ot_hrs"] = 0
     out = json.loads(run_from_js(json.dumps(p)))
     assert out["status"] == "optimal"
     assert out["total_overtime_hours"] == 0.0 and out["overtime_by_role"] == []
@@ -139,9 +139,9 @@ def test_an_unpaid_hourly_role_gets_no_overtime():
 
 
 def test_a_salaried_row_typed_above_100pct_still_gets_no_overtime():
-    """Salaried staff cannot be paid overtime. A salaried row TYPED at 125% would otherwise be
+    """Salaried staff cannot be paid overtime. A salaried row TYPED with 10 OT h would otherwise be
     priced per hour at its annual salary."""
-    roles = [dict(r, max_week_pct=125) for r in _SHIPPED_ROLES]
+    roles = [dict(r, max_ot_hrs=10) for r in _SHIPPED_ROLES]
     mgr, hc = compute_labor_arrays(roles, [])["labor_by_role"]
     assert float(mgr["ot_cap"].max()) == 0.0 and mgr["ot_rate"] == 0.0
     assert float(hc["ot_cap"].max()) > 0, "fixture inert: the hourly row got no overtime either"
@@ -166,13 +166,30 @@ def test_overtime_is_real_money_in_the_cash_floor():
     )
 
 
-@pytest.mark.parametrize("pct", [1000, 90])
-def test_a_max_week_out_of_range_is_refused(pct):
-    """Refused, not clamped: 1000% is a 400 h overtime cap per worker; below 100% means nothing."""
+@pytest.mark.parametrize("key,val,msg", [("max_ot_hrs", 400, "Max OT"), ("max_ot_hrs", -5, "Max OT"),
+                                         ("max_week_pct", 1000, "Max week"), ("max_week_pct", 90, "Max week")])
+def test_overtime_hours_out_of_range_are_refused(key, val, msg):
+    """Refused, not clamped: 400 OT h/wk per worker (or 1000% legacy) is a typo, and negative
+    or below-100% means nothing."""
     p = golden_payload()
-    next(e for e in p["employees"] if e["position"] == "Harvest Crew")["max_week_pct"] = pct
+    e = next(e for e in p["employees"] if e["position"] == "Harvest Crew")
+    e.pop("max_ot_hrs", None)
+    e[key] = val
     out = json.loads(run_from_js(json.dumps(p)))
-    assert out["status"] != "optimal" and "Max week" in json.dumps(out)
+    assert out["status"] != "optimal" and msg in json.dumps(out)
+
+
+def test_a_legacy_max_week_pct_is_the_same_overtime_as_its_hours():
+    """A pre-2026-10-24 caller's 125% week on 40 h IS 10 OT h — same cap, same answer."""
+    def legacy(p):
+        for e in p["employees"]:
+            ot = e.pop("max_ot_hrs")
+            if e["type"] != "salary":
+                e["max_week_pct"] = 100 * (1 + ot / e["hours_per_week"])
+    p = golden_payload(); legacy(p)
+    a = json.loads(run_from_js(json.dumps(p)))
+    b = json.loads(run_from_js(json.dumps(golden_payload())))
+    assert a["profit"] == pytest.approx(b["profit"], abs=0.005)
 
 
 def test_fica_above_the_whole_load_is_refused(minimal_params):

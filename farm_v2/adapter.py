@@ -14,7 +14,7 @@ without shipping matplotlib. Nothing here draws.
 import json
 import traceback
 
-from farm_v2.solver import PLAN_STATUSES, solve_farm_v2
+from farm_v2.solver import PLAN_STATUSES, next_head_deltas, solve_farm_v2
 from farm_v2.utils.water import get_rainfall_weekly
 
 # Employer FICA (Social Security 6.2% + Medicare 1.45%) as a fraction — the all-pay part of the
@@ -139,11 +139,11 @@ def run_from_js(params_json):
             raise ValueError(
                 f"retired labour inputs {_retired}: hiring is now per roster row (hire_more / "
                 f"max_more, with hire_productivity_pct and hire_cost_per_head), and overtime is "
-                f"capped per row by max_week_pct.")
+                f"capped per row by max_ot_hrs.")
         hire_productivity_pct    = _num('hire_productivity_pct', 70.0)
         hire_cost_per_head       = _num('hire_cost_per_head', 800.0)
         # Overtime is part of the MAIN plan (L.2, Q1a), capped per role by its row's
-        # max_week_pct — a grower who wants none sets every row to 100%. `overtime_enabled`
+        # max_ot_hrs — a grower who wants none sets every row to 0. `overtime_enabled`
         # stays as an off-switch for server callers; the form never sends it.
         overtime_enabled         = bool(p.get('overtime_enabled', True))
         overtime_rate_multiplier = _num('overtime_rate_multiplier', 1.0)
@@ -204,9 +204,9 @@ def run_from_js(params_json):
                 "task_field":       bool(e.get('task_field', True)),
                 "task_postharvest": bool(e.get('task_postharvest', True)),
                 "task_selling":     bool(e.get('task_selling', True)),
-                # Max week INCLUDING overtime, % of regular hours (L.2): 125 = 40 + 10 OT. Its
-                # default lives in labor._role; only a value the caller sent is passed.
-                **({'max_week_pct': _e_val(e, 'max_week_pct', None)} if 'max_week_pct' in e else {}),
+                # Overtime hours per person per week (L.2). labor._ot_hours is the one reader and
+                # its default; it also takes a legacy max_week_pct. Only what was sent is passed.
+                **{k: _e_val(e, k, None) for k in ('max_ot_hrs', 'max_week_pct') if k in e},
                 # Extra hires on this row (L.3, What-If only): may it add heads, and at most how many.
                 "hire_more":     bool(e.get('hire_more', False)),
                 "max_more":      _e_val(e, 'max_more', 0),
@@ -285,7 +285,9 @@ def run_from_js(params_json):
         # every caller converges on — this adapter, the tests, and the server path. It returns
         # status 'invalid_input' with an 'errors' list, which the client already renders.
 
-        result = solve_farm_v2(
+        # Kept as one dict so the What-If's 'one more head' re-solves differ from this solve by
+        # exactly one row (next_head_deltas).
+        solve_kwargs = dict(
             total_land=total_land,
             opening_cash=opening_cash,
             credit_line=credit_line,
@@ -338,6 +340,7 @@ def run_from_js(params_json):
             channels=channels,
             solver_time_limit=75.0,
         )
+        result = solve_farm_v2(**solve_kwargs)
 
         status = result['status']
 
@@ -356,6 +359,10 @@ def run_from_js(params_json):
                 'warnings': result.get('warnings', []),
                 'profit': None,
             })
+
+        # What-If only: one extra solve per hireable row (grower ruling 2026-10-24).
+        next_head = (next_head_deltas(solve_kwargs, result) if result.get('extra_hires')
+                     else [])
 
         # The solver's own arrays and tables, read element-wise below.
         x_sol  = result['x']
@@ -518,13 +525,15 @@ def run_from_js(params_json):
                  **{k: [round(float(v), 2) for v in r[k]]
                     for k in ('heads', 'paid_hours', 'task_hours', 'cost')}}
                 for r in result.get('labor_by_role', [])],
-            # Extra heads per row (L.3): taken, allowed, $/head for the season, hours/head.
+            # Extra heads per row (L.3): taken, allowed, $/head for the season, hours/head, and
+            # what ONE more head would do to profit (re-solved; None if that solve failed).
             'extra_hires': [
                 {'position': r['position'], 'row': r['row'], 'extra': int(r['extra']),
                  'max_more': int(r['max_more']),
                  'cost_per_head': round(float(r['cost_per_head']), 2),
-                 'hours_per_head': round(float(r['hours_per_head']), 1)}
-                for r in result.get('extra_hires', [])],
+                 'hours_per_head': round(float(r['hours_per_head']), 1),
+                 'next_head_delta': None if d is None else round(float(d), 0)}
+                for r, d in zip(result.get('extra_hires', []), next_head)],
             # Who stays late, which weeks, at what $/hr (L.2) — 52 entries each, 0-indexed.
             'overtime_by_role': [
                 {'position': r['position'], 'rate': round(float(r['rate']), 2),

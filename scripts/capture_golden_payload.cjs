@@ -35,7 +35,7 @@ const OWNED = ['crops', 'ambient_storage_cap', 'rate_ambient_storage',
                'insurance_premium_per_yr', 'insurance_payment_week', 'utilities_cost_per_yr',
                // L.5 — the split payroll load (replaces payroll_load_pct, dropped below).
                'fica_pct', 'straight_time_load_pct',
-               // Batch L — the roster rows now carry max_week_pct, hire_more/max_more, admin_pct
+               // Batch L — the roster rows now carry max_ot_hrs, hire_more/max_more, admin_pct
                // and task tags; pin the roster the form actually sends, not a July capture.
                'employees', 'overtime_rate_multiplier'];
 

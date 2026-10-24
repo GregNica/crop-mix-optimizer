@@ -115,12 +115,12 @@ def test_bought_labor_is_real_money_in_the_cash_floor(two_crop_params):
         overtime_enabled=True, overtime_rate_multiplier=1.5,
     )
     p["seasonal_employees"] = []
-    # L.2: overtime is per role, so the fixture needs an hourly role that may work it (a 200%
-    # week = up to 40 OT h/wk each). Re-derived frontier: cash binds below ~$149k credit; at
+    # L.2: overtime is per role, so the fixture needs an hourly role that may work it (up to
+    # 40 OT h/wk each). Re-derived frontier: cash binds below ~$149k credit; at
     # $140k profit $300,894 vs $302,588 unconstrained — cash costs profit, so the floor binds.
     p["year_round_employees"] = p["year_round_employees"] + [
         {"position": "Hand", "count": 2, "type": "hourly", "wage": 18.0, "hours_per_week": 40,
-         "max_week_pct": 200}]
+         "max_ot_hrs": 40}]
     r = solve_farm_v2(**p)
     assert r["status"] == "optimal", f"fixture must remain solvable: {r['status']} {r.get('errors')}"
     # Extra hires' C13 column is guarded in test_extra_hires.py (L.3 retired the spot market).

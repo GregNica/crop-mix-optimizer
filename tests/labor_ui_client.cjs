@@ -117,44 +117,49 @@ bootApp().then(({ window: w }) => {
     }
   }
 
-  // 6b — L.2: the allowance is a TOTAL week, shown in hours so 125% cannot read as on top
-  // (the grower's first reading was 90 h/wk). Live: typing into the row updates its readout.
+  // 6b — overtime is entered as HOURS per person per week (grower ruling 2026-10-24; the old
+  // '% of the week' read as on top). Live: typing into the row updates its readout.
   {
-    const r125 = w.otReadout({ type: 'hourly', hours_per_week: 40, max_week_pct: 125 });
-    if (!r125.includes('50 h/wk') || !r125.includes('40 regular + 10 OT')) {
-      fail(`otReadout(125% of 40 h) printed "${r125}" — must read "50 h/wk (40 regular + 10 OT)"`);
+    const r10 = w.otReadout({ type: 'hourly', hours_per_week: 40, max_ot_hrs: 10 });
+    if (!r10.includes('up to 50 h/wk') || !r10.includes('40 regular + 10 OT')) {
+      fail(`otReadout(10 OT h on 40) printed "${r10}" — must read "up to 50 h/wk (40 regular + 10 OT)"`);
     }
-    if (!/no overtime/.test(w.otReadout({ type: 'salary', hours_per_week: 45, max_week_pct: 125 }))) {
+    if (!/no overtime/.test(w.otReadout({ type: 'salary', hours_per_week: 45, max_ot_hrs: 10 }))) {
       fail('otReadout: a salaried row must say it gets no overtime');
     }
+    if (!/no overtime/.test(w.otReadout({ type: 'hourly', hours_per_week: 40, max_ot_hrs: 0 }))) {
+      fail('otReadout: 0 OT hours must say no overtime');
+    }
     const row = w.document.querySelector('#labor-list .labor-row:nth-child(2)');
-    const box = row && row.querySelector('[data-lf="max_week_pct"]');
-    if (!box) fail('the roster row has no "Max week incl. overtime" box');
+    const box = row && row.querySelector('[data-lf="max_ot_hrs"]');
+    if (!box) fail('the roster row has no "Max OT hrs/wk" box');
     else {
-      box.value = '150';
+      box.value = '20';
       box.dispatchEvent(new w.Event('input', { bubbles: true }));
       const txt = row.querySelector('.ot-readout').textContent;
-      if (!txt.includes('60 h/wk')) fail(`readout did not follow the box live: "${txt}"`);
-      const sent = w.getLaborFromForm()[1].max_week_pct;
-      if (sent !== 150) fail(`the payload carries max_week_pct=${sent}, typed 150`);
-      box.value = '125'; box.dispatchEvent(new w.Event('input', { bubbles: true }));
+      if (!txt.includes('up to 60 h/wk')) fail(`readout did not follow the box live: "${txt}"`);
+      const sent = w.getLaborFromForm()[1].max_ot_hrs;
+      if (sent !== 20) fail(`the payload carries max_ot_hrs=${sent}, typed 20`);
+      box.value = '10'; box.dispatchEvent(new w.Event('input', { bubbles: true }));
     }
   }
 
-  // 6c — a row restored without max_week_pct (a pre-L.2 plan) must show the overtime the
-  // payload will actually send (125%), not 'no overtime' (/code-review).
+  // 6c — rows restored from older plans show the overtime the payload will send: no saved value
+  // → 10 h (pre-L.2); a saved 'Max week 150%' on 40 h → 20 h, not 'no overtime' (/code-review).
   {
-    const html = w.renderLaborRow({ position: 'Old Crew', type: 'seasonal', count: 2, wage: 18,
-                                    hours_per_week: 40, start_week: 10, end_week: 40 }, 99);
-    if (!html.includes('50 h/wk')) fail('a row with no saved max_week_pct reads "no overtime" while 125% is sent');
+    const old = { position: 'Old Crew', type: 'seasonal', count: 2, wage: 18, hours_per_week: 40, start_week: 10, end_week: 40 };
+    if (!w.renderLaborRow(old, 99).includes('up to 50 h/wk')) fail('a row with no saved overtime reads "no overtime" while 10 h is sent');
+    const pct = w.renderLaborRow({ ...old, max_week_pct: 150 }, 99);
+    if (!pct.includes('up to 60 h/wk') || !pct.includes('value="20"')) fail('a saved 150% week did not become 20 OT hours');
   }
+
   // 6d — a blank FICA box is refused, not sent as 0 (/code-review).
   {
     const fb = doc.getElementById('fica_pct'), keep = fb.value;
     fb.value = '';
     const errs = w.validateParams(w.buildSolveParams());
     fb.value = keep;
-    if (!errs.some(e => /FICA/.test(e))) fail('a blank FICA box was not refused');
+    if (!errs.some(e => /Payroll taxes/.test(e))) fail('a blank payroll-taxes box was not refused');
   }
 
   // 7 — L.3: extra hires per roster row. The panel names each row's heads, prices them, offers the
@@ -168,6 +173,11 @@ bootApp().then(({ window: w }) => {
     if (!/No extra hire pays for itself/.test(zero) || !zero.includes('Harvest Crew') || !zero.includes('26,450')) {
       fail('renderLaborPlan: a zero answer must say no hire pays AND show each row\'s cost per head');
     }
+    // The one-more-head figure: a loss is shown as the reason; a gain points at Max more.
+    const lossHtml = w.renderLaborPlan({ profit: 100, extra_hires: [{ ...zeroRows[0], next_head_delta: -754 }] }, { profit: 100 }, sp);
+    if (!/One more head would change profit by <strong>−\$754/.test(lossHtml)) fail(`one-more-head loss not shown: ${lossHtml.slice(0, 400)}`);
+    const gainHtml = w.renderLaborPlan({ profit: 150, extra_hires: [{ ...zeroRows[0], extra: 5, next_head_delta: 1200 }] }, { profit: 100 }, sp);
+    if (!/would ADD \$1,200/.test(gainHtml) || !/raise Max more/.test(gainHtml)) fail('a positive next-head figure must point at Max more');
     // A hostile position name must not become markup (escaping on the new surface).
     const evil = w.renderLaborPlan({ profit: 100, extra_hires: [{ ...zeroRows[0], position: '<img src=x onerror=1>' }] },
                                    { profit: 100 }, sp);

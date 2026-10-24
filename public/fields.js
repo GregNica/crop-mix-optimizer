@@ -209,11 +209,11 @@
     },
     depreciation_water_years: {},
     fica_pct: {
-      chat: { label: "FICA %", type: "number", unit: "%", min: 0, max: 20,
+      chat: { label: "Payroll taxes %", type: "number", unit: "%", min: 0, max: 20,
         description: "Employer Social Security + Medicare, percent of ALL pay (overtime included). 7.65 in the US; 0 only for H-2A-only crews. NOT the rest of the payroll burden — that is straight_time_load_pct." },
     },
     straight_time_load_pct: {
-      chat: { label: "Other payroll load %", type: "number", unit: "%", min: 0, max: 80,
+      chat: { label: "Benefits & insurance %", type: "number", unit: "%", min: 0, max: 80,
         description: "Percent ADDED on top of wages for the employer burden OTHER than FICA (benefits, workers' comp, unemployment insurance, paid leave), charged on regular hours only. NOT the wage itself and NOT labor's share of revenue. Total burden incl. FICA is typically 15–35%, so this is typically ~8–27%. Explain if the user is unsure." },
     },
     labor_flex_enabled: {
@@ -397,7 +397,7 @@
     overtime_rate_multiplier:    { from: ['overtime_rate_multiplier'] },
     rainfall_weekly_multipliers: { sentBy: 'monte-carlo', from: [] },
     // Read by the adapter, sent by nothing. Each is a decision, not an oversight — say which.
-    overtime_enabled:            { unsent: 'server off-switch for overtime; the form caps it per role (max_week_pct = 100 means none)' },
+    overtime_enabled:            { unsent: 'server off-switch for overtime; the form caps it per role (max_ot_hrs = 0 means none)' },
     payroll_load_pct:            { unsent: 'legacy single payroll load (pre-L.5 server callers); the adapter splits it into fica + straight-time' },
     operating_weeks:             { unsent: 'deprecated; the solver ignores it (cost-accounting basis)' },
     storage_loss_frac_per_week:  { unsent: 'solver supports in-store shrink; no input yet — DECISIONS GROUP E3' },
