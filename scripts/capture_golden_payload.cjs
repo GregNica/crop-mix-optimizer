@@ -37,7 +37,9 @@ const OWNED = ['crops', 'ambient_storage_cap', 'rate_ambient_storage',
                'fica_pct', 'straight_time_load_pct',
                // Batch L — the roster rows now carry max_ot_hrs, hire_more/max_more, admin_pct
                // and task tags; pin the roster the form actually sends, not a July capture.
-               'employees', 'overtime_rate_multiplier'];
+               'employees', 'overtime_rate_multiplier',
+               // Batch W — every solve says how the farm is watered.
+               'water_mode'];
 
 bootApp().then(({ window: w }) => {
   const payload = JSON.parse(fs.readFileSync(PAYLOAD, 'utf8'));

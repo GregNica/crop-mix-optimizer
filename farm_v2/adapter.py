@@ -113,7 +113,14 @@ def run_from_js(params_json):
 
         # --- Water ---
         climate_zone             = str(p.get('climate_zone', 'california_central_valley'))
-        well_enabled             = bool(p.get('well_enabled', True))
+        # Batch W: HOW the farm is watered. ABSENT = irrigated (every saved plan and server caller
+        # predates the question). Outside irrigated the form's source ticks are only remembered
+        # state — the mode is the grower's answer — so they are cleared here, at the boundary,
+        # before the per-source "blank box" checks below can refuse a source nobody uses.
+        # Validation (not this line) refuses an unknown mode.
+        water_mode               = p.get('water_mode') or 'irrigated'
+        irrigated                = water_mode == 'irrigated'
+        well_enabled             = irrigated and bool(p.get('well_enabled', True))
         # No 2,500,000 fallback. That figure was a California water PERMIT used as a pump
         # capacity, retired in 667301d; leaving it as a default meant a payload without the key
         # silently got a farm that cannot irrigate itself. Same reasoning as TestNoPhantomFarm.
@@ -122,9 +129,9 @@ def run_from_js(params_json):
         if well_enabled and p.get('well_weekly_cap_L') in (None, ''):
             raise ValueError("no well_weekly_cap_L in payload: irrigation capacity would be invented")
         well_weekly_cap_L        = _num('well_weekly_cap_L', 0.0)
-        catchment_enabled        = bool(p.get('catchment_enabled', False))
+        catchment_enabled        = irrigated and bool(p.get('catchment_enabled', False))
         catchment_surface_area_m2 = _num_if_on(catchment_enabled, 'catchment_surface_area_m2', 5000)
-        city_water_enabled       = bool(p.get('city_water_enabled', False))
+        city_water_enabled       = irrigated and bool(p.get('city_water_enabled', False))
         city_water_cost_per_L    = _num_if_on(city_water_enabled, 'city_water_cost_per_L', 0.003)
         # No form input exists for the standing charge yet, but the solver models it, the P&L
         # labels it, and imported/server payloads may carry it — without this line the feature
@@ -348,6 +355,7 @@ def run_from_js(params_json):
             city_water_enabled=city_water_enabled,
             city_water_cost_per_L=city_water_cost_per_L,
             city_water_fixed_fee_per_week=city_water_fixed_fee,
+            water_mode=water_mode,
             cost_fert_per_lb=cost_fert_per_lb,
             cost_fuel_per_L=cost_fuel_per_L,
             year_round_employees=year_round_employees,
@@ -584,6 +592,9 @@ def run_from_js(params_json):
             'gap_note': result.get('gap_note'),
             # Why each requested crop is absent from the plan (S2).
             'unplanted_crops': result.get('unplanted_crops', []),
+            # How the farm was watered (Batch W) — the UI hides the water constraint card and
+            # its "+10% water" lever off-irrigated, where there is no limit to relieve.
+            'water_mode': result.get('water_mode', 'irrigated'),
         })
 
     except Exception as e:

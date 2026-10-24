@@ -21,6 +21,7 @@ Checks performed:
 from __future__ import annotations
 
 from farm_v2.utils.labor import SEASONAL_TYPES
+from farm_v2.utils.water import WATER_MODES
 
 import math
 from farm_v2.utils.calendar import generate_successions, week_of_year
@@ -47,6 +48,7 @@ def validate_params(
     catchment_enabled: bool = False,
     catchment_surface_area_m2: float = 0.0,
     well_weekly_cap_L: float = 0.0,
+    water_mode: str = "irrigated",
     max_plant_acres_per_week: float = 1e9,
     max_harvest_acres_per_week: float = 1e9,
     year: int = 2024,
@@ -96,12 +98,23 @@ def validate_params(
         raise ValueError("rainfall_weekly_L_per_acre contains negative values.")
 
     # 3. Water sources
+    # Batch W: the farm says HOW it is watered. Only "irrigated" reads the sources; the other two
+    # modes mean "no source", so a source left on with them is ambiguous and refused rather than
+    # resolved either way (the adapter clears the form's remembered ticks before it gets here).
+    any_source = city_water_enabled or well_enabled or catchment_enabled
+    if water_mode not in WATER_MODES:
+        raise ValueError(f"water_mode must be one of {list(WATER_MODES)}, got {water_mode!r}.")
+    if water_mode != "irrigated" and any_source:
+        raise ValueError(
+            f"water_mode={water_mode!r} uses no water source, but a source is enabled — "
+            f"turn the sources off or use water_mode='irrigated'."
+        )
     # Refused, not warned (D11): with every source off the solve came back "optimal" by growing
     # nothing. Here, the one check every caller passes through — not only the app's form.
-    if not city_water_enabled and not well_enabled and not catchment_enabled:
+    if water_mode == "irrigated" and not any_source:
         raise ValueError(
             "No water source enabled (city_water, well, catchment are all disabled) — "
-            "turn on at least one."
+            "turn on at least one, or choose water_mode 'rainfed' or 'unlimited'."
         )
     if catchment_enabled and catchment_surface_area_m2 <= 0:
         raise ValueError(

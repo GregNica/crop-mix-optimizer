@@ -32,6 +32,10 @@ RAINFALL_OFFSET_FRACTION: float = 0.65
 #: (accounting for evaporation and inefficiency).
 CATCHMENT_EFFICIENCY: float = 0.85
 
+#: How a farm is watered (Batch W): "irrigated" — the ticked sources cover what rain does not;
+#: "rainfed" — rain alone, no source; "unlimited" — water is not a constraint.
+WATER_MODES: tuple[str, ...] = ("irrigated", "rainfed", "unlimited")
+
 
 # ---------------------------------------------------------------------------
 # Built-in historical weekly rainfall data (liters / acre / week)
@@ -246,3 +250,31 @@ def compute_net_water_rates(
             result[i][week] = max(0.0, raw_rate - offset)
 
     return result
+
+
+def best_rain_coverage(
+    successions: list[dict],
+    crops: list[dict],
+    rainfall_weekly_L_per_acre: np.ndarray,
+    rainfall_offset_fraction: float = RAINFALL_OFFSET_FRACTION,
+) -> dict[str, float]:
+    """
+    For each crop, the share of its need rain covers in its DRIEST active week, on its best
+    succession — the number that decides whether it can be grown rain-fed (1.0 = fully).
+
+    A succession is rain-plantable only if rain covers every one of its weeks, so its coverage
+    is the minimum over its weeks; a crop is as plantable as its best succession.
+    """
+    _WATER_KEY = ["water_plant", "water_grow", "water_harv"]
+    best: dict[str, float] = {}
+    for s in successions:
+        crop = crops[s["crop"]]
+        cover = 1.0
+        for week, phase in zip(s["weeks"], s["phases"]):
+            need = crop[_WATER_KEY[phase]]
+            if 1 <= week <= 52 and need > 0:
+                rain = rainfall_weekly_L_per_acre[week - 1] * rainfall_offset_fraction
+                cover = min(cover, rain / need)
+        name = crop.get("name", f"crop {s['crop']}")
+        best[name] = max(best.get(name, 0.0), cover)
+    return best

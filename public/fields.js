@@ -172,6 +172,11 @@
       chat: { label: "Minimum viable margin %", type: "number", unit: "%", min: 0, max: 60,
         description: "Net-margin floor: crop-channels below it are dropped as 'not worth growing'; 0 disables it. Expert setting — if the user doesn't raise it, briefly explain it and suggest a small floor (~8%) or 0, and CONFIRM rather than setting silently." },
     },
+    // Batch W. Only "irrigated" reads the three source ticks below.
+    water_mode: {
+      chat: { label: "How the farm is watered", type: "enum", enum: ["irrigated", "rainfed", "unlimited"],
+        description: "irrigated = the ticked sources (well / catchment / city) cover what rain does not; rainfed = NO irrigation at all — only a planting rain fully waters every week can be grown, and on most climates the solve is refused saying so; unlimited = water does not limit the plan (no city water charged). Use rainfed ONLY if the user says they never irrigate, and unlimited only if they say water is never a concern — never to get past the 'no water source' refusal; ask about their sources instead." },
+    },
     climate_zone: {},
     well_enabled: {
       chat: { label: "Well water available", type: "boolean",
@@ -353,6 +358,7 @@
     sell_through_fraction:       { from: ['sell_through_pct'] },
     overhead_pct_of_revenue:     { from: ['overhead_pct'] },
     interest_rate_apr:           { from: ['interest_rate_pct'] },
+    water_mode:                  { from: ['water_mode'] },
     climate_zone:                { from: ['climate_zone'] },
     well_enabled:                { from: ['well_enabled'] },
     well_weekly_cap_L:           { from: ['well_weekly_cap_L'] },

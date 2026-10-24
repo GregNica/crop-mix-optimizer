@@ -49,6 +49,7 @@ from farm_v2.utils.calendar import (
     phase_weeks_of,
 )
 from farm_v2.utils.water import (
+    best_rain_coverage,
     compute_free_water,
     compute_net_water_rates,
     RAINFALL_OFFSET_FRACTION,
@@ -209,6 +210,18 @@ def _cw_index(c: int, w: int, n_weeks: int) -> int:
     return c * n_weeks + (w - 1)
 
 
+def _rain_short_message(successions, crops, rainfall, offset_fraction) -> str:
+    """The refusal for a rain-fed farm on which no succession can be rain-watered: name the crop
+    rain comes CLOSEST to watering, so the grower sees how far off it is, not just 'no'."""
+    cover = best_rain_coverage(successions, crops, np.asarray(rainfall, dtype=float), offset_fraction)
+    crop, pct = max(cover.items(), key=lambda kv: kv[1])
+    return (f"Rain-fed only: rain alone never waters a whole crop cycle on this climate, so "
+            f"nothing could be planted. The closest is {crop}: in its driest week rain covers "
+            f"{math.floor(pct * 100)}% of what it needs. This model has no yield penalty for under-watering — "
+            f"a crop is fully watered or not grown. Choose 'Irrigated' and tick a water source, "
+            f"or 'Don't limit by water'.")
+
+
 # ---------------------------------------------------------------------------
 # Main solver
 # ---------------------------------------------------------------------------
@@ -318,6 +331,11 @@ def solve_farm_v2(
     city_water_cost_per_L: float = 0.0,
     city_water_fixed_fee_per_week: float = 0.0,
     rainfall_offset_fraction: float = RAINFALL_OFFSET_FRACTION,
+    # Batch W: how the farm is watered. "irrigated" — the sources above cover what rain does not;
+    # "rainfed" — no source at all, so only a succession rain fully waters can be planted;
+    # "unlimited" — water is not a constraint (no C3 rows, no city water). Outside "irrigated"
+    # every source must be off — validate_params refuses the ambiguity.
+    water_mode: str = "irrigated",
     # --- Labor ---
     year_round_employees: list | None = None,
     seasonal_employees: list | None = None,
@@ -523,6 +541,7 @@ def solve_farm_v2(
             catchment_enabled=catchment_enabled,
             catchment_surface_area_m2=catchment_surface_area_m2,
             well_weekly_cap_L=well_weekly_cap_L,
+            water_mode=water_mode,
             year=year,
             rented_acres=rented_acres,
             cash_rent_per_acre_yr=cash_rent_per_acre_yr,
@@ -575,6 +594,26 @@ def solve_farm_v2(
     net_water_rate = compute_net_water_rates(
         successions, crops, rainfall_weekly_L_per_acre, rainfall_offset_fraction,
     )  # shape (N_S, 53)
+
+    # Rain-fed (Batch W): with no source, C3's supply is zero and only a succession whose every
+    # active week rain covers can be planted. Measured on every shipped climate: NONE can — the
+    # crops need 85-163k L/acre/wk and 65% of the rain offsets 50-64k — so the solve would come
+    # back "optimal" growing nothing (−$997k on the golden farm), the hole D11 closed. Refuse
+    # that case with the reason; solve, and say so, when some successions are rain-plantable.
+    if water_mode == "rainfed":
+        rain_ok = [i for i, s in enumerate(successions)
+                   if not any(net_water_rate[i][w] > 0 for w in s["weeks"] if 1 <= w <= N_WEEKS)]
+        if not rain_ok:
+            return _invalid([_rain_short_message(successions, crops, rainfall_weekly_L_per_acre,
+                                                 rainfall_offset_fraction)], successions)
+        validation_warnings.append(
+            f"Rain-fed only: this plan assumes rain alone waters the crops — no irrigation. "
+            f"{len(rain_ok)} of {N_S} possible plantings are fully watered by rain on this "
+            f"climate; the rest were left out.")
+    elif water_mode == "unlimited":
+        validation_warnings.append(
+            "Don't limit by water: this plan assumes the farm can always get the water its crops "
+            "need. No water source limited it and no city water was charged.")
 
     # Labor
     labor_result = compute_labor_arrays(
@@ -1189,7 +1228,9 @@ def solve_farm_v2(
     # wstore[0] = 0 — the tank starts the year empty, the same anchoring choice as the
     # inventory balance below and for the same reason: a periodic boundary leaves the level
     # free, so the reported series would not be a physical quantity.
-    for w in range(1, N_WEEKS + 1):
+    # "unlimited" (Batch W) writes no water rows at all: wstore is then unconstrained at zero
+    # cost and presolve drops it, the same collapse as a zero-capacity tank.
+    for w in (range(1, N_WEEKS + 1) if water_mode != "unlimited" else ()):
         cols = [
             (idx_x_start + i, total_land * net_water_rate[i][w])
             for i in range(N_S)
@@ -2008,8 +2049,11 @@ def solve_farm_v2(
         # draw more than that week's inflow by emptying stored water. Leaving it out made the
         # published cap smaller than the row actually solved against, so `used` exceeded `cap`
         # and the bottleneck ranking would have called water saturated when it was not.
+        # "unlimited" (Batch W) has no C3 row, so no ceiling: cap 0, which every consumer reads
+        # as "not a constraint" (cap > 0 guards) — water is never ranked, used stays honest.
         "water":   {"used": water_used_weekly,
                     "cap":  [float(free_water[w] + city_weekly[w] + wstore_opening[w])
+                             if water_mode != "unlimited" else 0.0
                              for w in range(N_WEEKS)]},
         "storage_ambient": {"used": ambient_m3_weekly,
                             "cap":  [float(ambient_storage_cap)] * N_WEEKS},
@@ -2093,6 +2137,7 @@ def solve_farm_v2(
         # key to read, and that copy understates any plan that holds stock. SPEC_v3 §9.
         "warnings":         validation_warnings,
         "errors":           [],
+        "water_mode":       water_mode,
         "capacity_series":  capacity_series,
         # WHY each requested crop is absent from the plan (audit Part 3 / S2). Computed here
         # rather than in the client so every entry point gets it — the What-If sweep and Monte

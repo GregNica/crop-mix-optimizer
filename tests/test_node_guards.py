@@ -121,6 +121,14 @@ GUARDS = [
         "re-enter rent as a mortgage — a double charge), a tenure label lost its unit bracket (Metric "
         "shows hectares under 'acres'), or the land What-If adds rent-free acres",
     ),
+    (
+        "water-mode-client",
+        ["tests/water_mode_client.cjs"],
+        "the Water section's mode question no longer reaches the payload correctly (Batch W). "
+        "Either a rain-fed or unlimited farm is refused for having no source, a remembered tick "
+        "waters a plan that said it has no irrigation, D11's no-source refusal stopped firing in "
+        "Irrigated, or an old saved plan loads in the wrong mode",
+    ),
 ]
 
 
