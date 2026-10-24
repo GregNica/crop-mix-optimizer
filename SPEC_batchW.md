@@ -1,7 +1,8 @@
 # SPEC — Batch W: water mode
 
-**Status:** DRAFT 2026-10-24, built on the recommendations below (the grower asked for the batch to
-run end-to-end; §2's one finding is flagged for a ruling at the next check). Source: BACKLOG
+**Status:** ✅ BUILT + LANDED 2026-10-24. Grower browser check passed. Rulings: Rain-fed only stays
+visible (BC8); Unlimited drops the limit and city water only — owned-asset depreciation and the
+per-litre on-farm charge stay, as designed below. Source: BACKLOG
 **BC4** (ruled 2026-10-23, option C), `/code-review max` #15, PLAN "Batch W".
 
 ---
