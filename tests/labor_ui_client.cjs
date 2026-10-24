@@ -179,6 +179,15 @@ bootApp().then(({ window: w }) => {
     // The one-more-head figure: a loss is shown as the reason; a gain points at Max more.
     const lossHtml = w.renderLaborPlan({ profit: 100, extra_hires: [{ ...zeroRows[0], next_head_delta: -754 }] }, { profit: 100 }, sp);
     if (!/One more head would change profit by <strong>≈ −\$754/.test(lossHtml)) fail(`one-more-head loss not shown: ${lossHtml.slice(0, 400)}`);
+    // Below Max more a small gain is the solver's tolerance, not a reason to raise the cap.
+    const noiseHtml = w.renderLaborPlan({ profit: 100, extra_hires: [{ ...zeroRows[0], extra: 2, max_more: 5, next_head_delta: 60 }] }, { profit: 90 }, sp);
+    if (/raise Max more/.test(noiseHtml) || !/≈ \$0/.test(noiseHtml)) fail('a +$60 figure below Max more must read ≈ $0, not "raise Max more"');
+    const infHtml = w.renderLaborPlan({ profit: 100, extra_hires: [{ ...zeroRows[0], next_head_delta: null, next_head_status: 'infeasible' }] }, { profit: 100 }, sp);
+    if (!/not affordable/.test(infHtml)) fail('an infeasible one-more-head must say it is not affordable');
+    // A part-time row's default OT never exceeds its own hours (6 h/wk → 6, not 10).
+    if (!w.renderLaborRow({ position: 'Helper', type: 'hourly', count: 1, wage: 18, hours_per_week: 6 }, 98).includes('data-lf="max_ot_hrs" value="6"')) {
+      fail('a 6 h/wk row defaulted to more overtime hours than its regular hours');
+    }
     const gainHtml = w.renderLaborPlan({ profit: 150, extra_hires: [{ ...zeroRows[0], extra: 5, next_head_delta: 1200 }] }, { profit: 100 }, sp);
     if (!/would ADD ≈ \$1,200/.test(gainHtml) || !/raise Max more/.test(gainHtml)) fail('a positive next-head figure must point at Max more');
     // A hostile position name must not become markup (escaping on the new surface).

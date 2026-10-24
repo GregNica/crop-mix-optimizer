@@ -209,3 +209,12 @@ def test_fica_above_the_whole_load_is_refused(minimal_params):
         dict(position="Hand", count=1, type="hourly", wage=20.0, hours_per_week=40,
              fica_pct=0.0765, benefits_pct=0.0)], seasonal_employees=[])
     assert solve_farm_v2(**p, overtime_enabled=True)["status"] == "invalid_input"
+
+
+
+def test_the_overtime_default_never_exceeds_the_rows_own_hours():
+    """/code-review: a 6 h/wk helper with no saved OT value got the flat 10 h default, which the
+    'OT ≤ Hrs/Wk' check then refused — an old plan stopped solving. Default = min(10, Hrs/Wk)."""
+    helper = dict(position="Helper", count=1, type="hourly", wage=18.0, hours_per_week=6)
+    (role,) = compute_labor_arrays([helper], [])["labor_by_role"]
+    assert float(role["ot_cap"].max()) == pytest.approx(6.0)

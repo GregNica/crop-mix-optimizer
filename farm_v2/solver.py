@@ -2109,29 +2109,44 @@ def solve_farm_v2(
     }
 
 
-# Budget for each "one more head" re-solve: ~2x the measured 11 s on the golden farm natively.
-NEXT_HEAD_TIME_LIMIT = 20.0
+# Budget for each "one more head" re-solve. Natively it takes 3.5-4 s on the golden farm; Pyodide
+# has run ~4x slower (Monte Carlo draws), so ~15 s in the browser — 45 s keeps a margin, and a
+# row that still runs out says so instead of showing nothing (/code-review).
+NEXT_HEAD_TIME_LIMIT = 45.0
 
 
 def next_head_deltas(solve_kwargs: dict, result: dict) -> list:
     """What ONE more head on each hireable row would add to (or take from) profit.
 
     For every row in `result["extra_hires"]`, re-solve with that row pinned to exactly one head
-    more than the What-If chose (`force_extra`; the rest of the plan free to re-adjust) and return
-    profit(forced) − profit(chosen), in the same order. Negative within Max more is the optimizer's
-    own reason for stopping there; positive means Max more is what stopped it (grower QA
-    2026-10-24: −$754 at 70% pace had read as a flat "no").
-
-    None where the forced solve did not PROVE optimality: a time-limited incumbent gave −$3,498
-    against a true −$704, so it is not shown at all. Even proved, each solve carries HiGHS's
-    default relative gap (~±$100 on the golden farm), which the panel signals with "≈". One
-    extra solve per row, each capped at NEXT_HEAD_TIME_LIMIT.
+    more than the What-If chose (`force_extra`; the rest of the plan free to re-adjust). Returns,
+    in the same order, {"delta": profit(forced) − profit(chosen) or None, "status": why}:
+      "optimal"     — delta given. Negative within Max more is the optimizer's own reason for
+                      stopping; positive AT Max more means the cap, not money, stopped it.
+      "infeasible"  — one more head cannot be funded or fitted (e.g. the cash floor): a real answer.
+      "time_limit"  — not proved inside NEXT_HEAD_TIME_LIMIT; no figure (a 2 s incumbent once read
+                      −$3,498 against a true −$704).
+      "base_not_optimal" — the What-If itself stopped early, so there is no proved base to subtract.
+      "error"       — that one re-solve failed; the rest of the What-If still stands.
+    Even proved, each solve carries HiGHS's default relative gap (~±$100 on the golden farm),
+    which the panel signals with "≈". Grower QA 2026-10-24: −$754 had read as a flat "no".
     """
+    hires = result.get("extra_hires", [])
+    if result.get("status") != "optimal":
+        return [{"delta": None, "status": "base_not_optimal"} for _ in hires]
     kw = dict(solve_kwargs, solver_time_limit=min(float(solve_kwargs.get("solver_time_limit", 80.0)),
                                                   NEXT_HEAD_TIME_LIMIT))
-    deltas = []
-    for j, hire in enumerate(result.get("extra_hires", [])):
-        forced = solve_farm_v2(**kw, force_extra={j: int(hire["extra"]) + 1})
-        deltas.append(float(forced["profit"]) - float(result["profit"])
-                      if forced.get("status") == "optimal" else None)
-    return deltas
+    out = []
+    for j, hire in enumerate(hires):
+        try:
+            forced = solve_farm_v2(**kw, force_extra={j: int(hire["extra"]) + 1})
+            status = forced.get("status")
+            if status == "optimal":
+                out.append({"delta": float(forced["profit"]) - float(result["profit"]),
+                            "status": "optimal"})
+            else:
+                out.append({"delta": None, "status": "infeasible" if status == "infeasible"
+                            else "time_limit" if str(status).startswith("time_limit") else "error"})
+        except Exception:   # one row's measurement must never cost the grower the whole What-If
+            out.append({"delta": None, "status": "error"})
+    return out

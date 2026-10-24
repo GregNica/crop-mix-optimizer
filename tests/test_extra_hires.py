@@ -133,7 +133,8 @@ def test_the_adapter_carries_the_row_through_and_back(two_crop_params, monkeypat
     the measurement itself is pinned by test_one_more_head_is_measured_both_ways."""
     import farm_v2.adapter as adapter
     monkeypatch.setattr(adapter, "next_head_deltas",
-                        lambda kw, res: [-754.4, None][:len(res["extra_hires"])])
+                        lambda kw, res: [{"delta": -754.4, "status": "optimal"},
+                                         {"delta": None, "status": "infeasible"}][:len(res["extra_hires"])])
     p = golden_payload(labor_flex_enabled=True)
     for e in p["employees"]:
         e["max_ot_hrs"] = 0                               # no overtime: make hiring the lever
@@ -147,7 +148,8 @@ def test_the_adapter_carries_the_row_through_and_back(two_crop_params, monkeypat
     for name, r in got.items():
         assert r["row"] == rows[name], "the result points at the wrong roster line"
         assert r["extra"] >= 1, f"{name} cut to one person hired nobody — fixture inert"
-    assert [r["next_head_delta"] for r in out["extra_hires"]] == [-754.0, None]
+    assert [(r["next_head_delta"], r["next_head_status"]) for r in out["extra_hires"]] == [
+        (-754.0, "optimal"), (None, "infeasible")]
 
 
 @pytest.mark.parametrize("key,val", [("hire_enabled", True), ("max_hire_hrs_per_week", 400),
@@ -173,14 +175,39 @@ def test_one_more_head_is_measured_both_ways(two_crop_params, hired):
     it must ADD money, which says Max more, not money, was the limit."""
     from farm_v2.solver import next_head_deltas
     p, free = hired
-    (d_free,) = next_head_deltas(dict(p, hire_enabled=True), free)
-    assert d_free is not None and d_free < 0, d_free
+    ((d_free, s_free),) = [(d["delta"], d["status"]) for d in next_head_deltas(dict(p, hire_enabled=True), free)]
+    assert s_free == "optimal" and d_free is not None and d_free < 0, (d_free, s_free)
     capped_kw = dict(_fixture(two_crop_params, max_more=1), hire_enabled=True)
     capped = solve_farm_v2(**capped_kw)
     assert capped["extra_hires"][0]["extra"] == 1
-    (d_capped,) = next_head_deltas(capped_kw, capped)
+    ((d_capped, _),) = [(d["delta"], d["status"]) for d in next_head_deltas(capped_kw, capped)]
     assert d_capped is not None and d_capped > 0, d_capped
     # The forced solve has EXACTLY one more head (force_extra pins it): the same as Max more 2.
     assert d_capped == pytest.approx(
         solve_farm_v2(**dict(_fixture(two_crop_params, max_more=2), hire_enabled=True))["profit"]
         - capped["profit"], abs=1.0)
+
+
+
+@pytest.mark.parametrize("forced,want", [({"status": "infeasible"}, "infeasible"),
+                                         ({"status": "time_limit_feasible", "profit": 1.0}, "time_limit"),
+                                         (RuntimeError("boom"), "error")])
+def test_a_row_without_a_proved_figure_says_why_and_never_sinks_the_what_if(hired, monkeypatch, forced, want):
+    """/code-review: 'not affordable', 'ran out of time' and 'failed' must be told apart, and one
+    failed re-solve must not throw away the What-If that already succeeded."""
+    import farm_v2.solver as solver
+    p, free = hired
+    def fake(**kw):
+        if isinstance(forced, Exception):
+            raise forced
+        return forced
+    monkeypatch.setattr(solver, "solve_farm_v2", fake)
+    assert solver.next_head_deltas(dict(p, hire_enabled=True), free) == [{"delta": None, "status": want}]
+
+
+def test_no_figure_is_subtracted_from_an_unproved_what_if(hired):
+    """A What-If that stopped on its time limit has no proved profit to subtract from."""
+    from farm_v2.solver import next_head_deltas
+    p, free = hired
+    assert next_head_deltas(dict(p, hire_enabled=True), dict(free, status="time_limit_feasible")) == [
+        {"delta": None, "status": "base_not_optimal"}]

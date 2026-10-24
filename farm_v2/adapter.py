@@ -20,13 +20,18 @@ from farm_v2.utils.water import get_rainfall_weekly
 def _legacy_ot_hours(e):
     """{'max_ot_hrs': h} from a pre-2026-10-24 row's max_week_pct (the total week as % of regular
     hours: 125 on 40 h = 10 h), or {} when there is nothing to convert. Unclamped, so a nonsense
-    percent becomes a nonsense hour count that validation refuses by name; a non-numeric pair is
-    passed through as None for the same reason."""
+    percent becomes a nonsense hour count that validation refuses by name. A non-numeric percent
+    is passed through as None for the same reason; non-numeric HOURS leave the key out, so the
+    caller hears about the hours box they actually got wrong."""
     pct, hrs = e.get('max_week_pct'), e.get('hours_per_week', 40)
     if pct is None:
         return {}
     try:
-        return {'max_ot_hrs': (float(pct) / 100.0 - 1.0) * float(hrs)}
+        hrs = float(hrs)
+    except (TypeError, ValueError):
+        return {}
+    try:
+        return {'max_ot_hrs': (float(pct) / 100.0 - 1.0) * hrs}
     except (TypeError, ValueError):
         return {'max_ot_hrs': None}
 
@@ -548,7 +553,8 @@ def run_from_js(params_json):
                  'max_more': int(r['max_more']),
                  'cost_per_head': round(float(r['cost_per_head']), 2),
                  'hours_per_head': round(float(r['hours_per_head']), 1),
-                 'next_head_delta': None if d is None else round(float(d), 0)}
+                 'next_head_delta': None if d['delta'] is None else round(float(d['delta']), 0),
+                 'next_head_status': d['status']}
                 for r, d in zip(result.get('extra_hires', []), next_head)],
             # Who stays late, which weeks, at what $/hr (L.2) — 52 entries each, 0-indexed.
             'overtime_by_role': [

@@ -192,7 +192,7 @@ def _field_share(emp: dict) -> float:
 
 
 # Most overtime hours ONE person may work per week when a row does not say (grower ruling
-# 2026-10-24: hours, flat — not a share of the week). The browser's OT_HRS_DEFAULT must equal it
+# 2026-10-24: hours, flat — not a share of the week), capped at the row's own Hrs/Wk. The browser's OT_HRS_DEFAULT must equal it
 # (tests/test_overtime_per_role.py pins the pair).
 OT_HRS_DEFAULT = 10.0
 
@@ -225,7 +225,8 @@ def _role(emp: dict, is_hourly: bool, count: float, hrs: float, field: float,
     wage = float(emp.get("wage", 0.0))
     # Salaried and unpaid roles: no overtime hours, so no cap and no rate.
     ot_ok = is_hourly and wage > 0
-    ot_hrs = max(0.0, float(emp.get("max_ot_hrs", OT_HRS_DEFAULT))) if ot_ok else 0.0
+    # The default never exceeds the row's own hours (a 6 h/wk helper gets 6, not 10).
+    ot_hrs = (max(0.0, float(emp.get("max_ot_hrs", min(OT_HRS_DEFAULT, hrs)))) if ot_ok else 0.0)
     fica = float(emp.get("fica_pct", 0.0))
     straight = float(emp.get("benefits_pct", 0.0)) - fica
     return {
