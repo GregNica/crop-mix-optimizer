@@ -385,6 +385,9 @@ def solve_farm_v2(
     year: int = 2024,
     # --- Solver options ---
     solver_time_limit: float = 80.0,
+    # {index into the result's extra_hires: heads} — pins that row's extra heads to EXACTLY n.
+    # Only next_head_deltas sets it, to measure one more head; never a grower input.
+    force_extra: dict | None = None,
 ) -> dict:
     """
     Solve the 52-week farm MILP and return a results dict.
@@ -1068,11 +1071,13 @@ def solve_farm_v2(
     # window). A role that can also hire gets a bigger cap as heads are added, so for it the
     # per-week cap becomes a ROW (Step 9) and the bound is lifted to the most it could reach.
     for j, r in enumerate(ex_roles):
-        ub[idx_ex_start + j] = max(r["max_more"], r["min_more"])
-        lb[idx_ex_start + j] = r["min_more"]
+        if force_extra and j in force_extra:
+            lb[idx_ex_start + j] = ub[idx_ex_start + j] = force_extra[j]
+        else:
+            ub[idx_ex_start + j] = r["max_more"]
     _ex_of = {id(r): j for j, r in enumerate(ex_roles)}
     for k, r in enumerate(ot_roles):
-        grow = (hire_prod * r["ot_per_head"] * r["max_more"]
+        grow = (hire_prod * r["ot_per_head"] * ub[idx_ex_start + _ex_of[id(r)]]
                 if id(r) in _ex_of else 0.0)
         ub[_ot(k, 0) : _ot(k, 0) + N_WEEKS] = r["ot_cap"] + grow
 
@@ -2104,32 +2109,29 @@ def solve_farm_v2(
     }
 
 
+# Budget for each "one more head" re-solve: ~2x the measured 11 s on the golden farm natively.
+NEXT_HEAD_TIME_LIMIT = 20.0
+
+
 def next_head_deltas(solve_kwargs: dict, result: dict) -> list:
     """What ONE more head on each hireable row would add to (or take from) profit.
 
-    For every row in `result["extra_hires"]`, re-solve with that row forced to one head more than
-    the What-If chose (the rest of the plan free to re-adjust), and return profit(forced) −
-    profit(chosen), in the same order — None where the forced solve did not produce a plan.
-    Negative within the row's Max more is the optimizer's own reason for stopping there; positive
-    means Max more is what stopped it. The zero answer ("no extra hire pays") gets its size this
-    way (grower QA 2026-10-24: −$1.3k at 70% pace read as a flat no). One extra solve per row.
+    For every row in `result["extra_hires"]`, re-solve with that row pinned to exactly one head
+    more than the What-If chose (`force_extra`; the rest of the plan free to re-adjust) and return
+    profit(forced) − profit(chosen), in the same order. Negative within Max more is the optimizer's
+    own reason for stopping there; positive means Max more is what stopped it (grower QA
+    2026-10-24: −$754 at 70% pace had read as a flat "no").
+
+    None where the forced solve did not PROVE optimality: a time-limited incumbent gave −$3,498
+    against a true −$704, so it is not shown at all. Even proved, each solve carries HiGHS's
+    default relative gap (~±$100 on the golden farm), which the panel signals with "≈". One
+    extra solve per row, each capped at NEXT_HEAD_TIME_LIMIT.
     """
+    kw = dict(solve_kwargs, solver_time_limit=min(float(solve_kwargs.get("solver_time_limit", 80.0)),
+                                                  NEXT_HEAD_TIME_LIMIT))
     deltas = []
-    for hire in result.get("extra_hires", []):
-        kw = dict(solve_kwargs)
-        kw["year_round_employees"] = [dict(e) for e in solve_kwargs.get("year_round_employees") or []]
-        kw["seasonal_employees"] = [dict(e) for e in solve_kwargs.get("seasonal_employees") or []]
-        rows = kw["year_round_employees"] + kw["seasonal_employees"]
-        # The caller's roster index when it gave one (the adapter does), else the first row
-        # with this name that may hire — the same row labor._role built the result from.
-        emp = next((e for e in rows if hire.get("row") is not None and e.get("row") == hire["row"]),
-                   None) or next(e for e in rows if e.get("position", "") == hire["position"]
-                                 and e.get("hire_more"))
-        n = int(hire["extra"]) + 1
-        emp["min_more"] = n
-        emp["max_more"] = max(int(emp.get("max_more", 0) or 0), n)
-        forced = solve_farm_v2(**kw)
+    for j, hire in enumerate(result.get("extra_hires", [])):
+        forced = solve_farm_v2(**kw, force_extra={j: int(hire["extra"]) + 1})
         deltas.append(float(forced["profit"]) - float(result["profit"])
-                      if forced.get("status") in PLAN_STATUSES and forced.get("profit") is not None
-                      else None)
+                      if forced.get("status") == "optimal" else None)
     return deltas

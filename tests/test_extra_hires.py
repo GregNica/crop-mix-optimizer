@@ -1,6 +1,6 @@
 """Extra hires per roster row (Batch L.3 — GROUP F1, the grower's design).
 
-An extra head INHERITS its row — wage, hours, field %, window, overtime allowance — and is an
+An extra head INHERITS its row — wage, hours, field %, window, overtime hours — and is an
 integer: a person, not a spot market of 2-hour weeks. It works at the farm-wide new-hire
 productivity, is paid the row's full weekly pay in every window week (committed, W12) and costs
 the one-off per-head amount once. What-If only (Q3): the main plan never hires.
@@ -82,9 +82,9 @@ def test_productivity_decides_how_many_heads(two_crop_params):
 
 
 def test_new_heads_may_work_overtime_too(two_crop_params):
-    """The row's overtime cap grows with its heads: OT hrs × (count + extra × pace) ×
-    hours × field. The fixture must buy MORE overtime in some week than the original two could
-    give (0.25 × 2 × 40 = 20 h), or a cap frozen at the original crew would pass unseen."""
+    """The row's overtime cap grows with its heads: OT hrs × (count + extra × pace) × field.
+    The fixture must buy MORE overtime in some week than the original two could give
+    (10 × 2 = 20 h), or a cap frozen at the original crew would pass unseen."""
     p = _fixture(two_crop_params)
     r = solve_farm_v2(**p, hire_enabled=True, overtime_enabled=True)
     assert r["status"] == "optimal"
@@ -92,7 +92,7 @@ def test_new_heads_may_work_overtime_too(two_crop_params):
     (ot,) = r["overtime_by_role"]
     assert max(ot["hours"]) > 20.0 + 1e-6, "OT never exceeds the original crew's cap — inert"
     for h in ot["hours"]:
-        assert h <= 0.25 * 40 * (2 + n * PROD) + 1e-6
+        assert h <= 10 * (2 + n * PROD) + 1e-6
 
 
 def test_hire_more_on_an_unpaid_row_is_refused_not_free(two_crop_params):
@@ -126,9 +126,14 @@ def test_extra_hires_are_real_money_in_the_cash_floor(two_crop_params):
     )
 
 
-def test_the_adapter_carries_the_row_through_and_back(two_crop_params):
+def test_the_adapter_carries_the_row_through_and_back(two_crop_params, monkeypatch):
     """hire_more / max_more ride on the roster row; the result names the FORM row index so
-    'Add to roster' adds the heads to the right line."""
+    'Add to roster' adds the heads to the right line, and carries each row's one-more-head
+    figure. next_head_deltas is stubbed: its two golden re-solves (~18 s) prove nothing here —
+    the measurement itself is pinned by test_one_more_head_is_measured_both_ways."""
+    import farm_v2.adapter as adapter
+    monkeypatch.setattr(adapter, "next_head_deltas",
+                        lambda kw, res: [-754.4, None][:len(res["extra_hires"])])
     p = golden_payload(labor_flex_enabled=True)
     for e in p["employees"]:
         e["max_ot_hrs"] = 0                               # no overtime: make hiring the lever
@@ -142,6 +147,7 @@ def test_the_adapter_carries_the_row_through_and_back(two_crop_params):
     for name, r in got.items():
         assert r["row"] == rows[name], "the result points at the wrong roster line"
         assert r["extra"] >= 1, f"{name} cut to one person hired nobody — fixture inert"
+    assert [r["next_head_delta"] for r in out["extra_hires"]] == [-754.0, None]
 
 
 @pytest.mark.parametrize("key,val", [("hire_enabled", True), ("max_hire_hrs_per_week", 400),
@@ -160,14 +166,13 @@ def test_new_hire_productivity_above_100pct_is_refused(two_crop_params):
     assert r["status"] == "invalid_input"
 
 
-def test_one_more_head_is_measured_both_ways(two_crop_params):
+def test_one_more_head_is_measured_both_ways(two_crop_params, hired):
     """next_head_deltas re-solves with one head more than chosen (grower QA 2026-10-24: a bare
     'no extra hire pays' hid a −$1.3k-ish margin). Within Max more the extra head must COST
     money — that is why the optimizer stopped; capped below its optimum (3 heads, Max more 1)
     it must ADD money, which says Max more, not money, was the limit."""
     from farm_v2.solver import next_head_deltas
-    p = _fixture(two_crop_params)
-    free = solve_farm_v2(**p, hire_enabled=True)
+    p, free = hired
     (d_free,) = next_head_deltas(dict(p, hire_enabled=True), free)
     assert d_free is not None and d_free < 0, d_free
     capped_kw = dict(_fixture(two_crop_params, max_more=1), hire_enabled=True)
@@ -175,7 +180,7 @@ def test_one_more_head_is_measured_both_ways(two_crop_params):
     assert capped["extra_hires"][0]["extra"] == 1
     (d_capped,) = next_head_deltas(capped_kw, capped)
     assert d_capped is not None and d_capped > 0, d_capped
-    # The forced solve really has one more head (min_more is a floor, not a hint).
+    # The forced solve has EXACTLY one more head (force_extra pins it): the same as Max more 2.
     assert d_capped == pytest.approx(
         solve_farm_v2(**dict(_fixture(two_crop_params, max_more=2), hire_enabled=True))["profit"]
         - capped["profit"], abs=1.0)

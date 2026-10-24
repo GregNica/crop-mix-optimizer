@@ -144,13 +144,16 @@ bootApp().then(({ window: w }) => {
     }
   }
 
-  // 6c — rows restored from older plans show the overtime the payload will send: no saved value
-  // → 10 h (pre-L.2); a saved 'Max week 150%' on 40 h → 20 h, not 'no overtime' (/code-review).
+  // 6c — a row restored with no saved overtime (a pre-L.2 plan) shows the OT_HRS_DEFAULT the
+  // payload will send, not 'no overtime' (/code-review). A saved 'Max week %' is converted at
+  // load by migrateFormState — pinned in form_state_client.cjs.
   {
     const old = { position: 'Old Crew', type: 'seasonal', count: 2, wage: 18, hours_per_week: 40, start_week: 10, end_week: 40 };
     if (!w.renderLaborRow(old, 99).includes('up to 50 h/wk')) fail('a row with no saved overtime reads "no overtime" while 10 h is sent');
-    const pct = w.renderLaborRow({ ...old, max_week_pct: 150 }, 99);
-    if (!pct.includes('up to 60 h/wk') || !pct.includes('value="20"')) fail('a saved 150% week did not become 20 OT hours');
+    // A salaried row with no saved value shows 0, not the hourly default (it never gets overtime).
+    if (!w.renderLaborRow({ ...old, type: 'salary' }, 99).includes('data-lf="max_ot_hrs" value="0"')) {
+      fail('a salaried row with no saved overtime shows a non-zero OT box');
+    }
   }
 
   // 6d — a blank FICA box is refused, not sent as 0 (/code-review).
@@ -175,9 +178,9 @@ bootApp().then(({ window: w }) => {
     }
     // The one-more-head figure: a loss is shown as the reason; a gain points at Max more.
     const lossHtml = w.renderLaborPlan({ profit: 100, extra_hires: [{ ...zeroRows[0], next_head_delta: -754 }] }, { profit: 100 }, sp);
-    if (!/One more head would change profit by <strong>−\$754/.test(lossHtml)) fail(`one-more-head loss not shown: ${lossHtml.slice(0, 400)}`);
+    if (!/One more head would change profit by <strong>≈ −\$754/.test(lossHtml)) fail(`one-more-head loss not shown: ${lossHtml.slice(0, 400)}`);
     const gainHtml = w.renderLaborPlan({ profit: 150, extra_hires: [{ ...zeroRows[0], extra: 5, next_head_delta: 1200 }] }, { profit: 100 }, sp);
-    if (!/would ADD \$1,200/.test(gainHtml) || !/raise Max more/.test(gainHtml)) fail('a positive next-head figure must point at Max more');
+    if (!/would ADD ≈ \$1,200/.test(gainHtml) || !/raise Max more/.test(gainHtml)) fail('a positive next-head figure must point at Max more');
     // A hostile position name must not become markup (escaping on the new surface).
     const evil = w.renderLaborPlan({ profit: 100, extra_hires: [{ ...zeroRows[0], position: '<img src=x onerror=1>' }] },
                                    { profit: 100 }, sp);

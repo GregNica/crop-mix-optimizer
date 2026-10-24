@@ -28,7 +28,7 @@ Overtime and extra hires (L.2 / L.3), both per role — see _role:
   hourly-only was the bug that removed C14, because it let flexibility buy back capacity the
   farm already had. Bought hours carry their FULL wage: the committed bill pays for the crew's
   stated hours, and these are extra (W12). An extra head INHERITS its row — wage, hours,
-  field %, window, overtime allowance — so no hired-wage statistic is inferred any more (the
+  field %, window, overtime hours — so no hired-wage statistic is inferred any more (the
   three that stood here were each a statistic over internal payroll posing as a market price;
   W15/W17 retired with them).
 """
@@ -191,16 +191,10 @@ def _field_share(emp: dict) -> float:
     return max(0.0, min(1.0, float(emp.get("field_time_pct", 100.0)) / 100.0))
 
 
-def _ot_hours(emp: dict, hrs: float) -> float:
-    """Most overtime hours ONE person on this row may work per week (≥ 0).
-
-    `max_ot_hrs` is the input. A pre-2026-10-24 caller's `max_week_pct` (the total week as % of
-    regular hours, 125 = 40 + 10) is read as the hours it meant; absent both, a 125% week —
-    a quarter of the regular hours — is the default it always was.
-    """
-    if "max_ot_hrs" in emp:
-        return max(0.0, float(emp["max_ot_hrs"]))
-    return max(0.0, float(emp.get("max_week_pct", 125.0)) / 100.0 - 1.0) * hrs
+# Most overtime hours ONE person may work per week when a row does not say (grower ruling
+# 2026-10-24: hours, flat — not a share of the week). The browser's OT_HRS_DEFAULT must equal it
+# (tests/test_overtime_per_role.py pins the pair).
+OT_HRS_DEFAULT = 10.0
 
 
 def _role(emp: dict, is_hourly: bool, count: float, hrs: float, field: float,
@@ -231,14 +225,14 @@ def _role(emp: dict, is_hourly: bool, count: float, hrs: float, field: float,
     wage = float(emp.get("wage", 0.0))
     # Salaried and unpaid roles: no overtime hours, so no cap and no rate.
     ot_ok = is_hourly and wage > 0
-    ot_hrs = _ot_hours(emp, hrs) if ot_ok else 0.0
+    ot_hrs = max(0.0, float(emp.get("max_ot_hrs", OT_HRS_DEFAULT))) if ot_ok else 0.0
     fica = float(emp.get("fica_pct", 0.0))
     straight = float(emp.get("benefits_pct", 0.0)) - fica
     return {
         # Overtime crop hours ONE head may add per week; the role's cap is count × this, and an
         # extra head (L.3) adds it again at new-hire pace.
-        "ot_per_head": on * (ot_hrs * field),
-        "ot_cap":     count * (on * (ot_hrs * field)),
+        "ot_per_head": (ot_per_head := on * (ot_hrs * field)),
+        "ot_cap":     count * ot_per_head,
         "ot_rate":    wage * (overtime_rate_multiplier * (1.0 + fica) + straight) if ot_ok else 0.0,
         "head_task":  on * (hrs * field),
         "head_cost":  on * (weekly_cost / count) if count > 0 else np.zeros(n_weeks),
@@ -246,8 +240,6 @@ def _role(emp: dict, is_hourly: bool, count: float, hrs: float, field: float,
         "paid":       wage > 0,
         "hire_more":  bool(emp.get("hire_more", False)),
         "max_more":   max(0, int(emp.get("max_more", 0) or 0)),
-        # A FLOOR on extra heads — set only by next_head_deltas to measure one more head.
-        "min_more":   max(0, int(emp.get("min_more", 0) or 0)),
         "position":   emp.get("position", ""),
         "row":        emp.get("row"),   # the caller's roster index, so a result can point back
         "is_hourly":  bool(is_hourly),

@@ -17,6 +17,20 @@ import traceback
 from farm_v2.solver import PLAN_STATUSES, next_head_deltas, solve_farm_v2
 from farm_v2.utils.water import get_rainfall_weekly
 
+def _legacy_ot_hours(e):
+    """{'max_ot_hrs': h} from a pre-2026-10-24 row's max_week_pct (the total week as % of regular
+    hours: 125 on 40 h = 10 h), or {} when there is nothing to convert. Unclamped, so a nonsense
+    percent becomes a nonsense hour count that validation refuses by name; a non-numeric pair is
+    passed through as None for the same reason."""
+    pct, hrs = e.get('max_week_pct'), e.get('hours_per_week', 40)
+    if pct is None:
+        return {}
+    try:
+        return {'max_ot_hrs': (float(pct) / 100.0 - 1.0) * float(hrs)}
+    except (TypeError, ValueError):
+        return {'max_ot_hrs': None}
+
+
 # Employer FICA (Social Security 6.2% + Medicare 1.45%) as a fraction — the all-pay part of the
 # payroll load. H-2A wages are exempt; not modelled yet.
 FICA_DEFAULT = 0.0765
@@ -204,9 +218,11 @@ def run_from_js(params_json):
                 "task_field":       bool(e.get('task_field', True)),
                 "task_postharvest": bool(e.get('task_postharvest', True)),
                 "task_selling":     bool(e.get('task_selling', True)),
-                # Overtime hours per person per week (L.2). labor._ot_hours is the one reader and
-                # its default; it also takes a legacy max_week_pct. Only what was sent is passed.
-                **{k: _e_val(e, k, None) for k in ('max_ot_hrs', 'max_week_pct') if k in e},
+                # Overtime hours per person per week (L.2; default in labor.OT_HRS_DEFAULT). A
+                # pre-2026-10-24 caller's max_week_pct (total week, % of regular: 125 = 40 + 10)
+                # is converted HERE, at the boundary — unclamped, so validation refuses nonsense.
+                **({'max_ot_hrs': _e_val(e, 'max_ot_hrs', None)} if 'max_ot_hrs' in e
+                   else _legacy_ot_hours(e)),
                 # Extra hires on this row (L.3, What-If only): may it add heads, and at most how many.
                 "hire_more":     bool(e.get('hire_more', False)),
                 "max_more":      _e_val(e, 'max_more', 0),

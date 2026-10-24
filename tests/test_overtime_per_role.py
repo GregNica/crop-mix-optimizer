@@ -19,9 +19,9 @@ from farm_v2.utils.labor import compute_labor_arrays
 from tests.helpers import golden_payload
 
 # Shipped roster at 10 OT h/wk per person: cap = count × 10 × field%.
-EXPECTED_CAP = {"Equipment Operator": 0.25 * 2 * 40 * 0.90,   # 18 h/wk, weeks 1-52
-                "Seasonal Field Crew": 0.25 * 12 * 40,         # 120 h/wk, weeks 10-42
-                "Harvest Crew": 0.25 * 8 * 40}                 # 80 h/wk, weeks 14-40
+EXPECTED_CAP = {"Equipment Operator": 2 * 10 * 0.90,   # 18 h/wk, weeks 1-52
+                "Seasonal Field Crew": 12 * 10,        # 120 h/wk, weeks 10-42
+                "Harvest Crew": 8 * 10}                # 80 h/wk, weeks 14-40
 WINDOW = {"Equipment Operator": (1, 52), "Seasonal Field Crew": (10, 42), "Harvest Crew": (14, 40)}
 WAGE = {"Equipment Operator": 26.0, "Seasonal Field Crew": 20.0, "Harvest Crew": 19.0}
 FICA, STRAIGHT = 0.0765, 0.1735   # shipped split of the old 25% (L.5)
@@ -138,7 +138,7 @@ def test_an_unpaid_hourly_role_gets_no_overtime():
         "an hour nobody pays for was made buyable (free labour)")
 
 
-def test_a_salaried_row_typed_above_100pct_still_gets_no_overtime():
+def test_a_salaried_row_typed_with_ot_hours_still_gets_no_overtime():
     """Salaried staff cannot be paid overtime. A salaried row TYPED with 10 OT h would otherwise be
     priced per hour at its annual salary."""
     roles = [dict(r, max_ot_hrs=10) for r in _SHIPPED_ROLES]
@@ -166,9 +166,9 @@ def test_overtime_is_real_money_in_the_cash_floor():
     )
 
 
-@pytest.mark.parametrize("key,val,msg", [("max_ot_hrs", 400, "Max OT"), ("max_ot_hrs", -5, "Max OT"),
-                                         ("max_week_pct", 1000, "Max week"), ("max_week_pct", 90, "Max week")])
-def test_overtime_hours_out_of_range_are_refused(key, val, msg):
+@pytest.mark.parametrize("key,val", [("max_ot_hrs", 400), ("max_ot_hrs", -5),
+                                     ("max_week_pct", 1000), ("max_week_pct", 90)])
+def test_overtime_hours_out_of_range_are_refused(key, val):
     """Refused, not clamped: 400 OT h/wk per worker (or 1000% legacy) is a typo, and negative
     or below-100% means nothing."""
     p = golden_payload()
@@ -176,10 +176,20 @@ def test_overtime_hours_out_of_range_are_refused(key, val, msg):
     e.pop("max_ot_hrs", None)
     e[key] = val
     out = json.loads(run_from_js(json.dumps(p)))
-    assert out["status"] != "optimal" and msg in json.dumps(out)
+    assert out["status"] != "optimal" and "Max OT" in json.dumps(out)
 
 
-def test_a_legacy_max_week_pct_is_the_same_overtime_as_its_hours():
+def test_the_browser_and_solver_share_one_overtime_default():
+    """OT_HRS_DEFAULT is stated in both languages (a row with no saved value must render what the
+    solver will use). They once disagreed for any week other than 40 h (/simplify)."""
+    import re
+    from farm_v2.utils.labor import OT_HRS_DEFAULT
+    from tests.helpers import index_src
+    m = re.search(r"^const OT_HRS_DEFAULT = ([0-9.]+);", index_src(), re.M)
+    assert m and float(m.group(1)) == OT_HRS_DEFAULT
+
+
+def test_a_legacy_max_week_pct_is_the_same_overtime_as_its_hours(golden):
     """A pre-2026-10-24 caller's 125% week on 40 h IS 10 OT h — same cap, same answer."""
     def legacy(p):
         for e in p["employees"]:
@@ -188,8 +198,7 @@ def test_a_legacy_max_week_pct_is_the_same_overtime_as_its_hours():
                 e["max_week_pct"] = 100 * (1 + ot / e["hours_per_week"])
     p = golden_payload(); legacy(p)
     a = json.loads(run_from_js(json.dumps(p)))
-    b = json.loads(run_from_js(json.dumps(golden_payload())))
-    assert a["profit"] == pytest.approx(b["profit"], abs=0.005)
+    assert a["profit"] == pytest.approx(golden["profit"], abs=0.005)
 
 
 def test_fica_above_the_whole_load_is_refused(minimal_params):
