@@ -49,7 +49,7 @@ from farm_v2.utils.calendar import (
     phase_weeks_of,
 )
 from farm_v2.utils.water import (
-    best_rain_coverage,
+    rain_coverage,
     compute_free_water,
     compute_net_water_rates,
     RAINFALL_OFFSET_FRACTION,
@@ -210,11 +210,11 @@ def _cw_index(c: int, w: int, n_weeks: int) -> int:
     return c * n_weeks + (w - 1)
 
 
-def _rain_short_message(successions, crops, rainfall, offset_fraction) -> str:
+def _rain_short_message(successions, crops, cover) -> str:
     """The refusal for a rain-fed farm on which no succession can be rain-watered: name the crop
     rain comes CLOSEST to watering, so the grower sees how far off it is, not just 'no'."""
-    cover = best_rain_coverage(successions, crops, np.asarray(rainfall, dtype=float), offset_fraction)
-    crop, pct = max(cover.items(), key=lambda kv: kv[1])
+    i = int(np.argmax(cover))
+    crop, pct = crops[successions[i]["crop"]].get("name", "a crop"), float(cover[i])
     return (f"Rain-fed only: rain alone never waters a whole crop cycle on this climate, so "
             f"nothing could be planted. The closest is {crop}: in its driest week rain covers "
             f"{math.floor(pct * 100)}% of what it needs. This model has no yield penalty for under-watering — "
@@ -600,17 +600,18 @@ def solve_farm_v2(
     # crops need 85-163k L/acre/wk and 65% of the rain offsets 50-64k — so the solve would come
     # back "optimal" growing nothing (−$997k on the golden farm), the hole D11 closed. Refuse
     # that case with the reason; solve, and say so, when some successions are rain-plantable.
+    water_limited = water_mode != "unlimited"
     if water_mode == "rainfed":
-        rain_ok = [i for i, s in enumerate(successions)
-                   if not any(net_water_rate[i][w] > 0 for w in s["weeks"] if 1 <= w <= N_WEEKS)]
-        if not rain_ok:
-            return _invalid([_rain_short_message(successions, crops, rainfall_weekly_L_per_acre,
-                                                 rainfall_offset_fraction)], successions)
+        cover = rain_coverage(successions, crops, np.asarray(rainfall_weekly_L_per_acre, dtype=float),
+                              rainfall_offset_fraction)
+        n_ok = int((cover >= 1.0).sum())
+        if not n_ok:
+            return _invalid([_rain_short_message(successions, crops, cover)], successions)
         validation_warnings.append(
             f"Rain-fed only: this plan assumes rain alone waters the crops — no irrigation. "
-            f"{len(rain_ok)} of {N_S} possible plantings are fully watered by rain on this "
+            f"{n_ok} of {N_S} possible plantings are fully watered by rain on this "
             f"climate; the rest were left out.")
-    elif water_mode == "unlimited":
+    elif not water_limited:
         validation_warnings.append(
             "Don't limit by water: this plan assumes the farm can always get the water its crops "
             "need. No water source limited it and no city water was charged.")
@@ -1230,7 +1231,8 @@ def solve_farm_v2(
     # free, so the reported series would not be a physical quantity.
     # "unlimited" (Batch W) writes no water rows at all: wstore is then unconstrained at zero
     # cost and presolve drops it, the same collapse as a zero-capacity tank.
-    for w in (range(1, N_WEEKS + 1) if water_mode != "unlimited" else ()):
+    c3_weeks = range(1, N_WEEKS + 1) if water_limited else range(0)
+    for w in c3_weeks:
         cols = [
             (idx_x_start + i, total_land * net_water_rate[i][w])
             for i in range(N_S)
@@ -2053,7 +2055,7 @@ def solve_farm_v2(
         # as "not a constraint" (cap > 0 guards) — water is never ranked, used stays honest.
         "water":   {"used": water_used_weekly,
                     "cap":  [float(free_water[w] + city_weekly[w] + wstore_opening[w])
-                             if water_mode != "unlimited" else 0.0
+                             if water_limited else 0.0
                              for w in range(N_WEEKS)]},
         "storage_ambient": {"used": ambient_m3_weekly,
                             "cap":  [float(ambient_storage_cap)] * N_WEEKS},

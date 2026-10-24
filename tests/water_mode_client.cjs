@@ -59,7 +59,7 @@ const ok = (name, cond) => { if (!cond) fail(name); };
   ok('the source controls are locked outside Irrigated', el('well_enabled').disabled && el('well_weekly_cap_L').disabled);
   ok('…but the tank box is not (it is still depreciated)', !el('water_storage_capacity').disabled);
   ok('the mode note says the sources are ignored', /ignored/.test(el('water-mode-note').textContent)
-     && el('water-mode-note').style.display !== 'none');
+     && !el('water-mode-note').hidden);
   el('well_weekly_cap_L').value = wasCap;
   el('well_weekly_cap_L').dispatchEvent(new W.Event('input', { bubbles: true }));
 

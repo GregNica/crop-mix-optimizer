@@ -594,7 +594,7 @@ def run_from_js(params_json):
             'unplanted_crops': result.get('unplanted_crops', []),
             # How the farm was watered (Batch W) — the UI hides the water constraint card and
             # its "+10% water" lever off-irrigated, where there is no limit to relieve.
-            'water_mode': result.get('water_mode', 'irrigated'),
+            'water_mode': water_mode,
         })
 
     except Exception as e:

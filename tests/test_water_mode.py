@@ -30,20 +30,22 @@ def solve(**overrides) -> dict:
 # "irrigated" there and a guard on the default fixture could not tell them apart. A desert farm on
 # a 2M L/wk well is water-bound: irrigated it loses money, unlimited it does not.
 DRY = dict(climate_zone="southwest_desert", well_weekly_cap_L=2_000_000)
+# City water ticked and priced: the form remembers ticks outside Irrigated, so every unlimited test
+# shares a solve that also proves the adapter cleared them.
+UNLIMITED = dict(DRY, water_mode="unlimited", city_water_enabled=True, city_water_cost_per_L=0.01)
 
 
-def test_absent_mode_is_irrigated_to_the_cent():
-    base = solve()
+def test_absent_mode_is_irrigated_to_the_cent(golden_out):
     absent = golden_payload()
     del absent["water_mode"]
     out = json.loads(run_from_js(json.dumps(absent)))
-    assert out["status"] == base["status"] == "optimal"
-    assert out["profit"] == base["profit"]
+    assert out["status"] == golden_out["status"] == "optimal"
+    assert out["profit"] == golden_out["profit"]
 
 
 def test_unlimited_lifts_the_water_limit_where_it_binds():
     irrigated = solve(**DRY)
-    unlimited = solve(**DRY, water_mode="unlimited")
+    unlimited = solve(**UNLIMITED)
     assert irrigated["status"] == unlimited["status"] == "optimal"
     assert unlimited["profit"] > irrigated["profit"] + 100_000, (irrigated["profit"], unlimited["profit"])
     assert unlimited["water_mode"] == "unlimited"
@@ -54,13 +56,13 @@ def test_unlimited_lifts_the_water_limit_where_it_binds():
 
 
 def test_unlimited_charges_no_city_water_even_with_city_ticked():
-    out = solve(**DRY, water_mode="unlimited", city_water_enabled=True, city_water_cost_per_L=0.01)
+    out = solve(**UNLIMITED)
     assert out["status"] == "optimal"
     assert out["bought_capacity_split"]["city_water"] == 0.0
 
 
 def test_unlimited_keeps_the_owned_water_assets_depreciated():
-    irrigated, unlimited = solve(**DRY), solve(**DRY, water_mode="unlimited")
+    irrigated, unlimited = solve(**DRY), solve(**UNLIMITED)
     for cls in ("water_storage", "irrigation"):
         assert unlimited["fixed_cost_split"][cls] == irrigated["fixed_cost_split"][cls] > 0, cls
 
@@ -117,3 +119,16 @@ class TestValidateDirectCallers:
             p = {**copy.deepcopy(minimal_params), "water_mode": mode, "well_enabled": False,
                  "catchment_enabled": False, "city_water_enabled": False}
             validate_params(**p)
+
+
+def test_one_list_of_modes_in_python_the_registry_and_the_form():
+    """The mode list is written in water.py, fields.js (the assistant's enum, which the page reads)
+    and the <select>. A mode added in one place would read as 'irrigated' on the client."""
+    import re
+    from farm_v2.utils.water import WATER_MODES
+    from tests.helpers import REPO, index_src
+    reg = (REPO / "public" / "fields.js").read_text()
+    enum = re.search(r'water_mode: \{\s*chat: \{[^}]*?enum: \[([^\]]*)\]', reg)
+    assert enum and re.findall(r'"([a-z]+)"', enum.group(1)) == list(WATER_MODES)
+    select = re.search(r'<select id="water_mode">(.*?)</select>', index_src(), re.S)
+    assert select and re.findall(r'value="([a-z]+)"', select.group(1)) == list(WATER_MODES)
