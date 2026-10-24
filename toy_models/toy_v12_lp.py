@@ -1,8 +1,29 @@
 """
-toy_v11_lp.py — the v5 sheet's model, written as a MILP and solved with scipy.
+toy_v12_lp.py — the v5 sheet's model, written as a MILP and solved with scipy.
 
-Imported by BOTH `build_toy_v11.py` (so the READ ME can promise the optimum LibreOffice should
-find) and `verify_toy_v11.py` (as the oracle the workbook is checked against).
+Imported by BOTH `build_toy_v12.py` (so the READ ME can promise the optimum LibreOffice should
+find) and `verify_toy_v12.py` (as the oracle the workbook is checked against).
+
+v12 ADDS THE FIXED LAYER (PLAN Batch FX.0, DECISIONS GROUP G) — the things a grower has already
+decided, owes, or physically has, which constrain the plan BEFORE the optimiser fills the rest:
+
+  ZONES (FX.4)       named land pools with a crop x zone eligibility table. A succession is
+                     now a (planting week, ZONE) pair, and land is one row per zone per week.
+  VARIANTS (FX.5)    a zone-specific crop is a separate NAME ("Tunnel Spinach") with its own
+                     windows, and a `sells_as` identity. ⚠️ Demand caps and contract floors are
+                     keyed by the IDENTITY, not the name — otherwise two variants each get the
+                     whole market (measured below: `share_caps=False`).
+  PERENNIAL (FX.2)   committed ground standing all 52 weeks: a PINNED pseudo-succession that
+                     never goes through the calendar generator (which refuses cycles > 52 wk).
+                     Upkeep is a yearly cost; establishment is DEPRECIATED, never seed.
+  MUST-PLANT (FX.1)  UNCONDITIONAL floors, in the two forms the plan said to decide here:
+                       standing   acres in the ground in EVERY week of a window
+                       annual     acres planted, summed over the year's plantings
+                     The overwintering carry-in (the app's C15) is the standing form with a
+                     one-week window at week 1 — same row, so it is stated once.
+  CONTRACTS (FX.3)   sold >= floor per identity x channel x week, with a SHORTFALL slack priced
+                     at a penalty: an unmeetable contract is a reported shortfall, never "no
+                     feasible plan" (grower ruling G3).
 
 WHY THIS EXISTS. v4 is the first version whose answer is not arithmetic — it is a CHOICE, made
 by a solver. So "is the sheet right?" splits in two:
@@ -92,22 +113,139 @@ sys.path.insert(0, str(REPO))
 from farm_v2.utils.calendar import generate_successions, harvest_weeks_of
 from farm_v2.utils.demand import build_demand_table, build_annual_caps
 
-CROP_NAMES = ["Spinach", "Kale", "Garlic"]
+BASE_CROPS = ["Spinach", "Kale", "Garlic"]          # straight from the golden payload
+VARIANT = "Tunnel Spinach"                           # FX.5 — a zone-specific NAME
+PERENNIAL = "Asparagus"                              # FX.2 — committed ground, all year
+ANNUALS = BASE_CROPS + [VARIANT]                     # everything the calendar generates
+CROP_NAMES = ANNUALS + [PERENNIAL]
 # v5 offers EVERY legal start week, exactly as generate_successions does for the app.
 PICKED = None
 N_WEEKS = 52
 
+# ---- FX.4 ZONES ------------------------------------------------------------------------
+# Named pools, no geometry. Open field is whatever the tunnel does not take, so the farm's
+# total land is unchanged and the golden figure still means what it meant.
+TUNNEL_ACRES = 2.0
+# (name, acres, the code a planting's name carries when its crop may use more than one zone).
+# acres None = THE REMAINDER: whatever 'Land you have' leaves after the others. Stated as data so
+# the oracle and the sheet derive it the same way — once both did it by testing a zone's NAME.
+ZONES = [("Open field", None, "F"), ("High tunnel", TUNNEL_ACRES, "T")]
+ZONE_NAMES = [z for z, _, _ in ZONES]
+ZONE_CODE = {z: code for z, _, code in ZONES}
+# Eligibility. Kale is deliberately allowed in BOTH zones — the one crop that exercises a
+# succession being split across pools; everything else lives in exactly one.
+ELIGIBLE = {"Spinach": ["Open field"], "Kale": ["Open field", "High tunnel"],
+            "Garlic": ["Open field"], VARIANT: ["High tunnel"], PERENNIAL: ["Open field"]}
+
+# ---- FX.2 THE PERENNIAL -----------------------------------------------------------------
+# ⚠️ TOY PLACEHOLDER DATA, sourced where a source was found and LABELLED where not. Templates
+# proper are FX.6 under Batch 3's data discipline; the toy needs a shape, not a library entry.
+#   establishment $4,082/ac          MSU Ext. E3315 (2016), years 0-2 excl. harvest
+#   mature yield 1,750 lb/ac         Univ. Kentucky asparagus budget (2016) base case
+#   upkeep $1,296/ac/yr              UKY 2016, full-harvest-year total cost
+#   wholesale $1.75/lb               UKY 2016
+#   life 10 bearing years            WSU EB1779 amortises establishment over 10 yr
+#   UNSOURCED: harvest weeks 18-25, the FM price and caps, the per-acre labour, the pack
+#   volume and shelf life — round figures in the right order, to be replaced in FX.6.
+PERENNIAL_ACRES = 3.0
+PERENNIAL_SPEC = dict(establish_per_acre=4_082.0, life_years=10, upkeep_per_acre_yr=1_296.0,
+                      harvest_weeks=list(range(18, 26)), labour_grow=0.5, labour_harv=5.5)
+
+# ---- FX.1 MUST-PLANT -------------------------------------------------------------------
+# ⚠️ FLOORS INTERACT: with the kale floors on, garlic rises to its ~18.58 ac ceiling unasked, so
+# the carry-in is SLACK at the full default — verify_toy_v12 checks it binding on its own fixture.
+# Every floor below BINDS at the unfloored v12 optimum, on purpose — measured, each one moves
+# the objective: a floor the optimum already clears is a guard that cannot fail (the L4 /
+# "defaulted off" trap in its quieter form). Unfloored: garlic 17.84 ac (18.06 with no contracts or perennial either), kale 4.4 ac standing
+# in weeks 10-20 and 32.9 ac planted. Costs, each added on top of the previous: garlic $1,017,
+# kale standing $4,559, kale annual $3,762.
+#
+# ⚠️ GARLIC'S CEILING IS ~18.6 AC, and it is set by TWO rows at once: the winter crew's 108 h
+# in the planting weeks (6.7 h/ac) and the 150 m3 barn at harvest. Relaxing either alone left
+# it infeasible — so "check the land" is not what an infeasible must-plant should tell anyone.
+#   (identity, acres, first week, last week)  — acres standing in EVERY week of the window
+MUST_STAND = [("Garlic", 18.3, 1, 1),        # overwintering carry-in: the app's C15
+              ("Kale", 8.0, 10, 20)]         # "keep kale in the ground for the CSA, spring"
+#   identity -> acres planted, summed across the year (legitimate for a succession crop)
+MUST_ANNUAL = {"Kale": 45.0}
+
+# ---- FX.3 CONTRACTS --------------------------------------------------------------------
+#   (identity, channel, lb per week, first week, last week, penalty $ per lb short)
+# Spinach's is deliberately PARTLY UNMEETABLE: weeks 33-36 sit in the summer gap between the
+# spring and autumn plantings, and shelf life is 2 weeks, so the slack has to carry it.
+CONTRACTS = [("Kale", "Wholesale", 1_500.0, 20, 40, 0.50),
+             ("Spinach", "Wholesale", 2_000.0, 28, 36, 0.50)]
+
 
 def load():
     payload = json.load(open(REPO / "tests" / "golden" / "default_farm_payload.json"))
-    crops = {c["name"]: c for c in payload["crops"] if c["name"] in CROP_NAMES}
+    crops = {c["name"]: c for c in payload["crops"] if c["name"] in BASE_CROPS}
+    # The variant: the SAME crop data with a longer planting window (a tunnel's job is season
+    # extension) and a tunnel-sized minimum block. Nothing else is invented.
+    v = json.loads(json.dumps(crops["Spinach"]))
+    v.update(name=VARIANT, sells_as="Spinach", min_acreage_if_planted=0.25,
+             seasons=[{"start": "01-02", "end": "06-30"}, {"start": "08-01", "end": "12-15"}])
+    crops[VARIANT] = v
+    ps = PERENNIAL_SPEC
+    crops[PERENNIAL] = dict(
+        name=PERENNIAL, perennial=True, yield_per_acre=1_750.0, cold_storage=True,
+        crop_size_m3_per_lb=0.0012, shelf_life_weeks=2, min_acreage_if_planted=0.0,
+        labor_plant=0.0, labor_grow=ps["labour_grow"], labor_harv=ps["labour_harv"],
+        seed_transplant_cost_per_acre=0.0,
+        channels={"Wholesale": {"price_per_lb": 1.75, "packaging_cost_per_lb": 0.15,
+                                "demand_cap_type": "weekly_flat", "weekly_demand_lbs": 1_500},
+                  "Farmers Market": {"price_per_lb": 4.00, "packaging_cost_per_lb": 0.30,
+                                     "demand_cap_type": "weekly_varying",
+                                     "demand_ranges": [{"weeks": "W18-W25",
+                                                        "weekly_lbs": 300}]}})
     ch_order = sorted(payload["channels"], key=lambda ch: -max(
         crops[c].get("channels", {}).get(ch["name"], {}).get("price_per_lb", 0)
-        for c in CROP_NAMES))
-    return payload, crops, ch_order, generate_successions(list(crops.values()), 2024)
+        for c in BASE_CROPS))
+    annual = [crops[n] for n in ANNUALS]
+    succs = []
+    for s in generate_successions(annual, 2024):
+        cn = ANNUALS[s["crop"]]
+        for z in ELIGIBLE[cn]:
+            succs.append(dict(s, zone=z, name=s["name"] if len(ELIGIBLE[cn]) == 1
+                              else f"{s['name']} {ZONE_CODE[z]}"))
+    # The perennial as a PINNED pseudo-succession: in the ground every week, harvesting in its
+    # window, acres fixed. Everything downstream (land, labour, stock, cash) then treats it like
+    # any planting, and nothing has to know a perennial exists except the acres bound.
+    # Its cost rides on the row as DATA: upkeep is this year's, establishment is capital and so
+    # DEPRECIATED over the bearing life (the locked OWN->depreciate basis), never seed. Flat over
+    # 52 weeks like the farm's other fixed costs.
+    ps = PERENNIAL_SPEC
+    hw = set(ps["harvest_weeks"])
+    succs.append(dict(name=PERENNIAL, crop=CROP_NAMES.index(PERENNIAL), zone="Open field",
+                      weeks=list(range(1, N_WEEKS + 1)), start_week=1, perennial=True,
+                      cost_per_acre_wk=(ps["upkeep_per_acre_yr"]
+                                        + ps["establish_per_acre"] / ps["life_years"]) / N_WEEKS,
+                      phases=[2 if w in hw else 1 for w in range(1, N_WEEKS + 1)]))
+    return payload, crops, ch_order, succs
 
 
 PAYLOAD, CROPS, CH_ORDER, SUCCS = load()
+
+
+def zone_acres(zones=None, land=None):
+    """{zone: acres}, the remainder zone (acres None) taking what the others leave of `land`."""
+    zones = ZONES if zones is None else zones
+    land = PAYLOAD["total_land"] if land is None else land
+    fixed = sum(z[1] for z in zones if z[1] is not None)
+    return {z[0]: (land - fixed if z[1] is None else z[1]) for z in zones}
+
+
+def identity(cn):
+    """The name the MARKET knows a crop by. A variant sells as its base; everything else is itself."""
+    return CROPS[cn].get("sells_as", cn)
+
+
+IDENTITIES = list(dict.fromkeys(identity(c) for c in CROP_NAMES))   # Spinach Kale Garlic Asparagus
+
+
+def members(gid):
+    """Every crop NAME that sells as identity `gid` — the FX.5 grouping, stated once."""
+    return [c for c in CROP_NAMES if identity(c) == gid]
 
 
 def payroll_load():
@@ -123,6 +261,9 @@ def payroll_load():
 BUSHEL_M3 = 1.2444 * 0.0283168        # USDA bushel = 1.2444 cu ft
 PIECE_CONTAINER = {"Spinach": ("bushel", 3.00), "Kale": ("bushel", 1.00),
                    "Garlic": ("bushel", 2.00)}
+# v12: piece rate stays on the three field crops. Tunnel spinach and asparagus are picked by the
+# crew — a simplification, stated, and one the FX layer does not need to test.
+PIECE_CROPS = list(PIECE_CONTAINER)
 
 
 # ⚠️ THE ONE DEFINITION of the piece-rate crew's weekly capacity. The builder writes THIS
@@ -151,12 +292,18 @@ for _e in PAYLOAD.get("employees", []):
         _e.setdefault("can_hire_more", True)
         _e.setdefault("max_extra", 10)
 CH_NAMES = [c["name"] for c in CH_ORDER]
-_DT = build_demand_table(list(CROPS.values()), CH_ORDER, N_WEEKS)
-_AC = build_annual_caps(list(CROPS.values()), CH_ORDER)
+FM = next(h for h in CH_NAMES if h.startswith("Farmers"))
+PERENNIAL_NAMES = {s["name"] for s in SUCCS if s.get("perennial")}
+# ⚠️ CAPS ARE BUILT PER IDENTITY, never per name — the variant has no cap of its own. Handing
+# the app's demand builder the variant too is exactly the FX.5 trap: it would mint a second,
+# full-size Spinach market.
+_DT = build_demand_table([CROPS[i] for i in IDENTITIES], CH_ORDER, N_WEEKS)
+_AC = build_annual_caps([CROPS[i] for i in IDENTITIES], CH_ORDER)
 
 
 def cap_spec(cn, hn):
-    ci, hi = CROP_NAMES.index(cn), CH_NAMES.index(hn)
+    """The cap on an IDENTITY x channel. Pass a crop name and you get its identity's cap."""
+    ci, hi = IDENTITIES.index(identity(cn)), CH_NAMES.index(hn)
     if (ci, hi) in _AC:
         return "Annual", float(_AC[(ci, hi)]), 1, N_WEEKS
     row = _DT[ci, hi, 1:]
@@ -321,12 +468,37 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
           piece=True, piece_committed=False, piece_start=1, piece_end=52,
           piece_max_hours_per_week=None, piece_rate_per_lb=None,
           piece_var_cost_per_lb=0.02, piece_fixed_cost=2_500.0,
-          wage_floor_per_hr=16.07):
+          wage_floor_per_hr=16.07,
+          zones=None, share_caps=True, perennial_acres=None,
+          must_stand=None, must_annual=None, contracts=None):
     """Maximise revenue - growing cost, as a MILP. Returns a dict of the optimum.
 
     `min_acreage=False` drops the binaries and solves the LP relaxation — useful only to show
     what the minimum-acreage rule costs, never as an answer.
+
+    v12 fixed-layer arguments default to the module's toy settings; pass `[]` / `{}` to switch a
+    piece OFF (that is how the with/without deltas are measured). `share_caps=False` is the
+    FX.5 TRAP, kept only so it can be measured: every crop NAME gets its own full market.
     """
+    zone_cap = zone_acres(zones, land)
+    perennial_acres = PERENNIAL_ACRES if perennial_acres is None else perennial_acres
+    must_stand = MUST_STAND if must_stand is None else must_stand
+    must_annual = MUST_ANNUAL if must_annual is None else must_annual
+    contracts = CONTRACTS if contracts is None else contracts
+    # Windows are WEEKS OF THIS YEAR. Unchecked, a week 53 indexed straight into the NEXT
+    # crop-channel's week-1 offered cell (off_i is a flat index), so a contract was "met" by
+    # another crop's January sales with no error. And one floor or contract per identity
+    # (x channel): the sheet labels its rows by identity, so a second would collide there.
+    for gid, _ac, a, b in must_stand:
+        if not 1 <= a <= b <= N_WEEKS:
+            raise ValueError(f"must-plant {gid}: window {a}-{b} is not inside weeks 1-{N_WEEKS}")
+    for gid, h, _lb, a, b, _p in contracts:
+        if not 1 <= a <= b <= N_WEEKS:
+            raise ValueError(f"contract {gid}/{h}: window {a}-{b} is not inside weeks 1-{N_WEEKS}")
+    for what, keys in (("standing floor", [f[0] for f in must_stand]),
+                       ("contract", [(c[0], c[1]) for c in contracts])):
+        if len(keys) != len(set(keys)):
+            raise ValueError(f"the toy carries one {what} per identity — got {keys}")
     shrink = shrink or {n: 0.0 for n in CROP_NAMES}
     land = PAYLOAD["total_land"] if land is None else land
     cold_cap = PAYLOAD["harvest_storage_cap"] if cold_cap is None else cold_cap
@@ -347,9 +519,13 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
     # works it, so the plan cannot prefer the cheap one or tell you who to ask to stay late.
     n_ot = n_roles * N_WEEKS if flex else 0
     n_extra = n_roles if hire_more else 0
-    n_piece = len(CROP_NAMES) * N_WEEKS if piece else 0
+    n_piece = len(PIECE_CROPS) * N_WEEKS if piece else 0
     n_pbin = 1 if piece else 0
-    N = n_s + n_off + n_y + n_ot + n_extra + n_piece + n_pbin
+    # FX.3: one shortfall cell per contract week. Weeks listed once per contract, in order.
+    short_keys = [(k, w) for k, (_i, _h, _lb, a, b, _pen) in enumerate(contracts)
+                  for w in range(a, b + 1)]
+    n_short = len(short_keys)
+    N = n_s + n_off + n_y + n_ot + n_extra + n_piece + n_pbin + n_short
     off_i = lambda p, w: n_s + p * N_WEEKS + (w - 1)
     y_i = lambda i: n_s + n_off + i
     _ot0 = n_s + n_off + n_y
@@ -359,6 +535,9 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
     _pc0 = _ex0 + n_extra
     piece_i = lambda c, w: _pc0 + c * N_WEEKS + (w - 1)
     pbin_i = _pc0 + n_piece          # 1 if the piece-rate crew is engaged at all
+    _sh0 = pbin_i + n_pbin
+    short_i = {kw: _sh0 + j for j, kw in enumerate(short_keys)}
+    is_per = [bool(s_.get("perennial")) for s_ in SUCCS]
 
     # The nominated window. Everything about the advisory crew is derived from it, so the
     # window is stated ONCE and never re-derived — v8's labour bugs were all a quantity
@@ -385,7 +564,7 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
     # Pounds a harvest hour moves, per crop — derived from the crop's own harvest labour and
     # yield, so no new input. It is what converts pounds picked into HOURS RELIEVED.
     lb_per_harvest_hr = {}
-    for cn in CROP_NAMES:
+    for cn in PIECE_CROPS:
         lh = CROPS[cn].get("labor_harv", 0.0) or 0.0
         lb_per_harvest_hr[cn] = (CROPS[cn]["yield_per_acre"] / lh) if lh else 0.0
     # ⚠️ THE MINIMUM-WAGE FLOOR, AND IT COLLAPSES TO A CONSTANT. A piece-rate worker must still
@@ -401,7 +580,7 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
         piece_max_hours_per_week = PIECE_MAX_HOURS_PER_WEEK
     piece_eff = {}
     piece_floor = {}
-    for cn in CROP_NAMES:
+    for cn in PIECE_CROPS:
         lbph = lb_per_harvest_hr[cn]
         floor = (wage_floor_per_hr / lbph) if lbph else 0.0
         piece_floor[cn] = floor
@@ -423,8 +602,14 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
     # inventing a price here would make the toy disagree with the thing it is checking.
     fert_rate, fuel_rate = PAYLOAD["cost_fert_per_lb"], PAYLOAD["cost_fuel_per_L"]
     var_week = np.zeros((n_s, N_WEEKS + 1))
+    # FX.2: the perennial's year. Upkeep is a cost of THIS year; establishment is capital, so it
+    # is depreciated over the bearing life (the locked OWN->depreciate basis) and NEVER charged
+    # as this year's seed. Both are spread flat over 52 weeks like the farm's other fixed costs.
     for i, s_ in enumerate(SUCCS):
         c = CROPS[CROP_NAMES[s_["crop"]]]
+        if "cost_per_acre_wk" in s_:          # FX.2: committed ground carries its own cost
+            var_week[i, 1:] += s_["cost_per_acre_wk"]
+            continue
         first = s_["weeks"][0]
         if 1 <= ((first - 1) % N_WEEKS) + 1 <= N_WEEKS:
             var_week[i, ((first - 1) % N_WEEKS) + 1] += c["seed_transplant_cost_per_acre"]
@@ -447,13 +632,14 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
     # three phases, and relieving the pool would let pickers do the planting.
     harv_week = np.zeros((n_s, N_WEEKS + 1))
     for i, s_ in enumerate(SUCCS):
+        if CROP_NAMES[s_["crop"]] not in PIECE_CROPS:
+            continue                     # only hours a piece crew could actually pick
         c = CROPS[CROP_NAMES[s_["crop"]]]
         for wk, ph in zip(s_["weeks"], s_["phases"]):
             if ph == 2:
                 harv_week[i, ((wk - 1) % N_WEEKS) + 1] += c.get("labor_harv", 0.0)
 
     lab_cap, wage_wk, hourly_field, hourly_heads = labour_arrays()
-    ot_rate = overtime_rate(overtime_multiplier)
     # The app's own refusal: a bought hour with no price is a free hour. Now checked PER ROLE,
     # where it belongs — a blend could hide one unpaid role behind three paid ones.
     if flex:
@@ -513,21 +699,43 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
             add(expr, 0.0, np.inf)                       # stock never negative
 
     # sold <= weekly ceiling  (an Annual pair gets no weekly row — same as the app)
+    # ⚠️ FX.5: ONE row per IDENTITY x channel, summing every crop that sells as it. With
+    # `share_caps=False` each NAME gets its own row — the trap, reproduced on purpose.
+    groups = {}
     for p, (cn, hn) in enumerate(pairs):
-        ctype, cval, w0, w1 = cap_spec(cn, hn)
-        if annual_override and (cn, hn) in annual_override:
-            ctype, cval = "Annual", float(annual_override[(cn, hn)])
-        st, _ = defaults(cn, hn)
+        key = (identity(cn), hn) if share_caps else (cn, hn)
+        groups.setdefault(key, []).append(p)
+    for (gid, hn), grp in groups.items():
+        ctype, cval, w0, w1 = cap_spec(gid, hn)
+        if annual_override and (gid, hn) in annual_override:
+            ctype, cval = "Annual", float(annual_override[(gid, hn)])
         if ctype == "Annual":
             e = np.zeros(N)
-            for w in range(1, N_WEEKS + 1):
-                e[off_i(p, w)] = st
+            for p in grp:
+                st, _ = defaults(*pairs[p])
+                for w in range(1, N_WEEKS + 1):
+                    e[off_i(p, w)] = st
             add(e, -np.inf, cval)                        # C6b: the yearly total
         else:
             for w in range(1, N_WEEKS + 1):
                 e = np.zeros(N)
-                e[off_i(p, w)] = st
+                for p in grp:
+                    e[off_i(p, w)] = defaults(*pairs[p])[0]
                 add(e, -np.inf, cval if w0 <= w <= w1 else 0.0)
+
+    # FX.3 — contract floors, on the IDENTITY (a buyer contracted for spinach, not for a bed):
+    #     sold[identity, ch, w] + short[k, w] >= floor
+    # The slack is what makes an unmeetable contract a REPORTED SHORTFALL instead of an
+    # infeasible model, and its penalty is what makes the solver try before it gives up.
+    for (k, w) in short_keys:
+        gid, hn, lb, _a, _b, pen = contracts[k]
+        e = np.zeros(N)
+        for p, (cn, h2) in enumerate(pairs):
+            if identity(cn) == gid and h2 == hn:
+                e[off_i(p, w)] = defaults(cn, h2)[0]
+        e[short_i[(k, w)]] = 1.0
+        add(e, lb, np.inf)
+        c_obj[short_i[(k, w)]] += pen
 
     # C4c — shelf life. Nothing in store may be older than its shelf life, so held stock is
     # bounded by what arrived in the last L weeks (L counts the harvest week, so the window is
@@ -545,11 +753,11 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
 
     # storage: opening stock + everything packed out this week, by pool
     for pool, cap in (("Cold", cold_cap), ("Ambient", amb_cap)):
-        members = [n for n in CROP_NAMES
+        in_pool = [n for n in CROP_NAMES
                    if ("Cold" if CROPS[n].get("cold_storage", True) else "Ambient") == pool]
         for w in range(1, N_WEEKS + 1):
             e = np.zeros(N)
-            for cn in members:
+            for cn in in_pool:
                 e += (opening[cn][w] + packed[cn][w]) * CROPS[cn]["crop_size_m3_per_lb"]
             add(e, -np.inf, cap)
 
@@ -576,7 +784,7 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
             # farm pays committed wages for hours it no longer needs AND a rate per pound for
             # the same picking — the hours are the thing that moves, not the wages, which are
             # owed either way.
-            for c_, cn in enumerate(CROP_NAMES):
+            for c_, cn in enumerate(PIECE_CROPS):
                 if lb_per_harvest_hr[cn] and w in piece_weeks:
                     e[piece_i(c_, w)] = -1.0 / lb_per_harvest_hr[cn]
         add(e, -np.inf, lab_cap[w])
@@ -609,16 +817,16 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
         # Piece-rate cost is a COGS line: rate (floored at minimum wage) plus the variable
         # cost, on every pound picked. The fixed cost is charged once — always if the crew is
         # pre-committed, otherwise only if the solver engages them at all.
-        for c_, cn in enumerate(CROP_NAMES):
+        for c_, cn in enumerate(PIECE_CROPS):
             for w in piece_weeks:
                 c_obj[piece_i(c_, w)] += piece_eff[cn]
         c_obj[pbin_i] += max(0.0, piece_fixed_cost)
 
     if piece:
         crop_succs = {cn: [i for i, s_ in enumerate(SUCCS)
-                           if CROP_NAMES[s_["crop"]] == cn] for cn in CROP_NAMES}
+                           if CROP_NAMES[s_["crop"]] == cn] for cn in PIECE_CROPS}
         for w in range(1, N_WEEKS + 1):
-            for c_, cn in enumerate(CROP_NAMES):
+            for c_, cn in enumerate(PIECE_CROPS):
                 if w not in piece_weeks:
                     e = np.zeros(N); e[piece_i(c_, w)] = 1.0
                     add(e, -np.inf, 0.0)                 # outside their window: nothing
@@ -635,7 +843,7 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
             # mix: it rewards hours-per-pound, favouring spinach over the cheaper garlic
             # relief. Hours is what a crew actually has.
             e = np.zeros(N)
-            for c_, cn in enumerate(CROP_NAMES):
+            for c_, cn in enumerate(PIECE_CROPS):
                 if lb_per_harvest_hr[cn]:
                     e[piece_i(c_, w)] = 1.0 / lb_per_harvest_hr[cn]
             e[pbin_i] = -float(piece_max_hours_per_week)
@@ -644,7 +852,7 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
             # it the crew relieves planting and growing hours it never touches — free labour
             # wearing a piece rate.
             e = np.zeros(N)
-            for c_, cn in enumerate(CROP_NAMES):
+            for c_, cn in enumerate(PIECE_CROPS):
                 if lb_per_harvest_hr[cn]:
                     e[piece_i(c_, w)] = 1.0 / lb_per_harvest_hr[cn]
             for i in range(n_s):
@@ -674,6 +882,11 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
                        - st * spec.get("packaging_cost_per_lb", 0.0))
                 for w in range(1, W + 1):
                     e[off_i(p, w)] += net
+            # ⚠️ NO SHORTFALL PENALTY IN HERE. It was charged in the week of the miss, and then a
+            # big penalty on an UNAVOIDABLE shortfall (kale, wks 36-37) drained the credit line and
+            # made the model infeasible — measured at $200/lb — which is exactly the "no feasible
+            # plan" ruling G3 forbids. A penalty is settled with the buyer after the season, like
+            # interest is post-solve here: in the objective and the P&L, never the cash floor.
             if flex:
                 for r_ in range(n_roles):
                     if POS[r_]["hourly"]:
@@ -685,7 +898,7 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
                     if any(ex_on[r_][1:W + 1]):
                         e[extra_i(r_)] -= max(0.0, hire_cost_per_head)
             if piece:
-                for c_, cn in enumerate(CROP_NAMES):
+                for c_, cn in enumerate(PIECE_CROPS):
                     for w in range(1, W + 1):
                         if w in piece_weeks:
                             e[piece_i(c_, w)] -= piece_eff[cn]
@@ -693,13 +906,44 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
                     e[pbin_i] -= max(0.0, piece_fixed_cost)
             add(e, -(op_cash + cred) + W * fixed_wk + wage_wk[1:W + 1].sum(), np.inf)
 
-    # land standing in the ground
-    for w in range(1, N_WEEKS + 1):
+    # land standing in the ground — FX.4: ONE ROW PER ZONE PER WEEK. A tunnel acre and a field
+    # acre are not interchangeable, which is the whole reason a zone exists. `land` (the old
+    # single-pool override) resizes the remainder zone only, so v11's land sweep means the same.
+    # ⚠️ Rows for EVERY zone a planting names, at 0 acres if the farm lacks it. Built only over the
+    # farm's zones (as first written), a planting in a missing zone had NO land row and was
+    # unbounded — measured: dropping the tunnel "raised" profit $91k on ground that did not exist.
+    stands = lambda s_, w: any(((wk - 1) % N_WEEKS) + 1 == w for wk in s_["weeks"])
+    for z in dict.fromkeys(s_["zone"] for s_ in SUCCS):
+        for w in range(1, N_WEEKS + 1):
+            e = np.zeros(N)
+            for i, s in enumerate(SUCCS):
+                if s["zone"] == z and stands(s, w):
+                    e[i] = 1.0
+            add(e, -np.inf, zone_cap.get(z, 0.0))
+
+    # FX.1 — must-plant floors. UNCONDITIONAL: no binary appears, so the solver cannot escape
+    # by not planting (which is exactly how `min_acreage_if_planted` is escaped — measured in
+    # PLAN FX.1 as a 14-acre garlic floor -> 0 acres).
+    #   standing  every week of [a, b]:  acres of the identity in the ground >= floor
+    #   annual    acres planted across the year's successions >= floor (perennial excluded:
+    #             its acres are committed, not planted this year)
+    def floor_row(gid, ac, keep, what):
+        """>= floor over the identity's plantings that pass `keep` — REFUSED, with the reason,
+        when none can (an empty row would only surface as a generic 'infeasible')."""
         e = np.zeros(N)
         for i, s in enumerate(SUCCS):
-            if any(((wk - 1) % N_WEEKS) + 1 == w for wk in s["weeks"]):
+            if identity(CROP_NAMES[s["crop"]]) == gid and keep(i, s):
                 e[i] = 1.0
-        add(e, -np.inf, land)
+        if not e.any():
+            raise RuntimeError(f"must-plant: {ac:g} ac of {gid} {what}, but nothing it can grow "
+                               f"qualifies — refused, not silently dropped")
+        add(e, ac, np.inf)
+
+    for gid, ac, a, b in must_stand:
+        for w in range(a, b + 1):
+            floor_row(gid, ac, lambda i, s, w=w: stands(s, w), f"must stand in week {w}")
+    for gid, ac in must_annual.items():
+        floor_row(gid, ac, lambda i, s: not is_per[i], "must be planted this year")
 
     # C9 / C10 — the plant / do-not-plant decision, exactly as farm_v2 states it:
     #     x_i <= land x y_i        (cannot plant acres without deciding to plant)
@@ -737,10 +981,26 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
         # same stock, only the choice of who gets served differs.
         for i, s_ in enumerate(SUCCS):
             lb_v[i] = ub_v[i] = float(fixed_acres)
+    for i in range(n_s):
+        if is_per[i]:
+            # FX.2: committed ground. Acres are an INPUT, so the bound IS the decision; the
+            # binary is pinned on (min acreage 0) so C9/C10 hold trivially.
+            lb_v[i] = ub_v[i] = float(perennial_acres)
+            if min_acreage:
+                lb_v[y_i(i)] = ub_v[y_i(i)] = 1.0 if perennial_acres > 0 else 0.0
+    for kw in short_keys:
+        ub_v[short_i[kw]] = contracts[kw[0]][2]       # cannot be short more than the order
     res = milp(c=c_obj, constraints=LinearConstraint(A, lo, hi), integrality=integrality,
-               bounds=Bounds(lb_v, ub_v), options={"disp": False, "time_limit": 300})
+               bounds=Bounds(lb_v, ub_v), options={"disp": False, "time_limit": 300,
+                                              # v12: the default 1e-4 gap is ~$50 of noise on a
+                                              # $490k plan — larger than some FX deltas measured.
+                                              "mip_rel_gap": 1e-7})
     if not res.success:
-        raise RuntimeError(f"LP did not solve: {res.message}")
+        # ⚠️ With FX.1 floors this is reachable by INPUT, not only by a bug: must-plant floors
+        # are hard (contracts are not — they carry a slack). Say which kind of thing to check.
+        raise RuntimeError(f"LP did not solve: {res.message} — if must-plant floors are set, "
+                           f"check them against land, the crew in the planting and harvest "
+                           f"weeks, and storage: any of the three can make one unplantable")
 
     x = res.x
     acres = {SUCCS[i]["name"]: float(x[i]) for i in range(n_s)}
@@ -749,7 +1009,13 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
     sold = {k: sum(v) * defaults(*k)[0] for k, v in offered.items()}
     revenue = sum(sold[(cn, hn)] * CROPS[cn].get("channels", {}).get(hn, {}).get("price_per_lb", 0.0)
                   for cn, hn in pairs)
-    growing = sum(x[i] * var_week[i, 1:].sum() for i in range(n_s))
+    # FX.2 reported on its own line: upkeep and depreciation are not "growing cost" a grower
+    # would recognise, and folding them in would hide what the perennial costs.
+    cost_i = x[:n_s] * var_week[:, 1:].sum(axis=1)
+    per_mask = np.array(is_per)
+    growing, perennial_cost = float(cost_i[~per_mask].sum()), float(cost_i[per_mask].sum())
+    short = {kw: float(x[short_i[kw]]) for kw in short_keys}
+    shortfall_cost = sum(short[kw] * contracts[kw[0]][5] for kw in short_keys)
     packaging = sum(sold[(cn, hn)] * CROPS[cn].get("channels", {}).get(hn, {})
                     .get("packaging_cost_per_lb", 0.0) for cn, hn in pairs)
     fixed = fixed_wk * N_WEEKS
@@ -780,11 +1046,11 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
                     flex_w += x[extra_i(r_)] * max(0.0, hire_cost_per_head)
         if piece:
             flex_w += sum(x[piece_i(c_, w)] * piece_eff[cn]
-                          for c_, cn in enumerate(CROP_NAMES)) if w in piece_weeks else 0.0
+                          for c_, cn in enumerate(PIECE_CROPS)) if w in piece_weeks else 0.0
             if piece_weeks and w == piece_weeks[0]:
                 flex_w += x[pbin_i] * max(0.0, piece_fixed_cost)
         week_net[w] = (rev_w - pkg_w - grow_w - fixed_wk - wage_wk[w] - overhead * rev_w
-                       - flex_w)
+                       - flex_w)              # the shortfall penalty is settled post-season
     bank = np.cumsum(week_net[1:]) + op_cash
     borrowed = np.maximum(0.0, -bank)
     interest = PAYLOAD.get("interest_rate_apr", 0.0) * float(borrowed.mean())
@@ -800,15 +1066,15 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
                     for r_ in range(n_roles))
     piece_lb = {cn: [float(x[piece_i(c_, w)]) if piece else 0.0
                      for w in range(1, N_WEEKS + 1)]
-                for c_, cn in enumerate(CROP_NAMES)}
+                for c_, cn in enumerate(PIECE_CROPS)}
     piece_used = bool(piece and x[pbin_i] > 0.5)
     piece_cost = (sum(sum(v) * piece_eff[cn] for cn, v in piece_lb.items())
                   + (max(0.0, piece_fixed_cost) if piece_used else 0.0))
     piece_hours_relieved = [sum(piece_lb[cn][w] / lb_per_harvest_hr[cn]
-                                for cn in CROP_NAMES if lb_per_harvest_hr[cn])
+                                for cn in PIECE_CROPS if lb_per_harvest_hr[cn])
                             for w in range(N_WEEKS)]
     cost = (growing + packaging + fixed + ovh + wages + interest
-            + ot_cost + hire_cost + piece_cost)
+            + ot_cost + hire_cost + piece_cost + perennial_cost + shortfall_cost)
 
     # ⚠️ THE OBJECTIVE MUST RECONCILE AGAINST THE COST BREAKDOWN, and this check exists because
     # a mutation walked straight through everything else. Charging the advisory crew for ONE
@@ -821,7 +1087,7 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
     # Wages and fixed costs are constants (committed, not decided) and interest is post-solve,
     # so none of them appear in it.
     obj_from_parts = (revenue - growing - packaging - ovh
-                      - ot_cost - hire_cost - piece_cost)
+                      - ot_cost - hire_cost - piece_cost - perennial_cost - shortfall_cost)
     if abs(-float(res.fun) - obj_from_parts) > max(1.0, abs(obj_from_parts) * 1e-9):
         raise RuntimeError(
             f"the objective and the cost breakdown disagree: solver maximised "
@@ -849,9 +1115,21 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
                                 cost=list(q["cost"]), heads=list(q["heads"]))
                            for q in positions()],
                 fixed_weekly=fixed_wk, opening_cash=op_cash, credit_line=cred,
-                var_week=var_week,
+                var_week=var_week, perennial_cost=perennial_cost,
+                short=short, shortfall_cost=shortfall_cost,
+                short_lb={k: sum(v for (kk, _w), v in short.items() if kk == k)
+                          for k in range(len(contracts))},
+                zone_peak={z: max(sum(x[i] for i, s_ in enumerate(SUCCS)
+                                      if s_["zone"] == z and stands(s_, w))
+                                  for w in range(1, N_WEEKS + 1)) for z in zone_cap},
+                identity_sold={(gid, hn): sum(v for (cn, h2), v in sold.items()
+                                              if identity(cn) == gid and h2 == hn)
+                               for gid in IDENTITIES for hn in CH_NAMES},
                 offered=offered, sold=sold, status=res.status, planted=planted,
-                n_planted=len(planted), n_offered=len(SUCCS))
+                n_planted=len(planted), n_offered=len(SUCCS),
+                # PLANTINGS — the committed perennial is in the calendar but is not one
+                n_plantings=sum(1 for k in planted if k not in PERENNIAL_NAMES),
+                n_plantable=len(SUCCS) - len(PERENNIAL_NAMES))
 
 
 if __name__ == "__main__":
@@ -859,7 +1137,7 @@ if __name__ == "__main__":
     print(f"OPTIMUM  profit ${r['profit']:,.0f}")
     print(f"   revenue    {r['revenue']:>12,.0f}")
     for k in ("growing", "packaging", "fixed", "overhead", "wages", "interest",
-              "ot_cost", "hire_cost", "piece_cost"):
+              "ot_cost", "hire_cost", "piece_cost", "perennial_cost", "shortfall_cost"):
         print(f"   {k:<10} {-r[k]:>12,.0f}")
     print(f"   plants {r['n_planted']} of {r['n_offered']} successions the app offers")
     print("\nacres:")

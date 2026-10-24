@@ -789,6 +789,10 @@ with/without delta ("this contract costs you $X") is only honest once the cost m
 
 **FX.0 · Prototype in the toy first (v12).** Same pattern as labour: prove the shapes against an
 independent oracle on a hand-checkable sheet before touching the guarded money path.
+✅ BUILT 2026-10-24 — `toy_models/farm_toy_v12_fixed_layer.xlsx`; measurements and the app design
+are in **`SPEC_batchFX.md`** (§2 findings, §5 six questions awaiting the grower). Settled there:
+must-plant ships in BOTH forms (30 ac kale: annual $0, standing $49,240), and C15 folds into the
+standing form.
 
 **FX.1 · Must-plant floors — UNCONDITIONAL.** "I need N acres of X." `min_acreage_if_planted` is
 NOT this: it is conditional on the plant binary, so the solver escapes it by dropping the crop

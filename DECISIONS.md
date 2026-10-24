@@ -1058,9 +1058,11 @@ what that non-goal rejected: zones, not maps.
 6. **⭐ Grower addition — templates for common variants, and the wizard PROMPTS for a variant** when
    a declared zone changes growing behaviour and the grower has not supplied one.
 
-**Not decided, to settle in the toy (FX.0):** whether a must-plant floor is on standing acreage
-(C15's lesson) or annual acres planted — likely both, named differently. P2 (allocation by stake)
-is NOT in this batch; it remains parked.
+**Settled in the toy (FX.0, 2026-10-24): BOTH, named differently.** Same 30 acres of kale — as an
+ANNUAL floor it costs $0 (the plan already plants more); as a STANDING floor over weeks 10–20 it
+costs $49,240. Different promises. The overwintering carry-in (C15) is the standing form with a
+one-week window, so it folds into the same mechanism. Full findings and six open questions for the
+grower: `SPEC_batchFX.md`. P2 (allocation by stake) is NOT in this batch; it remains parked.
 
 ---
 

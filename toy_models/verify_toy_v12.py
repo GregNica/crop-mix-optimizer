@@ -1,7 +1,12 @@
 """
-verify_toy_v11.py — EVALUATE the v4 workbook and prove it is the same problem the solver solves.
+verify_toy_v12.py — EVALUATE the v12 workbook and prove it is the same problem the solver solves.
 
-Run:  .venv/bin/python toy_models/verify_toy_v11.py
+Run:  .venv/bin/python toy_models/verify_toy_v12.py
+
+v12 (the fixed layer) adds rows the simulator must reproduce INDEPENDENTLY, not read back: land
+per zone, the shared market per identity, the perennial's cost line, the must-plant floors and
+the contract rows. Each gets a feasibility check at the optimum AND a "does it bind" check —
+a floor nothing ever reaches proves nothing.
 
 v4's answer is not arithmetic, it is a CHOICE, so "is the sheet right?" splits in two and both
 halves are checked here:
@@ -35,9 +40,9 @@ from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 
 from farm_v2.utils.calendar import generate_successions, harvest_weeks_of
-import toy_v11_lp as LP
+import toy_v12_lp as LP
 
-WB = REPO / "toy_models" / "farm_toy_v11_labour.xlsx"
+WB = REPO / "toy_models" / "farm_toy_v12_fixed_layer.xlsx"
 PFX = f"'[{WB.name}]MODEL'!"
 CROPS = tuple(LP.CROP_NAMES)
 CH = list(LP.CH_NAMES)
@@ -89,11 +94,11 @@ def labels():
 def crop_blocks():
     # The first token must be a CROP — "endswith('store')" alone also caught the recipe's
     # "Constraint — cold store" lines and made a bogus block out of them.
-    heads = [r for r in range(1, ws.max_row + 1)
-             if isinstance(ws.cell(row=r, column=1).value, str)
-             and "—" in ws.cell(row=r, column=1).value
-             and ws.cell(row=r, column=1).value.endswith("store")
-             and ws.cell(row=r, column=1).value.split(" ")[0].title() in CROPS]
+    # v12: matched on the WHOLE crop name before the dash — "TUNNEL SPINACH  —  cold store" has
+    # a first token of "TUNNEL", and the old first-token test silently dropped that block.
+    _head = lambda v: (isinstance(v, str) and v.endswith("store") and "  —  " in v
+                       and v.split("  —  ")[0] in {c.upper() for c in CROPS})
+    heads = [r for r in range(1, ws.max_row + 1) if _head(ws.cell(row=r, column=1).value)]
     out = {}
     for i, r in enumerate(heads):
         stop = heads[i + 1] if i + 1 < len(heads) else ws.max_row + 1
@@ -102,7 +107,7 @@ def crop_blocks():
             lv = ws.cell(row=rr, column=1).value
             if isinstance(lv, str) and lv.strip():
                 seq.setdefault(lv.strip(), rr)
-        out[ws.cell(row=r, column=1).value.split(" ")[0]] = seq
+        out[ws.cell(row=r, column=1).value.split("  —  ")[0]] = seq
     return out
 
 
@@ -136,7 +141,19 @@ for r in range(1, ws.max_row + 1):
     if isinstance(a, str) and b in CROPS and isinstance(ws.cell(row=r, column=3).value, (int, float)):
         SUCC_ROW[a] = r
 OBJ_ROW = LBL["PROFIT  (the objective)"][0]
-assert len(PAIR_ROW) == 6 and len(CROP_ROW) == 3, "sheet layout not found"
+assert len(PAIR_ROW) == len(CROPS) * len(CH) and len(CROP_ROW) == len(CROPS), "sheet layout not found"
+assert set(BLK) == {c.upper() for c in CROPS}, f"crop blocks found: {sorted(BLK)}"
+def _one(label):
+    """The row carrying `label` — asserted UNIQUE, because a label that appears twice is an
+    ordinal in disguise and the trap this toy has hit four times."""
+    rows = LBL.get(label, [])
+    assert len(rows) == 1, f"{label!r} appears {len(rows)}x"
+    return rows[0]
+
+
+ZONE_ROW = {z: _one(z) for z in LP.ZONE_NAMES}
+PER = LP.PERENNIAL
+PER_ROW = _one("Upkeep $/acre/yr")
 assert len(SUCC_ROW) == len(LP.SUCCS), (
     f"found {len(SUCC_ROW)} succession rows, the app offers {len(LP.SUCCS)} — v5 must carry ALL "
     f"of them; a hand-picked subset is the exact defect v5 exists to remove")
@@ -167,19 +184,26 @@ def row(d, r):
 
 def simulate(acres, offered, packout=None, shrink=None, caps=None,
              opening_cash=50_000.0, credit_line=250_000.0,
-             adv=None):
+             adv=None, fx=None):
     """The v4 flow. `offered` is GIVEN — nothing is decided here."""
-    packout = packout or {n: 1.00 for n in CROPS}
-    shrink = shrink or {n: 0.0 for n in CROPS}
+    packout = {n: (packout or {}).get(n, 1.00) for n in CROPS}
+    shrink = {n: (shrink or {}).get(n, 0.0) for n in CROPS}
+    fx = fx or {}
     gross = {n: [0.0] * 53 for n in CROPS}
-    land = [0.0] * 53
+    # v12: land PER ZONE, and acres standing PER IDENTITY (the must-plant floors' left side)
+    land = {z: [0.0] * 53 for z in LP.ZONE_NAMES}
+    standing = {g: [0.0] * 53 for g in LP.IDENTITIES}
+    planted = {g: 0.0 for g in LP.IDENTITIES}
     for s in LP.SUCCS:
         cn = CROPS[s["crop"]]
         hw = harvest_weeks_of(s, 52)
         for w in hw:
             gross[cn][w] += acres[s["name"]] * crops[cn]["yield_per_acre"] / max(1, len(hw))
-        for wk in s["weeks"]:
-            land[((wk - 1) % 52) + 1] += acres[s["name"]]
+        for w in {((wk - 1) % 52) + 1 for wk in s["weeks"]}:
+            land[s["zone"]][w] += acres[s["name"]]
+            standing[LP.identity(cn)][w] += acres[s["name"]]
+        if not s.get("perennial"):
+            planted[LP.identity(cn)] += acres[s["name"]]
     packed = {n: [gross[n][w] * packout[n] for w in range(53)] for n in CROPS}
     op = {n: [0.0] * 53 for n in CROPS}
     shr = {n: [0.0] * 53 for n in CROPS}
@@ -187,8 +211,17 @@ def simulate(acres, offered, packout=None, shrink=None, caps=None,
     close = {n: [0.0] * 53 for n in CROPS}
     room = {n: [0.0] * 53 for n in CROPS}
     sold = {(n, h): [0.0] * 53 for n in CROPS for h in CH}
+    # SOLD is offered x sell-through and nothing else, so it is fixed before any ceiling is
+    # worked out — which a SHARED ceiling needs, because it subtracts another crop's sales.
+    for n in CROPS:
+        for h in CH:
+            for w in range(1, 53):
+                sold[(n, h)][w] = offered[(n, h)][w - 1] * LP.defaults(n, h)[0]
+    # FX.5: what each identity sells, all names together. The ceiling is measured on THIS.
+    gsold = {(g, h): [sum(sold[(n, h)][w] for n in CROPS if LP.identity(n) == g)
+                      for w in range(53)] for g in LP.IDENTITIES for h in CH}
     ret = {(n, h): [0.0] * 53 for n in CROPS for h in CH}
-    con = {(n, h): [0.0] * 53 for n in CROPS for h in CH}
+    con_ = {(n, h): [0.0] * 53 for n in CROPS for h in CH}
     cap = {(n, h): [0.0] * 53 for n in CROPS for h in CH}
     shelf = {n: [0.0] * 53 for n in CROPS}
     for n in CROPS:
@@ -211,13 +244,13 @@ def simulate(acres, offered, packout=None, shrink=None, caps=None,
                 # so the annual running-allowance form (and the weekly season window) had no
                 # test at all, on a sheet whose whole point is that its numbers are checkable.
                 ctype, cval, w0, w1 = (caps or {}).get((n, h), LP.cap_spec(n, h))
-                cap[(n, h)][w] = (cval - sum(sold[(n, h)][1:w]) if ctype == "Annual"
+                g = LP.identity(n)
+                cap[(n, h)][w] = (cval - sum(gsold[(g, h)][1:w]) if ctype == "Annual"
                                   else (cval if w0 <= w <= w1 else 0.0))
                 o = offered[(n, h)][w - 1]
-                sold[(n, h)][w] = o * st
                 ret[(n, h)][w] = (o - o * st) * rt
-                con[(n, h)][w] = o - ret[(n, h)][w]
-                left -= con[(n, h)][w]
+                con_[(n, h)][w] = o - ret[(n, h)][w]
+                left -= con_[(n, h)][w]
             close[n][w] = left
     # ---- money, week by week. Built independently of the sheet, which is the point: the whole
     # cash section was added in one commit and compared against NOTHING, the exact gap that has
@@ -233,7 +266,14 @@ def simulate(acres, offered, packout=None, shrink=None, caps=None,
                 rev[w] += sold[(n, h)][w] * spec.get("price_per_lb", 0.0)
                 pkg[w] += sold[(n, h)][w] * spec.get("packaging_cost_per_lb", 0.0)
     key = ["plant", "grow", "harv"]
+    # FX.2: the perennial's line, from its own inputs — upkeep + establishment / life, flat.
+    _ps = {**LP.PERENNIAL_SPEC, **fx.get("perennial", {})}
+    per_wk = (_ps["upkeep_per_acre_yr"] + _ps["establish_per_acre"] / _ps["life_years"]) / 52
+    per = [0.0] + [sum(acres[s_["name"]] for s_ in LP.SUCCS if s_.get("perennial")) * per_wk
+                   for _ in range(52)]
     for s_ in LP.SUCCS:
+        if s_.get("perennial"):
+            continue                       # never seed, never fertiliser: its own line above
         cn = CROPS[s_["crop"]]; c = crops[cn]; a = acres[s_["name"]]
         grow[((s_["weeks"][0] - 1) % 52) + 1] += a * c["seed_transplant_cost_per_acre"]
         for wk, ph in zip(s_["weeks"], s_["phases"]):
@@ -318,14 +358,27 @@ def simulate(acres, offered, packout=None, shrink=None, caps=None,
         for wk, ph in zip(s_["weeks"], s_["phases"]):
             lab_used[((wk - 1) % 52) + 1] += a * c.get(
                 f"labor_{['plant', 'grow', 'harv'][ph]}", 0.0)
-            if ph == 2:
+            if ph == 2 and CROPS[s_["crop"]] in LP.PIECE_CROPS:
                 harv_need[((wk - 1) % 52) + 1] += a * c.get("labor_harv", 0.0)
+    # FX.3: contracts. owed in the window, delivered = the IDENTITY's sales on that channel.
+    contracts = fx.get("contracts", LP.CONTRACTS)
+    short = adv.get("short", {})
+    con = []
+    pen = [0.0] * 53
+    for k, (g, h, lb, a, b, p) in enumerate(contracts):
+        sh = [0.0] + [float(short.get((k, w), 0.0)) for w in range(1, 53)]
+        owed = [0.0] + [lb if a <= w <= b else 0.0 for w in range(1, 53)]
+        con.append(dict(ds=[gsold[(g, h)][w] + sh[w] for w in range(53)], owed=owed,
+                        pen=[sh[w] * p for w in range(53)]))
+        for w in range(1, 53):
+            pen[w] += sh[w] * p
     net = [0.0] * 53; cum = [0.0] * 53; running = opening_cash
     for w in range(1, 53):
         # ⚠️ WAGES ARE IN HERE, and in no per-acre charge anywhere. That is the W12 point: every
         # listed worker is paid for their stated hours whether the crops need them or not.
         net[w] = (rev[w] - pkg[w] - grow[w] - fixed_wk - rev[w] * ovh_pct - wage_wk[w]
-                  - ot_cost[w] - head_wk[w] - piece_cost[w])
+                  - ot_cost[w] - head_wk[w] - piece_cost[w] - per[w])
+        # the shortfall penalty is settled AFTER the season — never in the weekly cash (G3)
         running += net[w]; cum[w] = running
 
     # The floor is MINUS THE CREDIT LINE, because `cum` above is a bank balance that already
@@ -345,9 +398,15 @@ def simulate(acres, offered, packout=None, shrink=None, caps=None,
                 lab_used_net=[lab_used[w] - relief[w] for w in range(53)],
                 ot_cap_role=ot_cap_role, ot_cost_role=ot_cost_role,
                 gross=gross, packed=packed, opening=op, shr=shr, store=store, close=close,
-                room=room, sold=sold, ret=ret, con=con, cap=cap, shelf=shelf, land=land,
-                cold=[room["Spinach"][w] + room["Kale"][w] for w in range(1, 53)],
-                amb=[room["Garlic"][w] for w in range(1, 53)])
+                room=room, sold=sold, ret=ret, con=con_, cap=cap, shelf=shelf, land=land,
+                standing=standing, planted=planted, gsold=gsold, contracts=con, pen=pen,
+                per=per,
+                # derived from each crop's own pool flag — v11 named the crops here, and a
+                # fourth cold crop would have been left out of the pool it fills
+                cold=[sum(room[n][w] for n in CROPS if crops[n].get("cold_storage", True))
+                      for w in range(1, 53)],
+                amb=[sum(room[n][w] for n in CROPS if not crops[n].get("cold_storage", True))
+                     for w in range(1, 53)])
 
 
 CREW_ROW = {}
@@ -401,6 +460,10 @@ def flex_overrides(opt):
         for w in range(1, 53):
             ov[f"{col(w)}{rr}"] = float(series[w - 1])
     ov[f"B{LBL['ENGAGED?'][0]}"] = 1.0 if opt["piece_used"] else 0.0
+    # v12: the contract shortfall cells
+    for (k, w), v in opt.get("short", {}).items():
+        g, h = LP.CONTRACTS[k][0], LP.CONTRACTS[k][1]
+        ov[f"{col(w)}{_one(f'{g} / {h} — SHORTFALL')}"] = float(v)
     return ov
 
 
@@ -418,7 +481,8 @@ def acre_overrides(acres, binaries=True):
     ov = {}
     for k, v in acres.items():
         ov[f"C{SUCC_ROW[k]}"] = float(v)
-        if binaries:
+        # the perennial's PLANT? is a formula of its acres, not a decision — never written
+        if binaries and k != PER:
             ov[f"D{SUCC_ROW[k]}"] = 1 if v > 1e-9 else 0
     return ov
 
@@ -429,7 +493,8 @@ def _adv_of(opt):
                 ot_by_role=dict(zip(opt["role_names"], opt["ot_by_role"])),
                 piece_lb=opt["piece_lb"], piece_eff=opt["piece_eff"],
                 piece_used=opt["piece_used"],
-                piece_start=opt["piece_weeks"][0] if opt["piece_weeks"] else 1)
+                piece_start=opt["piece_weeks"][0] if opt["piece_weeks"] else 1,
+                short=opt.get("short", {}))
 
 
 def check_values(tag, overrides, acres, offered, **kw):
@@ -440,8 +505,9 @@ def check_values(tag, overrides, acres, offered, **kw):
         compare(f"[{tag}] {n} packed", row(d, b["Packed out -> INTO the store"]), s["packed"][n])
         compare(f"[{tag}] {n} in store", row(d, b["In store this week"]), s["store"][n])
         for h in CH:
-            compare(f"[{tag}] {n}/{h} ceiling",
-                    row(d, b[f"{h} — most you may sell this week"]), s["cap"][(n, h)])
+            if LP.identity(n) == n:      # a variant has no ceiling of its own (FX.5)
+                compare(f"[{tag}] {n}/{h} ceiling",
+                        row(d, b[f"{h} — most you may sell this week"]), s["cap"][(n, h)])
             compare(f"[{tag}] {n}/{h} sold", row(d, b[f"{h} — SOLD"]), s["sold"][(n, h)])
         compare(f"[{tag}] {n} carried out", row(d, b["Stock carried out"]), s["close"][n])
         compare(f"[{tag}] {n} shelf-life bound",
@@ -481,7 +547,36 @@ def check_values(tag, overrides, acres, offered, **kw):
     for nm, series in s["pos_cost"].items():
         compare(f"[{tag}] position cost: {nm}",
                 row(d, _pos_row(nm, "D — WHAT IT COSTS", "Wage bill this week")), series)
-    compare(f"[{tag}] LAND", row(d, LBL["LAND in the ground"][0]), s["land"])
+    for z in LP.ZONE_NAMES:
+        compare(f"[{tag}] LAND {z}", row(d, _one(f"LAND in the ground — {z}")), s["land"][z])
+    # FX.1 — every standing floor's left side, and every annual floor's
+    for g, _ac, _a, _b in LP.MUST_STAND:
+        compare(f"[{tag}] {g} standing", row(d, _one(f"{g} standing")), s["standing"][g])
+    for g in LP.MUST_ANNUAL:
+        got = d.get(f"B{_one(f'{g} planted this year')}")
+        report(abs(float(got) - s["planted"][g]) < 1e-6,
+               f"[{tag}] {g} planted this year (sheet {float(got):.3f}, sim {s['planted'][g]:.3f})")
+    # FX.5 — the shared market's total, compared for every identity sold by more than one name
+    for g in LP.IDENTITIES:
+        if len(LP.members(g)) > 1:
+            for h in CH:
+                compare(f"[{tag}] {g}/{h} sold, every name",
+                        row(d, _one(f"{g} / {h} — SOLD, every name that sells as {g}")),
+                        s["gsold"][(g, h)])
+    # FX.3 — contracts, row by row, and the cash lines FX adds
+    for k, (g, h, *_r) in enumerate(LP.CONTRACTS):
+        sh = _one(f"{g} / {h} — SHORTFALL")
+        # the three rows below the decision, CHECKED by name before they are read by offset
+        for off, lab in ((1, "delivered + short"), (2, "owed"), (3, "penalty")):
+            got = str(ws.cell(row=sh + off, column=1).value or "").strip()
+            assert got.startswith(lab), f"contract {k}: row +{off} is {got!r}, wanted {lab!r}"
+        compare(f"[{tag}] contract {k} delivered + short", row(d, sh + 1), s["contracts"][k]["ds"])
+        compare(f"[{tag}] contract {k} owed", row(d, sh + 2), s["contracts"][k]["owed"])
+        compare(f"[{tag}] contract {k} penalty", row(d, sh + 3), s["contracts"][k]["pen"], 1e-4)
+    compare(f"[{tag}] perennial upkeep + depreciation",
+            row(d, _one("perennial upkeep + depreciation")), s["per"], 1e-4)
+    compare(f"[{tag}] contract shortfall penalty",
+            row(d, _one("contract shortfall penalty")), s["pen"], 1e-4)
     compare(f"[{tag}] COLD STORE", row(d, LBL["COLD STORE"][0]), [0] + s["cold"], 1e-4)
     compare(f"[{tag}] AMBIENT STORE", row(d, LBL["AMBIENT STORE"][0]), [0] + s["amb"], 1e-4)
     return d
@@ -495,8 +590,9 @@ assert len(CREW_ROW) == len(LP.PAYLOAD["employees"]), (
     f"found {len(CREW_ROW)} roster rows, expected {len(LP.PAYLOAD['employees'])}: {CREW_ROW}")
 
 print(_el(), "A. VALUES — the sheet's formulas against an independent simulator")
-# 1 acre on each of 68 plantings = 68 acres, inside the 80 available. Six each would
-# be 408 and the comparison would only ever run on a wildly infeasible plan.
+# 1 acre on each planting. v12 offers 140 (Kale twice over, the tunnel variant), so this is no
+# longer inside the land — section A checks ARITHMETIC, and the LP-optimum run below is the
+# feasible one.
 A6 = {k: 1.0 for k in PICKED}
 ZERO = {(n, h): [0.0] * 52 for n in CROPS for h in CH}
 # NOT "as shipped": v5 ships with every acre at 0 because acres are now DECISION cells. The
@@ -619,7 +715,25 @@ def worst(d, label):
     got = str(ws.cell(row=used + 3, column=1).value or "").strip()
     assert got == "room left", f"{label!r}: expected a room-left row at +3, found {got!r}"
     return min(float(x) for x in row(d, used + 3) if x is not None)
-FM = [h for h in CH if h.startswith("Farmers")][0]
+FM = LP.FM
+# by its HEADER on the calendar, never by the builder's column arithmetic restated here
+_SH = _one("Succession")
+C_MAXA = next(get_column_letter(c) for c in range(1, ws.max_column + 1)
+              if ws.cell(row=_SH, column=c).value == "max if planted")
+TOTAL_LAND_IN = float(ws.cell(row=CAP_ROW["land"], column=2).value)
+row_f = lambda d, r_: [float(x) for x in row(d, r_)]
+total_lab = lambda d, lab: sum(row_f(d, _one(lab)))
+STAND_IN = {ws.cell(row=r_, column=1).value: r_ for r_ in range(1, ws.max_row + 1)
+            if str(ws.cell(row=r_, column=5).value or "").startswith("STANDING")}
+CON_IN = [r_ for r_ in range(1, ws.max_row + 1)
+          if ws.cell(row=r_, column=1).value in LP.IDENTITIES
+          and ws.cell(row=r_, column=2).value in CH
+          and isinstance(ws.cell(row=r_, column=6).value, (int, float))
+          and isinstance(ws.cell(row=r_, column=3).value, (int, float))
+          and r_ > LBL["5d — CONTRACTS  (what you have already promised to deliver)"][0]]
+ANN_IN = {ws.cell(row=r_, column=1).value: r_ for r_ in range(1, ws.max_row + 1)
+          if str(ws.cell(row=r_, column=5).value or "").startswith("ANNUAL")}
+assert len(STAND_IN) == len(LP.MUST_STAND) and len(CON_IN) == len(LP.CONTRACTS), (STAND_IN, CON_IN)
 WS_ = [h for h in CH if h.lower().startswith("wholesale")][0]
 base_cold = peak(d0, "COLD STORE")
 
@@ -632,7 +746,11 @@ for tag, ov, pred in [
                    / total(d0, "SPINACH", "ROOM OCCUPANCY") - 0.60) < 0.01),
     ("m3 per lb      Spinach x2",
      {f"D{CROP_ROW['Spinach']}": crops["Spinach"]["crop_size_m3_per_lb"] * 2},
-     lambda d: peak(d, "COLD STORE") > base_cold * 1.2),
+     # on SPINACH's own room row: v12 put five crops in the cooler, so a one-crop change no
+     # longer moves the POOL by 20% and the pool-level threshold went false on a correct sheet
+     lambda d: abs(total(d, "SPINACH", "ROOM OCCUPANCY")
+                   / total(d0, "SPINACH", "ROOM OCCUPANCY") - 2.0) < 0.01
+               and peak(d, "COLD STORE") > base_cold),
     ("weekly ceiling Garlic/FM -> 200", {f"D{PAIR_ROW[('Garlic', FM)]}": 200.0},
      lambda d: total(d, "GARLIC", f"{FM} — most you may sell this week") < 200.0 * 52 + 1),
     ("season window  Garlic/FM from wk -> 30", {f"E{PAIR_ROW[('Garlic', FM)]}": 30},
@@ -680,7 +798,37 @@ for tag, ov, pred in [
                > float(d0[f"{col(1)}{LBL["floor"][0]}"])),
     ("cold cap       -> 50", {f"B{CAP_ROW['cold']}": 50.0}, lambda d: worst(d, "COLD STORE") < 0),
     ("ambient cap    -> 20", {f"B{CAP_ROW['ambient']}": 20.0}, lambda d: worst(d, "AMBIENT STORE") < 0),
-    ("land           -> 10", {f"B{CAP_ROW['land']}": 10.0}, lambda d: worst(d, "LAND in the ground") < 0),
+    ("land           -> 10", {f"B{CAP_ROW['land']}": 10.0},
+     lambda d: worst(d, "LAND in the ground — Open field") < 0),
+    # ---- v12: every FX input moves the row it claims to ----
+    ("tunnel acres   -> 0.5", {f"B{ZONE_ROW['High tunnel']}": 0.5},
+     lambda d: worst(d, "LAND in the ground — High tunnel") < 0
+               and float(d[f"B{ZONE_ROW['Open field']}"]) == TOTAL_LAND_IN - 0.5),
+    # Eligibility is LIVE: Kale may not use the tunnel -> every tunnel Kale row's max is 0.
+    ("eligibility    Kale / High tunnel -> N",
+     {f"{get_column_letter(18 + LP.ZONE_NAMES.index('High tunnel'))}{CROP_ROW['Kale']}": "N"},
+     lambda d: all(float(d[f"{C_MAXA}{SUCC_ROW[s['name']]}"]) == 0.0 for s in LP.SUCCS
+                   if s["zone"] == "High tunnel" and CROPS[s["crop"]] == "Kale")
+               and any(float(d[f"{C_MAXA}{SUCC_ROW[s['name']]}"]) > 0 for s in LP.SUCCS
+                       if s["zone"] == "Open field" and CROPS[s["crop"]] == "Kale")),
+    ("perennial      upkeep -> $10,000/ac", {f"B{PER_ROW}": 10_000.0},
+     lambda d: total_lab(d, "perennial upkeep + depreciation")
+               > total_lab(d0, "perennial upkeep + depreciation") * 3),
+    ("perennial      acres -> 6", {f"C{SUCC_ROW[PER]}": 6.0},
+     lambda d: max(row_f(d, _one("LAND in the ground — Open field")))
+               >= max(row_f(d0, _one("LAND in the ground — Open field"))) + 2.999),
+    ("must-plant     Kale standing -> 9 ac", {f"B{STAND_IN['Kale']}": 9.0},
+     lambda d: max(row_f(d, _one("must stand (row %d)" % STAND_IN["Kale"]))) == 9.0),
+    ("must-plant     window -> wk 12-14", {f"C{STAND_IN['Kale']}": 12, f"D{STAND_IN['Kale']}": 14},
+     lambda d: sum(1 for x in row_f(d, _one("must stand (row %d)" % STAND_IN["Kale"]))
+                   if x > 0) == 3),
+    ("must-plant     Kale ANNUAL -> 50 ac", {f"B{ANN_IN['Kale']}": 50.0},
+     lambda d: float(d[f"D{_one('Kale planted this year')}"]) == 50.0),
+    ("contract       Kale lb -> 999", {f"C{CON_IN[0]}": 999.0},
+     lambda d: max(row_f(d, _one(f"owed (row {CON_IN[0]})"))) == 999.0),
+    ("contract       penalty -> $7 with 100 lb short",
+     {f"F{CON_IN[0]}": 7.0, f"{col(25)}{_one('Kale / Wholesale — SHORTFALL')}": 100.0},
+     lambda d: abs(total_lab(d, "contract shortfall penalty") - 700.0) < 1e-6),
 ]:
     try:
         ok = pred(calc({**BASE_ACRES, **ov}))
@@ -721,12 +869,15 @@ for label, val in (("optimum profit", OPT["profit"]), ("optimum revenue", OPT["r
                    ("fixed cost", OPT["fixed"]), ("overhead", OPT["overhead"]),
                    ("weekly fixed cost", OPT["fixed_weekly"]), ("wages", OPT["wages"]),
                    ("extra-head cost", OPT["hire_cost"]), ("piece-rate cost", OPT["piece_cost"]), ("interest", OPT["interest"]),
+                   ("perennial cost", OPT["perennial_cost"]), ("shortfall cost", OPT["shortfall_cost"]),
                    ("LP-relaxation profit", RELAX["profit"])):
     report(f"${val:,.0f}" in prose, f"READ ME states the real {label} (${val:,.0f})")
-report(f"{OPT['n_planted']} of {OPT['n_offered']}" in prose,
-       f"READ ME states how many successions are planted ({OPT['n_planted']} of {OPT['n_offered']})")
-report(f"{RELAX['n_planted']}" in prose,
-       f"READ ME states the relaxation's planting count ({RELAX['n_planted']})")
+# PLANTINGS — the oracle counts the committed perennial out, once, for every reader
+_np, _no = OPT["n_plantings"], OPT["n_plantable"]
+report(f"{_np} of {_no}" in prose,
+       f"READ ME states how many successions are planted ({_np} of {_no})")
+_rn = RELAX["n_plantings"]
+report(f"{_rn}" in prose, f"READ ME states the relaxation's planting count ({_rn})")
 
 print(_el(), "\nE. THE SHEET AND THE SOLVER ARE THE SAME PROBLEM")
 d_opt = calc({**acre_overrides(OPT["acres"]), **offered_overrides(OPT["offered"]),
@@ -741,8 +892,52 @@ report(not neg, f"no negative stock at the optimum (weeks {neg[:5]})" if neg
        else "no negative stock at the optimum")
 for pool in ("COLD STORE", "AMBIENT STORE"):
     report(worst(d_opt, pool) >= -1e-6, f"{pool} not exceeded at the optimum")
-report(worst(d_opt, "LAND in the ground") >= -1e-6,
-       "land not exceeded at the optimum")
+for _z in LP.ZONE_NAMES:
+    report(worst(d_opt, f"LAND in the ground — {_z}") >= -1e-6,
+           f"land not exceeded at the optimum — {_z}")
+# ⚠️ AND THE TUNNEL IS ACTUALLY USED. A zone nobody plants in proves nothing about zones.
+report(worst(d_opt, "LAND in the ground — High tunnel") <= 1e-6,
+       "the High tunnel zone BINDS in some week at the optimum")
+
+# ---- v12: THE FIXED LAYER, ON THE SHEET'S OWN ROWS — feasible AND binding ----------------
+# ⚠️ "BINDS" MEANS "CHANGES THE PLAN", NOT "IS TIGHT ON THE SHEET". Measured: the garlic carry-in
+# (18.3 ac) costs $1,017 alone, yet the plan never sits AT it — once garlic must pass its unfloored
+# 17.84 ac, the 2-ac planting blocks make 18.58 (its winter-crew + barn ceiling) the cheapest
+# answer. A tightness test called that floor inert. So each floor's worth is measured on the
+# oracle, one at a time against its OWN removal, and must be positive.
+_free = LP.solve(must_stand=[], must_annual={})["obj_value"]
+_floor_cost = {f[0]: _free - LP.solve(must_stand=[f], must_annual={})["obj_value"]
+               for f in LP.MUST_STAND}
+for _g, _ac, _a, _b in LP.MUST_STAND:
+    _st = row_f(d_opt, _one(f"{_g} standing"))
+    _fl = row_f(d_opt, _one(f"must stand (row {STAND_IN[_g]})"))
+    _bad = [w + 1 for w in range(52) if _st[w] < _fl[w] - 1e-6]
+    report(not _bad, f"{_g}: standing floor met in every week of {_a}-{_b}"
+           + (f" (short weeks {_bad[:4]})" if _bad else ""))
+    _bind = _floor_cost[_g] > 1.0
+    report(_bind, f"{_g}: and the standing floor CHANGES THE PLAN (costs ${_floor_cost[_g]:,.0f} alone) — "
+                  f"a floor the plan clears anyway proves nothing")
+for _g, _ac in LP.MUST_ANNUAL.items():
+    _ar = _one(f"{_g} planted this year")
+    _pl, _fl = float(d_opt[f"B{_ar}"]), float(d_opt[f"D{_ar}"])
+    report(_pl >= _fl - 1e-6 and _pl <= _fl + 1e-6,
+           f"{_g}: annual floor met AND binding ({_pl:.3f} planted vs {_fl:.3f})")
+_any_short = 0.0
+for _k, (_g, _h, *_r) in enumerate(LP.CONTRACTS):
+    _sh = _one(f"{_g} / {_h} — SHORTFALL")
+    _ds, _ow, _s = row_f(d_opt, _sh + 1), row_f(d_opt, _sh + 2), row_f(d_opt, _sh)
+    _bad = [w + 1 for w in range(52) if _ds[w] < _ow[w] - 1e-6 or _s[w] > _ow[w] + 1e-6]
+    report(not _bad, f"contract {_g}/{_h}: delivered + short >= owed, and short <= owed"
+           + (f" (weeks {_bad[:4]})" if _bad else ""))
+    _any_short += sum(_s)
+report(_any_short > 0, f"and some contract IS short at the optimum ({_any_short:,.0f} lb) — the "
+                       f"slack that keeps an unmeetable contract solvable is exercised")
+_pen_sheet = sum(row_f(d_opt, _one("contract shortfall penalty")))
+report(abs(_pen_sheet - OPT["shortfall_cost"]) < 1e-3,
+       f"sheet shortfall penalty ${_pen_sheet:,.2f} = LP ${OPT['shortfall_cost']:,.2f}")
+_per_sheet = sum(row_f(d_opt, _one("perennial upkeep + depreciation")))
+report(abs(_per_sheet - OPT["perennial_cost"]) < 1e-3,
+       f"sheet perennial line ${_per_sheet:,.2f} = LP ${OPT['perennial_cost']:,.2f}")
 _lu = [float(x) for x in row(d_opt, LBL["CROP HOURS needed"][0])]
 # ⚠️ Measured against HOURS AVAILABLE, not the fixed crew. With flex on, crop hours SHOULD
 # exceed the standing crew — that is the whole point of buying hours — and this check flagged
@@ -893,13 +1088,16 @@ for n in CROPS:
     report(not over, f"{n} never holds stock past its shelf life"
            + (f" (weeks {over[:4]})" if over else ""))
 
-for n in CROPS:
+# ⚠️ FX.5: measured per IDENTITY, on every name that sells as it. Checked per crop (as v11 did)
+# the two spinaches could each sit under the ceiling while together they doubled it.
+for g in LP.IDENTITIES:
+    members = LP.members(g)
     for h in CH:
-        b = BLK[n.upper()]
-        over = [w + 1 for w, (s_, c_) in enumerate(zip(row(d_opt, b[f"{h} — SOLD"]),
-                                                       row(d_opt, b[f"{h} — most you may sell this week"])))
-                if float(s_) > float(c_) + 1e-6]
-        report(not over, f"{n}/{h} never sells past its ceiling"
+        _tot = [sum(float(x) for x in vals) for vals in
+                zip(*(row(d_opt, BLK[m.upper()][f"{h} — SOLD"]) for m in members))]
+        _cap = row_f(d_opt, BLK[g.upper()][f"{h} — most you may sell this week"])
+        over = [w + 1 for w in range(52) if _tot[w] > _cap[w] + 1e-6]
+        report(not over, f"{g}/{h} — {' + '.join(members)} — never sells past ONE ceiling"
                + (f" (weeks {over[:4]})" if over else ""))
 
 print("\n" + ("ALL CHECKS PASSED" if not failures else f"{len(failures)} FAILURE(S)"))

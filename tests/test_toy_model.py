@@ -1,7 +1,7 @@
 """
 The toy model's numbers must not drift from the app's.
 
-`toy_models/farm_toy_v11_labour.xlsx` exists to be an INDEPENDENT check on the app's
+`toy_models/farm_toy_v12_fixed_layer.xlsx` exists to be an INDEPENDENT check on the app's
 arithmetic — a grower opens it, changes an acre figure and verifies by hand what the solver
 claims. That only works while its crop constants and its planting calendar are the app's.
 Nothing about a spreadsheet fails loudly when a crop's m3/lb changes underneath it; it just
@@ -17,7 +17,7 @@ So this pins two things:
      its harvest week was reported as needing no cooler at all), it is the one thing this toy
      exists to teach, and it is invisible in a rendered spreadsheet — the cells look identical.
 
-Regenerate with:  python3 toy_models/build_toy_v11.py
+Regenerate with:  .venv/bin/python toy_models/build_toy_v12.py
 """
 import json
 import re
@@ -28,8 +28,11 @@ from tests.helpers import REPO
 
 openpyxl = pytest.importorskip("openpyxl")
 
-WORKBOOK = REPO / "toy_models" / "farm_toy_v11_labour.xlsx"
-TOY_CROPS = ("Spinach", "Kale", "Garlic")
+WORKBOOK = REPO / "toy_models" / "farm_toy_v12_fixed_layer.xlsx"
+TOY_CROPS = ("Spinach", "Kale", "Garlic")          # the three read straight from the app
+# v12 adds a zone variant and a perennial. They are the toy's own (FX.0), so the DRIFT tests
+# stay on the three app crops and every structural test runs over all five.
+ALL_CROPS = TOY_CROPS + ("Tunnel Spinach", "Asparagus")
 # v5 carries EVERY succession the app offers. A hand-picked subset is the exact defect it
 # exists to remove, so the list is derived, never typed.
 def _all_successions():
@@ -42,10 +45,26 @@ def _all_successions():
 PICKED = [s["name"] for s in _all_successions()]
 
 
+def _sheet_succession_rows(model):
+    """{name: row} for every calendar row, by content (col B is a crop, col C a number)."""
+    out = {}
+    for r in range(1, model.max_row + 1):
+        a, b = model.cell(row=r, column=1).value, model.cell(row=r, column=2).value
+        if isinstance(a, str) and b in ALL_CROPS and isinstance(
+                model.cell(row=r, column=3).value, (int, float)):
+            out[a] = r
+    return out
+
+
+def _zoned(name):
+    """Every spelling a planting can carry on the sheet: bare (one zone) or '<name> F'/'<name> T'."""
+    return [name, f"{name} F", f"{name} T"]
+
+
 @pytest.fixture(scope="module")
 def model():
     if not WORKBOOK.exists():
-        pytest.skip(f"{WORKBOOK.name} not built; run toy_models/build_toy_v11.py")
+        pytest.skip(f"{WORKBOOK.name} not built; run toy_models/build_toy_v12.py")
     return openpyxl.load_workbook(WORKBOOK)["Model"]
 
 
@@ -94,7 +113,7 @@ def _lp_probe(body):
     if not venv.exists():
         pytest.skip(f"{venv} missing — cannot run the LP oracle")
     code = (f"import sys; sys.path.insert(0, {str(REPO / 'toy_models')!r});\n"
-            f"import json, toy_v11_lp as lp\n" + body)
+            f"import json, toy_v12_lp as lp\n" + body)
     out = subprocess.run([str(venv), "-c", code], capture_output=True, text=True)
     assert out.returncode == 0, f"LP probe failed:\n{out.stderr[-2000:]}"
     return json.loads(out.stdout.strip().splitlines()[-1])
@@ -120,11 +139,12 @@ def _crop_blocks(ws):
     # recipe's "Constraint — cold store" and "Constraint — ambient store", which collapsed into
     # a bogus "Constraint" block. Latent since v5 — harmless while every caller named the three
     # crops explicitly, and it surfaced the moment a test iterated the blocks instead.
+    # v12: the WHOLE name before the dash — "TUNNEL SPINACH  —  cold store" starts "TUNNEL".
+    _up = {c.upper() for c in ALL_CROPS}
     heads = [r for r in range(1, ws.max_row + 1)
              if isinstance(ws.cell(row=r, column=1).value, str)
-             and "—" in ws.cell(row=r, column=1).value
              and ws.cell(row=r, column=1).value.endswith("store")
-             and ws.cell(row=r, column=1).value.split(" ")[0].title() in TOY_CROPS]
+             and ws.cell(row=r, column=1).value.split("  —  ")[0] in _up]
     blocks = {}
     for i, r in enumerate(heads):
         stop = heads[i + 1] if i + 1 < len(heads) else ws.max_row + 1
@@ -133,7 +153,7 @@ def _crop_blocks(ws):
             lv = ws.cell(row=rr, column=1).value
             if isinstance(lv, str) and lv.strip():
                 seq.setdefault(lv.strip(), rr)
-        blocks[ws.cell(row=r, column=1).value.split(" ")[0]] = seq
+        blocks[ws.cell(row=r, column=1).value.split("  —  ")[0]] = seq
     return blocks
 
 
@@ -173,28 +193,32 @@ def test_every_succession_the_app_offers_is_on_the_sheet(model):
     measured, freeing that was worth +128% of profit, more than every missing cost line
     combined. A subset here silently reintroduces it, and the sheet would still look right.
     """
-    rows = {}
-    for r in range(1, model.max_row + 1):
-        a, b = model.cell(row=r, column=1).value, model.cell(row=r, column=2).value
-        if isinstance(a, str) and b in TOY_CROPS and isinstance(
-                model.cell(row=r, column=3).value, (int, float)):
-            rows[a] = r
-    missing = [n for n in PICKED if n not in rows]
+    rows = _sheet_succession_rows(model)
+    # (1) every planting the APP's generator offers for the three app crops is on the sheet,
+    # in at least one zone — read from the app, not from the toy's own oracle.
+    missing = [n for n in PICKED if not any(z in rows for z in _zoned(n))]
     assert not missing, (
         f"{len(missing)} of {len(PICKED)} successions the app offers are absent from the "
         f"calendar (e.g. {missing[:4]}) — the solver cannot choose a week it is not shown")
-    extra = [n for n in rows if n not in PICKED]
-    assert not extra, f"sheet carries successions the app does not generate: {extra[:4]}"
+    # (2) and the sheet carries EXACTLY the oracle's set — no more, no fewer (zones, variant,
+    # perennial included). Two sources, because either alone can agree with a wrong sheet.
+    names = _lp_probe("print(json.dumps([s['name'] for s in lp.SUCCS]))")
+    assert sorted(rows) == sorted(names), (
+        f"sheet and oracle disagree on the calendar: only on sheet "
+        f"{sorted(set(rows) - set(names))[:4]}, only in oracle {sorted(set(names) - set(rows))[:4]}")
 
 
 def test_the_phase_pattern_matches_the_apps_generator(model):
     """Each planting's P/G/H row must be the calendar the app would build for that start week."""
     from farm_v2.utils.calendar import harvest_weeks_of
-    succ = {x["name"]: x for x in _all_successions()}
+    succ = {}
+    for x in _all_successions():
+        for z in _zoned(x["name"]):
+            succ[z] = x                      # a zoned copy carries the SAME calendar
     checked = 0
     for r in range(1, model.max_row + 1):
         name = model.cell(row=r, column=1).value
-        if name not in succ:
+        if name not in succ or model.cell(row=r, column=2).value not in TOY_CROPS:
             continue
         want = {((wk - 1) % 52) + 1: "PGH"[ph]
                 for wk, ph in zip(succ[name]["weeks"], succ[name]["phases"])}
@@ -206,7 +230,13 @@ def test_the_phase_pattern_matches_the_apps_generator(model):
                    if model.cell(row=r, column=w + 4).value == "H") == len(
             harvest_weeks_of(succ[name], 52))
         checked += 1
-    assert checked == len(PICKED), f"only checked {checked} of {len(PICKED)} plantings"
+    # EXACT, over every app-crop row on the sheet (Kale carries an F and a T copy). `>=` let a
+    # missing row hide behind Kale's duplicates (code-review).
+    want_rows = sum(1 for r in range(1, model.max_row + 1)
+                    if model.cell(row=r, column=1).value in succ
+                    and model.cell(row=r, column=2).value in TOY_CROPS)
+    assert checked == want_rows and checked >= len(PICKED), (
+        f"checked {checked} plantings, expected {want_rows} (app offers {len(PICKED)})")
 
 
 def test_the_plant_decision_is_wired_to_a_minimum_acreage(model):
@@ -238,7 +268,7 @@ def test_the_plant_decision_is_wired_to_a_minimum_acreage(model):
 # 2 — the formulas say what their labels say
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("crop", ["SPINACH", "KALE", "GARLIC"])
+@pytest.mark.parametrize("crop", [c.upper() for c in ALL_CROPS])
 def test_room_occupancy_measures_throughput_not_what_sleeps_there(model, crop):
     """ROOM = stock carried IN + this week's harvest. Never the stock carried OUT.
 
@@ -260,7 +290,7 @@ def test_room_occupancy_measures_throughput_not_what_sleeps_there(model, crop):
         f"and the sheet would teach it as correct")
 
 
-@pytest.mark.parametrize("crop", ["SPINACH", "KALE", "GARLIC"])
+@pytest.mark.parametrize("crop", [c.upper() for c in ALL_CROPS])
 def test_the_inventory_chain_actually_chains(model, crop):
     b = _crop_blocks(model)[crop]
     w1, w2 = _wl(model, 1), _wl(model, 2)
@@ -282,9 +312,19 @@ def test_each_pool_sums_its_own_crops_only(model):
     rows = _labelled_rows(model)
     cold = model.cell(row=rows["COLD STORE"][0], column=_wc(model, 2)).value
     amb = model.cell(row=rows["AMBIENT STORE"][0], column=_wc(model, 2)).value
-    sp, ka, ga = (str(b[c]["ROOM OCCUPANCY"]) for c in ("SPINACH", "KALE", "GARLIC"))
-    assert sp in cold and ka in cold and ga not in cold, "cold pool is not Spinach + Kale"
-    assert ga in amb and sp not in amb and ka not in amb, "ambient pool is not Garlic alone"
+    # derived from the payload / crop table's own pool column, never a typed list
+    pool = {}
+    for r in range(1, model.max_row + 1):
+        a = model.cell(row=r, column=1).value
+        if a in ALL_CROPS and model.cell(row=r, column=5).value in ("Cold", "Ambient"):
+            pool[a.upper()] = model.cell(row=r, column=5).value
+    assert set(pool) == set(b), f"pool column not found for every crop: {sorted(pool)}"
+    w2 = _wl(model, 2)
+    for crop, p in pool.items():
+        ref = f"{w2}{b[crop]['ROOM OCCUPANCY']}"
+        inside, outside = (cold, amb) if p == "Cold" else (amb, cold)
+        assert ref in inside, f"{crop} ({p}) is missing from its own pool"
+        assert ref not in outside, f"{crop} ({p}) is counted in the OTHER pool"
 
 
 def test_no_formula_points_off_the_sheet(model):
@@ -358,7 +398,8 @@ def test_every_constraint_reads_as_an_inequality(model):
     wrote that sheet, so it is the one shape here that needs no explaining.
     """
     rows = _labelled_rows(model)
-    for label in ("LAND in the ground", "COLD STORE", "AMBIENT STORE"):
+    for label in ("LAND in the ground — Open field", "LAND in the ground — High tunnel",
+                  "COLD STORE", "AMBIENT STORE"):
         assert label in rows, f"{label} band is missing"
         top = rows[label][0]
         assert model.cell(row=top + 1, column=_wc(model, 1)).value == "<=", \
@@ -378,9 +419,12 @@ def test_land_band_measures_standing_acres_not_the_annual_sum(model):
     one acre actually reserved. A commitment is a quantity of ground, not of activity.
     """
     rows = _labelled_rows(model)
-    f = model.cell(row=rows["LAND in the ground"][0], column=_wc(model, 2)).value
-    assert "SUMPRODUCT" in f, f"land row should sum across the whole calendar, got {f!r}"
-    assert '<>""' in f, "land row should read the phase strip for that WEEK, not an annual total"
+    for zone in ("Open field", "High tunnel"):
+        f = model.cell(row=rows[f"LAND in the ground — {zone}"][0], column=_wc(model, 2)).value
+        assert "SUMPRODUCT" in f, f"land row should sum across the whole calendar, got {f!r}"
+        assert '<>""' in f, "land row should read the phase strip for that WEEK, not an annual total"
+        # v12 / FX.4: and only ITS OWN zone's plantings — a tunnel acre is not a field acre
+        assert f'="{zone}"' in f, f"{zone} land row does not filter on its zone: {f!r}"
 
 
 def test_readme_coordinates_point_at_what_they_claim():
@@ -411,12 +455,16 @@ def test_readme_coordinates_point_at_what_they_claim():
         assert hits, f"the READ ME never names the {what} range (column {letter})"
         top, bot = min(h[1] for h in hits), max(h[3] for h in hits)
         rows = bot - top + 1
-        assert rows == len(PICKED), (
+        # v12: the changing cells are every PLANTABLE row — the committed perennial is an
+        # input, and naming it as a changing cell would let the solver dig it up.
+        plantable = [n for n, r in _sheet_succession_rows(model).items()
+                     if model.cell(row=r, column=2).value != "Asparagus"]
+        assert rows == len(plantable), (
             f"the READ ME's {what} range {letter}{top}:{letter}{bot} covers {rows} rows, but the "
-            f"app offers {len(PICKED)} successions — a partial range silently recreates v4's "
-            f"hand-picked-calendar defect")
-        assert model.cell(row=top, column=1).value in PICKED
-        assert model.cell(row=bot, column=1).value in PICKED
+            f"sheet offers {len(plantable)} plantings — a partial range silently recreates v4's "
+            f"hand-picked-calendar defect, and one row too many hands the perennial to the solver")
+        assert model.cell(row=top, column=1).value in plantable
+        assert model.cell(row=bot, column=1).value in plantable
 
 
 def test_sell_through_lives_on_the_crop_channel_row_not_the_crop():
@@ -446,8 +494,8 @@ def test_sell_through_lives_on_the_crop_channel_row_not_the_crop():
     n = sum(1 for r in range(pair_hdr + 1, pair_hdr + 40)
             if model.cell(row=r, column=2).value in
             {model.cell(row=x, column=2).value for x in range(pair_hdr + 1, pair_hdr + 40)}
-            and model.cell(row=r, column=1).value in ("Spinach", "Kale", "Garlic"))
-    assert n == 6, f"expected 6 crop x channel rows, found {n}"
+            and model.cell(row=r, column=1).value in ALL_CROPS)
+    assert n == len(ALL_CROPS) * 2, f"expected {len(ALL_CROPS) * 2} crop x channel rows, found {n}"
 
 
 # ---------------------------------------------------------------------------
@@ -491,7 +539,7 @@ def test_no_derived_value_is_frozen(model):
 
 
 def test_the_sheet_actually_calculates_correctly():
-    """Run toy_models/verify_toy_v11.py — it CALCULATES the workbook.
+    """Run toy_models/verify_toy_v12.py — it CALCULATES the workbook.
 
     Everything above reads formulas as text, and text can be well-formed and wrong. This shells
     out to the venv because `formulas` cannot be installed into the system interpreter pytest
@@ -518,8 +566,8 @@ def test_the_sheet_actually_calculates_correctly():
     # propagation nudges test whether an INPUT IS WIRED, which the exact comparisons cannot see
     # at fixed inputs, so none of them is redundant. Cost is tracked as backlog L10 — the
     # answer there is to make each recalculation cheaper, not to run fewer of them.
-    r = subprocess.run([str(venv), str(REPO / "toy_models" / "verify_toy_v11.py")],
-                       capture_output=True, text=True, cwd=REPO, timeout=1800)
+    r = subprocess.run([str(venv), str(REPO / "toy_models" / "verify_toy_v12.py")],
+                       capture_output=True, text=True, cwd=REPO, timeout=2700)
     assert r.returncode == 0, (
         "the toy workbook does not calculate correctly:\n"
         + "\n".join(l for l in r.stdout.splitlines() if "FAIL" in l or "FAILURE" in l)
@@ -951,7 +999,7 @@ def test_a_bought_hour_with_no_price_is_refused():
     import importlib.util
 
     spec = importlib.util.spec_from_file_location(
-        "toy_v11_lp", REPO / "toy_models" / "toy_v11_lp.py")
+        "toy_v12_lp", REPO / "toy_models" / "toy_v12_lp.py")
     lp = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(lp)
 
@@ -1061,3 +1109,212 @@ def test_the_palette_is_semantic_and_closed(model):
         "the piece-rate engage switch is not the decision colour")
     assert _fill(rows["Payroll load %"][0], 2) == "FFF2CC", (
         "the payroll load is not the input colour — it is a cell you type in")
+
+
+# ---------------------------------------------------------------------------
+# 5 — v12: the fixed layer (PLAN Batch FX.0, DECISIONS GROUP G)
+# ---------------------------------------------------------------------------
+
+def test_a_variant_cannot_take_a_second_market(model):
+    """FX.5's trap: demand caps keyed by crop NAME give two variants the whole market each.
+
+    Two halves, because either alone is inert. The ORACLE must hold the two spinaches under one
+    Farmers Market ceiling — and must exceed it when keyed by name (`share_caps=False`), or the
+    first assertion could pass on a model where the cap never binds at all. The SHEET must
+    measure the ceiling against the identity's TOTAL and give the variant no ceiling of its own.
+    """
+    d = _lp_probe(
+        "fm = next(h for h in lp.CH_NAMES if h.startswith('Farmers'))\n"
+        "cap = lp.cap_spec('Spinach', fm)[1]\n"
+        "out = {}\n"
+        "for tag, kw in (('shared', {}), ('by_name', {'share_caps': False})):\n"
+        "    r = lp.solve(**kw)\n"
+        "    out[tag] = max(sum(r['offered'][(c, fm)][w] for c in lp.CROP_NAMES\n"
+        "                       if lp.identity(c) == 'Spinach') for w in range(52))\n"
+        "out['cap'] = cap\n"
+        "print(json.dumps(out))")
+    assert d["shared"] <= d["cap"] + 1e-6, (
+        f"the two spinaches together sell {d['shared']:,.0f} lb in a week against a "
+        f"{d['cap']:,.0f} lb ceiling — a second NAME has become a second MARKET")
+    assert d["by_name"] > d["cap"] + 1, (
+        f"keyed by name the spinaches still sell only {d['by_name']:,.0f} lb — the cap never "
+        f"binds, so the assertion above proves nothing")
+    # the sheet: the variant has no ceiling row, and its identity's ceiling reads the total
+    blocks = _crop_blocks(model)
+    assert not any(k.endswith("most you may sell this week") for k in blocks["TUNNEL SPINACH"]), (
+        "Tunnel Spinach has a ceiling row of its own — the trap, on the sheet")
+    rows = _labelled_rows(model)
+    tot = [lab for lab in rows if lab.startswith("Spinach / Farmers Market — SOLD, every name")]
+    assert len(tot) == 1, f"no single total row for the Spinach market: {tot}"
+    w = _wc(model, 20)
+    f = str(model.cell(row=rows[tot[0]][0], column=w).value)
+    want = {blocks["SPINACH"]["Farmers Market — SOLD"], blocks["TUNNEL SPINACH"]["Farmers Market — SOLD"]}
+    assert {r for _, r in _refs(f)} == want, f"the market total does not sum both names: {f!r}"
+    cap = str(model.cell(row=blocks["SPINACH"]["Farmers Market — most you may sell this week"],
+                         column=w).value)
+    # ⚠️ PARSED, not substring-matched. `"Annual" in cap` was always true — every ceiling's
+    # formula carries the =IF($C="Annual",...) test — so this half could never fail (code-review).
+    read = {r for _, r in _refs(cap)}
+    assert rows[tot[0]][0] in read, (
+        f"the Spinach ceiling's running allowance does not subtract the identity TOTAL "
+        f"(row {rows[tot[0]][0]}): {cap!r}")
+    assert blocks["SPINACH"]["Farmers Market — SOLD"] not in read, (
+        "the shared ceiling subtracts Spinach's own sales only — Tunnel Spinach is invisible to it")
+
+
+def test_must_plant_is_unconditional_and_min_acreage_is_not(model):
+    """FX.1: the floor forces the crop IN; 'min acres if planted' can be escaped by not planting.
+
+    Make garlic ruinous to grow. Without a floor the solver plants none (the escape — PLAN FX.1
+    measured it on the app: a 14-acre garlic floor via min acreage -> 0 acres). With a standing
+    floor it must plant the floor anyway, and pay for it.
+    """
+    d = _lp_probe(
+        "lp.CROPS['Garlic']['seed_transplant_cost_per_acre'] = 60000.0\n"
+        "free = lp.solve(must_stand=[], must_annual={})\n"
+        "held = lp.solve(must_stand=[('Garlic', 5.0, 1, 1)], must_annual={})\n"
+        "g = lambda r: sum(v for k, v in r['acres'].items() if k.startswith('Garlic'))\n"
+        "print(json.dumps([g(free), g(held), free['obj_value'] - held['obj_value']]))")
+    free, held, cost = d
+    assert free < 1e-6, f"garlic at $60,000/ac seed is still planted ({free:.2f} ac) — the fixture is not hostile"
+    assert held >= 5.0 - 1e-6, f"a 5-acre must-plant floor planted {held:.2f} ac — it was escaped"
+    assert cost > 0, "the floor cost nothing, so it never bound"
+    # and on the sheet: no floor row reads a PLANT? binary
+    rows = _labelled_rows(model)
+    for lab in [l for l in rows if l.endswith(" standing") or l.endswith(" planted this year")]:
+        r = rows[lab][0]
+        f = str(model.cell(row=r, column=_wc(model, 20)).value or model.cell(row=r, column=2).value)
+        assert "$D$" not in f, f"{lab!r} reads the PLANT? column — a floor that can be switched off: {f!r}"
+
+
+def test_an_unmeetable_contract_is_a_shortfall_not_infeasible():
+    """Grower ruling G3: the plan always solves and the shortfall is reported.
+
+    Order more kale than the farm could ever grow. A hard floor makes this infeasible; the slack
+    must carry it instead, never short by more than was ordered, and price every pound.
+    """
+    d = _lp_probe(
+        "c = [('Kale', 'Wholesale', 1_000_000.0, 20, 22, 0.10)]\n"
+        "r = lp.solve(contracts=c)\n"
+        "print(json.dumps([r['short_lb'][0], r['shortfall_cost'], max(r['short'].values())]))")
+    short, cost, worst = d
+    assert short > 2_000_000, f"only {short:,.0f} lb short of a 3,000,000 lb order — not credible"
+    assert worst <= 1_000_000 + 1e-6, f"short {worst:,.0f} lb in a week that owed 1,000,000"
+    assert abs(cost - short * 0.10) < 1e-3, "the shortfall is not priced at the contract's penalty"
+
+
+def test_the_perennial_is_committed_ground_outside_the_calendar(model):
+    """FX.2: the calendar refuses cycles over 52 weeks, so a perennial is written straight in.
+
+    Its acres are an INPUT (the grower already has them), its row sits OUTSIDE the solver's
+    changing cells, it stands in all 52 weeks, and its cost line reads the depreciation block —
+    establishment over its life, never this year's seed.
+    """
+    from farm_v2.utils.calendar import generate_successions
+    asparagus = dict(name="Asparagus", planting_weeks=1, harvest_weeks=8, days_to_maturity=700,
+                     seasons=[{"start": "04-01", "end": "04-15"}])
+    with pytest.raises(ValueError, match="52-week"):
+        generate_successions([asparagus], 2024)
+    rows = _sheet_succession_rows(model)
+    r = rows["Asparagus"]
+    def _rgb(c):
+        f = model.cell(row=r, column=c).fill
+        return (f.fgColor.rgb or "")[-6:].upper() if f and f.fill_type == "solid" else ""
+    assert _rgb(3) == "FFF2CC", "the perennial's acres are not an input"
+    assert str(model.cell(row=r, column=4).value).startswith("="), "its PLANT? is not derived"
+    assert all(model.cell(row=r, column=_wc(model, w)).value in ("G", "H") for w in range(1, 53)), (
+        "the perennial does not stand all 52 weeks")
+    assert max(rows.values()) == r, "the perennial must be the LAST calendar row"
+    labels = _labelled_rows(model)
+    est = labels["Establishment $/acre"][0]
+    per_wk = labels["-> $/acre per week"][0]
+    f = str(model.cell(row=per_wk, column=2).value)
+    assert f"$B${est}" in f and f"$B${labels['Bearing life, years'][0]}" in f, (
+        f"establishment is not depreciated over the bearing life: {f!r}")
+    crop_r = next(x for x in labels["Asparagus"] if model.cell(row=x, column=8).value is not None)
+    seed = model.cell(row=crop_r, column=8)
+    assert seed.value in (0, "=0"), f"the perennial carries a seed cost: {seed.value!r}"
+    # and it is not a box you can type in — a seed cost means nothing for committed ground
+    assert (seed.fill.fgColor.rgb or "")[-6:].upper() != "FFF2CC", "the perennial's seed is an input"
+
+
+def test_eligibility_is_wired_into_max_acres(model):
+    """FX.4: a Y/N nobody reads is a dead input. Every tunnel planting's C9 helper must read it."""
+    hdr = _labelled_rows(model)["Succession"][0]
+    cols = {model.cell(row=hdr, column=c).value: c for c in range(1, model.max_column + 1)
+            if model.cell(row=hdr, column=c).value}
+    assert "zone" in cols, "the calendar has no zone column"
+    seen = 0
+    for name, r in _sheet_succession_rows(model).items():
+        if model.cell(row=r, column=cols["zone"]).value != "High tunnel":
+            continue
+        f = str(model.cell(row=r, column=cols["max if planted"]).value)
+        assert '="Y"' in f, f"{name}: max-if-planted ignores the zone eligibility: {f!r}"
+        seen += 1
+    assert seen >= 2, f"only {seen} tunnel plantings found"
+
+
+def test_a_zone_the_farm_lacks_grows_nothing():
+    """Found while measuring FX.0: drop the tunnel and its plantings had NO land row at all.
+
+    The oracle then 'grew' tunnel spinach on no ground and reported the tunnel as COSTING $91k.
+    A planting whose zone is not on the farm must be pinned to zero, not left unbounded.
+    """
+    d = _lp_probe(
+        "r = lp.solve(zones=[('Open field', lp.PAYLOAD['total_land'])])\n"
+        "print(json.dumps(sum(r['acres'][s['name']] for s in lp.SUCCS\n"
+        "                     if s['zone'] == 'High tunnel')))")
+    assert d < 1e-9, f"{d:.2f} acres planted in a zone the farm does not have"
+
+
+def test_committed_perennial_acres_do_not_count_as_planted_this_year():
+    """An ANNUAL must-plant floor counts acres PLANTED this year; a perennial is not planted.
+
+    Survived mutation until this existed: the default annual floor is on kale and the perennial
+    is asparagus, so counting the perennial changed nothing — the effect needs a floor and a
+    perennial with the SAME identity, two conditions at once. Asparagus has no annual plantings,
+    so an annual asparagus floor must be unmeetable; counting the 3 committed acres would 'meet' it.
+    """
+    d = _lp_probe(
+        "try:\n"
+        "    lp.solve(must_annual={'Asparagus': 1.0})\n"
+        "    print(json.dumps('solved'))\n"
+        "except RuntimeError as e:\n"
+        "    print(json.dumps('refused' if 'must be planted this year' in str(e) else str(e)))")
+    assert d == "refused", (
+        "an annual floor on the perennial was met — committed acres were counted as this "
+        "year's planting")
+
+
+def test_floors_aggregate_by_identity_not_by_name(model):
+    """A floor on an identity sold by TWO names must count both.
+
+    The shipped floors are on garlic and kale, each its own sole name, so name-vs-identity was
+    never exercised — every floor guard passed with the aggregation keyed by name (code-review).
+    Spinach is the one shared identity, and in weeks 2-3 only TUNNEL spinach can stand: a
+    Spinach floor there is meetable only if the variant counts.
+    """
+    d = _lp_probe(
+        "try:\n"
+        "    r = lp.solve(must_stand=[('Spinach', 1.0, 2, 3)], must_annual={})\n"
+        "    print(json.dumps(sum(r['acres'][s['name']] for s in lp.SUCCS\n"
+        "                         if lp.CROP_NAMES[s['crop']] == lp.VARIANT\n"
+        "                         and any(((w - 1) % 52) + 1 == 2 for w in s['weeks']))))\n"
+        "except RuntimeError as e:\n"
+        "    print(json.dumps(str(e)))")
+    assert isinstance(d, float) and d >= 1.0 - 1e-6, (
+        f"a Spinach floor in weeks 2-3 was not met by Tunnel Spinach: {d!r}")
+    # and the SHEET's floor rows read the identity column, never the crop-name column
+    hdr = _labelled_rows(model)["Succession"][0]
+    cols = {model.cell(row=hdr, column=c).value: c for c in range(1, model.max_column + 1)
+            if model.cell(row=hdr, column=c).value}
+    id_col = openpyxl.utils.get_column_letter(cols["sells as"])
+    rows = _labelled_rows(model)
+    for lab in [l for l in rows if l.endswith(" standing") or l.endswith(" planted this year")]:
+        r = rows[lab][0]
+        f = str(model.cell(row=r, column=_wc(model, 20)).value
+                if lab.endswith(" standing") else model.cell(row=r, column=2).value)
+        assert f"${id_col}$" in f, f"{lab!r} does not read the 'sells as' column: {f!r}"
+        assert "$B$" + str(hdr + 1) not in f, f"{lab!r} reads the crop NAME column: {f!r}"
+        if lab.endswith(" planted this year"):
+            assert '<>"-"' in f, f"{lab!r} does not exclude the committed perennial: {f!r}"

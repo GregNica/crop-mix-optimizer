@@ -1,5 +1,7 @@
 """
-build_toy_v11.py — generates the LABOUR-BY-ROLE (per-role overtime, hire-more, piece rate) toy model workbook (a MILP).
+build_toy_v12.py — generates the FIXED LAYER toy model workbook (a MILP): zones, a variant that
+shares its market, a perennial, must-plant floors and contract floors (PLAN Batch FX.0), on top
+of v11's labour by role.
 
 v5 closes the two gaps the grower found in v4, both of which were DECISION VARIABLES rather
 than cost lines:
@@ -39,7 +41,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.formatting.rule import CellIsRule
 
 from farm_v2.utils.calendar import harvest_weeks_of
-import toy_v11_lp as LP
+import toy_v12_lp as LP
 
 CROP_NAMES = LP.CROP_NAMES
 crops = LP.CROPS
@@ -57,12 +59,16 @@ _N_HOURLY = sum(1 for e in LP.PAYLOAD["employees"]
 _N_ROLES = len(LP.PAYLOAD["employees"])
 N_OT_CELLS = _N_HOURLY * 52          # one overtime row PER ROLE — no blend
 N_EXTRA_CELLS = _N_ROLES             # extra heads, one integer per roster row
-N_PIECE_CELLS = len(CROP_NAMES) * 52 + 1     # lb picked per crop per week + the engage switch
+N_PIECE_CELLS = len(LP.PIECE_CROPS) * 52 + 1     # lb picked per crop per week + the engage switch
 N_FLEX_CELLS = N_OT_CELLS + N_EXTRA_CELLS + N_PIECE_CELLS
-N_DEC_CELLS = len(SUCCS) * 2 + N_OFFER_CELLS + N_FLEX_CELLS
-DEC_BREAKDOWN = (f"{len(SUCCS)} acres + {len(SUCCS)} binaries + {N_OFFER_CELLS} offered "
+# v12: the perennial sits in the calendar but its acres are an INPUT (committed ground), so it
+# is not a decision cell — the calendar's decision range stops one row short of it.
+N_PLANTABLE = len(SUCCS) - len(LP.PERENNIAL_NAMES)
+N_SHORT_CELLS = len(LP.CONTRACTS) * 52           # one shortfall row per contract
+N_DEC_CELLS = N_PLANTABLE * 2 + N_OFFER_CELLS + N_FLEX_CELLS + N_SHORT_CELLS
+DEC_BREAKDOWN = (f"{N_PLANTABLE} acres + {N_PLANTABLE} binaries + {N_OFFER_CELLS} offered "
                  f"+ {N_OT_CELLS} overtime ({_N_HOURLY} roles x 52) + {N_EXTRA_CELLS} extra "
-                 f"heads + {N_PIECE_CELLS} piece-rate")
+                 f"heads + {N_PIECE_CELLS} piece-rate + {N_SHORT_CELLS} contract shortfall")
 PACK_OUT = 1.00
 COLD_CAP = LP.PAYLOAD["harvest_storage_cap"]
 AMB_CAP = LP.PAYLOAD["ambient_storage_cap"]
@@ -75,6 +81,8 @@ LAST = get_column_letter(wcol(52))
 C_MAXA = get_column_letter(wcol(52) + 1)   # helper: max acres if planted
 C_MINA = get_column_letter(wcol(52) + 2)   # helper: min acres if planted
 C_START = get_column_letter(wcol(52) + 3)  # helper: the week seed is paid
+C_ZONE = get_column_letter(wcol(52) + 4)   # v12: which land pool this planting stands in
+C_ID = get_column_letter(wcol(52) + 5)     # v12: the identity it SELLS AS (read from section 2)
 
 # ---------------------------------------------------------------------------
 # THE PALETTE IS SEMANTIC (v9, at the grower's request). FOUR colours, one
@@ -128,7 +136,6 @@ BAND_FILL = PatternFill("solid", fgColor="F7F7F7")
 POOL_C = BAND_FILL
 POOL_A = SUB_FILL
 CH_FILL = [BAND_FILL, SUB_FILL]
-ANNUAL_FILL = SUB_FILL
 BIN_FILL = DEC_FILL
 THIN = Side(style="thin", color="BFBFBF")
 BOX = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
@@ -144,7 +151,7 @@ ws.column_dimensions["C"].width = 8
 ws.column_dimensions["D"].width = 6
 for w in range(1, 53):
     ws.column_dimensions[wl(w)].width = 7.5
-for c in (C_MAXA, C_MINA, C_START):
+for c in (C_MAXA, C_MINA, C_START, C_ZONE, C_ID):
     ws.column_dimensions[c].width = 11
 
 
@@ -212,7 +219,8 @@ except Exception:
 _BUILT = _dt.datetime.now().strftime("%Y-%m-%d %H:%M")
 
 r = 1
-put(r, 1, "FARM TOY MODEL — v11: labour by role, hire-more and piece rate", font=F_TITLE)
+put(r, 1, "FARM TOY MODEL — v12: the fixed layer (zones, variants, perennial, floors, contracts)",
+    font=F_TITLE)
 put(r, 4, f"BUILT {_BUILT}   (from source at {_SHA})", font=F_NOTE)
 r += 1
 # The legend is COLOURED, not described. A key that names a colour in grey text
@@ -238,12 +246,37 @@ put(r, 1, "Ambient store (barn)", font=F_BOLD)
 put(r, 2, AMB_CAP, fill=IN_FILL, fmt="#,##0", border=True); ROW_AMBCAP = r
 put(r, 3, "m3 — Garlic", font=F_NOTE); r += 2
 
+# ---- v12 / FX.4: ZONES. Named land pools, no geometry. Open field is whatever the other
+# zones do not take, so "Land you have" keeps meaning the whole farm and v11's land sweep still
+# reads the same.
+put(r, 1, "1b — ZONES  (named land pools — no map)", font=F_H1); r += 1
+ZONE_ROW = {}
+for z, a, _code in LP.ZONES:
+    put(r, 1, z, font=F_BOLD)
+    ZONE_ROW[z] = r
+    if a is not None:
+        put(r, 2, a, fill=IN_FILL, fmt="0.0", border=True)
+        put(r, 3, "acres", font=F_NOTE)
+    else:
+        put(r, 3, "acres — what the other zones leave of 'Land you have'", font=F_NOTE)
+    r += 1
+# the remainder zone (acres None in LP.ZONES — data, not a name test), as the oracle derives it
+for z, a, _code in LP.ZONES:
+    if a is None:
+        put(ZONE_ROW[z], 2, f"=$B${ROW_LAND}" + "".join(f"-$B${ZONE_ROW[o]}" for o, oa, _ in LP.ZONES
+                                                       if oa is not None),
+            fmt="0.0", border=True)
+put(r, 1, "   Which crops may stand in which zone is the 'Open field?' / 'High tunnel?' columns of "
+          "section 2. A yellow Y can be set to N (its plantings get max acres 0); a grey N has no "
+          "plantings to switch on — allowing it means new calendar rows.", font=F_NOTE); r += 2
+
 # --- 2. crops ---
 put(r, 1, "2 — HOW EACH CROP BEHAVES", font=F_H1); r += 1
 for j, h in enumerate(["Crop", "Yield lb/acre", "Pack-out", "m3 per lb", "Store", "Shelf life wk",
                        "Shrink %/wk", "Seed $/acre", "Min acres if planted", "Harvest weeks",
                        "$/ac plant wk", "$/ac grow wk", "$/ac harvest wk",
-                       "hrs/ac plant", "hrs/ac grow", "hrs/ac harvest"]):
+                       "hrs/ac plant", "hrs/ac grow", "hrs/ac harvest", "Sells as"]
+                      + [f"{z}?" for z in LP.ZONE_NAMES]):
     put(r, 1 + j, h, font=F_BOLD, fill=HDR_FILL, border=True)
 r += 1
 ROW_CROP = r
@@ -258,8 +291,15 @@ for name in CROP_NAMES:
     put(r, 5, pool, border=True, fill=POOL_C if pool == "Cold" else POOL_A)
     put(r, 6, c.get("shelf_life_weeks", c.get("sales_spread_weeks", 1)), fill=IN_FILL, border=True)
     put(r, 7, 0.0, fill=IN_FILL, fmt="0.0%", border=True)
-    put(r, 8, c["seed_transplant_cost_per_acre"], fill=IN_FILL, fmt="$#,##0", border=True)
-    put(r, 9, c.get("min_acreage_if_planted", 0.0), fill=IN_FILL, fmt="0.0", border=True)
+    if c.get("perennial"):
+        # ⚠️ NOT YELLOW for committed ground: seed and a minimum block mean nothing for acres
+        # that are typed, not chosen, so a box here would be a DEAD input (code-review found
+        # three on this row). A formula reading 0 keeps the shared column formulas valid.
+        put(r, 8, "=0", fmt="$#,##0", border=True)
+        put(r, 9, "=0", fmt="0.0", border=True)
+    else:
+        put(r, 8, c["seed_transplant_cost_per_acre"], fill=IN_FILL, fmt="$#,##0", border=True)
+        put(r, 9, c.get("min_acreage_if_planted", 0.0), fill=IN_FILL, fmt="0.0", border=True)
     # Every succession of a crop harvests over the same number of weeks on this data, so
     # lb-per-harvest-week is a per-CROP scalar and the old 68-row helper column was carrying no
     # information. ASSERTED rather than assumed: a crop whose successions differ (a wrapped
@@ -278,13 +318,34 @@ for name in CROP_NAMES:
     # ⚠️ WATER IS ABSENT ON PURPOSE. The app prices on-farm water at $0 (backlog W10), so
     # inventing a price here would make the toy disagree with the thing it exists to check.
     _fert, _fuel = LP.PAYLOAD["cost_fert_per_lb"], LP.PAYLOAD["cost_fuel_per_L"]
+    # v12 / FX.5: the identity the MARKET knows this crop by. Caps and contracts are keyed by
+    # it, so two crops with one identity share one market. Grey, not yellow: which rows exist
+    # downstream depends on it, so changing it here would not re-plumb the sheet.
+    put(r, 17, LP.identity(name), border=True)
+    # v12 / FX.4: eligibility, one Y/N per zone. LIVE — the calendar's 'max if planted' reads it.
+    for _zj, _z in enumerate(LP.ZONE_NAMES):
+        if _z in LP.ELIGIBLE[name] and not c.get("perennial"):
+            put(r, 18 + _zj, "Y", fill=IN_FILL, border=True, align="center")
+        elif _z in LP.ELIGIBLE[name]:
+            put(r, 18 + _zj, "Y", border=True, align="center")   # committed: where it IS
+        else:
+            # ⚠️ GREY, NOT YELLOW. No planting rows exist for this crop in this zone, so a Y
+            # typed here would change nothing — a dead input, which the guard caught. The sheet
+            # can withdraw an eligibility, never grant one; granting means new calendar rows.
+            put(r, 18 + _zj, "N", border=True, align="center")
     for _j, _ph in enumerate(("plant", "grow", "harv")):
         # FULL precision stored, two decimals DISPLAYED. Rounding the stored value to cents
         # put the sheet $2.38 away from the LP on a $1.65M objective — small, but it is the
         # difference between "these are the same model" and "these are nearly the same model",
         # and section E is the check that distinguishes them.
-        put(r, 11 + _j, c.get(f"fert_{_ph}", 0.0) * _fert + c.get(f"fuel_{_ph}", 0.0) * _fuel,
-            fill=IN_FILL, fmt="$0.00", border=True)
+        if c.get("perennial"):
+            # Filled in a SECOND PASS from the committed-ground block below — never a number
+            # retyped here, or the upkeep would have two definitions on one sheet. Its PLANT
+            # cell stays a formula 0: committed ground has no planting week to charge.
+            put(r, 11 + _j, "=0" if _ph == "plant" else 0, fmt="$0.00", border=True)
+        else:
+            put(r, 11 + _j, c.get(f"fert_{_ph}", 0.0) * _fert + c.get(f"fuel_{_ph}", 0.0) * _fuel,
+                fill=IN_FILL, fmt="$0.00", border=True)
         # ⚠️ LABOUR HOURS ARE INPUTS, not literals inside the C2 formula. They were baked in as
         # `*2`, `*4`, `*50` — numbers the sheet used and could not show, so no one could see WHY
         # spinach crowds the crew (50 h/acre to pick, against kale's 22) or change it to find out.
@@ -292,7 +353,40 @@ for name in CROP_NAMES:
         put(r, 14 + _j, c.get(f"labor_{_ph}", 0.0), fill=IN_FILL, fmt="0.0", border=True)
     crop_row[name] = r; r += 1
 put(r, 1, "'Min acres if planted' is what the plant/don't-plant switch enforces — see section 4.",
+    font=F_NOTE); r += 1
+put(r, 1, f"⚠️ {LP.VARIANT} is a separate NAME with its own windows, and it SELLS AS Spinach: it "
+          f"shares Spinach's market (section 5) instead of getting a second one.", font=F_NOTE)
+r += 2
+
+# ---- v12 / FX.2: COMMITTED GROUND — the perennial ----------------------------------------
+put(r, 1, f"2b — COMMITTED GROUND: {LP.PERENNIAL} (a perennial, in the ground all 52 weeks)",
+    font=F_H1); r += 1
+put(r, 1, "   Its acres are an INPUT on its calendar row (section 4) — not a decision. It never goes "
+          "through the planting calendar, which refuses any cycle over 52 weeks.", font=F_NOTE)
+r += 1
+_ps = LP.PERENNIAL_SPEC
+put(r, 1, "Establishment $/acre", font=F_BOLD)
+put(r, 2, _ps["establish_per_acre"], fill=IN_FILL, fmt="$#,##0", border=True); ROW_PEST = r
+put(r, 3, "what it cost to put in — CAPITAL, so depreciated, never charged as this year's seed "
+          "(MSU Ext. E3315)", font=F_NOTE); r += 1
+put(r, 1, "Bearing life, years", font=F_BOLD)
+put(r, 2, _ps["life_years"], fill=IN_FILL, fmt="0", border=True); ROW_PLIFE = r
+put(r, 3, "WSU EB1779 amortises establishment over 10 bearing years", font=F_NOTE); r += 1
+put(r, 1, "Upkeep $/acre/yr", font=F_BOLD)
+put(r, 2, _ps["upkeep_per_acre_yr"], fill=IN_FILL, fmt="$#,##0", border=True); ROW_PUPK = r
+put(r, 3, "this year's cost of keeping it (Univ. Kentucky 2016 full-harvest year)", font=F_NOTE)
+r += 1
+put(r, 1, "  -> $/acre per week", font=F_BOLD)
+put(r, 2, f"=($B${ROW_PUPK}+$B${ROW_PEST}/$B${ROW_PLIFE})/52", fmt="$0.00", border=True)
+ROW_PWK = r
+put(r, 3, "upkeep + depreciation, flat across the year like the farm's other fixed costs",
+    font=F_NOTE); r += 1
+put(r, 1, "   ⚠️ TOY PLACEHOLDERS where no source was found: the harvest weeks (18-25), the FM "
+          "price and caps, the labour hours, the pack volume and shelf life. FX.6 sources them.",
     font=F_NOTE); r += 2
+# SECOND PASS: the perennial's grow / harvest $/acre-week ARE this block's figure.
+for _j in (1, 2):
+    put(crop_row[LP.PERENNIAL], 11 + _j, f"=$B${ROW_PWK}", fmt="$0.00", border=True)
 
 # --- 3. crop x channel ---
 put(r, 1, "3 — WHO BUYS IT   (one row per crop x channel — the grower's ruling)", font=F_H1); r += 1
@@ -309,10 +403,15 @@ for cname in CROP_NAMES:
         st, ret = LP.defaults(cname, hname)
         put(r, 1, cname, border=True)
         put(r, 2, hname, border=True, fill=CH_FILL[hi])
-        put(r, 3, ctype, fill=IN_FILL, border=True)
-        put(r, 4, cval, fill=IN_FILL, fmt="#,##0", border=True)
-        put(r, 5, w0, fill=IN_FILL, border=True)
-        put(r, 6, w1, fill=IN_FILL, border=True)
+        if LP.identity(cname) != cname:
+            # ⚠️ FX.5: NO CAP OF ITS OWN. A cap typed here is the trap — a second, full-size
+            # market for the same product. The cap lives on the identity's row.
+            put(r, 3, f"as {LP.identity(cname)}", border=True)
+        else:
+            put(r, 3, ctype, fill=IN_FILL, border=True)
+            put(r, 4, cval, fill=IN_FILL, fmt="#,##0", border=True)
+            put(r, 5, w0, fill=IN_FILL, border=True)
+            put(r, 6, w1, fill=IN_FILL, border=True)
         put(r, 7, st, fill=IN_FILL, fmt="0.00", border=True)
         put(r, 8, ret, fill=IN_FILL, fmt="0.00", border=True)
         put(r, 9, crops[cname].get("channels", {}).get(hname, {}).get("price_per_lb", 0.0),
@@ -430,7 +529,7 @@ for j2, h in enumerate(["$ per bushel", "lb per bushel", "-> $/lb", "floor $/lb"
     put(r, 2 + j2, h, font=F_BOLD, fill=HDR_FILL, border=True)
 r += 1
 PC_ROWS = {}
-for name in CROP_NAMES:
+for name in LP.PIECE_CROPS:
     cr = crop_row[name]
     lh = crops[name].get("labor_harv", 0.0) or 0.0
     put(r, 1, f"   {name}", font=F_SMALL)
@@ -458,7 +557,7 @@ put(r, 1, "   ⚠️ 'lb per bushel' comes from the crop's own volume figure. Ch
 # by the crew's weekly capacity, and by the harvest hours the relief cannot exceed.
 r = week_header(r, "lb")
 PIECE_LB_ROW = {}
-for name in CROP_NAMES:
+for name in LP.PIECE_CROPS:
     put(r, 1, f"   {name} — picked by piece-rate crew", font=F_BOLD, fill=DEC_FILL)
     put(r, 2, "lb <-- SOLVER", font=F_NOTE)
     for w in range(1, 53):
@@ -466,7 +565,7 @@ for name in CROP_NAMES:
     PIECE_LB_ROW[name] = r; r += 1
 put(r, 1, "Piece-rate lb this week", font=F_SMALL); put(r, 2, "lb", font=F_NOTE)
 for w in range(1, 53):
-    put(r, wcol(w), "=" + "+".join(f"{wl(w)}{PIECE_LB_ROW[n]}" for n in CROP_NAMES), fmt="#,##0")
+    put(r, wcol(w), "=" + "+".join(f"{wl(w)}{PIECE_LB_ROW[n]}" for n in LP.PIECE_CROPS), fmt="#,##0")
 ROW_PCTOT = r; r += 1
 # ⚠️ THE CAPACITY IS IN HOURS, NOT POUNDS, AND THE GROWER FOUND WHY. A crew picks pounds at a
 # rate that differs 3.6x by crop, so ONE pound number describes a crew that silently resizes
@@ -478,7 +577,7 @@ put(r, 1, "  picking hours used", font=F_BOLD, fill=CON_FILL); put(r, 2, "hrs", 
 for w in range(1, 53):
     # the ONE definition of this quantity on the sheet — block B reads it from here
     terms = [f"{wl(w)}{PIECE_LB_ROW[n]}/($B${crop_row[n]}/$P${crop_row[n]})"
-             for n in CROP_NAMES if (crops[n].get("labor_harv", 0.0) or 0.0)]
+             for n in LP.PIECE_CROPS if (crops[n].get("labor_harv", 0.0) or 0.0)]
     put(r, wcol(w), ("=" + "+".join(terms)) if terms else 0, fmt="#,##0", fill=CON_FILL)
 ROW_PCHRS = r; r += 1
 put(r, 1, "  their weekly capacity", font=F_BOLD, fill=CON_FILL); put(r, 2, "hrs", font=F_NOTE)
@@ -509,6 +608,8 @@ for w in range(1, 53):
 put(r, wcol(52) + 1, "max if planted", font=F_SMALL, fill=HDR_FILL)
 put(r, wcol(52) + 2, "min if planted", font=F_SMALL, fill=HDR_FILL)
 put(r, wcol(52) + 3, "starts wk", font=F_SMALL, fill=HDR_FILL)
+put(r, wcol(52) + 4, "zone", font=F_SMALL, fill=HDR_FILL)
+put(r, wcol(52) + 5, "sells as", font=F_SMALL, fill=HDR_FILL)
 ROW_SUCC_HDR = r; r += 1
 ROW_SUCC = r
 PH = {0: "P", 1: "G", 2: "H"}
@@ -518,20 +619,38 @@ for s in SUCCS:
     nharv = max(1, len(harvest_weeks_of(s, 52)))
     put(r, 1, s["name"], font=F_SMALL)
     put(r, 2, cn, font=F_SMALL)
-    put(r, 3, 0.0, fill=DEC_FILL, fmt="0.00")          # DECISION: acres
-    put(r, 4, 0, fill=BIN_FILL, fmt="0")               # DECISION: plant? (binary)
+    if s.get("perennial"):
+        # FX.2: COMMITTED. The acres are typed, and "plant?" follows from them — the solver
+        # touches neither, so this row sits OUTSIDE the recipe's changing-cell range.
+        put(r, 3, LP.PERENNIAL_ACRES, fill=IN_FILL, fmt="0.00", border=True)
+        put(r, 4, f"=IF(C{r}>0,1,0)", fmt="0")
+    else:
+        put(r, 3, 0.0, fill=DEC_FILL, fmt="0.00")      # DECISION: acres
+        put(r, 4, 0, fill=BIN_FILL, fmt="0")           # DECISION: plant? (binary)
     pbw = {((wk - 1) % 52) + 1: ph for wk, ph in zip(s["weeks"], s["phases"])}
     for w in range(1, 53):
         if w in pbw:
             put(r, wcol(w), PH[pbw[w]], align="center", font=F_SMALL, fill=CAL_FILL)
     # C9 / C10 helpers — the plant/don't-plant linkage, as columns the Solver can constrain
-    put(r, wcol(52) + 1, f"=D{r}*$B${ROW_LAND}", fmt="0.0", font=F_SMALL)
+    # v12: x eligibility. A planting in a zone its crop may not use can carry no acres — the
+    # Y/N in section 2 is read HERE, which is what makes it a live input and not a label.
+    _zc = get_column_letter(18 + LP.ZONE_NAMES.index(s["zone"]))
+    put(r, wcol(52) + 1, f'=D{r}*$B${ROW_LAND}*IF(${_zc}${crop_row[cn]}="Y",1,0)', fmt="0.0",
+        font=F_SMALL)
     put(r, wcol(52) + 2, f"=D{r}*$I${crop_row[cn]}", fmt="0.0", font=F_SMALL)
     # The week seed is paid for. Genuinely per-succession — unlike the lb/harvest-week column
     # v5 retired, this differs from row to row and no per-crop scalar can carry it.
-    put(r, wcol(52) + 3, f'=MATCH("P",${wl(1)}{r}:${LAST}{r},0)', fmt="0", font=F_SMALL)
+    if s.get("perennial"):
+        put(r, wcol(52) + 3, "-", font=F_SMALL)     # never planted this year: no seed week
+    else:
+        put(r, wcol(52) + 3, f'=MATCH("P",${wl(1)}{r}:${LAST}{r},0)', fmt="0", font=F_SMALL)
+    put(r, wcol(52) + 4, s["zone"], font=F_SMALL)
+    put(r, wcol(52) + 5, f"=$Q${crop_row[cn]}", font=F_SMALL)
     succ_rows[s["name"]] = r; r += 1
 ROW_SUCC_END = r - 1
+# The DECISION range stops before the perennial, which the builder guarantees is last.
+assert SUCCS[-1].get("perennial") and not any(x.get("perennial") for x in SUCCS[:-1])
+ROW_DEC_END = ROW_SUCC_END - 1
 
 # SECOND PASS — "Harvest weeks" as a FORMULA counting the H's on each crop's first planting,
 # rather than a number the generator knows and the sheet cannot show. It follows the calendar if
@@ -548,13 +667,82 @@ put(r, 1, "ACRES <= 'max if planted' and ACRES >= 'min if planted' are the app's
 
 SR = f"$C${ROW_SUCC}:$C${ROW_SUCC_END}"          # acres column
 CROPCOL = f"$B${ROW_SUCC}:$B${ROW_SUCC_END}"     # crop name column
+ZONECOL = f"${C_ZONE}${ROW_SUCC}:${C_ZONE}${ROW_SUCC_END}"
+IDCOL = f"${C_ID}${ROW_SUCC}:${C_ID}${ROW_SUCC_END}"
+STANDS = lambda w: f"({wl(w)}${ROW_SUCC}:{wl(w)}${ROW_SUCC_END}<>\"\")"
 
-# --- 5. land, then per crop ---
+# --- 5. land — ONE BLOCK PER ZONE (FX.4). A tunnel acre is not a field acre. ---
+ROW_LANDUSED = {}
+for _z in LP.ZONE_NAMES:
+    r = week_header(r, "acres")
+    land_lhs = (lambda z_: lambda w: f'=SUMPRODUCT({STANDS(w)}*({ZONECOL}="{z_}")*{SR})')(_z)
+    r, ROW_LANDUSED[_z], _ = constraint_triplet(
+        r, f"LAND in the ground — {_z}", land_lhs, f"$B${ZONE_ROW[_z]}", None,
+        f"   Acres standing in {_z} that week"
+        + (f", the {LP.PERENNIAL_ACRES:g} committed acres of {LP.PERENNIAL} included."
+           if _z == "Open field" else "."))
+
+# --- 5a. MUST-PLANT floors (FX.1) — UNCONDITIONAL: no PLANT? binary appears in them, so
+# the solver cannot escape by not planting, which is exactly how 'min acres if planted' is
+# escaped. Two forms, named differently because they are different promises.
+put(r, 1, "5a — MUST-PLANT  (what you have already decided to grow)", font=F_H1); r += 1
+put(r, 1, "   STANDING = acres in the ground in EVERY week of the window. ANNUAL = acres planted, "
+          "summed over the year's plantings.", font=F_NOTE); r += 1
+put(r, 1, "   ⚠️ Not the same promise — the READ ME prices both at 30 acres of kale, and one "
+          "costs about nothing while the other costs tens of thousands.", font=F_NOTE); r += 1
+for j, h in enumerate(["Sells as", "Acres", "From wk", "To wk"]):
+    put(r, 1 + j, h, font=F_BOLD, fill=HDR_FILL, border=True)
+r += 1
+STAND_IN = []
+for gid, ac, a, b in LP.MUST_STAND:
+    put(r, 1, gid, border=True)
+    put(r, 2, ac, fill=IN_FILL, fmt="0.0", border=True)
+    put(r, 3, a, fill=IN_FILL, fmt="0", border=True)
+    put(r, 4, b, fill=IN_FILL, fmt="0", border=True)
+    put(r, 5, "STANDING" + ("  — the overwintering carry-in (the app's C15)" if a == b == 1
+                             else ""), font=F_NOTE)
+    STAND_IN.append(r); r += 1
+ANNUAL_IN = []
+for gid, ac in LP.MUST_ANNUAL.items():
+    put(r, 1, gid, border=True)
+    put(r, 2, ac, fill=IN_FILL, fmt="0.0", border=True)
+    put(r, 5, "ANNUAL — acres planted across the year; committed perennial acres do not count",
+        font=F_NOTE)
+    ANNUAL_IN.append(r); r += 1
+r += 1
 r = week_header(r, "acres")
-land_lhs = lambda w: (f"=SUMPRODUCT(({wl(w)}${ROW_SUCC}:{wl(w)}${ROW_SUCC_END}<>\"\")*{SR})")
-r, ROW_LANDUSED, _ = constraint_triplet(
-    r, "LAND in the ground", land_lhs, f"$B${ROW_LAND}", None,
-    "   Acres standing that week, summed across every planting the solver chose.")
+STAND_ROWS = []
+for _ir in STAND_IN:
+    gid = ws.cell(row=_ir, column=1).value
+    put(r, 1, f"{gid} standing", font=F_BOLD, fill=CON_FILL); put(r, 2, "acres", font=F_NOTE)
+    for w in range(1, 53):
+        put(r, wcol(w), f'=SUMPRODUCT({STANDS(w)}*({IDCOL}="{gid}")*{SR})', fmt="0.0",
+            fill=CON_FILL)
+    _u = r; r += 1
+    put(r, 1, f"  must stand (row {_ir})", font=F_BOLD, fill=CON_FILL)
+    for w in range(1, 53):
+        put(r, wcol(w), f"=IF(AND({w}>=$C${_ir},{w}<=$D${_ir}),$B${_ir},0)", fmt="0.0",
+            fill=CON_FILL)
+    _f = r; r += 1
+    put(r, 1, "  room above the floor", font=F_SMALL, fill=CON_FILL)
+    for w in range(1, 53):
+        put(r, wcol(w), f"={wl(w)}{_u}-{wl(w)}{_f}", fmt="0.0", fill=CON_FILL)
+    ws.conditional_formatting.add(f"{wl(1)}{r}:{LAST}{r}", CellIsRule(
+        operator="lessThan", formula=["0"], fill=PatternFill("solid", fgColor="FFC7CE"),
+        font=Font(color="9C0006", bold=True)))
+    STAND_ROWS.append((_u, _f, _ir)); r += 1
+ANN_ROWS = []
+for _ir in ANNUAL_IN:
+    gid = ws.cell(row=_ir, column=1).value
+    put(r, 1, f"{gid} planted this year", font=F_BOLD, fill=CON_FILL)
+    put(r, 2, f'=SUMPRODUCT(({IDCOL}="{gid}")*(${C_START}${ROW_SUCC}:${C_START}${ROW_SUCC_END}'
+              f'<>"-")*{SR})', fmt="0.0", fill=CON_FILL)
+    put(r, 3, ">=", align="center", font=F_BOLD)
+    put(r, 4, f"=$B${_ir}", fmt="0.0", fill=CON_FILL)
+    ANN_ROWS.append(r); r += 1
+put(r, 1, "   ⚠️ A must-plant floor is HARD — set one the farm cannot carry and there is no plan. "
+          "Garlic's ceiling here is ~18.6 ac, set by the winter crew AND the barn together.",
+    font=F_NOTE); r += 2
 
 # ---------------------------------------------------------------------------
 # LABOUR (v11). Four blocks, one job each — A who is on, B what you can add,
@@ -661,9 +849,10 @@ put(r, 1, "HARVEST hours needed", font=F_SMALL); put(r, 2, "hrs", font=F_NOTE)
 for w in range(1, 53):
     put(r, wcol(w), "=" + "+".join(
         f'SUMPRODUCT(({CROPCOL}="{n}")*({wl(w)}${ROW_SUCC}:{wl(w)}${ROW_SUCC_END}="H")*{SR})'
-        f'*$P${crop_row[n]}' for n in CROP_NAMES), fmt="#,##0")
+        f'*$P${crop_row[n]}' for n in LP.PIECE_CROPS), fmt="#,##0")
 ROW_HARVNEED = r; r += 1
-put(r, 1, "   Harvest-phase hours only. The relief above cannot exceed this row.", font=F_NOTE)
+put(r, 1, "   Harvest-phase hours only, of the crops the piece-rate crew picks. The relief above "
+          "cannot exceed this row.", font=F_NOTE)
 r += 1
 # ⚠️ v11: THREE ROWS, NOT TWENTY-ONE. Each role used to get a full constraint triplet here —
 # a "used" row that was an alias of its decision row, a "<=" row, a "limit" row that was an
@@ -745,7 +934,7 @@ put(r, 1, "   ⚠️ FULL rate, not the premium above base pay — the wage bill
 put(r, 1, "Piece-rate cost — per lb every week, + the fixed cost ONCE", font=F_SMALL)
 put(r, 2, "$", font=F_NOTE)
 for w in range(1, 53):
-    terms = [f"{wl(w)}{PIECE_LB_ROW[n]}*$F${PC_ROWS[n]}" for n in CROP_NAMES]
+    terms = [f"{wl(w)}{PIECE_LB_ROW[n]}*$F${PC_ROWS[n]}" for n in LP.PIECE_CROPS]
     # ⚠️ 'Pre-committed?' was read by NOTHING — the FOURTH recipe-only input this toy has
     # shipped (v8's overtime cap, v10's max people, v11's hire toggle). Wire it where it
     # belongs: a pre-committed crew's fixed cost is sunk whether or not the solver engages
@@ -757,6 +946,21 @@ put(r, 1, "   COGS, not payroll: you pay for what they pick. ⚠️ The fixed co
           "the first week of their window — which is why its IF tests w=From and not the "
           "whole window. Charged per week it would bill $2,500 fifty-two times.",
     font=F_NOTE); r += 2
+
+def write_ceiling(cap_row, pr, sold_row):
+    """The ceiling row: the stated weekly figure in season, or what is LEFT of an annual cap.
+
+    `sold_row` is what the running allowance subtracts — this crop's own SOLD row, or (FX.5) the
+    total of everything selling as its identity. One function so the two cannot drift.
+    Always CONSTRAINT red (v10's rule), annual or weekly — v11's second pass still repainted it
+    grey with the channel/annual fill, undoing that rule on every ceiling.
+    """
+    for w in range(1, 53):
+        weekly = f"IF(AND({w}>=$E${pr},{w}<=$F${pr}),$D${pr},0)"
+        prior = (f"SUM({wl(1)}{sold_row}:{wl(w-1)}{sold_row})" if w > 1 else "0")
+        put(cap_row, wcol(w), f'=IF($C${pr}="Annual",$D${pr}-{prior},{weekly})',
+            fmt="#,##0", fill=CON_FILL)
+
 
 crop_block = {}
 for name in CROP_NAMES:
@@ -799,34 +1003,37 @@ for name in CROP_NAMES:
         # that week. The value was right and the heading was wrong, which is the harder version
         # of this defect to see.
         is_annual = ws.cell(row=pr, column=3).value == "Annual"
+        is_variant = LP.identity(name) != name
         # ⚠️ v10: RED. This is a real constraint (sold <= ceiling) and v9 painted it with the
         # channel's grey, so the sheet's most-used limit did not look like a limit. The palette
         # guard missed it because it was pinned to rows I already knew were right — the same
         # mistake as a test that only runs the default fixture.
-        put(r, 1, f"{hname} — most you may sell this week", font=F_SMALL, fill=CON_FILL)
-        put(r, 2, "lb", font=F_NOTE)
-        R_CAP = r
-        # ⚠️ FORMULAS FILLED IN A SECOND PASS, once R_SOLD is known. They used to be written
-        # here against `R_CAP + 2`, guessing where SOLD would land — and then the annual note
-        # rows were inserted between the two, so the guess pointed at a blank line, the running
-        # allowance summed nothing, and the ceiling never declined. Inert for two commits while
-        # looking right. Never address a row you have not placed yet.
-        for w in range(1, 53):
-            # WEEKLY pair: the stated figure, inside its season.
-            # ANNUAL pair: what is LEFT of the year's allowance. Writing the whole annual figure
-            # into every week (as this did) reads as a 500,000 lb/week ceiling under a heading
-            # that says weekly, and pushes the real limit onto one separate constraint entry the
-            # reader has to remember to add. A running allowance is truthful AND self-enforcing:
-            #     sold[w] <= annual - sum(sold before w)   for every w
-            # is exactly "the year's total <= annual", and it is linear — no MAX() needed,
-            # because the constraint itself stops the remainder going negative.
-            put(r, wcol(w), 0, fmt="#,##0", fill=CON_FILL)  # placeholder; filled below
-        r += 1
-        if is_annual:
-            put(r, 1, f"   ^ {hname} is an ANNUAL cap ({int(ws.cell(row=pr, column=4).value):,} lb "
-                      f"a year), so there is NO weekly limit —", font=F_NOTE); r += 1
-            put(r, 1, "     this row is what is LEFT of the year, and it falls as you sell.",
-                font=F_NOTE); r += 1
+        if is_variant:
+            # ⚠️ FX.5: NO CEILING ROW. This crop sells into its identity's market, whose ceiling
+            # (in that crop's block) is measured against EVERYTHING that sells as it.
+            put(r, 1, f"{hname} — shares {LP.identity(name)}'s ceiling (section 5c)",
+                font=F_NOTE)
+            R_CAP = None; r += 1
+        else:
+            put(r, 1, f"{hname} — most you may sell this week", font=F_SMALL, fill=CON_FILL)
+            put(r, 2, "lb", font=F_NOTE)
+            R_CAP = r
+            # ⚠️ FORMULAS FILLED IN A SECOND PASS, once R_SOLD is known. They used to be written
+            # here against `R_CAP + 2`, guessing where SOLD would land — and then the annual note
+            # rows were inserted between the two, so the guess pointed at a blank line, the
+            # running allowance summed nothing, and the ceiling never declined. Inert for two
+            # commits while looking right. Never address a row you have not placed yet.
+            # WEEKLY pair: the stated figure, inside its season. ANNUAL pair: what is LEFT of the
+            # year's allowance — sold[w] <= annual - sum(sold before w) for every w is exactly
+            # "the year's total <= annual", linear and self-enforcing (see write_ceiling).
+            for w in range(1, 53):
+                put(r, wcol(w), 0, fmt="#,##0", fill=CON_FILL)  # placeholder; filled below
+            r += 1
+            if is_annual:
+                put(r, 1, f"   ^ {hname} is an ANNUAL cap ({int(ws.cell(row=pr, column=4).value):,} "
+                          f"lb a year), so there is NO weekly limit —", font=F_NOTE); r += 1
+                put(r, 1, "     this row is what is LEFT of the year, and it falls as you sell.",
+                    font=F_NOTE); r += 1
         put(r, 1, f"{hname} — OFFERED", font=F_BOLD, fill=DEC_FILL)
         put(r, 2, "lb  <-- SOLVER", font=F_NOTE)
         for w in range(1, 53):
@@ -850,12 +1057,10 @@ for name in CROP_NAMES:
             put(r, wcol(w), f"={wl(w)}{R_OFF}-{wl(w)}{R_RET}", fmt="#,##0")
         consumed_rows.append(r); r += 1
 
-        # SECOND PASS — now R_SOLD is a fact rather than an offset guess.
-        for w in range(1, 53):
-            weekly = f"IF(AND({w}>=$E${pr},{w}<=$F${pr}),$D${pr},0)"
-            prior = (f"SUM({wl(1)}{R_SOLD}:{wl(w-1)}{R_SOLD})" if w > 1 else "0")
-            put(R_CAP, wcol(w), f'=IF($C${pr}="Annual",$D${pr}-{prior},{weekly})',
-                fmt="#,##0", fill=ANNUAL_FILL if is_annual else fill)
+        # SECOND PASS — now R_SOLD is a fact rather than an offset guess. (A shared market's
+        # ceiling is re-written once more, in 5c, against the identity's TOTAL sold.)
+        if not is_variant:
+            write_ceiling(R_CAP, pr, R_SOLD)
         ch_rows[hname] = dict(cap=R_CAP, off=R_OFF, sold=R_SOLD, ml=R_ML, ret=R_RET, con=r - 1)
 
     put(r, 1, "Stock carried out", font=F_BOLD, fill=CON_FILL); put(r, 2, "lb", font=F_NOTE)
@@ -929,6 +1134,82 @@ for name in CROP_NAMES:
                             close=R_CLOSE, room=R_ROOM, shelf=R_SHELF, pool=pool, ch=ch_rows,
                             grow=R_GROW, pkg=R_PKG)
 
+# --- 5c. WHAT EACH MARKET TAKES — per IDENTITY (FX.5) ---------------------------------
+# For an identity sold by more than one crop name, the market's ceiling is measured against the
+# TOTAL, and that is the whole defence against the variant trap: a second NAME is not a second
+# MARKET. Measured on this farm: keyed by name instead, the two spinaches sell twice the
+# Farmers Market's weekly ceiling and the plan "earns" money that does not exist (READ ME).
+put(r, 1, "5c — WHAT EACH MARKET TAKES  (one market per identity, however many names sell into it)",
+    font=F_H1); r += 1
+r = week_header(r, "lb")
+CEIL = {}                      # (identity, channel) -> (ceiling row, sold row it is measured on)
+for gid in LP.IDENTITIES:
+    members = LP.members(gid)
+    for h in CH_NAMES:
+        base = crop_block[gid]["ch"][h]
+        if len(members) == 1:
+            CEIL[(gid, h)] = (base["cap"], base["sold"])
+            continue
+        put(r, 1, f"{gid} / {h} — SOLD, every name that sells as {gid}", font=F_BOLD,
+            fill=CON_FILL)
+        put(r, 2, "lb", font=F_NOTE)
+        for w in range(1, 53):
+            put(r, wcol(w), "=" + "+".join(f"{wl(w)}{crop_block[m]['ch'][h]['sold']}"
+                                           for m in members), fmt="#,##0", fill=CON_FILL)
+        _tot = r; r += 1
+        put(r, 1, f"   {', '.join(members)} — against the ceiling in the {gid.upper()} block",
+            font=F_NOTE); r += 1
+        _pr = pair_row[(gid, h)]
+        write_ceiling(base["cap"], _pr, _tot)
+        CEIL[(gid, h)] = (base["cap"], _tot)
+r += 1
+
+# --- 5d. CONTRACTS (FX.3) ----------------------------------------------------------------
+# sold[identity, channel, w] + SHORTFALL >= owed. The shortfall cell is what makes an
+# unmeetable contract a REPORTED number rather than "no feasible plan" (grower ruling G3); its
+# penalty is what makes the solver try before it gives up.
+put(r, 1, "5d — CONTRACTS  (what you have already promised to deliver)", font=F_H1); r += 1
+for j, h in enumerate(["Sells as", "Channel", "lb / week", "From wk", "To wk", "Penalty $/lb"]):
+    put(r, 1 + j, h, font=F_BOLD, fill=HDR_FILL, border=True)
+r += 1
+CON_IN = []
+for gid, h, lb, a, b, pen in LP.CONTRACTS:
+    put(r, 1, gid, border=True); put(r, 2, h, border=True)
+    put(r, 3, lb, fill=IN_FILL, fmt="#,##0", border=True)
+    put(r, 4, a, fill=IN_FILL, fmt="0", border=True)
+    put(r, 5, b, fill=IN_FILL, fmt="0", border=True)
+    put(r, 6, pen, fill=IN_FILL, fmt="$0.00", border=True)
+    CON_IN.append(r); r += 1
+put(r, 1, "   ⚠️ The penalty is per lb SHORT, on top of the sale you did not make. It is what a "
+          "missed delivery costs you — cover purchases, a lost account. Set it low and the plan "
+          "will short a contract it could have met.", font=F_NOTE); r += 2
+CON_ROWS = []
+for _k, _ir in enumerate(CON_IN):
+    gid, h = LP.CONTRACTS[_k][0], LP.CONTRACTS[_k][1]
+    _sold = CEIL[(gid, h)][1]
+    r = week_header(r, "lb")
+    put(r, 1, f"{gid} / {h} — SHORTFALL", font=F_BOLD, fill=DEC_FILL)
+    put(r, 2, "lb <-- SOLVER", font=F_NOTE)
+    for w in range(1, 53):
+        put(r, wcol(w), 0.0, fmt="#,##0", fill=DEC_FILL)
+    _sh = r; r += 1
+    put(r, 1, f"  delivered + short", font=F_BOLD, fill=CON_FILL); put(r, 2, "lb", font=F_NOTE)
+    for w in range(1, 53):
+        put(r, wcol(w), f"={wl(w)}{_sold}+{wl(w)}{_sh}", fmt="#,##0", fill=CON_FILL)
+    _ds = r; r += 1
+    put(r, 1, f"  owed (row {_ir})", font=F_BOLD, fill=CON_FILL); put(r, 2, "lb", font=F_NOTE)
+    for w in range(1, 53):
+        put(r, wcol(w), f"=IF(AND({w}>=$D${_ir},{w}<=$E${_ir}),$C${_ir},0)", fmt="#,##0",
+            fill=CON_FILL)
+    _ow = r; r += 1
+    put(r, 1, f"  penalty", font=F_SMALL); put(r, 2, "$", font=F_NOTE)
+    for w in range(1, 53):
+        put(r, wcol(w), f"={wl(w)}{_sh}*$F${_ir}", fmt="#,##0")
+    _pen = r; r += 1
+    put(r, 1, "   delivered + short >= owed, and short <= owed (you cannot be short of an order "
+              "nobody placed).", font=F_NOTE); r += 2
+    CON_ROWS.append(dict(short=_sh, ds=_ds, owed=_ow, pen=_pen, inp=_ir))
+
 # --- 6. stores ---
 put(r, 1, "6 — THE TWO STORES", font=F_H1); r += 1
 pool_rows = {}
@@ -982,9 +1263,21 @@ for w in range(1, 53):
 R_PKGWK = r; r += 1
 put(r, 1, "  growing cost", font=F_SMALL); put(r, 2, "$", font=F_NOTE)
 for w in range(1, 53):
-    put(r, wcol(w), "=" + "+".join(f"{wl(w)}{crop_block[n]['grow']}" for n in CROP_NAMES),
+    put(r, wcol(w), "=" + "+".join(f"{wl(w)}{crop_block[n]['grow']}" for n in LP.ANNUALS),
         fmt="#,##0")
 R_GROWWK = r; r += 1
+put(r, 1, "  perennial upkeep + depreciation", font=F_SMALL); put(r, 2, "$", font=F_NOTE)
+for w in range(1, 53):
+    put(r, wcol(w), f"={wl(w)}{crop_block[LP.PERENNIAL]['grow']}", fmt="#,##0")
+R_PERWK = r; r += 1
+put(r, 1, "  contract shortfall penalty", font=F_SMALL); put(r, 2, "$", font=F_NOTE)
+for w in range(1, 53):
+    put(r, wcol(w), "=" + "+".join(f"{wl(w)}{c_['pen']}" for c_ in CON_ROWS), fmt="#,##0")
+R_SHWK = r; r += 1
+put(r, 1, "   ^ shown for its timing, but NOT in net cash: a penalty is settled with the buyer after "
+          "the season. Charged against the weekly cash floor, an unavoidable shortfall at a big "
+          "penalty made the whole plan INFEASIBLE — the very thing a priced shortfall exists to "
+          "prevent.", font=F_NOTE); r += 1
 put(r, 1, "  fixed cost", font=F_SMALL); put(r, 2, "$", font=F_NOTE)
 for w in range(1, 53):
     put(r, wcol(w), f"=$B${ROW_FIXWK}", fmt="#,##0")
@@ -1013,7 +1306,8 @@ put(r, 1, "NET CASH this week", font=F_BOLD); put(r, 2, "$", font=F_NOTE)
 for w in range(1, 53):
     put(r, wcol(w), f"={wl(w)}{R_REVWK}-{wl(w)}{R_PKGWK}-{wl(w)}{R_GROWWK}"
                     f"-{wl(w)}{R_FIXWK}-{wl(w)}{R_OVHWK}-{wl(w)}{R_WAGEWK}"
-                    f"-{wl(w)}{R_OTWK}-{wl(w)}{R_HEADWK}-{wl(w)}{R_PCWK}", fmt="#,##0")
+                    f"-{wl(w)}{R_OTWK}-{wl(w)}{R_HEADWK}-{wl(w)}{R_PCWK}"
+                    f"-{wl(w)}{R_PERWK}", fmt="#,##0")
 R_NETWK = r; r += 2
 
 r = week_header(r, "$")
@@ -1064,7 +1358,8 @@ ROW_REV = r; r += 1
 for _lab, _row in (("Growing cost", R_GROWWK), ("Packaging", R_PKGWK),
                    ("Fixed cost", R_FIXWK), ("Overhead", R_OVHWK), ("Wages", R_WAGEWK),
                    ("Overtime", R_OTWK), ("New heads", R_HEADWK),
-                   ("Piece rate", R_PCWK)):
+                   ("Piece rate", R_PCWK), ("Perennial", R_PERWK),
+                   ("Contract shortfall", R_SHWK)):
     put(r, 1, _lab, font=F_BOLD)
     put(r, 2, f"=SUM({wl(1)}{_row}:{LAST}{_row})", fmt="$#,##0", font=F_BOLD)
     if _lab == "Growing cost":
@@ -1081,6 +1376,11 @@ for _lab, _row in (("Growing cost", R_GROWWK), ("Packaging", R_PKGWK),
     if _lab == "Piece rate":
         put(r, 3, "paid per POUND picked — COGS, not payroll, and nothing owed when there is "
                   "nothing to pick", font=F_NOTE)
+    if _lab == "Perennial":
+        put(r, 3, f"{LP.PERENNIAL}: this year's upkeep + establishment DEPRECIATED over its life "
+                  f"— never charged as seed", font=F_NOTE)
+    if _lab == "Contract shortfall":
+        put(r, 3, "the penalty on every lb a contract went short — see 5d", font=F_NOTE)
     ROW_COST_LAST = r          # ⚠️ the LAST cost row, captured as it is written
     r += 1
 put(r, 1, "Peak borrowing", font=F_BOLD)
@@ -1112,18 +1412,19 @@ put(r, 2, f"=B{ROW_REV}-SUM(B{ROW_COST}:B{ROW_COST_LAST})-B{ROW_INT}", fmt="$#,#
 put(r, 3, "<-- MAXIMISE THIS CELL", font=F_BOLD)
 ROW_OBJ = r; r += 1
 put(r, 1, "Plantings chosen", font=F_BOLD)
-put(r, 2, f"=SUM($D${ROW_SUCC}:$D${ROW_SUCC_END})", fmt="0")
-put(r, 3, f"of {len(SUCCS)} offered", font=F_NOTE)
+put(r, 2, f"=SUM($D${ROW_SUCC}:$D${ROW_DEC_END})", fmt="0")
+put(r, 3, f"of {N_PLANTABLE} offered (the committed perennial is not a planting decision)",
+    font=F_NOTE)
 r += 2
 
 annual_rows = []
 put(r, 1, "Annual caps", font=F_BOLD); r += 1
-for n in CROP_NAMES:
+for n in LP.IDENTITIES:
     for h in CH_NAMES:
         pr = pair_row[(n, h)]
         if ws.cell(row=pr, column=3).value != "Annual":
             continue
-        sr_ = crop_block[n]["ch"][h]["sold"]
+        sr_ = CEIL[(n, h)][1]
         put(r, 1, f"   {n} / {h} — sold all year", font=F_SMALL)
         put(r, 2, f"=SUM({wl(1)}{sr_}:{LAST}{sr_})", fmt="#,##0")
         put(r, 3, "<=", align="center", font=F_BOLD)
@@ -1134,22 +1435,40 @@ r += 1
 put(r, 1, "SOLVER SETUP — Tools > Solver", font=F_H1); r += 1
 recipe = [
     ("Target cell", f"$B${ROW_OBJ}", "set to MAXIMUM"),
-    ("By changing cells", f"$C${ROW_SUCC}:$D${ROW_SUCC_END}", "acres AND plant? together"),
+    ("By changing cells", f"$C${ROW_SUCC}:$D${ROW_DEC_END}",
+     f"acres AND plant? together — NOT row {ROW_SUCC_END}, the committed perennial"),
     ("  ...and", ";".join(f"${wl(1)}${crop_block[n]['ch'][h]['off']}:${LAST}$"
                           f"{crop_block[n]['ch'][h]['off']}"
                           for n in CROP_NAMES for h in CH_NAMES), "the OFFERED rows"),
-    ("Constraint — PLANT? is binary", f"$D${ROW_SUCC}:$D${ROW_SUCC_END}  =  Binary", ""),
-    ("Constraint — C9 acres <= max", f"$C${ROW_SUCC}:$C${ROW_SUCC_END}  <=  "
-     f"${C_MAXA}${ROW_SUCC}:${C_MAXA}${ROW_SUCC_END}", "no acres without deciding to plant"),
-    ("Constraint — C10 acres >= min", f"$C${ROW_SUCC}:$C${ROW_SUCC_END}  >=  "
-     f"${C_MINA}${ROW_SUCC}:${C_MINA}${ROW_SUCC_END}", "planted means a real block"),
+    ("  ...and", ";".join(f"${wl(1)}${c_['short']}:${LAST}${c_['short']}" for c_ in CON_ROWS),
+     "the contract SHORTFALL rows"),
+    ("Constraint — PLANT? is binary", f"$D${ROW_SUCC}:$D${ROW_DEC_END}  =  Binary", ""),
+    ("Constraint — C9 acres <= max", f"$C${ROW_SUCC}:$C${ROW_DEC_END}  <=  "
+     f"${C_MAXA}${ROW_SUCC}:${C_MAXA}${ROW_DEC_END}",
+     "no acres without deciding to plant — and none in a zone the crop may not use"),
+    ("Constraint — C10 acres >= min", f"$C${ROW_SUCC}:$C${ROW_DEC_END}  >=  "
+     f"${C_MINA}${ROW_SUCC}:${C_MINA}${ROW_DEC_END}", "planted means a real block"),
 ]
-for n in CROP_NAMES:
-    for h in CH_NAMES:
-        cb = crop_block[n]["ch"][h]
-        recipe.append((f"Constraint — {n}/{h} sold <= ceiling",
-                       f"${wl(1)}${cb['sold']}:${LAST}${cb['sold']}  <=  "
-                       f"${wl(1)}${cb['cap']}:${LAST}${cb['cap']}", ""))
+for (gid, h), (cap_r, sold_r) in CEIL.items():
+    # ⚠️ FX.5: measured on the IDENTITY'S total sold — one market however many names sell in.
+    recipe.append((f"Constraint — {gid}/{h} sold <= ceiling",
+                   f"${wl(1)}${sold_r}:${LAST}${sold_r}  <=  "
+                   f"${wl(1)}${cap_r}:${LAST}${cap_r}",
+                   "every name that sells as it" if sold_r != crop_block[gid]["ch"][h]["sold"]
+                   else ""))
+for _u, _f, _ir in STAND_ROWS:
+    recipe.append((f"Constraint — must-plant STANDING (row {_ir})",
+                   f"${wl(1)}${_u}:${LAST}${_u}  >=  ${wl(1)}${_f}:${LAST}${_f}",
+                   "unconditional — no PLANT? binary can switch it off"))
+for _ar in ANN_ROWS:
+    recipe.append((f"Constraint — must-plant ANNUAL", f"$B${_ar}  >=  $D${_ar}", ""))
+for c_ in CON_ROWS:
+    recipe.append((f"Constraint — contract (row {c_['inp']})",
+                   f"${wl(1)}${c_['ds']}:${LAST}${c_['ds']}  >=  "
+                   f"${wl(1)}${c_['owed']}:${LAST}${c_['owed']}", "delivered + short >= owed"))
+    recipe.append((f"Constraint — shortfall <= owed (row {c_['inp']})",
+                   f"${wl(1)}${c_['short']}:${LAST}${c_['short']}  <=  "
+                   f"${wl(1)}${c_['owed']}:${LAST}${c_['owed']}", ""))
 for n in CROP_NAMES:
     recipe.append((f"Constraint — {n} stock never negative",
                    f"${wl(1)}${crop_block[n]['close']}:${LAST}${crop_block[n]['close']}  >=  0", ""))
@@ -1163,11 +1482,14 @@ recipe += [
      f"${LAST}${pool_rows['Cold']['used']}  <=  $B${ROW_COLDCAP}", ""),
     ("Constraint — ambient store", f"${wl(1)}${pool_rows['Ambient']['used']}:"
      f"${LAST}${pool_rows['Ambient']['used']}  <=  $B${ROW_AMBCAP}", ""),
-    ("Constraint — land", f"${wl(1)}${ROW_LANDUSED}:${LAST}${ROW_LANDUSED}  <=  $B${ROW_LAND}", ""),
+] + [
+    (f"Constraint — land, {z}", f"${wl(1)}${ROW_LANDUSED[z]}:${LAST}${ROW_LANDUSED[z]}  <=  "
+     f"$B${ZONE_ROW[z]}", "one pool per zone") for z in LP.ZONE_NAMES
+] + [
     ("  ...and", ";".join(f"${wl(1)}${o}:${LAST}${o}" for o, _, _, _ in OT_ROWS),
      "one overtime row per hourly role — no blend"),
     ("  ...and", f"$K${ROW_CREW}:$K${ROW_CREW_END};$B${ROW_PCBIN};"
-     + ";".join(f"${wl(1)}${PIECE_LB_ROW[n]}:${LAST}${PIECE_LB_ROW[n]}" for n in CROP_NAMES),
+     + ";".join(f"${wl(1)}${PIECE_LB_ROW[n]}:${LAST}${PIECE_LB_ROW[n]}" for n in LP.PIECE_CROPS),
      "extra heads, the engage switch, and the pounds picked"),
     ("Constraint — CROP HOURS <= available", f"${wl(1)}${ROW_LABUSED}:${LAST}${ROW_LABUSED}  <=  "
      f"${wl(1)}${ROW_HOURSAVAIL}:${LAST}${ROW_HOURSAVAIL}", "the app's C2, less piece-rate relief"),
@@ -1207,6 +1529,56 @@ ws.freeze_panes = "E1"
 # ---------------------------------------------------------------------------
 _OPT = LP.solve()
 _RELAX = LP.solve(min_acreage=False)
+# ---- v12: WHAT EACH FIXED PIECE COSTS, measured on the OBJECTIVE, not on profit ----
+# ⚠️ Profit includes INTEREST, which is post-solve and depends on the cash path — and two plans
+# with the same objective can borrow differently. Measured: removing a floor that did not bind
+# "raised" profit $45 with the objective identical to the cent. A with/without delta on profit
+# would report that as the floor's cost. The objective is what the solver actually traded.
+_D = {}
+for _k, _kw in (("contracts", dict(contracts=[])), ("stand", dict(must_stand=[])),
+                ("annual", dict(must_annual={})), ("perennial", dict(perennial_acres=0.0)),
+                ("tunnel", dict(zones=[("Open field", LP.PAYLOAD["total_land"])])),
+                ("all", dict(contracts=[], must_stand=[], must_annual={}, perennial_acres=0.0))):
+    _D[_k] = LP.solve(**_kw)["obj_value"] - _OPT["obj_value"]
+_TRAP = LP.solve(share_caps=False)
+_VID = LP.identity(LP.VARIANT)                 # the identity the variant shares
+_trap_wk = max(sum(_TRAP["offered"][(c_, LP.FM)][w] for c_ in LP.members(_VID))
+               for w in range(52))
+_SVA = {}
+for _k, _kw in (("annual30", dict(must_annual={"Kale": 30.0}, must_stand=[LP.MUST_STAND[0]])),
+                ("stand30", dict(must_annual={}, must_stand=[LP.MUST_STAND[0],
+                                                             ("Kale", 30.0, 10, 20)])),
+                ("base", dict(must_annual={}, must_stand=[LP.MUST_STAND[0]]))):
+    _SVA[_k] = LP.solve(**_kw)["obj_value"]
+_PEN = LP.solve(contracts=[(g, h, lb, a, b, 5.0) for g, h, lb, a, b, _ in LP.CONTRACTS])
+_sh = {k: v for k, v in _OPT["short"].items() if v > 1e-6}
+_shwk = {}
+for (k_, w_), v_ in _sh.items():
+    _shwk.setdefault(k_, []).append(w_)
+def _weeks_short(res, k):
+    return sorted(w for (kk, w), v in res["short"].items() if kk == k and v > 1e-6)
+
+
+def _fc_line(k):
+    """Fact or choice, DERIVED: re-solved at $5/lb, does the shortfall move? Typed, this verdict
+    sat beside computed numbers and would have gone stale the first time the data changed."""
+    g, h = LP.CONTRACTS[k][0], LP.CONTRACTS[k][1]
+    a, b = _OPT["short_lb"][k], _PEN["short_lb"][k]
+    w0, w5 = _weeks_short(_OPT, k), _weeks_short(_PEN, k)
+    if b >= a - 1e-6:
+        verdict = f"a FACT — no price delivers weeks {w5[0]}-{w5[-1]}" if w5 else "a FACT"
+    else:
+        gained = sorted(set(w0) - set(w5))
+        verdict = f"a CHOICE — at $5 the plan grows for weeks {', '.join(map(str, gained))}"
+    return f"{g:<8} {a:,.0f} lb short -> {b:,.0f} lb   {verdict}"
+
+
+def _usd(v):
+    """Whole dollars, with -0 shown as 0 and a negative as -$X rather than $-X."""
+    v = round(v)
+    return f"-${-v:,.0f}" if v < 0 else f"${v:,.0f}"
+
+
 NUMS = {
     "{PROFIT}": f"${_OPT['profit']:,.0f}", "{REV}": f"${_OPT['revenue']:,.0f}",
     "{COST}": f"${_OPT['cost']:,.0f}",
@@ -1234,28 +1606,123 @@ NUMS = {
     "{V7_PROFIT}": "$388,786",
     "{MARGIN}": f"{_OPT['profit'] / _OPT['revenue'] * 100:.1f}%",
     "{V5_PROFIT}": "$2,384,231",
-    "{N_PLANTED}": str(_OPT["n_planted"]), "{N_OFFERED}": str(_OPT["n_offered"]),
-    "{RELAX_PROFIT}": f"${_RELAX['profit']:,.0f}", "{RELAX_N}": str(_RELAX["n_planted"]),
+    # PLANTINGS, which the committed perennial is not — counted out of both sides
+    "{N_PLANTED}": str(_OPT["n_plantings"]), "{N_OFFERED}": str(_OPT["n_plantable"]),
+    "{RELAX_PROFIT}": f"${_RELAX['profit']:,.0f}", "{RELAX_N}": str(_RELAX["n_plantings"]),
     "{MIN_COST}": f"${_RELAX['profit'] - _OPT['profit']:,.0f}",
     "{V4_PROFIT}": "$1,094,831",
     "{N_DEC}": f"{N_DEC_CELLS:,}", "{DEC_BREAKDOWN}": DEC_BREAKDOWN,
     "{N_SUCC}": str(len(SUCCS)),
-    "{ACRES_RANGE}": f"C{ROW_SUCC}:C{ROW_SUCC_END}",
-    "{BIN_RANGE}": f"D{ROW_SUCC}:D{ROW_SUCC_END}",
+    "{ACRES_RANGE}": f"C{ROW_SUCC}:C{ROW_DEC_END}",
+    "{BIN_RANGE}": f"D{ROW_SUCC}:D{ROW_DEC_END}",
     "{OBJ}": f"B{ROW_OBJ}",
+    "{PERCOST}": f"${_OPT['perennial_cost']:,.0f}",
+    "{SHORTCOST}": f"${_OPT['shortfall_cost']:,.0f}",
+    # _D = objective WITHOUT the piece minus WITH it: a cost when positive. The tunnel is the
+    # other way round — removing it LOSES money — so it is reported as what it earns.
+    "{D_CON}": _usd(_D['contracts']), "{D_STAND}": _usd(_D['stand']),
+    "{D_ANN}": _usd(_D['annual']), "{D_PER}": _usd(_D['perennial']),
+    "{D_TUN}": _usd(-_D['tunnel']), "{D_ALL}": _usd(_D['all']),
+    **{f"{{FC{k}}}": _fc_line(k) for k in range(len(LP.CONTRACTS))},
+    "{TRAP_GAIN}": f"${_TRAP['obj_value'] - _OPT['obj_value']:,.0f}",
+    "{TRAP_WK}": f"{_trap_wk:,.0f}",
+    "{FM_CAP}": f"{LP.cap_spec(_VID, LP.FM)[1]:,.0f}",
+    "{SVA_ANN}": _usd(_SVA['base'] - _SVA['annual30']),
+    "{SVA_STAND}": _usd(_SVA['base'] - _SVA['stand30']),
+    "{SHORTS}": "; ".join(f"{LP.CONTRACTS[k_][0]}/{LP.CONTRACTS[k_][1]} "
+                          f"{_OPT['short_lb'][k_]:,.0f} lb short (weeks {min(ws_)}-{max(ws_)})"
+                          for k_, ws_ in sorted(_shwk.items())) or "none",
+    "{N_PLANTABLE}": str(N_PLANTABLE),
+    "{CH1}": LP.FM,
 }
 readme = [
- ("Farm toy model — v11: ONE LABOUR MECHANISM — THE ROSTER", F_TITLE),
+ ("Farm toy model — v12: THE FIXED LAYER", F_TITLE),
  (f"BUILT {_BUILT}   (from source at commit {_SHA})", F_NOTE),
  ("If that timestamp is older than the change you are looking for, you have a stale copy —", F_NOTE),
  ("close the file and re-open it from WSL rather than from a recent-files list.", F_NOTE),
  ("", None),
- ("WHAT v11 CHANGES — labour is now ONE mechanism: the roster", F_H1),
+ ("WHAT v12 ADDS — the things you have already decided, owe, or physically have", F_H1),
+ ("Your first page of January: 'what do you know you need to plant? That absorbs the big blocks,", None),
+ ("and then the rest gets filled in with extras.' Until now the model optimised every acre from", None),
+ ("zero. v12 is the 'absorb the big blocks' half, prototyped here before the app (PLAN FX.0).", None),
+ ("", None),
+ ("     profit {PROFIT}      revenue {REV}      margin {MARGIN}", F_BOLD),
+ ("     {N_PLANTED} of {N_OFFERED} plantings used, plus the committed perennial", F_BOLD),
+ ("", None),
+ ("WHAT EACH PIECE COSTS — with it vs without it, measured on the objective", F_H1),
+ ("     the two contracts             {D_CON}   ({SHORTS})", None),
+ ("     the standing floors           {D_STAND}", None),
+ ("     the annual floor              {D_ANN}", None),
+ ("     the perennial (3 ac)          {D_PER}   (its upkeep + depreciation: {PERCOST})", None),
+ ("     ALL of the above              {D_ALL}", F_BOLD),
+ ("     the 2-acre tunnel zone        {D_TUN}   (what the tunnel EARNS, against 2 acres of field)", None),
+ ("   ⚠️ Measured on the OBJECTIVE, not profit. Profit includes interest, which is worked out", None),
+ ("   AFTER the solve from the cash curve — and two plans worth the same can borrow differently.", None),
+ ("   Removing a floor that did not bind once 'raised' profit $45 with the objective unchanged to", None),
+ ("   the cent. A with/without on profit would have called that $45 the floor's cost.", None),
+ ("", None),
+ ("1. ZONES — named land pools, no map.", F_BOLD),
+ ("   Section 1b. 'Open field' is whatever the other zones leave of 'Land you have'. Section 2", None),
+ ("   says which crop may stand in which zone (Y/N), and a planting is now a (week, zone) pair:", None),
+ ("   Kale is allowed in both, so each Kale week appears twice — 'F' and 'T'. Land is one", None),
+ ("   constraint block PER ZONE. A tunnel acre is not a field acre; that is why zones exist.", None),
+ ("", None),
+ ("2. A VARIANT IS A SEPARATE NAME THAT SELLS AS ITS BASE.", F_BOLD),
+ ("   'Tunnel Spinach' is Spinach with a longer planting window and a tunnel-sized minimum. Its", None),
+ ("   own name, its own windows, its own costs — and NO market of its own. Section 5c measures", None),
+ ("   every name that sells as Spinach against ONE Spinach ceiling.", None),
+ ("   ⚠️ THE TRAP, measured: key the caps by NAME instead (what the app does today) and the two", None),
+ ("   spinaches sell {TRAP_WK} lb a week into a {FM_CAP} lb Farmers Market, and the plan 'earns'", None),
+ ("   {TRAP_GAIN} that does not exist. Same family as the duplicate-name defect (W1).", None),
+ ("", None),
+ ("3. A PERENNIAL IS COMMITTED GROUND, NOT A PLANTING.", F_BOLD),
+ ("   Asparagus, 3 acres, in the ground all 52 weeks. Its acres are an INPUT (yellow) on its", None),
+ ("   calendar row, outside the solver's changing cells. It never goes through the planting", None),
+ ("   calendar — which refuses any cycle over 52 weeks — so it is written straight in.", None),
+ ("   Establishment is CAPITAL: depreciated over its bearing life, never charged as this year's", None),
+ ("   seed (the locked OWN -> depreciate rule). Upkeep is this year's cost. Section 2b.", None),
+ ("", None),
+ ("4. MUST-PLANT FLOORS — UNCONDITIONAL, IN TWO FORMS. Section 5a.", F_BOLD),
+ ("   'Min acres if planted' is NOT this: it is conditional on PLANT?, so the solver escapes it", None),
+ ("   by not planting. A must-plant floor has no binary in it.", None),
+ ("     STANDING  acres in the ground in EVERY week of a window.", None),
+ ("     ANNUAL    acres planted, summed over the year's plantings.", None),
+ ("   They are different promises and the toy settles that question. Same 30 acres of kale:", None),
+ ("     ANNUAL 30 ac costs {SVA_ANN}   — the plan already plants more than that", None),
+ ("     STANDING 30 ac in weeks 10-20 costs {SVA_STAND}", F_BOLD),
+ ("   So: both, named differently. The overwintering carry-in (garlic in the ground on 1 Jan, the", None),
+ ("   app's C15) is simply a STANDING floor with a one-week window at week 1 — the same row.", None),
+ ("   ⚠️ A floor is HARD. Garlic's ceiling here is about 18.6 acres, and it is set by TWO limits", None),
+ ("   at once: the 108-hour winter crew in the planting weeks AND the 150 m3 barn at harvest.", None),
+ ("   Relaxing either alone does not help. An app that refuses an impossible floor must say", None),
+ ("   which limits it hit — 'check your land' would be wrong here.", None),
+ ("", None),
+ ("5. CONTRACTS — A FLOOR WITH A PRICED SHORTFALL. Section 5d.", F_BOLD),
+ ("   delivered + SHORTFALL >= owed, per week, keyed by IDENTITY (the buyer contracted for", None),
+ ("   spinach, not for a bed). The shortfall is a decision with a penalty per lb, so an", None),
+ ("   unmeetable contract is a REPORTED number, never 'no feasible plan'.", None),
+ ("   Both shortfalls look alike on the sheet and they are not. Raise both penalties from $0.50", None),
+ ("   to $5.00 a pound and measure:", None),
+ ("     {FC0}", None),
+ ("     {FC1}", None),
+ ("   (both verdicts are re-solved, not reasoned — the first one I reasoned came out backwards)", None),
+ ("   Where the plan shorts at $0.50 and not at $5, shorting was cheaper than growing. Only the penalty tells a choice from", None),
+ ("   a fact — which is why it has to be the grower's number, and why the app should report", None),
+ ("   WHICH kind each shortfall is.", None),
+ ("", None),
+ ("THE QUESTIONS THIS LEAVES FOR THE APP SPEC", F_H1),
+ ("  - Carry-in vs this year's planting. In a cyclic year, garlic planted in November IS the", None),
+ ("    garlic standing on 1 January, so 'already in the ground' and 'will plant this autumn' are", None),
+ ("    the same acres. A real grower can plant a different amount this autumn. Separating them", None),
+ ("    means a calendar year with a carry-in block, not a steady-state year.", None),
+ ("  - The penalty's default. A number nobody sourced decides whether a contract is honoured.", None),
+ ("  - Zone costs. A tunnel costs money to own; this toy charges nothing for it.", None),
+ ("", None),
+ ("WHAT v11 CHANGED — labour is now ONE mechanism: the roster", F_H1),
  ("v10 invented a separate 'proposed hire' block with its own window, wage, hours and field% —", None),
  ("eight inputs to re-describe something the roster already described. That was the same error", None),
  ("v9 made with spot hire, one version later. It is gone.", None),
  ("", None),
- ("     profit {V10_PROFIT} (v10) -> {PROFIT}      revenue {REV}      margin {MARGIN}", F_BOLD),
  ("     overtime {OTWHO}      extra heads: {EXTRA}", F_BOLD),
  ("     piece rate {PIECECOST} for {PIECELB} lb, relieving {PIECEREL} harvest hours", F_BOLD),
  ("", None),
@@ -1429,15 +1896,17 @@ readme = [
  ("", None),
  ("WHERE THINGS ARE", F_H1),
  ("  YELLOW   you type: the farm, the crop table, the crop x channel table.", None),
- ("  GREEN    the solver writes: the ACRES column ({ACRES_RANGE}), the six OFFERED rows, and", None),
+ ("  GREEN    the solver writes: the ACRES column ({ACRES_RANGE}), every OFFERED row, the contract SHORTFALL rows, and", None),
  ("           the PROFIT cell ({OBJ}).", None),
  ("  BLUE     the solver writes: the PLANT? binaries ({BIN_RANGE}).", None),
  ("  Everything else is a formula. Columns A-D stay put when you scroll right.", None),
  ("", None),
  ("HOW TO RUN IT", F_H1),
- ("Section 7 lists every entry with exact ranges. In short:", None),
+ ("SOLVER SETUP, at the foot of the Model sheet, lists every entry with exact ranges. In short:", None),
  ("   Tools > Solver, target the PROFIT cell, set to MAXIMUM", None),
- ("   Changing cells: {ACRES_RANGE} and {BIN_RANGE} together, plus the six OFFERED rows", None),
+ ("   Changing cells: {ACRES_RANGE} and {BIN_RANGE} together, plus EVERY OFFERED row, the labour", None),
+ ("   rows and the contract SHORTFALL rows — leave the shortfalls out and an unmeetable contract", None),
+ ("   becomes a hard floor, so the solver reports NO solution", None),
  ("   Add the constraint  {BIN_RANGE} = Binary   — without it the binaries are just numbers", None),
  ("   and the minimum-acreage rule silently stops working", None),
  ("   Options: engine = LibreOffice CoinMP Linear Solver; tick non-negative", None),
@@ -1452,7 +1921,10 @@ readme = [
  ("       wages        {WAGES}      committed — owed whether the crops need the hours or not", None),
  ("       interest     {INTEREST}          APR on what the credit line actually carries", None),
  ("       overtime     {OTCOST}       {OTHRS} hours, capped by row 8 week by week", None),
- ("       advisory     {ADVCOST}      {ADVCREW} people, weeks {ADVFROM}-{ADVTO} — {ADVGIVEN} hrs committed", None),
+ ("       extra heads  {HIRECOST}      {EXTRA}", None),
+ ("       piece rate   {PIECECOST}", None),
+ ("       perennial    {PERCOST}      upkeep + depreciation", None),
+ ("       shortfall    {SHORTCOST}      the contract penalty", None),
  ("     peak borrowing {PEAKB} — the deepest the line is ever drawn", None),
  ("       interest     {INTEREST}          on {PEAKB} of peak borrowing — reported, not optimised over", None),
  ("     {N_PLANTED} of {N_OFFERED} plantings used", F_BOLD),
@@ -1499,11 +1971,10 @@ readme = [
  ("   alone. Now set Garlic's 'Returns to store' to 0.00 and re-solve: the delay becomes a loss", None),
  ("   and the plan changes.", None),
  ("", None),
- ("EXPERIMENT 2 — move the hiring window.  Set the advisory window to 16 and 21, re-solve.", F_BOLD),
- ("   C2 binds in all six of those weeks, so they LOOK like the place to add people. The solver", None),
- ("   hires nobody, and profit moves by about five dollars. Put it back to 43-49 and it hires", None),
- ("   {ADVCREW} for {ADVCOST}. Utilisation tells you where a constraint is tight; it does not tell", None),
- ("   you what relieving it is worth, and only one of those is a hiring decision.", None),
+ ("EXPERIMENT 2 — raise the contract penalties.  In 5d set both to $5.00, re-solve.", F_BOLD),
+ ("     {FC0}", None),
+ ("     {FC1}", None),
+ ("   One shortfall that moves is a choice; one that does not is a fact — only the penalty tells them apart.", None),
  ("", None),
  ("EXPERIMENT 2b — tighten the overtime allowance.  Set it to 1.00 and re-solve.", F_BOLD),
  ("   Row 8 goes to zero everywhere and overtime disappears — 1.00 means 'no hours beyond", None),
@@ -1557,7 +2028,7 @@ readme = [
  ("configurations. Every input is perturbed to prove it propagates. No number is frozen. And the", None),
  ("same MILP is solved with scipy.milp, its answer written into the decision cells, and the", None),
  ("sheet's own PROFIT cell must reproduce the optimum exactly.", None),
- ("     Run it yourself:   .venv/bin/python toy_models/verify_toy_v8.py", None),
+ ("     Run it yourself:   .venv/bin/python toy_models/verify_toy_v12.py", None),
 ]
 row_i = 1
 for text, font in readme:
@@ -1567,7 +2038,13 @@ for text, font in readme:
     if font: c.font = font
     row_i += 1
 
-out = REPO / "toy_models" / "farm_toy_v11_labour.xlsx"
+# ⚠️ No placeholder may survive into the prose. v11 shipped five ({ADVCOST}, {ADVCREW}, ...)
+# printed literally for two versions because the dict lost the keys and nothing looked.
+import re as _re
+_left = sorted({m for t, _ in readme for m in _re.findall(r"\{[A-Z_0-9]+\}", t)} - set(NUMS))
+assert not _left, f"READ ME placeholders with no value: {_left}"
+
+out = REPO / "toy_models" / "farm_toy_v12_fixed_layer.xlsx"
 wb.save(out)
 print(f"wrote {out}")
 print(f"  successions offered : {len(SUCCS)}")
