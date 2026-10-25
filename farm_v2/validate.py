@@ -27,6 +27,7 @@ import math
 from farm_v2.utils.calendar import generate_successions, week_of_year
 from farm_v2.utils.zones import crop_zone_names, resolve_zones
 from farm_v2.utils.perennials import resolve_perennial_blocks
+from farm_v2.utils.commitments import committed_acres, resolve_floors
 from farm_v2.utils.numbers import (check_nonneg as _check_nonneg, check_positive as _check_positive,
                                    is_number as _is_number)
 
@@ -224,8 +225,7 @@ def validate_params(
             f"duplicates silently drop pounds from the sales reports. Rename: {dupes}."
         )
 
-    total_committed = 0.0
-    standing = []                           # (crop, acres in the ground in week 1, zones it may stand in)
+    zones_of = {}                           # crop name -> the zones it may stand in
     for crop in crops:
         # R1: charged straight into the objective — a negative rate PAYS the farm (reproduced:
         # -$2,000/acre turned a -$99k farm into +$139k "optimal"), NaN crashes scipy.
@@ -234,7 +234,7 @@ def validate_params(
         warnings.extend(_validate_crop(crop, ch_names, year))
         # Acres already in the ground (S14). Checked here rather than in _validate_crop
         # because it is only meaningful against the farm's size.
-        committed = float(crop.get("committed_acres", 0.0) or 0.0)
+        committed = committed_acres(crop)
         if committed < 0:
             raise ValueError(
                 f"Crop '{crop['name']}' committed_acres must be >= 0, got {committed:g}."
@@ -269,7 +269,7 @@ def validate_params(
                 f"Crop '{crop['name']}' cannot be planted in {', '.join(too_small)}: its "
                 f"{min_acres:g}-acre minimum planting is larger than the zone."
             )
-        standing.append((crop["name"], committed, set(eligible)))
+        zones_of[crop["name"]] = set(eligible)
         if committed > 0:
             # NOT checked here any more: `committed_acres < min_acreage_if_planted`. That was
             # added on a mis-diagnosis and rejected farms that solve perfectly well — C15 is a
@@ -294,22 +294,31 @@ def validate_params(
                     f"as overwintering. Committed acres are ground standing at the START of the "
                     f"planning year, so only an overwintering crop can hold any."
                 )
-        total_committed += committed
-    # FX.2 — a perennial block stands in its zone all year, so in week 1 it competes for ground
-    # with the overwintered acres above: both join the land and zone checks that follow.
+    # FX.1/FX.2 — the ground committed EXACTLY, all of it standing in week 1: each perennial block
+    # in its zone (all year), each carry-in pin in its crop's zones. Both join the land and zone
+    # checks below. Floors (must_stand / must_plant_annual) are not checked here: whether they fit
+    # is the solve's question, and a failed one names the commitments and the limit (elastic
+    # re-solve) — a second model of the land rows here would have to stay in step with C1.
     blocks = resolve_perennial_blocks(commitments, crops, zone_names)
-    for b in blocks:
-        standing.append((f"{b['crop']} (block {b['id']})", b["acres"], {b["zone"]}))
-        total_committed += b["acres"]
+    floors = resolve_floors(commitments, crops, total_land)
+    carry_ins = [f for f in floors if f["kind"] == "carry_in"]
+    standing = [(f"{b['crop']} (block {b['id']})", b["acres"], {b["zone"]}) for b in blocks]
+    standing += [(f["crop"], f["acres"], zones_of[f["crop"]]) for f in carry_ins if f["acres"] > 0]
+    for f in carry_ins:
+        if not f["acres"]:
+            # Ruling 1: the carry-in is a pin, so no acres entered = nothing planted last fall.
+            warnings.append(
+                f"Crop '{f['crop']}' overwinters, but no acres are entered as already in the "
+                f"ground, so none of it is grown this year. Enter the acres planted last fall."
+            )
     # FX.5 — C8 is one row per identity, so a crop's commitments and its variants' share one
     # diversity ceiling: each can fit it alone and together not, which HiGHS reports as a bare
     # "infeasible". Measured: Garlic + a Hardneck variant at 33.6 ac each against a 48-ac ceiling.
     by_identity = {}
     for crop in crops:
-        committed = float(crop.get("committed_acres", 0.0) or 0.0)
-        if committed > 0:
+        if committed_acres(crop) > 0:
             by_identity.setdefault(crop.get("sells_as") or crop["name"], []).append(
-                (crop["name"], committed, float(crop.get("crop_diversity_max", 1.0) or 1.0)))
+                (crop["name"], committed_acres(crop), float(crop.get("crop_diversity_max", 1.0) or 1.0)))
     for parent, held in by_identity.items():
         together = sum(c for _, c, _ in held)
         ceiling = total_land * held[0][2]
@@ -319,16 +328,18 @@ def validate_params(
                 f"ceiling of {ceiling:g} acres, but have {together:g} acres committed between "
                 f"them. Raise the ceiling or correct the committed acreage."
             )
-    if total_committed > total_land:
-        raise ValueError(
-            f"Committed plantings total {total_committed:g} acres against a {total_land:g}-acre "
-            f"farm. Reduce them, or the plan is infeasible before it starts."
-        )
     # FX.4 — the commitments must also fit zone by zone. A crop allowed in several zones can
     # split its acres, so a per-zone sum is not the test; Hall's condition is: for every group
     # of zones, the commitments that can ONLY stand inside it fit its acres. 2^zones groups,
     # fine at the 3-5 zones a farm has. Otherwise HiGHS returns a bare "infeasible".
     from itertools import combinations
+    total = sum(a for _, a, _ in standing)
+    if total > total_land + 1e-9:
+        raise ValueError(
+            f"Committed plantings total {total:g} acres against a {total_land:g}-acre farm "
+            f"({', '.join(n for n, *_ in standing)}). Reduce them, or the plan is infeasible "
+            f"before it starts."
+        )
     for k in range(1, len(zone_names)):
         for group in combinations(zone_names, k):
             inside = [(n, a) for n, a, el in standing if a > 0 and el <= set(group)]
@@ -415,7 +426,7 @@ def _validate_perennial_crop(crop: dict, name: str) -> None:
         raise ValueError(f"Crop '{name}' missing required keys: {missing}.")
     if crop["crop_size_m3_per_lb"] < 0:
         raise ValueError(f"Crop '{name}' crop_size_m3_per_lb must be ≥ 0.")
-    if float(crop.get("committed_acres", 0.0) or 0.0) > 0 or crop.get("overwinters"):
+    if committed_acres(crop) > 0 or crop.get("overwinters"):
         raise ValueError(
             f"Crop '{name}' is perennial, so its ground is its blocks in the commitments table — "
             f"clear its committed acres and 'overwinters'."

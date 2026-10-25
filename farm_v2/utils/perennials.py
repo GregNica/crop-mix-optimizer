@@ -25,29 +25,20 @@ fertiliser, fuel, crop protection or labour (grower, 2026-10-25: asparagus is no
 crewed in January). Harvest weeks must lie inside the season.
 
 Read by validation and the solver alike, so a block one of them would refuse, the other refuses.
-Only `kind: "perennial"` exists so far; the other kinds SPEC §6.1 names (must_stand,
-must_plant_annual, contract) arrive with FX.1/FX.3 and are refused until then, never skipped.
+The checks every commitment kind shares (ids, source, which kinds exist) live in commitments.py.
 """
 
 from farm_v2.utils.calendar import DORMANT, GROW, HARVEST, week_span
-from farm_v2.utils.numbers import check_nonneg, check_positive, is_number
+from farm_v2.utils.commitments import N_WEEKS, check_entries, week as _week
+from farm_v2.utils.numbers import check_nonneg, check_positive
 from farm_v2.utils.zones import crop_zone_names
 
-N_WEEKS = 52
-KINDS_PLANNED = ("must_stand", "must_plant_annual", "contract")
-SOURCES = ("user", "suggested", "accepted")
 
 
 def _number(v, what, *, positive=False):
     """`v` as a float, or ValueError — the shared money-input refusals (bool, str, NaN, < 0)."""
     (check_positive if positive else check_nonneg)(v, what)
     return float(v)
-
-
-def _week(v, what):
-    if not is_number(v) or v != int(v) or not 1 <= v <= N_WEEKS:
-        raise ValueError(f"{what} must be a whole week 1-{N_WEEKS}, got {v!r}.")
-    return int(v)
 
 
 def growing_weeks(crop):
@@ -74,26 +65,9 @@ def resolve_perennial_blocks(commitments, crops, zone_names):
     Also refuses a perennial crop with no block at all: it would stand nowhere and read as
     unplanted. A crop whose only block is a suggestion is not refused — it is simply not planted.
     """
-    commitments = [] if commitments is None else commitments
-    if not isinstance(commitments, list) or not all(isinstance(e, dict) for e in commitments):
-        raise ValueError(f"commitments must be a list of entries, got {commitments!r}.")
     by_name = {c.get("name"): c for c in crops}
-    seen_ids, blocks = set(), []
-    for e in commitments:
-        cid = e.get("id")
-        if isinstance(cid, bool) or not isinstance(cid, (str, int)) or cid == "":
-            raise ValueError(f"Every commitment needs an id (text or a number), got {cid!r}.")
-        if cid in seen_ids:
-            raise ValueError(f"Commitment id {cid!r} is used twice; ids must be unique.")
-        seen_ids.add(cid)
-        kind, source = e.get("kind"), e.get("source", "user")
-        if source not in SOURCES:
-            raise ValueError(f"Commitment {cid!r}: source must be one of {list(SOURCES)}, got {source!r}.")
-        if kind in KINDS_PLANNED:
-            raise ValueError(f"Commitment {cid!r}: kind {kind!r} is not supported yet.")
-        if kind != "perennial":
-            raise ValueError(f"Commitment {cid!r}: unknown kind {kind!r}.")
-        blocks.append(_resolve_block(e, cid, source, by_name, zone_names))
+    blocks = [_resolve_block(e, cid, source, by_name, zone_names)
+              for e, cid, kind, source in check_entries(commitments) if kind == "perennial"]
 
     with_blocks = {b["crop"] for b in blocks}
     blocks = [b for b in blocks if b["source"] != "suggested"]

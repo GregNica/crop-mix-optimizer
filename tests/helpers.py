@@ -29,6 +29,15 @@ def golden_payload(**overrides) -> dict:
     return p
 
 
+# FX.1 (ruling 1): the demo's garlic is 18 ac ALREADY IN THE GROUND, pinned exactly. A fixture
+# that cuts the crew, the water or the zones can make that pin unmeetable — a real refusal — so a
+# test about something else sets the carry-in it can hold, here, with the reason beside it.
+def set_carry_in(p: dict, acres: float, crop: str = "Garlic") -> dict:
+    """`p` with `crop`'s acres already in the ground set to `acres` (0 = none overwintered)."""
+    next(c for c in p["crops"] if c["name"] == crop)["committed_acres"] = acres
+    return p
+
+
 def index_src() -> str:
     """The app's single HTML file, as text."""
     return INDEX.read_text()

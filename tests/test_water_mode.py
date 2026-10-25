@@ -14,14 +14,19 @@ from farm_v2.adapter import run_from_js
 from farm_v2.utils.calendar import generate_successions
 from farm_v2.utils.water import compute_net_water_rates, get_rainfall_weekly
 from farm_v2.validate import validate_params
-from tests.helpers import golden_payload
+from tests.helpers import golden_payload, set_carry_in
 
 pytest.importorskip("scipy")
 
 
 @lru_cache(maxsize=None)
 def _solve(overrides_json: str) -> dict:
-    return json.loads(run_from_js(json.dumps(golden_payload(**json.loads(overrides_json)))))
+    p = golden_payload(**json.loads(overrides_json))
+    # FX.1: the demo's 18 ac of garlic are PINNED (ruling 1), and neither rain alone nor the dry
+    # well can water them — a real refusal, but these tests are about water modes, not about
+    # garlic, so their farm has none overwintered (garlic then reads `no_carry_in`).
+    set_carry_in(p, 0)
+    return json.loads(run_from_js(json.dumps(p)))
 
 
 def solve(**overrides) -> dict:
@@ -154,9 +159,10 @@ def test_a_crop_rain_cannot_water_says_so_not_outcompeted():
     the crop lost on economics."""
     out = solve(water_mode="rainfed", rainfall_weekly_multipliers=[2.6] * 52)
     why = {r["crop"]: r for r in out["unplanted_crops"]}
-    for crop in ("Tomatoes", "Hot Peppers", "Garlic"):
+    for crop in ("Tomatoes", "Hot Peppers"):
         assert why[crop]["reason"] == "rain_short", why[crop]
         assert 0 < why[crop]["rain_coverage"] < 1
+    assert why["Garlic"]["reason"] == "no_carry_in"      # nothing overwintered: the first cause
 
 
 def test_a_monte_carlo_draw_too_dry_for_any_crop_is_a_real_loss_not_a_dropped_draw():
@@ -165,5 +171,5 @@ def test_a_monte_carlo_draw_too_dry_for_any_crop_is_a_real_loss_not_a_dropped_dr
     out = solve(water_mode="rainfed", refuse_rain_short=False)
     assert out["status"] == "optimal", out.get("errors")
     assert out["profit"] < -900_000 and out["revenue"] == 0
-    assert {r["reason"] for r in out["unplanted_crops"]} == {"rain_short"}
+    assert {r["reason"] for r in out["unplanted_crops"] if r["crop"] != "Garlic"} == {"rain_short"}
     assert any("0 of 132" in w for w in out["warnings"]), out["warnings"]

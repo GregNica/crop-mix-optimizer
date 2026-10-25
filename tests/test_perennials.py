@@ -178,7 +178,7 @@ def _refused(p, words):
     (dict(extra_cost_per_acre=-5), "extra_cost_per_acre must be a number ≥ 0"),
     (dict(harvest_to_week=None), "harvest_to_week must be a whole week"),
     (dict(harvest_from_week=53), "harvest_from_week must be a whole week"),
-    (dict(kind="must_stand"), "not supported yet"),
+    (dict(kind="contract"), "not supported yet"),
     (dict(kind="orchard"), "unknown kind"),
     (dict(id=""), "needs an id"),
     (dict(source="robot"), "source must be one of"),
@@ -207,7 +207,8 @@ def test_patch_that_cannot_fit_is_named_not_bare_infeasible():
     committed plantings instead of returning HiGHS's bare 'infeasible'."""
     r = solve(perennial_farm(dict(BEARING, acres=10, labor_harv=200), ESTABLISHING))
     assert r["status"] == "infeasible"
-    assert any("Asparagus · planted 2019 (10 ac)" in e and "cannot all fit" in e for e in r["errors"]), r
+    assert any("Asparagus · planted 2019 (10 ac)" in e and "cannot all be met" in e for e in r["errors"]), r
+    assert [b["limit"] for b in r["binding_limits"]] == ["labour"]      # FX.1: and WHICH limit
 
 
 def test_perennial_card_minimum_is_not_applied_to_its_patches():

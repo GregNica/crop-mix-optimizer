@@ -1072,6 +1072,9 @@ grower: `SPEC_batchFX.md`. P2 (allocation by stake) is NOT in this batch; it rem
    pin also reserves this fall's ground, labour and storage for replanting the same quantity — the
    grower's "is there room in the fall?" check, for free, with no new labels. A plan that cannot
    fit the replant is refused with its cause. Splitting carry-in from the fall replant → BACKLOG X7.
+   **Follow-on (grower, 2026-10-25, FX.1 build):** no acres entered on an overwintering crop =
+   nothing overwintered = none grown this year. The demo farm's garlic is set to **18 ac already
+   in the ground** (what the free optimiser chose), so the demo keeps its garlic: $652,831 (−$45).
 2. **⚠️ AMENDS ruling 3 above.** A blank penalty would make a contract meaningless (the plan just
    sells those pounds where they pay best). Each contract REQUIRES a choice: **Must deliver**
    (hard; may be infeasible — the refusal names the contract and weeks) or **Pay a penalty**

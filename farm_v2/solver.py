@@ -26,7 +26,8 @@ Constraint order (rows of A):
   C9   binary linkage upper x[i] ≤ y[i]  (N_S)
        FX.2: a perennial block is a PINNED x (bounds lb = ub = its acres, y = 1), standing all
        52 weeks — every row below sees it like any planting except C8 and C10, which skip it
-  C15  committed acres — floor on ground STANDING in week 1 (one row per committed crop)
+  C15  commitments (FX.1) — standing floors (one row per week of the window), annual floors,
+       and the carry-in PIN of an overwintering crop (week 1, floor = ceiling)
   C10  min acreage lower   x[i] ≥ y[i]×min_frac  (N_S)
   C11  max plant acres/week (52)
   C12  max harvest acres/week (52)
@@ -43,7 +44,7 @@ from __future__ import annotations
 import math
 import numpy as np
 from scipy.optimize import milp, LinearConstraint, Bounds
-from scipy.sparse import csr_matrix
+from scipy.sparse import csr_matrix, hstack
 
 from farm_v2.utils.calendar import (
     generate_successions,
@@ -65,6 +66,7 @@ from farm_v2.utils.demand import build_demand_table, build_annual_caps
 from farm_v2.utils.zones import resolve_zones
 from farm_v2.utils.variants import identity_groups, resolve_variants
 from farm_v2.utils.perennials import perennial_successions, resolve_perennial_blocks
+from farm_v2.utils.commitments import describe, floor_columns, resolve_floors
 from farm_v2.validate import validate_params
 
 
@@ -77,6 +79,7 @@ from farm_v2.validate import validate_params
 # — and only the second is published, as `demand_at_cap_threshold`, so the exported name would
 # have been describing whichever concept was edited last.
 NEAR_LIMIT_FRACTION = 0.95      # a resource is "near its limit" (unplanted-crop diagnosis)
+DIAGNOSIS_TIME_LIMIT = 20.0     # s per solve of the infeasible-commitments diagnosis (FX.1)
 DEMAND_AT_CAP_FRACTION = 0.95   # a week counts as "at cap" in demand_saturation.weeks_at_cap
 
 # The columns of `vc_split`, in order — the ONE place the index-to-name mapping lives.
@@ -237,9 +240,70 @@ def _rain_short_message(successions, crops, cover) -> str:
 # Main solver
 # ---------------------------------------------------------------------------
 
+def _elastic_limits(A, lo, hi, lb, ub, integrality, limit_rows, options):
+    """Which of the farm's limits a set of commitments presses on — the elastic re-solve (FX.1).
+
+    Every row in `limit_rows` gets a slack column that lets it be exceeded, and the solve minimises
+    the total overrun, each row's slack in units of its limit's LARGEST weekly capacity (so an hour
+    and a dollar are comparable: an overrun is "x% of that limit"). Commitments stay hard. Returns
+    [{limit, unit, weeks, max_over}] — the limits that must give, in the row order they were built,
+    with the overrun in the limit's own unit — or None if even that cannot solve.
+    """
+    lo, hi = np.asarray(lo, dtype=float), np.asarray(hi, dtype=float)
+    rows = [r for r in limit_rows if np.isfinite(hi[r]) or np.isfinite(lo[r])]
+    if not rows:
+        return None
+    scale = {}
+    for r in rows:
+        bound = hi[r] if np.isfinite(hi[r]) else lo[r]
+        name = limit_rows[r][0]
+        scale[name] = max(scale.get(name, 0.0), abs(float(bound)))
+    coef = [(-1.0 if np.isfinite(hi[r]) else 1.0) * (scale[limit_rows[r][0]] or 1.0) for r in rows]
+    S = csr_matrix((coef, (rows, range(len(rows)))), shape=(A.shape[0], len(rows)))
+    n = A.shape[1]
+    res = milp(c=np.concatenate([np.zeros(n), np.ones(len(rows))]),
+               constraints=LinearConstraint(hstack([A, S]).tocsr(), lo, hi),
+               integrality=np.concatenate([integrality, np.zeros(len(rows), dtype=int)]),
+               bounds=Bounds(np.concatenate([lb, np.zeros(len(rows))]),
+                             np.concatenate([ub, np.full(len(rows), np.inf)])),
+               options=options)
+    if res.x is None:
+        return None
+    out = {}
+    for k, r in enumerate(rows):
+        if res.x[n + k] <= 1e-6:            # the slack is a fraction of the limit's capacity
+            continue
+        over = res.x[n + k] * abs(coef[k])
+        name, week, factor, unit = limit_rows[r]
+        rec = out.setdefault(name, {"limit": name, "unit": unit, "weeks": [], "max_over": 0.0})
+        if week is not None:
+            rec["weeks"].append(week)
+        rec["max_over"] = max(rec["max_over"], float(over * factor))
+    return list(out.values())
+
+
+def _limits_text(limits):
+    """'labour (weeks 12-14, up to 42 h over) and cold storage (week 30, 3.1 m³ over)'."""
+    parts = []
+    for b in limits:
+        w = b["weeks"]
+        runs = []                               # [12, 13, 14, 30] -> "12–14, 30"
+        for x in w:
+            if runs and x == runs[-1][1] + 1:
+                runs[-1][1] = x
+            else:
+                runs.append([x, x])
+        span = ", ".join(f"{a}" if a == z else f"{a}–{z}" for a, z in runs)
+        when = "" if not w else f"week {span}, " if len(w) == 1 else f"weeks {span}, "
+        up = "" if len(w) == 1 else "up to "
+        amount = f"${b['max_over']:,.0f}" if b["unit"] == "$" else f"{b['max_over']:,.3g} {b['unit']}"
+        parts.append(f"{b['limit']} ({when}{up}{amount} over)")
+    return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+
+
 def _diagnose_unplanted_crops(
     crops, successions, crop_contribution, annual_caps, demand_table, excluded_channels,
-    capacity_series, phase_table, n_weeks, rain_short_crops=None,
+    capacity_series, phase_table, n_weeks, rain_short_crops=None, no_carry_in=None,
 ):
     """Say WHY each crop got zero acres — as DATA, not as sentences.
 
@@ -284,6 +348,14 @@ def _diagnose_unplanted_crops(
             # FX.2 — a perennial has no window; with no patch binding (only suggested ones) it is
             # simply not committed this year, and "check the season window" would be wrong.
             rec["reason"] = "no_committed_block" if crop.get("perennial") else "no_plantable_window"
+            out.append(rec)
+            continue
+
+        # FX.1 — an overwintering crop with no acres in the ground is pinned at 0 (ruling 1); when
+        # every planting it has stands in week 1 (the solver's own pin row says so), nothing of
+        # it can be grown this year.
+        if c_idx in (no_carry_in or ()):
+            rec["reason"] = "no_carry_in"
             out.append(rec)
             continue
 
@@ -361,6 +433,10 @@ def solve_farm_v2(
     # outcome (grow nothing, carry the fixed costs) and belongs in the distribution — refused, the
     # draw was silently dropped and the dry tail vanished (/code-review). A PLAN is still refused.
     refuse_rain_short: bool = True,
+    # FX.1 — on an infeasible plan with commitments in it, two more solves say which limits they
+    # press on (`binding_limits`). Callers that read only the status (one-more-head re-solves,
+    # Monte Carlo draws) pass False and skip them.
+    diagnose_infeasible: bool = True,
     # --- Labor ---
     year_round_employees: list | None = None,
     seasonal_employees: list | None = None,
@@ -614,6 +690,7 @@ def solve_farm_v2(
         zone_list = resolve_zones(zones, total_land)
         zone_names = [z["name"] for z in zone_list]
         blocks = resolve_perennial_blocks(commitments, crops, zone_names)
+        floors = resolve_floors(commitments, crops, total_land)
         successions = (generate_successions(crops, year, zone_names)
                        + perennial_successions(blocks, crops, zone_names))
     except ValueError as ve:
@@ -1238,8 +1315,15 @@ def solve_farm_v2(
     lbs_con, ubs_con = [], []
     row = 0
 
-    def add_row(col_vals, lo, hi):
+    # The rows that are a LIMIT of the farm (land, crew, water, storage, cash, ...): row ->
+    # (what it limits, week, factor to its own unit). A failed solve with commitments in it
+    # relaxes exactly these, to say which limit the commitments press on (FX.1).
+    limit_rows = {}
+
+    def add_row(col_vals, lo, hi, limit=None):
         nonlocal row
+        if limit is not None:
+            limit_rows[row] = limit
         for c_col, v_val in col_vals:
             rows_A.append(row)
             cols_A.append(c_col)
@@ -1286,10 +1370,12 @@ def solve_farm_v2(
     for i, s in enumerate(successions):
         for w in phase_weeks_of(s, None, N_WEEKS):
             stands_in[s["zone"]][w - 1].append(i)
+    land_name = "land" if len(zone_list) == 1 else "land in {}"
     for zone, weeks in zip(zone_list, stands_in):
-        for members in weeks:
+        for w, members in enumerate(weeks, start=1):
             add_row([(idx_x_start + i, 1.0) for i in members],
-                    -np.inf, zone["acres"] / total_land)
+                    -np.inf, zone["acres"] / total_land,
+                    limit=(land_name.format(zone["name"]), w, total_land, "ac"))
 
     # Crop labour hours in week w, as constraint coefficients on x. Built ONCE because two rows
     # need it: C2 caps it at capacity, and the reporting below sums the same hours.
@@ -1310,7 +1396,7 @@ def solve_farm_v2(
         for j, r in enumerate(ex_roles):
             if r["head_task"][w - 1] > 0:
                 cols.append((idx_ex_start + j, -hire_prod * r["head_task"][w - 1]))
-        add_row(cols, -np.inf, rhs)
+        add_row(cols, -np.inf, rhs, limit=("labour", w, 1.0, "h"))
 
     # Overtime cap of a role that can hire: ot[k][w] ≤ cap[w] + prod × ot_per_head[w]
     # × extra — the new heads may stay late too, at the pace they work (toy v11's form).
@@ -1350,7 +1436,7 @@ def solve_farm_v2(
         cols.append((idx_ws_start + w - 1, 1.0))            # +wstore[w]
         if w > 1:
             cols.append((idx_ws_start + w - 2, -1.0))       # −wstore[w-1]
-        add_row(cols, -np.inf, free_water[w - 1])
+        add_row(cols, -np.inf, free_water[w - 1], limit=("water", w, 1.0, "L"))
 
     # C4a — Inventory balance (equality rows, n_crops × 52)
     #
@@ -1435,13 +1521,13 @@ def solve_farm_v2(
     # inflow-vs-held mismatch); this makes the third one unrepresentable.
     cold_room_cols = [_room_cols(w, True) for w in range(1, N_WEEKS + 1)]
     ambient_room_cols = [_room_cols(w, False) for w in range(1, N_WEEKS + 1)]
-    for cols in cold_room_cols:
-        add_row(cols, -np.inf, harvest_storage_cap)
-    for cols in ambient_room_cols:
+    for w, cols in enumerate(cold_room_cols, start=1):
+        add_row(cols, -np.inf, harvest_storage_cap, limit=("cold storage", w, 1.0, "m³"))
+    for w, cols in enumerate(ambient_room_cols, start=1):
         # Emitted unconditionally even when no crop is ambient: an all-empty row is 0 <= cap,
         # which presolve drops, and branching on crop data would add a case to reason about
         # for no gain.
-        add_row(cols, -np.inf, ambient_storage_cap)
+        add_row(cols, -np.inf, ambient_storage_cap, limit=("ambient storage", w, 1.0, "m³"))
 
     # C4c — Shelf life: nothing in store is older than L weeks (n_crops × 52 rows)
     #
@@ -1573,7 +1659,8 @@ def solve_farm_v2(
             if successions[i]["crop"] in members and "pinned_acres" not in successions[i]
         ]
         if cols:
-            add_row(cols, -np.inf, rhs)
+            add_row(cols, -np.inf, rhs,
+                    limit=(f"{crops[root].get('name')}'s diversity ceiling", None, total_land, "acre-weeks"))
 
     # C9 — Binary linkage upper: x[i] ≤ y[i]
     for i in range(N_S):
@@ -1582,47 +1669,75 @@ def solve_farm_v2(
             -np.inf, 0.0,
         )
 
-    # C15 — Committed acres: land already in the ground is not a decision (S14)
+    # C15 — Commitments (FX.1): what the grower has already decided, as floors on acres.
     #
-    # "Already planted" means STANDING IN THE GROUND when the plan is made. The planning year is
-    # anchored at 1 January, so that is week 1 — which is exactly the set of successions an
-    # overwintering crop occupies at the start of the year (garlic goes in around week 46 and
-    # runs through to July).
+    #   must_stand         Σ acres of the identity IN THE GROUND in week w ≥ A, every w in window
+    #   must_plant_annual  Σ acres of the identity's chosen plantings over the year ≥ A
+    #   carry_in           Σ acres of an overwintering crop standing in week 1 = committed (a PIN)
     #
-    # ⚠️ The floor is on ACREAGE ACTIVE IN WEEK 1, not on the annual sum of plantings. Flooring
-    # the sum was wrong and measured so: with a 3-acre commitment and a 1-acre/week planting
-    # cap, the solver satisfied it with eighteen separate 1-acre plantings spread from week 9 to
-    # week 26 — annual sum 18, peak standing acreage 6, and not one acre of the commitment
-    # actually reserved. A commitment is a quantity of ground, not a quantity of activity.
+    # No y in any of them: a floor the optimiser could escape by not planting (C10's
+    # `min_acreage_if_planted`) is not a commitment — measured: a 14-ac garlic "minimum" -> 0 ac.
     #
-    # ⚠️ COSTS ARE STILL CHARGED, and this CAN change the plan, not only the P&L. The seed,
-    # labour and fuel are sunk, but charging them consumes cash (C13) and labour (C2) in those
-    # weeks, so when either binds the forced planting crowds out other crops and the returned
-    # plan differs from the honest one. See BACKLOG S14.
-    for c_idx, crop in enumerate(crops):
-        committed = float(crop.get("committed_acres", 0.0) or 0.0)
-        if committed <= 0:
-            continue
-        cols = [(idx_x_start + i, -total_land)
-                for i, s in enumerate(successions)
-                if s["crop"] == c_idx and phase_table[i][1] is not None]
-        if not cols:
-            # Nothing this crop can grow is in the ground in week 1, so the commitment cannot
-            # be honoured by any plan. Silently dropping it is the failure mode this whole
-            # sweep exists to remove.
-            return _invalid([
-                f"Crop '{crop.get('name', c_idx)}' has {committed:g} acres recorded as "
-                f"already planted, but none of its plantings are in the ground at the start "
-                f"of the planning year. Mark it as overwintering, or set its committed "
-                f"acres to 0."
-            ], successions=successions)
-        add_row(cols, -np.inf, -committed)
+    # ⚠️ Carry-in is on ACREAGE ACTIVE IN WEEK 1, not on the annual sum of plantings (S14): with a
+    # 3-acre commitment flooring the sum, the solver once satisfied it with eighteen 1-acre
+    # plantings from week 9 to 26 and reserved none of the ground actually standing. A commitment
+    # is a quantity of ground, not of activity. And it is a pin (grower ruling 1): the cyclic year
+    # makes the same row reserve this fall's replant, and no entry = nothing overwintered = 0.
+    #
+    # ⚠️ COSTS ARE STILL CHARGED, and this CAN change the plan, not only the P&L. The carried-in
+    # seed, labour and fuel are sunk, but charging them consumes cash (C13) and labour (C2) in
+    # those weeks, so when either binds the forced planting crowds out other crops. BACKLOG S14.
+    # Each commitment that holds ground, by id: what releasing it frees — the pinned plantings'
+    # bounds, the floor rows — and how a refusal names it. A failed plan releases them all; FX.3's
+    # per-entry with/without delta releases one.
+    held = {}                   # id -> {"plantings": [...], "rows": [...], "label": str}
+    for i in pinned:
+        if successions[i]["pinned_acres"] > 0:
+            held[successions[i]["commitment_id"]] = {
+                "plantings": [i], "rows": [],
+                "label": f"{successions[i]['name']} ({successions[i]['pinned_acres']:g} ac)"}
+    lot_free = set()            # plantings with no lot-size minimum (C10)
+    no_carry_in = set()         # crops pinned at 0 that have no other planting (the diagnosis)
+    for f in floors:
+        pin = f["kind"] == "carry_in"
+        cols = floor_columns(f, successions, phase_table)
+        if pin and not f["acres"]:
+            crop_plantings = {i for i, s in enumerate(successions) if s["crop"] in f["members"]}
+            if crop_plantings and crop_plantings <= set(cols[0][1]):
+                no_carry_in.update(f["members"])
+        if pin and 0 < f["acres"] < crops[f["members"][0]].get("min_acreage_if_planted", 0.0):
+            lot_free.update(cols[0][1])
+        for w, members in cols:
+            if not members:
+                if not f["acres"]:
+                    continue            # pinned at 0 with nothing that could stand: no row
+                if pin:
+                    msg = (f"Crop '{f['crop']}' has {f['acres']:g} acres recorded as already "
+                           f"planted, but none of its plantings are in the ground at the start "
+                           f"of the planning year. Mark it as overwintering, or set its committed "
+                           f"acres to 0.")
+                else:
+                    msg = (f"Commitment {f['id']!r} asks for {f['acres']:g} acres of "
+                           f"'{f['crop']}', but no planting of it can be "
+                           f"{'planted this year' if w is None else f'in the ground in week {w}'}. "
+                           f"Check its season window, or the commitment's weeks.")
+                return _invalid([msg], successions=successions)
+            if f["acres"]:
+                held.setdefault(f["id"], {"plantings": [], "rows": [], "label": describe(f)})["rows"].append(row)
+            add_row([(idx_x_start + i, total_land) for i in members],
+                    f["acres"], f["acres"] if pin else np.inf)
 
     # C10 — Min acreage lower: x[i] ≥ y[i] × min_frac. A pinned planting's acres are given (FX.2),
-    # so it has no minimum — 0 keeps the row, and the row count, uniform.
+    # so it has no minimum — 0 keeps the row, and the row count, uniform. Nor do the plantings of
+    # a carry-in pinned BELOW the crop's lot size (FX.1, `lot_free` above): 1 ac in the ground
+    # against a 2-ac minimum is a fact, and the fall replant is the same quantity (ruling 1), so
+    # the minimum would make the pin unmeetable (it was only a floor before, which the minimum
+    # rounded up). At or above the lot size one planting meets the pin, so the minimum stays —
+    # and the plan's replant lots stay at least the lot size.
     for i in range(N_S):
         crop = crops[successions[i]["crop"]]
-        min_acres = 0.0 if "pinned_acres" in successions[i] else crop.get("min_acreage_if_planted", 0.0)
+        min_acres = (0.0 if "pinned_acres" in successions[i] or i in lot_free
+                     else crop.get("min_acreage_if_planted", 0.0))
         min_frac = min_acres / total_land
         add_row(
             [(idx_x_start + i, -1.0), (idx_y_start + i, min_frac)],
@@ -1636,7 +1751,8 @@ def solve_farm_v2(
             for i in range(N_S)
             if phase_table[i][w] == 0
         ]
-        add_row(cols, -np.inf, max_plant_acres_per_week)
+        add_row(cols, -np.inf, max_plant_acres_per_week,
+                limit=("acres you can plant in a week", w, 1.0, "ac"))
 
     # C12 — Max harvest acres per week
     for w in range(1, N_WEEKS + 1):
@@ -1645,7 +1761,8 @@ def solve_farm_v2(
             for i in range(N_S)
             if phase_table[i][w] == 2
         ]
-        add_row(cols, -np.inf, max_harvest_acres_per_week)
+        add_row(cols, -np.inf, max_harvest_acres_per_week,
+                limit=("acres you can harvest in a week", w, 1.0, "ac"))
 
     # C13 — Weekly cash floor (cumulative):
     # Σ_{t≤W} net_rev[t] - Σ_i x[i]×cum_var[i,W] ≥ -(opening_cash+credit_line) + W×fixed_weekly
@@ -1697,7 +1814,7 @@ def solve_farm_v2(
         # Fixed selling (stall fees/retainers) is a steady weekly cash outflow → in the floor.
         rhs_lo = (floor + W * (fixed_weekly + fixed_selling_per_week)
                   + float(shaped_cum[W - 1]))
-        add_row(cols, rhs_lo, np.inf)
+        add_row(cols, rhs_lo, np.inf, limit=("cash", W, 1.0, "$"))
 
     # (Former C14 removed.) Overtime/hire are needed only beyond TOTAL labor capacity
     # (salaried + hourly + seasonal); C2 already enforces that ceiling and forces
@@ -1732,27 +1849,37 @@ def solve_farm_v2(
     status = report_solve_status(result.status, time_limited_incumbent)
 
     if result.status != 0 and not time_limited_incumbent:
-        # FX.2 — a pin is forced into labour, water, storage, harvest-acre and cash rows that C8/C10's
-        # exemption does not cover, so committed patches alone can make the plan infeasible
-        # (measured: a 10-ac patch at 200 h/ac/wk harvest returned a bare HiGHS "infeasible").
-        # One re-solve with the pins RELEASED tells whether they are the cause; WHICH limit binds
-        # is FX.1's elastic re-solve.
-        pin_errors = []
-        if result.status == 2 and pinned:
-            lb_free = lb.copy()
-            lb_free[[idx_x_start + i for i in pinned]] = 0.0
-            lb_free[[idx_y_start + i for i in pinned]] = 0.0
-            free = milp(c=c_obj, constraints=constraints, integrality=integrality,
-                        bounds=Bounds(lb_free, ub),
-                        options={"disp": False, "time_limit": solver_time_limit})
+        # FX.1/FX.2 — commitments (pinned patches, floors, carry-in pins) are forced into the
+        # labour, water, storage, harvest-acre and cash rows, so they alone can make the plan
+        # infeasible (measured: a 10-ac patch at 200 h/ac/wk harvest returned a bare HiGHS
+        # "infeasible"). Re-solve with every commitment RELEASED: if a plan then exists, they are
+        # the cause, and an elastic re-solve says WHICH limits they press on — the toy's garlic
+        # needed the crew AND the barn together, so relaxing one limit at a time cannot say it.
+        pin_errors, binding_limits = [], None
+        if result.status == 2 and held and diagnose_infeasible:
+            # A diagnosis, not the plan: it need not get the plan's whole time budget.
+            opts = {"disp": False, "time_limit": min(solver_time_limit, DIAGNOSIS_TIME_LIMIT)}
+            lb_free, lo_free = lb.copy(), np.array(lbs_con, dtype=float)
+            for h in held.values():
+                lb_free[[idx_x_start + i for i in h["plantings"]]] = 0.0
+                lb_free[[idx_y_start + i for i in h["plantings"]]] = 0.0
+                lo_free[h["rows"]] = -np.inf
+            free = milp(c=c_obj, constraints=LinearConstraint(A_sparse, lo_free, ubs_con),
+                        integrality=integrality, bounds=Bounds(lb_free, ub), options=opts)
             if free.status == 0 or has_time_limited_incumbent(free.status, getattr(free, "x", None) is not None):
-                names = ", ".join(f"{successions[i]['name']} ({successions[i]['pinned_acres']:g} ac)"
-                                  for i in pinned)
+                binding_limits = _elastic_limits(A_sparse, lbs_con, ubs_con, lb, ub, integrality,
+                                                 limit_rows, opts)
                 pin_errors.append(
-                    f"The committed plantings ({names}) cannot all fit this year: together with "
-                    f"the rest of the farm they need more labour, water, storage, harvest capacity "
-                    f"or cash than the farm has in some week. Without them a plan exists. Reduce "
-                    f"their acres, or raise the limit they press on."
+                    f"The commitments ({'; '.join(h['label'] for h in held.values())}) cannot all "
+                    f"be met this year. "
+                    + (f"Together with the rest of the farm they need more "
+                       f"{_limits_text(binding_limits)} than the farm has. Without them a plan "
+                       f"exists. Reduce them, or raise the limit they press on."
+                       if binding_limits else
+                       "No amount of extra land, labour, water, storage or cash makes them fit "
+                       "together, so they contradict each other or a fixed setting — e.g. a "
+                       "standing floor above an overwintered crop's acres, which are exact. "
+                       "Without them a plan exists.")
                 )
         return {
             "status": status,
@@ -1762,6 +1889,9 @@ def solve_farm_v2(
             # because this path omitted them — a caller band-aiding a schema the solver should
             # simply keep consistent.
             "errors": pin_errors,
+            # FX.1 — the limits the commitments press on, as data (the UI and the assistant
+            # narrate from this, never from the sentence above). None when not diagnosed.
+            "binding_limits": binding_limits,
             "warnings": validation_warnings,
             "channel_margins": channel_margins,
             "excluded_channels": excluded_channels,
@@ -2323,6 +2453,7 @@ def solve_farm_v2(
         "unplanted_crops":  _diagnose_unplanted_crops(
             crops, successions, crop_contribution, annual_caps, demand_table,
             excluded_channels, capacity_series, phase_table, N_WEEKS, rain_short_crops,
+            no_carry_in,
         ),
         "storage_peak_m3":  max(storage_m3_weekly) if storage_m3_weekly else 0.0,
         "ambient_peak_m3":  max(ambient_m3_weekly) if ambient_m3_weekly else 0.0,
@@ -2364,7 +2495,8 @@ def next_head_deltas(solve_kwargs: dict, result: dict) -> list:
     out = []
     for j, hire in enumerate(hires):
         try:
-            forced = solve_farm_v2(**kw, force_extra={j: int(hire["extra"]) + 1})
+            forced = solve_farm_v2(**kw, force_extra={j: int(hire["extra"]) + 1},
+                                   diagnose_infeasible=False)
             status = forced.get("status")
             if status == "optimal":
                 out.append({"delta": float(forced["profit"]) - float(result["profit"]),

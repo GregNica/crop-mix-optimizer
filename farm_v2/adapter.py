@@ -368,6 +368,8 @@ def run_from_js(params_json):
             water_mode=water_mode,
             # Monte Carlo draws send False: a rain-fed dry year is a real (grow-nothing) outcome.
             refuse_rain_short=bool(p.get('refuse_rain_short', True)),
+            # ...and skip the infeasible-commitments diagnosis, which a draw would throw away.
+            diagnose_infeasible=bool(p.get('diagnose_infeasible', True)),
             cost_fert_per_lb=cost_fert_per_lb,
             cost_fuel_per_L=cost_fuel_per_L,
             year_round_employees=year_round_employees,
@@ -403,6 +405,8 @@ def run_from_js(params_json):
                 'status': status,
                 'error': result.get('message', 'Solver did not find an optimal solution.'),
                 'errors': result.get('errors', []),
+                # FX.1 — which limits the commitments press on, as data (None = not diagnosed).
+                'binding_limits': result.get('binding_limits'),
                 'warnings': result.get('warnings', []),
                 'profit': None,
             })

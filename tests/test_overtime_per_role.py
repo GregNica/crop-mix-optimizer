@@ -16,7 +16,7 @@ import pytest
 
 from farm_v2.adapter import run_from_js
 from farm_v2.utils.labor import compute_labor_arrays
-from tests.helpers import golden_payload
+from tests.helpers import golden_payload, set_carry_in
 
 # Shipped roster at 10 OT h/wk per person: cap = count × 10 × field%.
 EXPECTED_CAP = {"Equipment Operator": 2 * 10 * 0.90,   # 18 h/wk, weeks 1-52
@@ -26,7 +26,9 @@ WINDOW = {"Equipment Operator": (1, 52), "Seasonal Field Crew": (10, 42), "Harve
 WAGE = {"Equipment Operator": 26.0, "Seasonal Field Crew": 20.0, "Harvest Crew": 19.0}
 FICA, STRAIGHT = 0.0765, 0.1735   # shipped split of the old 25% (L.5)
 # Pinned from the 2026-10-23 re-pin (test_golden_farm GOLDEN history).
-EXPECTED_HOURS = {"Equipment Operator": 70.2, "Seasonal Field Crew": 407.9, "Harvest Crew": 500.6}
+# FX.1 (2026-10-25): garlic pinned at 18 ac (was free at 18.04) — EO 70.2 -> 74.4, SFC 407.9 -> 406.8,
+# HC 500.6 -> 501.0. The pinned split puts more garlic in W46, the Equipment Operator's week.
+EXPECTED_HOURS = {"Equipment Operator": 74.4, "Seasonal Field Crew": 406.8, "Harvest Crew": 501.0}
 
 
 def _solve(**over):
@@ -112,14 +114,22 @@ def test_the_premium_carries_fica_only(golden):
 
 
 def test_zero_ot_hours_means_no_overtime_and_restores_the_pre_L2_farm():
-    """The grower's off-switch: every row at 0 OT h. Byte-equal to the pre-L.2 baseline profit."""
+    """The grower's off-switch: every row at 0 OT h.
+
+    Was byte-equal to the pre-L.2 baseline ($612,912.19), whose plan CHOSE 15.3 ac of garlic. FX.1
+    (ruling 1) pins garlic at the acres in the ground, and the demo's 18 cannot be replanted in
+    the fall without overtime (refused: crew, week 48) — so this fixture enters the 15 ac a
+    no-overtime crew can replant. $609,664.94 at 15 ac; profit is ~$8k/ac steep here, so the old
+    figure is not reachable by any round acreage. (A looser C10 measured $609,556.56 — LOWER with
+    fewer constraints: the 1e-4 MIP gap, so this pin is deterministic, not an optimum to the cent.)"""
     p = golden_payload()
     for e in p["employees"]:
         e["max_ot_hrs"] = 0
+    set_carry_in(p, 15)
     out = json.loads(run_from_js(json.dumps(p)))
     assert out["status"] == "optimal"
     assert out["total_overtime_hours"] == 0.0 and out["overtime_by_role"] == []
-    assert out["profit"] == pytest.approx(612_912.19, abs=0.01)
+    assert out["profit"] == pytest.approx(609_664.94, abs=0.01)
 
 
 # Which roles may work overtime is decided in labor._role before any solve (the solver's ot_roles

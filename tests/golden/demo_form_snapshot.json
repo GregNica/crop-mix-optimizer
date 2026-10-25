@@ -255,7 +255,7 @@
   "planting_weeks": "3",
   "harvest_weeks": "1",
   "min_acreage_if_planted": 2,
-  "committed_acres": 0,
+  "committed_acres": 18,
   "sell_through_pct": "",
   "sales_spread_weeks": "16",
   "cold_storage": false,

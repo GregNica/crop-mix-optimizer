@@ -213,7 +213,9 @@ class TestRefusalsThroughThePayload:
         p = golden_payload()
         garlic = next(c for c in p["crops"] if c["name"] == "Garlic")
         assert garlic["cold_storage"] is False
-        p["crops"].append(variant_of(garlic, name="Hardneck Garlic", sells_as="Garlic"))
+        hardneck = variant_of(garlic, name="Hardneck Garlic", sells_as="Garlic")
+        hardneck["committed_acres"] = 0    # its own carry-in (FX.5); 18 + 18 would not fit the crew
+        p["crops"].append(hardneck)
         assert solve(p)["status"] == "optimal"
 
     def test_a_variant_sending_the_parents_raw_spread_is_normalised_alike(self):

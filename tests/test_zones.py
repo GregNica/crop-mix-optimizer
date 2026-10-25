@@ -307,4 +307,5 @@ class TestCoveredZones:
                            zones=[dict(TUNNEL[0], covered=True), TUNNEL[1]])
         for c in p["crops"]:
             c["zones"] = ["High tunnel"]
+            c["committed_acres"] = 0       # FX.1: 18 ac of carried-in garlic cannot fit 2 ac
         _refused(p, "rain covers 0%")

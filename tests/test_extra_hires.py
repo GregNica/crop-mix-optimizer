@@ -15,7 +15,7 @@ import pytest
 
 from farm_v2.adapter import run_from_js
 from farm_v2.solver import solve_farm_v2
-from tests.helpers import golden_payload
+from tests.helpers import golden_payload, set_carry_in
 from tests.test_labor_flex import _labor_bound
 
 WEEKS = 46 - 8 + 1                     # 39-week window
@@ -138,6 +138,9 @@ def test_the_adapter_carries_the_row_through_and_back(two_crop_params, monkeypat
     p = golden_payload(labor_flex_enabled=True)
     for e in p["employees"]:
         e["max_ot_hrs"] = 0                               # no overtime: make hiring the lever
+    # FX.1: without overtime the fall crew can replant 15 ac of garlic, not the demo's 18 (the
+    # crews hired here work weeks 14-40, so hiring cannot help in November).
+    set_carry_in(p, 15)
     rows = {e["position"]: i for i, e in enumerate(p["employees"])}
     for name in ("Seasonal Field Crew", "Harvest Crew"):          # both crews cut to one person
         p["employees"][rows[name]].update(count=1, hire_more=True, max_more=10)

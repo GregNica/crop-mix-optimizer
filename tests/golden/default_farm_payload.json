@@ -312,7 +312,7 @@
    "cold_storage": false,
    "overwinters": true,
    "min_acreage_if_planted": 2,
-   "committed_acres": 0,
+   "committed_acres": 18,
    "crop_diversity_max": 0.6,
    "yield_per_acre": 10000,
    "crop_size_m3_per_lb": 0.0011953859649122807,

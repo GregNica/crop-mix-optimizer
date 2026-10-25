@@ -528,13 +528,13 @@ class TestCommittedAcres:
         assert any("diversity ceiling" in e for e in res["errors"]), res["errors"]
 
     def test_a_commitment_below_the_lot_size_minimum_is_NOT_refused(self, minimal_params):
-        """The check that used to live here was wrong and rejected solvable farms.
+        """The check that used to live here was wrong and rejected solvable farms — 2 committed
+        acres against a 10-acre minimum is a fact about the field, not a typo.
 
-        C15 is a floor and C10 simply raises the planting to the lot size, so committing less
-        than the minimum is fine — the plan just plants the minimum. Measured before removal:
-        2 committed acres against a 10-acre minimum solved optimal at 147 acres. The old
-        message also told the grower to raise their committed acreage, i.e. to misstate what is
-        actually in the ground.
+        FX.1 (grower ruling 1, 2026-10-25): the carry-in is now a PIN, so the plan stands at
+        exactly the 2 acres, not at the lot size. Before FX.1 it was a floor and C10 rounded the
+        planting up to 10 — reserving 8 acres of fall replant nobody asked for. A pinned planting
+        has no minimum, as an FX.2 patch has none.
         """
         params = self._overwintering(minimal_params, 2.0, min_acreage_if_planted=10.0)
         res = _solve(params)
@@ -543,6 +543,6 @@ class TestCommittedAcres:
             f"{res.get('errors')}"
         )
         standing = self._standing_acres(res, params["total_land"])
-        assert standing >= 10.0 - 1e-6, (
-            f"the lot-size minimum should raise the planting to 10 acres, got {standing:.2f}"
+        assert standing == pytest.approx(2.0, abs=1e-6), (
+            f"the carry-in is a pin at 2 acres, got {standing:.2f}"
         )

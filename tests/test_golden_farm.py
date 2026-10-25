@@ -50,15 +50,22 @@ pytestmark = pytest.mark.skipif(not PAYLOAD.exists(), reason="golden payload mis
 # re-captured to the CENT on 2026-07-30 so the five plan-determined lines can be pinned tightly
 # (see CASH_TIMED_LINES below for why the other two cannot be).
 GOLDEN = {
-    "revenue":          2_510_379.95,
-    "variable_cost":      466_693.60,
+    "revenue":          2_510_770.84,
+    "variable_cost":      466_950.51,
     "fixed_cost":         949_497.22,
-    "overhead_cost":      401_660.79,
-    "interest_cost":        2_282.33,
-    "profit":             652_876.15,
-    "operating_profit": 1_069_819.27,
+    "overhead_cost":      401_723.33,
+    "interest_cost":        2_281.93,
+    "profit":             652_831.24,
+    "operating_profit": 1_069_836.50,
 }
 # Baseline history — re-pin ONLY with a reason, and record it here.
+#   2026-10-25 (FX.1: the overwintering carry-in is a PIN — grower ruling 1 + "#1 is obvious"):
+#     the demo's garlic was free and planted 18.04 ac (shown 18.1); it is now 18 ac ALREADY IN
+#     THE GROUND (DEMO_OVERRIDES), pinned exactly — 0 entered would mean none overwintered and
+#     cost the farm its garlic ($407,817). revenue +391, variable_cost +257, overhead +63,
+#     interest −0.40, fixed UNCHANGED, profit 652,876 -> 652,831 (−$45). Same three plantings
+#     (W46 7.4 / W47 4.0 / W48 6.6). ⚠️ 18.06 ac would cost ~$10k (an unexplained cliff above
+#     18.03 — SPEC_batchFX "FX.1 as built"); 18 sits below it.
 #   2026-10-23 (Batch L.2: overtime enters the MAIN plan, per role — grower ruling Q1(a)):
 #     revenue 2,414,714 -> 2,510,380 (+4.0%), variable_cost 450,550 -> 466,694, fixed_cost
 #     UNCHANGED 949,497 (committed wages untouched), overhead 386,354 -> 401,661, interest
@@ -810,9 +817,10 @@ class TestValidationRunsOnTheSolverPath:
 # the client stopped reconstructing them from demand x price and started reading the solver's
 # own `v`. These are the numbers under the Revenue line in the exported P&L.
 GOLDEN_CHANNEL_REVENUE = {
-    "Farmers Market": 1_309_764,
-    "Wholesale":      1_200_616,
+    "Farmers Market": 1_310_260,
+    "Wholesale":      1_200_510,
 }
+# Re-pinned 2026-10-25 with FX.1's garlic pin (see GOLDEN's history): FM +496, Wholesale −106.
 # Re-pinned 2026-10-23 with L.2's overtime (see GOLDEN's history): FM +8,164, Wholesale +87,502.
 # Re-pinned 2026-08-30 with the sell-through default (see GOLDEN's history). Wholesale moves
 # most (+30%): it takes 57% of the farm's pounds, so it wore most of the haircut that was being

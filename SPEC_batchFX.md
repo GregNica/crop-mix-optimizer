@@ -270,6 +270,46 @@ excluded) ≥ acres/total_land. No y in either row. C15 becomes `must_stand {com
 (load-time migration of `committed_acres`; keep the overwintering requirement message). HARD:
 infeasible → refusal naming which of land / labour / storage / cash binds (elastic re-solve).
 
+**FX.1 as built (2026-10-25).** `farm_v2/utils/commitments.py` now owns what every commitment
+kind shares (list shape, unique ids, `source`, known kinds, suggestions don't bind — moved out of
+`perennials.py`) and resolves the floors; validation and the solver both read it.
+- **Entries.** `{id, kind: "must_stand", crop, acres, from_week, to_week}` (window may wrap) and
+  `{id, kind: "must_plant_annual", crop, acres}`. `crop` may name a parent or a variant; the floor is
+  on the IDENTITY. Standing counts every planting in the ground that week, a perennial patch
+  included; annual counts chosen plantings only (pins excluded; an annual floor on a perennial is
+  refused by name).
+- **C15 is the floor rows.** One row per standing week / one per annual floor, no y. The carry-in
+  is generated from each crop card: `committed_acres` on an overwintering crop → `carry_in` with
+  window [1] and **floor = ceiling**. Overwintering with 0 entered → pinned at 0 (no row needed when
+  nothing could stand); validation warns, and the unplanted diagnosis says `no_carry_in`, not
+  "outcompeted". A non-overwintering crop with acres keeps the old warning + refusal.
+- **Demo farm (grower, 2026-10-25: "#1 is obvious"):** Garlic `committed_acres: 18`
+  (`DEMO_OVERRIDES`). Measured: the free plan took 18.04 ac (shown as 18.1); pinned at 0 the farm
+  loses its garlic (−$245,060 → $407,817); pinned at 18 → **$652,831.24 (−$45)**. ⚠️ Found on the
+  way: a cliff between 18.03 ac ($652,854) and 18.06 ac ($642,759) — not the barn (binds on both
+  sides; a 5% bigger barn keeps the cliff); a property of the model at that acreage, unexplained.
+- **Refusals name the cause.** Pre-solve: the EXACT acres (patches + carry-in pins, all standing in
+  week 1) against land and FX.4's Hall's condition, as before. Floors are not pre-checked — a
+  second model of the land rows would have to stay in step with C1 (`/simplify`, altitude); the
+  solve's diagnosis names land with its weeks instead. Post-solve, on infeasible: (1) re-solve
+  with every commitment released — one registry by commitment id (`held`: the plantings whose
+  bounds it pins, the rows it adds, its label), which FX.3's per-entry with/without delta reuses
+  to release ONE; if a plan exists, (2) the **elastic re-solve**: every LIMIT row (land per zone, labour, water, cold and
+  ambient storage, plant/harvest acres per week, cash, diversity) gets a slack in units of its
+  limit's largest weekly capacity, commitments stay hard, Σ slack minimised. Result
+  `binding_limits: [{limit, unit, weeks, max_over}]` (adapter forwards it) + one sentence. If even
+  that is infeasible, the commitments contradict each other (e.g. a standing floor above an exact
+  carry-in) and the message says so. Measured: **45 ac overwintered garlic needs the fall crew
+  (weeks 29, 47–49, ≤176 h) AND the barn (weeks 29–31, ≤29.7 m³) together** — the toy's finding,
+  reproduced in the app. 25 ac is refused for the crew in week 48 alone: the fall-replant check.
+  Both diagnostic solves are capped at `DIAGNOSIS_TIME_LIMIT` (20 s) and skipped when the caller
+  passes `diagnose_infeasible=False` — the one-more-head re-solves and Monte Carlo draws, which
+  read only the status. (A draw that cannot solve is still SKIPPED by the client: BACKLOG X10.)
+- **Lot size.** A carry-in pinned BELOW the crop's minimum planting has no C10 minimum (1 ac in
+  the ground against a 2-ac lot is a fact; the old floor rounded it up to the lot, reserving a
+  fall replant nobody asked for). At or above the lot the minimum stays: one planting meets it,
+  and an unneeded exemption opened degenerate optima (measured: a covered-tunnel test's plan moved).
+
 **FX.3 Contracts.** Farm-level `contracts: [{sells_as, channel, lb_per_week, from_week, to_week,
 penalty_per_lb}]` → `Σ v[identity,ch,w] + short[k,w] ≥ lb`, `0 ≤ short ≤ lb`, penalty in the
 objective and the P&L — ⚠️ **NOT in the C13 weekly cash floor**: charged there, an unavoidable
