@@ -403,7 +403,7 @@
     overtime_rate_multiplier:    { from: ['overtime_rate_multiplier'] },
     rainfall_weekly_multipliers: { sentBy: 'monte-carlo', from: [] },
     refuse_rain_short:           { sentBy: 'monte-carlo', from: [] },
-    diagnose_infeasible:         { sentBy: 'monte-carlo', from: [] },   // FX.1: a draw skips the limit diagnosis
+    diagnose_infeasible:         { sentBy: 'solveForNumbers', from: [] },   // FX.1: re-solves that read only the status skip the limit diagnosis
     // Read by the adapter, sent by nothing. Each is a decision, not an oversight — say which.
     overtime_enabled:            { unsent: 'server off-switch for overtime; the form caps it per role (max_ot_hrs = 0 means none)' },
     payroll_load_pct:            { unsent: 'legacy single payroll load (pre-L.5 server callers); the adapter splits it into fica + straight-time' },

@@ -246,13 +246,19 @@ def _elastic_limits(A, lo, hi, lb, ub, integrality, limit_rows, options):
     Every row in `limit_rows` gets a slack column that lets it be exceeded, and the solve minimises
     the total overrun, each row's slack in units of its limit's LARGEST weekly capacity (so an hour
     and a dollar are comparable: an overrun is "x% of that limit"). Commitments stay hard. Returns
-    [{limit, unit, weeks, max_over}] — the limits that must give, in the row order they were built,
-    with the overrun in the limit's own unit — or None if even that cannot solve.
+    (limits, verdict): `limits` = [{limit, unit, weeks, max_over}], the limits that must give, in
+    the row order they were built, with the overrun in the limit's own unit; `verdict` is
+      "proved"         the smallest such overrun, found;
+      "unfinished"     the time limit hit first — `limits` (maybe None) is an incumbent, not proved
+                       minimal, so it may name a limit that need not give;
+      "contradiction"  no overrun of ANY limit makes the commitments fit: they contradict each other.
+    ⚠️ The weighting decides only between SUBSTITUTE limits (either alone would do); a limit whose
+    capacity is 0 everywhere is weighed in its raw unit (/code-review high #5, deferred).
     """
     lo, hi = np.asarray(lo, dtype=float), np.asarray(hi, dtype=float)
     rows = [r for r in limit_rows if np.isfinite(hi[r]) or np.isfinite(lo[r])]
     if not rows:
-        return None
+        return None, "contradiction"
     scale = {}
     for r in rows:
         bound = hi[r] if np.isfinite(hi[r]) else lo[r]
@@ -268,7 +274,7 @@ def _elastic_limits(A, lo, hi, lb, ub, integrality, limit_rows, options):
                              np.concatenate([ub, np.full(len(rows), np.inf)])),
                options=options)
     if res.x is None:
-        return None
+        return None, _elastic_verdict(res.status, False)
     out = {}
     for k, r in enumerate(rows):
         if res.x[n + k] <= 1e-6:            # the slack is a fraction of the limit's capacity
@@ -279,7 +285,16 @@ def _elastic_limits(A, lo, hi, lb, ub, integrality, limit_rows, options):
         if week is not None:
             rec["weeks"].append(week)
         rec["max_over"] = max(rec["max_over"], float(over * factor))
-    return list(out.values())
+    # Nothing over the tolerance on an infeasible model is a numerics edge: not a diagnosis.
+    return list(out.values()) or None, _elastic_verdict(res.status, bool(out))
+
+
+def _elastic_verdict(status, named_any):
+    """What an elastic solve's outcome says (see _elastic_limits). HiGHS status 0 = proved optimal,
+    2 = infeasible; anything else stopped early, so any limits it names are an incumbent's."""
+    if status == 2:
+        return "contradiction"
+    return "proved" if status == 0 and named_any else "unfinished"
 
 
 def _limits_text(limits):
@@ -295,8 +310,11 @@ def _limits_text(limits):
                 runs.append([x, x])
         span = ", ".join(f"{a}" if a == z else f"{a}–{z}" for a, z in runs)
         when = "" if not w else f"week {span}, " if len(w) == 1 else f"weeks {span}, "
-        up = "" if len(w) == 1 else "up to "
-        amount = f"${b['max_over']:,.0f}" if b["unit"] == "$" else f"{b['max_over']:,.3g} {b['unit']}"
+        up = "up to " if len(w) > 1 else ""        # a weekless limit (diversity) is one quantity
+        v = b["max_over"]
+        # Never `.3g`: it prints 15,320 L as "1.53e+04".
+        amount = (f"${v:,.0f}" if b["unit"] == "$" else
+                  f"{v:,.0f} {b['unit']}" if v >= 100 else f"{v:.3g} {b['unit']}")
         parts.append(f"{b['limit']} ({when}{up}{amount} over)")
     return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
 
@@ -1855,7 +1873,7 @@ def solve_farm_v2(
         # "infeasible"). Re-solve with every commitment RELEASED: if a plan then exists, they are
         # the cause, and an elastic re-solve says WHICH limits they press on — the toy's garlic
         # needed the crew AND the barn together, so relaxing one limit at a time cannot say it.
-        pin_errors, binding_limits = [], None
+        pin_errors, binding_limits, verdict = [], None, None
         if result.status == 2 and held and diagnose_infeasible:
             # A diagnosis, not the plan: it need not get the plan's whole time budget.
             opts = {"disp": False, "time_limit": min(solver_time_limit, DIAGNOSIS_TIME_LIMIT)}
@@ -1866,21 +1884,33 @@ def solve_farm_v2(
                 lo_free[h["rows"]] = -np.inf
             free = milp(c=c_obj, constraints=LinearConstraint(A_sparse, lo_free, ubs_con),
                         integrality=integrality, bounds=Bounds(lb_free, ub), options=opts)
-            if free.status == 0 or has_time_limited_incumbent(free.status, getattr(free, "x", None) is not None):
-                binding_limits = _elastic_limits(A_sparse, lbs_con, ubs_con, lb, ub, integrality,
-                                                 limit_rows, opts)
+            names = "; ".join(h["label"] for h in held.values())
+            if free.status != 2 and not (free.status == 0 or has_time_limited_incumbent(
+                    free.status, getattr(free, "x", None) is not None)):
+                # The release re-solve itself ran out of time: say so, not a bare "infeasible".
+                verdict = "unfinished"
                 pin_errors.append(
-                    f"The commitments ({'; '.join(h['label'] for h in held.values())}) cannot all "
-                    f"be met this year. "
-                    + (f"Together with the rest of the farm they need more "
-                       f"{_limits_text(binding_limits)} than the farm has. Without them a plan "
-                       f"exists. Reduce them, or raise the limit they press on."
-                       if binding_limits else
-                       "No amount of extra land, labour, water, storage or cash makes them fit "
-                       "together, so they contradict each other or a fixed setting — e.g. a "
-                       "standing floor above an overwintered crop's acres, which are exact. "
-                       "Without them a plan exists.")
-                )
+                    f"No plan fits this year. The commitments ({names}) may be the cause, but the "
+                    f"check of whether the farm fits without them did not finish in time.")
+            elif free.status != 2:
+                binding_limits, verdict = _elastic_limits(A_sparse, lbs_con, ubs_con, lb, ub,
+                                                          integrality, limit_rows, opts)
+                if binding_limits:
+                    why = (f"Together with the rest of the farm they need more "
+                           f"{_limits_text(binding_limits)} than the farm has. Without them a plan "
+                           f"exists. Reduce them, or raise the limit they press on.")
+                    if verdict == "unfinished":
+                        why += (" (The check ran out of time before proving this is the smallest "
+                                "change, so a limit named here may not need to give.)")
+                elif verdict == "contradiction":
+                    why = ("No amount of extra land, labour, water, storage or cash makes them fit "
+                           "together, so they contradict each other or a fixed setting — e.g. a "
+                           "standing floor above an overwintered crop's acres, which are exact. "
+                           "Without them a plan exists.")
+                else:
+                    why = ("Without them a plan exists. The check of which limit they press on did "
+                           "not finish in time.")
+                pin_errors.append(f"The commitments ({names}) cannot all be met this year. " + why)
         return {
             "status": status,
             "profit": None,
@@ -1892,6 +1922,7 @@ def solve_farm_v2(
             # FX.1 — the limits the commitments press on, as data (the UI and the assistant
             # narrate from this, never from the sentence above). None when not diagnosed.
             "binding_limits": binding_limits,
+            "binding_limits_verdict": verdict,       # proved | unfinished | contradiction | None
             "warnings": validation_warnings,
             "channel_margins": channel_margins,
             "excluded_channels": excluded_channels,
@@ -2490,13 +2521,16 @@ def next_head_deltas(solve_kwargs: dict, result: dict) -> list:
     hires = result.get("extra_hires", [])
     if result.get("status") != "optimal":
         return [{"delta": None, "status": "base_not_optimal"} for _ in hires]
+    # Only the status is read, so no infeasible-commitments diagnosis — set HERE, in the dict: the
+    # adapter's solve_kwargs already carry the key, and passing it again at the call raised a
+    # TypeError that the per-row `except` turned into "error" on every row (/code-review high).
     kw = dict(solve_kwargs, solver_time_limit=min(float(solve_kwargs.get("solver_time_limit", 80.0)),
-                                                  NEXT_HEAD_TIME_LIMIT))
+                                                  NEXT_HEAD_TIME_LIMIT),
+              diagnose_infeasible=False)
     out = []
     for j, hire in enumerate(hires):
         try:
-            forced = solve_farm_v2(**kw, force_extra={j: int(hire["extra"]) + 1},
-                                   diagnose_infeasible=False)
+            forced = solve_farm_v2(**kw, force_extra={j: int(hire["extra"]) + 1})
             status = forced.get("status")
             if status == "optimal":
                 out.append({"delta": float(forced["profit"]) - float(result["profit"]),

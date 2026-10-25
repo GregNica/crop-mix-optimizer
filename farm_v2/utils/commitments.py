@@ -12,9 +12,10 @@ FLOOR kinds itself (FX.1). Perennial patches are resolved by `perennials.py`.
     {"id": "k2", "kind": "must_plant_annual", "crop": "Kale", "acres": 45}
         at least 45 acres of kale PLANTED over the year, counted planting by planting.
 
-Both are on the crop's IDENTITY — the crop and its FX.5 variants (a Tunnel Spinach counts toward
-a Spinach floor). The two are different promises, measured so in the toy: 30 ac kale as an annual
-floor cost $0 (the plan already plants more); standing over weeks 10-20 it cost $49,240. A
+Naming a crop counts it and its FX.5 variants (a Tunnel Spinach counts toward a Spinach floor);
+naming a variant counts that variant only. The two kinds are different promises, measured so in
+the toy: 30 ac kale as an annual floor cost $0 (the plan already plants more); standing over
+weeks 10-20 it cost $49,240. A
 standing floor counts every planting in the ground that week, a perennial patch included; the
 annual floor counts chosen plantings only — a patch is not "planted" this year.
 
@@ -35,6 +36,7 @@ FLOOR_KINDS = ("must_stand", "must_plant_annual")
 KINDS = FLOOR_KINDS + ("perennial",)
 KINDS_PLANNED = ("contract",)
 SOURCES = ("user", "suggested", "accepted")
+CARRY_IN = "carry-in:"          # id prefix of the carry-in the app makes for each crop
 
 
 def committed_acres(crop):
@@ -56,6 +58,10 @@ def check_entries(commitments):
             raise ValueError(f"Every commitment needs an id (text or a number), got {cid!r}.")
         if cid in seen:
             raise ValueError(f"Commitment id {cid!r} is used twice; ids must be unique.")
+        if isinstance(cid, str) and cid.startswith(CARRY_IN):
+            # The app names each crop's carry-in this way; sharing the name would merge the two
+            # in a refusal and in a per-entry with/without (/code-review high #7).
+            raise ValueError(f"Commitment id {cid!r}: ids starting {CARRY_IN!r} are reserved.")
         seen.add(cid)
         kind, source = e.get("kind"), e.get("source", "user")
         if source not in SOURCES:
@@ -80,9 +86,11 @@ def resolve_floors(commitments, crops, total_land):
     entries (suggestions left out, like a suggested patch), then one carry-in per overwintering
     crop (or crop with committed acres), in crop order.
 
-    Each floor: {id, kind, crop, members, acres, weeks}. `members` are the crop indices of its
-    identity (FX.5); `weeks` the standing window (None for an annual floor). A `carry_in` is a
-    PIN — its row has an equal ceiling — and covers only its own crop."""
+    Each floor: {id, kind, crop, members, acres, weeks}. `members` are the crop indices it counts:
+    naming a crop counts the crop and its FX.5 variants (a Tunnel Spinach counts toward Spinach);
+    naming a VARIANT counts that variant only — "5 ac of tunnel spinach" is not met by field
+    spinach (/code-review high #6). `weeks` is the standing window (None for an annual floor). A
+    `carry_in` is a PIN — its row has an equal ceiling — and covers only its own crop."""
     root_of = {m: root for root, ms in identity_groups(crops).items() for m in ms}
     index = {c.get("name"): i for i, c in enumerate(crops)}
     floors = []
@@ -108,13 +116,14 @@ def resolve_floors(commitments, crops, total_land):
                               week(e.get("to_week"), f"{what}: to_week"))
         if source == "suggested":
             continue
-        root = root_of[index[name]]
+        i = index[name]
+        members = [m for m, r in root_of.items() if r == i] if root_of[i] == i else [i]
         floors.append({"id": cid, "kind": kind, "crop": name, "acres": acres, "weeks": weeks,
-                       "members": [m for m, r in root_of.items() if r == root]})
+                       "members": members})
     for c_idx, crop in enumerate(crops):
         if committed_acres(crop) <= 0 and not crop.get("overwinters"):
             continue
-        floors.append({"id": f"carry-in:{crop.get('name')}", "kind": "carry_in",
+        floors.append({"id": f"{CARRY_IN}{crop.get('name')}", "kind": "carry_in",
                        "crop": crop.get("name"), "acres": committed_acres(crop), "weeks": [1],
                        "members": [c_idx]})
     return floors

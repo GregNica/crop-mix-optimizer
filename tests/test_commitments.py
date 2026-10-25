@@ -200,3 +200,83 @@ def test_callers_that_read_only_the_status_skip_the_diagnosis():
     r = solve(farm(garlic=45, diagnose_infeasible=False))
     assert r["status"] == "infeasible"
     assert r["binding_limits"] is None and r["errors"] == []
+
+
+# ---------------------------------------------------------------------------
+# /code-review high on 11b731a
+# ---------------------------------------------------------------------------
+
+def test_one_more_head_re_solves_take_the_adapters_kwargs(monkeypatch):
+    """#1: the adapter's solve_kwargs carry diagnose_infeasible, and next_head_deltas once passed
+    it again at the call — a TypeError the per-row except turned into 'error' on every row, so
+    the one-more-head figure vanished. The adapter path was stubbed in every test."""
+    import farm_v2.solver as solver
+    seen = []
+    monkeypatch.setattr(solver, "solve_farm_v2",
+                        lambda **kw: seen.append(kw) or {"status": "optimal", "profit": 90.0})
+    out = solver.next_head_deltas({"diagnose_infeasible": True, "solver_time_limit": 80.0},
+                                  {"status": "optimal", "profit": 100.0,
+                                   "extra_hires": [{"extra": 1}]})
+    assert out == [{"delta": -10.0, "status": "optimal"}]
+    assert seen[0]["diagnose_infeasible"] is False and seen[0]["force_extra"] == {0: 2}
+
+
+@pytest.mark.parametrize("limit, text", [
+    (dict(limit="water", unit="L", weeks=[20, 21, 22, 24], max_over=15_320.4),
+     "water (weeks 20–22, 24, up to 15,320 L over)"),
+    (dict(limit="cold storage", unit="m³", weeks=[30], max_over=3.14159), "cold storage (week 30, 3.14 m³ over)"),
+    (dict(limit="cash", unit="$", weeks=[5, 6], max_over=12_345.6), "cash (weeks 5–6, up to $12,346 over)"),
+    (dict(limit="Kale's diversity ceiling", unit="acre-weeks", weeks=[], max_over=3.2),
+     "Kale's diversity ceiling (3.2 acre-weeks over)"),
+])
+def test_limits_read_as_plain_numbers(limit, text):
+    """#3 and #8: never '1.53e+04 L'; a weekless limit is one quantity, not 'up to'."""
+    from farm_v2.solver import _limits_text
+    assert _limits_text([limit]) == text
+
+
+def test_an_unfinished_diagnosis_does_not_claim_a_contradiction(monkeypatch):
+    """#4: a diagnosis that ran out of time is not 'they contradict each other'."""
+    import farm_v2.solver as solver
+    monkeypatch.setattr(solver, "DIAGNOSIS_TIME_LIMIT", 1e-4)
+    r = solve(farm(garlic=45))
+    assert r["status"] == "infeasible"
+    assert r["binding_limits_verdict"] == "unfinished"
+    assert "contradict" not in r["errors"][0] and "did not finish" in r["errors"][0]
+    assert r["binding_limits"] is None
+
+
+def test_the_crew_and_barn_diagnosis_is_proved():
+    assert solve(farm(garlic=45))["binding_limits_verdict"] == "proved"
+
+
+def test_a_floor_naming_a_variant_counts_only_the_variant():
+    """#6: '3 ac of Tunnel Spinach standing in weeks 20-25' is not met by field Spinach — the
+    tunnel holds 2 ac, so it cannot be met at all, and the diagnosis names the tunnel's land."""
+    from tests.test_variants import variant_farm
+    p = variant_farm()
+    p["commitments"] = [dict(id="t1", kind="must_stand", crop="Tunnel Spinach", acres=3,
+                             from_week=20, to_week=25)]
+    r = solve(p)
+    assert r["status"] == "infeasible", r["status"]
+    assert "land in High tunnel" in {b["limit"] for b in r["binding_limits"]}
+
+
+def test_a_commitment_cannot_take_a_carry_in_id():
+    """#7: the app names each crop's carry-in 'carry-in:<crop>'; a typed id sharing it would merge
+    with it in a refusal and in a per-entry with/without."""
+    _refused(farm(dict(KALE_ANNUAL, id="carry-in:Garlic")), "are reserved")
+
+
+@pytest.mark.parametrize("status, named_any, verdict", [
+    (0, True, "proved"),
+    (1, True, "unfinished"),        # stopped on the clock WITH an incumbent: not proved minimal
+    (1, False, "unfinished"),
+    (0, False, "unfinished"),       # nothing over tolerance on an infeasible model: no diagnosis
+    (2, False, "contradiction"),
+])
+def test_the_elastic_verdict(status, named_any, verdict):
+    """#4: an incumbent the time limit stopped is never reported as proved. A solve cannot be made
+    to stop with an incumbent on demand, so the mapping is tested on its own."""
+    from farm_v2.solver import _elastic_verdict
+    assert _elastic_verdict(status, named_any) == verdict

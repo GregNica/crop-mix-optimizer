@@ -407,6 +407,7 @@ def run_from_js(params_json):
                 'errors': result.get('errors', []),
                 # FX.1 — which limits the commitments press on, as data (None = not diagnosed).
                 'binding_limits': result.get('binding_limits'),
+                'binding_limits_verdict': result.get('binding_limits_verdict'),
                 'warnings': result.get('warnings', []),
                 'profit': None,
             })

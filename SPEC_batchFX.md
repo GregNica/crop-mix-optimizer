@@ -310,6 +310,23 @@ kind shares (list shape, unique ids, `source`, known kinds, suggestions don't bi
   fall replant nobody asked for). At or above the lot the minimum stays: one planting meets it,
   and an unneeded exemption opened degenerate optima (measured: a covered-tunnel test's plan moved).
 
+**`/code-review high` on `11b731a` (2026-10-25): 8 findings; #1 reproduced (every row read "error").**
+Fixed: (1) `next_head_deltas` passed `diagnose_infeasible` a second time beside the adapter's own
+kwargs → TypeError swallowed per row, so the one-more-head figure vanished in every What-If with
+hires (every test stubbed that path) — now set in the kwargs dict; (2) only Monte Carlo skipped the
+diagnosis — `solveForNumbers` now skips it by default and the labour-plan panel, which SHOWS the
+refusal, opts in; (3) `.3g` printed "1.53e+04 L" — plain numbers; (4) a diagnosis that ran out of
+time read as "they contradict each other" — `binding_limits_verdict` ∈ proved | unfinished |
+contradiction (`_elastic_verdict`, unit-tested: an incumbent stopped by the clock is never
+"proved"), and a RELEASE re-solve that times out now says so instead of a bare infeasible;
+(6) a floor naming a VARIANT counted the parent's acres — it now counts that variant only (naming
+the parent still counts both); (7) `carry-in:` ids are reserved; (8) a weekless limit (diversity)
+no longer reads "up to". 13 targeted mutants on the changed code, 13 caught (N7 first survived —
+fixed by extracting the verdict).
+Deferred: (5) a limit with zero capacity everywhere is weighed in its raw unit, so between two
+SUBSTITUTE limits the elastic may prefer the other — same root as M11 (the weighting only matters
+for substitutes); one decision for both, with a fixture that has a substitute.
+
 **FX.3 Contracts.** Farm-level `contracts: [{sells_as, channel, lb_per_week, from_week, to_week,
 penalty_per_lb}]` → `Σ v[identity,ch,w] + short[k,w] ≥ lb`, `0 ≤ short ≤ lb`, penalty in the
 objective and the P&L — ⚠️ **NOT in the C13 weekly cash floor**: charged there, an unavoidable
