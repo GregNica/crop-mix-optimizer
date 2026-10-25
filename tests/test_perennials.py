@@ -324,3 +324,76 @@ def test_extra_cost_is_spread_flat_over_the_year():
     without = solve_optimal(perennial_farm(BEARING))
     shift = [a - b for a, b in zip(without["weekly_cash_flow"], with_extra["weekly_cash_flow"])]
     assert shift == pytest.approx([3 * 520 / 52 * w for w in range(53)], abs=2)   # [0] = opening
+
+
+# ---------------------------------------------------------------------------
+# Growing season — dormant weeks hold land and use nothing (grower, 2026-10-25)
+# ---------------------------------------------------------------------------
+
+SEASON = dict(growing_from_week=14, growing_to_week=40)       # 27 active weeks, harvest 18-25 inside
+
+
+def season_farm(*blocks, **season):
+    p = perennial_farm(*blocks)
+    p["crops"][-1].update(season or SEASON)
+    return p
+
+
+@pytest.fixture(scope="module")
+def seasonal():
+    return solve_optimal(season_farm())
+
+
+def test_outside_the_season_a_patch_is_dormant(seasonal):
+    for cid in ("c1", "c2"):
+        row = block_row(seasonal, cid)
+        assert [w for w, ph in zip(row["weeks"], row["phases"]) if ph == 3] == \
+            list(range(1, 14)) + list(range(41, 53)), cid
+    assert [w for w, ph in zip(block_row(seasonal, "c1")["weeks"], block_row(seasonal, "c1")["phases"])
+            if ph == 2] == list(HARVEST)
+
+
+def test_dormant_patch_still_holds_its_land(seasonal):
+    assert min(sum(z["used_acres"][w] for z in seasonal["zones"]) for w in range(52)) >= 4.0 - 1e-6
+
+
+def test_dormant_weeks_use_no_labour(seasonal):
+    # bearing: 27 active weeks = 19 grow + 8 harvest; establishing: 27 grow.
+    assert block(seasonal, "c1")["labor_hours"] == pytest.approx(3 * (19 * 0.5 + 8 * 5.5))
+    assert block(seasonal, "c2")["labor_hours"] == pytest.approx(1 * 27 * 0.5)
+
+
+def test_dormant_weeks_carry_no_inputs(seasonal):
+    """Fertiliser every active week, fuel by phase, the spray over the 19 (or 27) grow weeks — and
+    nothing in the 25 dormant ones. The establishing patch's flat extra is a patch cost, not an
+    input, so it stays whole."""
+    bearing = 27 * 2.0 * FERT + (19 * 1.0 + 8 * 3.0) * FUEL + 150
+    establishing = 27 * 2.0 * FERT + 27 * 1.0 * FUEL + 150
+    assert block(seasonal, "c1")["cost"] == pytest.approx(3 * bearing)
+    assert block(seasonal, "c2")["cost"] == pytest.approx(establishing + 800)
+
+
+def test_water_readers_skip_dormant_weeks():
+    """Direct, because a solve hides it: the app meters water at $0, so only C3 reads it."""
+    import numpy as np
+    from farm_v2.utils.calendar import DORMANT, GROW
+    from farm_v2.utils.water import compute_net_water_rates, rain_coverage
+    succ = [{"crop": 0, "weeks": [1, 2], "phases": [DORMANT, GROW]}]
+    crop = [{"water_plant": 0, "water_grow": 100.0, "water_harv": 0}]
+    rain = np.zeros(52)
+    rate = compute_net_water_rates(succ, crop, rain, 0.65)
+    assert (rate[0][1], rate[0][2]) == (0.0, 100.0)
+    # A DRY dormant week must not count: the growing week is fully rain-watered, so coverage is
+    # 1.0 — counted, the dormant week's zero would drag it to 0 and bar the patch rain-fed.
+    # (A WET dormant week was this guard's first form, and it was inert: it can only raise a min.)
+    rain[1] = 1e6
+    assert rain_coverage(succ, crop, rain, 0.65)[0] == 1.0
+
+
+@pytest.mark.parametrize("season, words", [
+    (dict(growing_from_week=14), "give both growing_from_week and growing_to_week"),
+    (dict(growing_from_week=20, growing_to_week=40), "outside 'Asparagus's growing season"),
+    (dict(growing_from_week=0, growing_to_week=40), "growing_from_week must be a whole week"),
+])
+def test_bad_season_is_refused(season, words):
+    _refused(season_farm(**season), words)

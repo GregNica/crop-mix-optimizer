@@ -19,12 +19,17 @@ the card's rates like any crop's (grower, 2026-10-25: "perennials still need tho
 block's establishment is SUNK: no depreciation line (ruling 6 overrides OWN->depreciate for now).
 `labor_grow`/`labor_harv` on a block override the card's (a young patch picks less). No yield ramp.
 
+The card's growing season (`growing_from_week`, `growing_to_week`; absent = all year) bounds when
+a patch uses anything: outside it the patch is DORMANT — it holds its land and uses no water,
+fertiliser, fuel, crop protection or labour (grower, 2026-10-25: asparagus is not irrigated or
+crewed in January). Harvest weeks must lie inside the season.
+
 Read by validation and the solver alike, so a block one of them would refuse, the other refuses.
 Only `kind: "perennial"` exists so far; the other kinds SPEC §6.1 names (must_stand,
 must_plant_annual, contract) arrive with FX.1/FX.3 and are refused until then, never skipped.
 """
 
-from farm_v2.utils.calendar import week_span
+from farm_v2.utils.calendar import DORMANT, GROW, HARVEST, week_span
 from farm_v2.utils.numbers import check_nonneg, check_positive, is_number
 from farm_v2.utils.zones import crop_zone_names
 
@@ -43,6 +48,19 @@ def _week(v, what):
     if not is_number(v) or v != int(v) or not 1 <= v <= N_WEEKS:
         raise ValueError(f"{what} must be a whole week 1-{N_WEEKS}, got {v!r}.")
     return int(v)
+
+
+def growing_weeks(crop):
+    """The weeks a perennial card's patches are active, or ValueError. Both ends or neither."""
+    first, last = crop.get("growing_from_week"), crop.get("growing_to_week")
+    if first is None and last is None:
+        return list(range(1, N_WEEKS + 1))
+    name = crop.get("name")
+    if first is None or last is None:
+        raise ValueError(f"Crop '{name}': give both growing_from_week and growing_to_week, or neither "
+                         f"(neither = active all year).")
+    return week_span(_week(first, f"Crop '{name}': growing_from_week"),
+                     _week(last, f"Crop '{name}': growing_to_week"))
 
 
 def resolve_perennial_blocks(commitments, crops, zone_names):
@@ -126,16 +144,23 @@ def _resolve_block(e, cid, source, by_name, zone_names):
         harvest = week_span(first, last)            # may wrap the year, as a season window does
     else:
         harvest = []
+    season = growing_weeks(crop)
+    outside = [w for w in harvest if w not in season]
+    if outside:
+        raise ValueError(
+            f"{what} harvests in week(s) {outside}, outside '{name}'s growing season (weeks "
+            f"{season[0]}–{season[-1]}). Move the harvest weeks or widen the season on its card."
+        )
     labour = {k: _number(e.get(k, crop.get(k)), f"{what}: {k}") for k in ("labor_grow", "labor_harv")}
     return {"id": cid, "source": source, "crop": name, "acres": acres, "zone": zone,
             "planted_year": planted, "yield_per_acre": ypa, "extra_cost_per_acre": extra,
-            "harvest_weeks": harvest, **labour}
+            "harvest_weeks": harvest, "growing_weeks": season, **labour}
 
 
 def perennial_successions(blocks, crops, zone_names):
     """One pinned pseudo-succession per block, in the shape generate_successions returns. Phases:
-    grow (1) every week, harvest (2) in the block's harvest weeks; no planting phase — it is
-    already in the ground.
+    harvest in the block's harvest weeks, grow in the rest of its card's growing season, DORMANT
+    outside it; no planting phase — it is already in the ground.
 
     What the solver needs is carried as PLANTING properties, so its core asks about pins and
     overrides, never about perennials: `pinned_acres` (the acres are an input), `commitment_id`,
@@ -153,12 +178,13 @@ def perennial_successions(blocks, crops, zone_names):
         while name in used:                    # two blocks of one crop, year and zone
             name, n = f"{base} ({n})", n + 1
         used.add(name)
-        hw = set(b["harvest_weeks"])
+        hw, season = set(b["harvest_weeks"]), set(b["growing_weeks"])
         out.append({
             "name": name,
             "crop": index[b["crop"]],
             "weeks": list(range(1, N_WEEKS + 1)),
-            "phases": [2 if w in hw else 1 for w in range(1, N_WEEKS + 1)],
+            "phases": [HARVEST if w in hw else GROW if w in season else DORMANT
+                       for w in range(1, N_WEEKS + 1)],
             "start_week": 1,
             "zone": zone_names.index(b["zone"]),
             "pinned_acres": b["acres"],

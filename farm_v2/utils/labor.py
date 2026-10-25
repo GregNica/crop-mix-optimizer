@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from farm_v2.utils.calendar import planting_value
+from farm_v2.utils.calendar import DORMANT, planting_value
 
 # The two accepted seasonal type spellings. PT is a legacy alias — the two take identical
 # code paths (wage, capacity, committed-wage treatment all the same); the app's adapter maps
@@ -282,7 +282,7 @@ def compute_labor_rates(
     for i, s in enumerate(successions):
         crop = crops[s["crop"]]
         for week, phase in zip(s["weeks"], s["phases"]):
-            if 1 <= week <= n_weeks:
+            if 1 <= week <= n_weeks and phase != DORMANT:
                 result[i][week] = planting_value(s, crop, _LABOR_KEY[phase])
 
     return result

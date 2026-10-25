@@ -47,6 +47,7 @@ from scipy.sparse import csr_matrix
 
 from farm_v2.utils.calendar import (
     generate_successions,
+    DORMANT,
     build_phase_table,
     harvest_weeks_of,
     phase_weeks_of,
@@ -735,7 +736,7 @@ def solve_farm_v2(
     for i, s in enumerate(successions):
         crop = crops[s["crop"]]
         for week, phase in zip(s["weeks"], s["phases"]):
-            if 1 <= week <= N_WEEKS:
+            if 1 <= week <= N_WEEKS and phase != DORMANT:
                 fert_rate[i][week] = crop.get(_FERT_KEY[phase], 0.0)
                 fuel_rate[i][week]  = crop.get(_FUEL_KEY[phase], 0.0)
 

@@ -244,10 +244,17 @@ refused any perennial outright (`calendar.py`, "cycle is 113 weeks … exceeds t
   (client wording added); (8) the money-input checks moved to `utils/numbers.py` (one copy);
   (9) the report no longer silently skips a pin without a `block`. 5/5 targeted mutants caught.
   Deferred, on the record:
-  - **(4) Dormancy — FOR THE GROWER.** Every non-harvest week is a GROW week, so the card's
-    water/fert/fuel/labour grow rates are charged all 52 weeks, January included. Recommended:
-    a "growing season" (weeks) on the perennial card; outside it the patch holds its land with
-    no inputs or labour.
+  - **(4) Dormancy — BUILT (grower, 2026-10-25: "yes add the growing season").** Every
+    non-harvest week had been a GROW week, so the card's grow rates were charged all 52 weeks,
+    January included. The perennial card takes `growing_from_week` / `growing_to_week` (both or
+    neither; absent = all year, i.e. the old behaviour; may wrap). Outside it a patch is in the
+    new phase `DORMANT` (= 3, `calendar.py`): it holds its land (C1 counts every phase) and every
+    per-phase rate reader skips it — labour, both water readers, fertiliser, fuel; crop
+    protection already spreads over GROW weeks only. Harvest weeks outside the season are
+    refused by name. Client: one `PHASE_CODE` table for the Gantt and its CSV ('D', grey) — both
+    had mapped anything not 0/1 to 'H'. Measured (season W14–40): bearing patch 19 G + 8 H + 25
+    D, labour 3×(19×0.5 + 8×5.5) h. 7 targeted mutants, 7 caught — after the rain-coverage
+    guard was found INERT (a WET dormant week can only raise a minimum; the harm is a DRY one).
   - (7) `commitments` are forwarded as sent, outside the client's unit conversion — the UI step
     must convert a patch's acres/yield/cost with the crop card (the ×2.2046 family).
   - (10) Skipped: `planted_year` is not compared with `year`, because the app never sends a plan

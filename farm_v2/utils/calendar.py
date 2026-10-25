@@ -17,6 +17,12 @@ from datetime import date, timedelta
 from farm_v2.utils.zones import WHOLE_FARM, crop_zone_names
 
 
+# Phase codes in a succession's `phases`. DORMANT (FX.2) is a perennial patch outside its card's
+# growing season: it HOLDS its land (C1 counts every phase) and uses no water, fertiliser, fuel,
+# crop protection or labour — every per-phase rate reader skips it.
+PLANT, GROW, HARVEST, DORMANT = 0, 1, 2, 3
+
+
 # ---------------------------------------------------------------------------
 # Week ↔ date helpers
 # ---------------------------------------------------------------------------
@@ -270,7 +276,7 @@ def _is_leap(year: int) -> bool:
 # Utility: summarise succession calendar as a readable dict
 # ---------------------------------------------------------------------------
 
-PHASE_LABEL = {0: "P", 1: "G", 2: "H", None: "-"}
+PHASE_LABEL = {PLANT: "P", GROW: "G", HARVEST: "H", DORMANT: "D", None: "-"}
 
 
 def succession_summary(successions: list[dict], crops: list[dict]) -> str:

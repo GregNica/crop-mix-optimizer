@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from farm_v2.utils.calendar import DORMANT
+
 # ---------------------------------------------------------------------------
 # Hard-coded defaults
 # ---------------------------------------------------------------------------
@@ -250,7 +252,7 @@ def compute_net_water_rates(
         crop = crops[s["crop"]]
         frac = fracs[i]
         for week, phase in zip(s["weeks"], s["phases"]):
-            if not (1 <= week <= 52):
+            if not (1 <= week <= 52) or phase == DORMANT:
                 continue
             raw_rate = crop[WATER_PHASE_KEYS[phase]]
             offset = rainfall_weekly_L_per_acre[week - 1] * frac
@@ -279,6 +281,8 @@ def rain_coverage(
         crop = crops[s["crop"]]
         frac = fracs[i]
         for week, phase in zip(s["weeks"], s["phases"]):
+            if phase == DORMANT:
+                continue
             need = crop[WATER_PHASE_KEYS[phase]]
             if 1 <= week <= 52 and need > 0:
                 rain = rainfall_weekly_L_per_acre[week - 1] * frac
