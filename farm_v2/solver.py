@@ -280,7 +280,9 @@ def _diagnose_unplanted_crops(
         }
 
         if not succ_idx:
-            rec["reason"] = "no_plantable_window"
+            # FX.2 — a perennial has no window; with no patch binding (only suggested ones) it is
+            # simply not committed this year, and "check the season window" would be wrong.
+            rec["reason"] = "no_committed_block" if crop.get("perennial") else "no_plantable_window"
             out.append(rec)
             continue
 
@@ -849,19 +851,38 @@ def solve_farm_v2(
     # establishing sells nothing, so it carries no per-pound cost — it is committed, not chosen.
     # `kernel_yield` is the per-acre yield the per-crop rates below read: the crop's, or for a
     # perennial the acre-weighted yield of its bearing blocks.
+    # ONE set of rows per crop carries every per-crop rate below, each a WEIGHTED mean over it:
+    #   annual    — every slot it could be planted in, weight 1 (the plain mean these always were);
+    #   perennial — its BEARING patches, weighted by acres (FX.2). A patch still establishing
+    #               sells nothing, so it is committed cost, not a rate a pound carries; and patches
+    #               differ in size and yield, so a plain mean let a 0.2-ac young patch at 100 lb/ac
+    #               put the crop's per-pound cost at $1.69 against a true $0.19 (/code-review).
+    # Sharing the rows is what keeps the margin tooltip reconciling: per-pound cost, yield and the
+    # per-acre split must describe the same plantings, or revenue − cost ≠ margin.
+    kernel_rows = []
+    for c_idx, crop in enumerate(crops):
+        if crop.get("perennial"):
+            kernel_rows.append([(i, successions[i]["pinned_acres"]) for i in pinned
+                                if successions[i]["crop"] == c_idx and succ_yield[i] > 0])
+        else:
+            kernel_rows.append([(i, 1.0) for i, s in enumerate(successions) if s["crop"] == c_idx])
+
+    def _kernel_mean(c_idx, values):
+        """The weighted mean of values[i] over crop c_idx's kernel rows (0 when it has none)."""
+        rows = kernel_rows[c_idx]
+        total = sum(w for _, w in rows)
+        return sum(w * values[i] for i, w in rows) / total if total else 0.0 * values[0]
+
     var_cost_per_lb = np.zeros(n_crops, dtype=float)
     kernel_yield = np.zeros(n_crops, dtype=float)
     for c_idx, crop in enumerate(crops):
         stf = float(crop.get("sell_through_fraction", sell_through_fraction) or 0.0)
-        own = [i for i, s in enumerate(successions) if s["crop"] == c_idx and succ_yield[i] * stf > 0]
-        costs = [var_cost_coeff[i] / (total_land * succ_yield[i] * stf) for i in own]
-        var_cost_per_lb[c_idx] = float(np.mean(costs)) if costs else 0.0
-        if crop.get("perennial"):
-            acres = sum(successions[i]["pinned_acres"] for i in own)
-            kernel_yield[c_idx] = (sum(succ_yield[i] * successions[i]["pinned_acres"] for i in own)
-                                   / acres) if acres else 0.0
-        else:
-            kernel_yield[c_idx] = float(crop.get("yield_per_acre", 0.0) or 0.0)
+        kernel_yield[c_idx] = _kernel_mean(c_idx, succ_yield)
+        # Σ cost / Σ pounds over the rows: for an annual (one yield) this IS the mean per-slot cost
+        # per pound it always was; for a perennial it is what its bearing patches cost per pound.
+        sold_per_x = total_land * kernel_yield[c_idx] * stf
+        var_cost_per_lb[c_idx] = (_kernel_mean(c_idx, var_cost_coeff) / sold_per_x
+                                  if sold_per_x > 0 else 0.0)
 
     # Land-occupancy days per crop: planting through the LAST harvest week, not days-to-maturity
     # — a crop harvested over several weeks occupies the ground for all of them, and charging it
@@ -871,26 +892,19 @@ def solve_farm_v2(
         lens = [len(s["weeks"]) * 7.0 for s in successions if s["crop"] == c_idx and s["weeks"]]
         occupancy_days[c_idx] = float(np.mean(lens)) if lens else 0.0
 
-    # Per-acre variable cost split for each crop, from the products the objective charged.
-    # var_cost_coeff/vc_split are "cost when x=1", i.e. for total_land acres, so divide out.
     # Per-acre LABOUR HOURS, replacing the per-acre labour cost W12 removed. Wages are committed,
     # so an acre of any crop adds $0 of labour cost at the margin — printing a per-crop labour
     # DOLLAR figure would state a charge the model does not make, which is the untrue-number class
     # this file keeps getting caught by. Hours are the honest version of the same question ("which
     # crops are labour-hungry?"), they are what C2 actually rations, and they need no cost basis.
-    labor_hours_per_acre = {}
-    for c_idx, crop in enumerate(crops):
-        rows_h = [float(labor_rate[i][1:].sum()) for i, sc in enumerate(successions)
-                  if sc["crop"] == c_idx]
-        labor_hours_per_acre[crop["name"]] = float(np.mean(rows_h)) if rows_h else 0.0
+    labor_hours_per_acre = {crop["name"]: float(_kernel_mean(c_idx, labor_rate[:, 1:].sum(axis=1)))
+                            for c_idx, crop in enumerate(crops)}
 
+    # var_cost_coeff/vc_split are "cost when x=1", i.e. for total_land acres, so divide out.
     cost_split_per_acre = {}
     for c_idx, crop in enumerate(crops):
-        rows = [vc_split[i] for i, sc in enumerate(successions) if sc["crop"] == c_idx]
-        if rows and total_land > 0:
-            mean = np.mean(np.vstack(rows), axis=0) / total_land
-        else:
-            mean = np.zeros(len(VC_CATEGORIES), dtype=float)
+        mean = (_kernel_mean(c_idx, vc_split) / total_land if total_land > 0
+                else np.zeros(len(VC_CATEGORIES), dtype=float))
         cost_split_per_acre[crop["name"]] = dict(
             zip(VC_CATEGORIES, (float(v) for v in mean)),
             total=float(mean.sum()),
@@ -1717,6 +1731,28 @@ def solve_farm_v2(
     status = report_solve_status(result.status, time_limited_incumbent)
 
     if result.status != 0 and not time_limited_incumbent:
+        # FX.2 — a pin is forced into labour, water, storage, harvest-acre and cash rows that C8/C10's
+        # exemption does not cover, so committed patches alone can make the plan infeasible
+        # (measured: a 10-ac patch at 200 h/ac/wk harvest returned a bare HiGHS "infeasible").
+        # One re-solve with the pins RELEASED tells whether they are the cause; WHICH limit binds
+        # is FX.1's elastic re-solve.
+        pin_errors = []
+        if result.status == 2 and pinned:
+            lb_free = lb.copy()
+            lb_free[[idx_x_start + i for i in pinned]] = 0.0
+            lb_free[[idx_y_start + i for i in pinned]] = 0.0
+            free = milp(c=c_obj, constraints=constraints, integrality=integrality,
+                        bounds=Bounds(lb_free, ub),
+                        options={"disp": False, "time_limit": solver_time_limit})
+            if free.status == 0 or has_time_limited_incumbent(free.status, getattr(free, "x", None) is not None):
+                names = ", ".join(f"{successions[i]['name']} ({successions[i]['pinned_acres']:g} ac)"
+                                  for i in pinned)
+                pin_errors.append(
+                    f"The committed plantings ({names}) cannot all fit this year: together with "
+                    f"the rest of the farm they need more labour, water, storage, harvest capacity "
+                    f"or cash than the farm has in some week. Without them a plan exists. Reduce "
+                    f"their acres, or raise the limit they press on."
+                )
         return {
             "status": status,
             "profit": None,
@@ -1724,7 +1760,7 @@ def solve_farm_v2(
             # Present on EVERY branch. The adapter had to write result.get('errors', []) purely
             # because this path omitted them — a caller band-aiding a schema the solver should
             # simply keep consistent.
-            "errors": [],
+            "errors": pin_errors,
             "warnings": validation_warnings,
             "channel_margins": channel_margins,
             "excluded_channels": excluded_channels,
@@ -2171,10 +2207,8 @@ def solve_farm_v2(
     # this year, what it can sell, and the hours it takes. Stage is read off its harvest (none =
     # establishing), never stored beside it.
     perennial_blocks_out = []
-    for i in pinned:
-        b = successions[i].get("block")
-        if b is None:
-            continue
+    for i in (i for i in pinned if "block" in successions[i]):
+        b = successions[i]["block"]
         perennial_blocks_out.append({
             "id": b["id"], "source": b["source"], "crop": b["crop"], "zone": b["zone"],
             "name": successions[i]["name"], "acres": b["acres"], "planted_year": b["planted_year"],

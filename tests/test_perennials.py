@@ -172,10 +172,10 @@ def _refused(p, words):
 @pytest.mark.parametrize("change, words", [
     (dict(crop="Rhubarb"), "not one of the farm's crops"),
     (dict(crop="Spinach"), "not marked perennial"),
-    (dict(acres=0), "acres must be > 0"),
-    (dict(acres=True), "acres must be a number"),
+    (dict(acres=0), "acres must be positive"),
+    (dict(acres=True), "acres must be positive, got True"),
     (dict(yield_per_acre=None), "yield_per_acre"),
-    (dict(extra_cost_per_acre=-5), "extra_cost_per_acre must be >= 0"),
+    (dict(extra_cost_per_acre=-5), "extra_cost_per_acre must be a number ≥ 0"),
     (dict(harvest_to_week=None), "harvest_to_week must be a whole week"),
     (dict(harvest_from_week=53), "harvest_from_week must be a whole week"),
     (dict(kind="must_stand"), "not supported yet"),
@@ -200,6 +200,29 @@ def test_unaccepted_suggestion_does_not_bind(base):
     assert [b["id"] for b in accepted["perennial_blocks"]] == ["c1", "c2"]
     assert accepted["profit"] == pytest.approx(base["profit"], abs=0.01)     # = typed (`user`)
     assert accepted["profit"] < plain["profit"] - 100
+
+
+def test_patch_that_cannot_fit_is_named_not_bare_infeasible():
+    """A 10-ac patch needing 200 h/ac/wk at harvest exceeds the crew alone; the refusal names the
+    committed plantings instead of returning HiGHS's bare 'infeasible'."""
+    r = solve(perennial_farm(dict(BEARING, acres=10, labor_harv=200), ESTABLISHING))
+    assert r["status"] == "infeasible"
+    assert any("Asparagus · planted 2019 (10 ac)" in e and "cannot all fit" in e for e in r["errors"]), r
+
+
+def test_perennial_card_minimum_is_not_applied_to_its_patches():
+    """A card keeping a 5-ac minimum, allowed only in a 3-ac tunnel: its 2-ac patch is valid,
+    because a pinned patch has no minimum (C10 skips pins)."""
+    p = perennial_farm(dict(BEARING, acres=2, zone="High tunnel"), dict(ESTABLISHING, zone="High tunnel"),
+                       zones=[{"name": "High tunnel", "acres": 3, "covered": True}, {"name": "Open field"}])
+    p["crops"][-1].update(min_acreage_if_planted=5, zones=["High tunnel"])
+    assert sorted(b["acres"] for b in solve_optimal(p)["perennial_blocks"]) == [1.0, 2.0]
+
+
+def test_perennial_with_only_a_suggested_patch_is_not_committed():
+    r = solve_optimal(perennial_farm(dict(BEARING, source="suggested")))
+    rec = next(u for u in r["unplanted_crops"] if u["crop"] == "Asparagus")
+    assert rec["reason"] == "no_committed_block"
 
 
 def test_duplicate_id_refused():
@@ -263,13 +286,35 @@ def test_pin_is_exempt_from_rotation_and_lot_size(card, why):
 
 def test_margin_kernel_weights_bearing_blocks_by_acres():
     """Hand-derived: 3 ac at 1,750 lb and 1 ac at 1,000 lb sell (5,250 + 1,000) / 4 = 1,562.5 lb
-    per acre — not the unweighted 1,375. The establishing block is in neither figure. Per-pound
-    cost is each bearing block's input cost over its own yield, averaged."""
+    per acre — not the unweighted 1,375. Per-pound cost is what the bearing patches cost over what
+    they sell: 4 × inputs / 6,250 lb. (This guard first pinned the plain mean of per-patch ratios,
+    which /code-review showed reads $1.69/lb for a true $0.19 with a small young patch.) The
+    establishing patch is in neither figure."""
     young = dict(BEARING, id="c3", acres=1, yield_per_acre=1000)
     r = solve_optimal(perennial_farm(BEARING, young, ESTABLISHING))
     m = r["channel_margins"]["Asparagus"]["Wholesale"]
     assert m["sold_lbs_per_acre"] == pytest.approx(1562.5)
-    assert m["var_cost_per_lb"] == pytest.approx((BEARING_INPUTS / 1750 + BEARING_INPUTS / 1000) / 2)
+    assert m["var_cost_per_lb"] == pytest.approx(4 * BEARING_INPUTS / 6250)
+
+
+def test_small_young_patch_does_not_inflate_per_pound_cost():
+    """The /code-review scenario: a 0.2-ac patch at 100 lb/ac beside the 3-ac bearing one. The
+    per-pound cost is the bearing patches' total cost over their sellable pounds, read off the
+    solver's own per-patch report."""
+    r = solve_optimal(perennial_farm(BEARING, dict(BEARING, id="c3", acres=0.2, yield_per_acre=100),
+                                     ESTABLISHING))
+    bearing = [b for b in r["perennial_blocks"] if b["stage"] == "bearing"]
+    true = sum(b["cost"] for b in bearing) / sum(b["sellable_lbs"] for b in bearing)
+    assert r["channel_margins"]["Asparagus"]["Wholesale"]["var_cost_per_lb"] == pytest.approx(true)
+
+
+def test_margin_tooltip_reconciles_for_a_perennial(base):
+    """revenue/acre − cost/acre = margin/acre, as it does for every annual: the split must describe
+    the same (bearing) patches the per-pound cost does — establishing extra cost included, it was
+    $390/ac apart."""
+    for ch, m in base["channel_margins"]["Asparagus"].items():
+        assert m["revenue_per_acre"] - m["cost_per_acre"]["total"] == pytest.approx(
+            m["margin_per_acre_cycle"]), ch
 
 
 def test_extra_cost_is_spread_flat_over_the_year():

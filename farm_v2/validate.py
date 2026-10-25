@@ -27,7 +27,8 @@ import math
 from farm_v2.utils.calendar import generate_successions, week_of_year
 from farm_v2.utils.zones import crop_zone_names, resolve_zones
 from farm_v2.utils.perennials import resolve_perennial_blocks
-from farm_v2.utils.numbers import is_number as _is_number
+from farm_v2.utils.numbers import (check_nonneg as _check_nonneg, check_positive as _check_positive,
+                                   is_number as _is_number)
 
 
 # ---------------------------------------------------------------------------
@@ -253,7 +254,9 @@ def validate_params(
             )
         # A minimum planting no eligible zone can hold makes the crop unplantable, and the
         # diagnosis would call it "outcompeted". C10 applies per zone slot (FX.4).
-        min_acres = float(crop.get("min_acreage_if_planted", 0.0) or 0.0)
+        # A perennial's patches are pinned with no minimum (C10 skips pins), so its card's
+        # minimum is never applied — refusing a patch for it would refuse a valid farm (FX.2).
+        min_acres = 0.0 if crop.get("perennial") else float(crop.get("min_acreage_if_planted", 0.0) or 0.0)
         too_small = [z for z in eligible if zone_acres[z] + 1e-9 < min_acres]
         if too_small and len(too_small) == len(eligible):
             raise ValueError(
@@ -417,19 +420,6 @@ def _validate_perennial_crop(crop: dict, name: str) -> None:
             f"Crop '{name}' is perennial, so its ground is its blocks in the commitments table — "
             f"clear its committed acres and 'overwinters'."
         )
-
-
-def _check_nonneg(val, name: str) -> None:
-    """For values charged straight into money: NaN poisons the profit and a negative pays the farm,
-    so both are refused rather than coerced."""
-    if not (_is_number(val) and val >= 0):
-        raise ValueError(f"{name} must be a number ≥ 0, got {val!r}.")
-
-
-def _check_positive(val: float, name: str) -> None:
-    # _is_number, not `val <= 0`: NaN compares False to everything, so it passed (/code-review max #9).
-    if not (_is_number(val) and val > 0):
-        raise ValueError(f"{name} must be positive, got {val!r}.")
 
 
 def _require_employee_numbers(emp: dict, keys: tuple, kind: str, i: int) -> None:

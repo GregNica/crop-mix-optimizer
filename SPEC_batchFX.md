@@ -228,6 +228,30 @@ refused any perennial outright (`calendar.py`, "cycle is 113 weeks … exceeds t
   no cap or minimum), the kernel's acre weighting (no test read a perennial margin), and the
   extra cost's flat spread (totals agree if charged in one week). Each guard forces the second
   condition. Two fast kills checked by hand: real (80 ac without the ceiling; presolve-infeasible).
+- **`/code-review high` on `28210e2` (2026-10-25): 10 findings; the money/refusal ones reproduced.**
+  Fixed: (1) a perennial's per-pound cost was the PLAIN mean of per-patch ratios — a 0.2-ac young
+  patch at 100 lb/ac read $1.69/lb against a true $0.19, Wholesale at −26%, and a 5% hurdle would
+  drop the channel and waste the forced harvest. ⚠️ **My own guard had pinned that wrong formula**,
+  so mutation testing "confirmed" it: a mutant kill proves a guard is SENSITIVE, never that its
+  oracle is right. Now one weighted kernel (annual: every slot, weight 1 — identical to before;
+  perennial: bearing patches by acres) feeds per-pound cost, yield, hours and the split;
+  (3) the margin tooltip did not reconcile for a perennial ($1,482 vs $1,872/ac — the split
+  averaged in the establishing patch) — same fix; (2) a patch the crew/cooler/water/cash cannot
+  hold returned a bare HiGHS "infeasible" — now one re-solve with the pins released, and if that
+  solves the refusal NAMES the committed plantings (which limit binds = FX.1's elastic re-solve);
+  (5) validation applied the card's minimum planting to perennial patches; (6) a perennial with
+  only a suggested patch was diagnosed "no plantable window" — new reason `no_committed_block`
+  (client wording added); (8) the money-input checks moved to `utils/numbers.py` (one copy);
+  (9) the report no longer silently skips a pin without a `block`. 5/5 targeted mutants caught.
+  Deferred, on the record:
+  - **(4) Dormancy — FOR THE GROWER.** Every non-harvest week is a GROW week, so the card's
+    water/fert/fuel/labour grow rates are charged all 52 weeks, January included. Recommended:
+    a "growing season" (weeks) on the perennial card; outside it the patch holds its land with
+    no inputs or labour.
+  - (7) `commitments` are forwarded as sent, outside the client's unit conversion — the UI step
+    must convert a patch's acres/yield/cost with the crop card (the ×2.2046 family).
+  - (10) Skipped: `planted_year` is not compared with `year`, because the app never sends a plan
+    year — `year` is the 2024 calendar layout, and the check would refuse real 2025 patches.
 - **Deferred:** the per-entry with/without delta (§6.3) to FX.3, built once for every kind.
   Hand-placed plantings of an annual (§6.2) stay unexposed: FX.1's floors cover "this crop is
   committed"; a fixed-date pin waits for the co-pilot work.

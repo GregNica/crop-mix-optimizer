@@ -25,7 +25,7 @@ must_plant_annual, contract) arrive with FX.1/FX.3 and are refused until then, n
 """
 
 from farm_v2.utils.calendar import week_span
-from farm_v2.utils.numbers import is_number
+from farm_v2.utils.numbers import check_nonneg, check_positive, is_number
 from farm_v2.utils.zones import crop_zone_names
 
 N_WEEKS = 52
@@ -34,11 +34,8 @@ SOURCES = ("user", "suggested", "accepted")
 
 
 def _number(v, what, *, positive=False):
-    """`v` as a float, or ValueError — bool and str refused, as for every money input."""
-    if not is_number(v):
-        raise ValueError(f"{what} must be a number, got {v!r}.")
-    if v < 0 or (positive and v == 0):
-        raise ValueError(f"{what} must be {'> 0' if positive else '>= 0'}, got {v:g}.")
+    """`v` as a float, or ValueError — the shared money-input refusals (bool, str, NaN, < 0)."""
+    (check_positive if positive else check_nonneg)(v, what)
     return float(v)
 
 
