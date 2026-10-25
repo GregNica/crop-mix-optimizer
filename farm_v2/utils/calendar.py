@@ -14,6 +14,8 @@ ISO 53-week-year edge case and to keep week numbers strictly in [1, 52].
 import math
 from datetime import date, timedelta
 
+from farm_v2.utils.zones import WHOLE_FARM, crop_zone_names
+
 
 # ---------------------------------------------------------------------------
 # Week ↔ date helpers
@@ -54,7 +56,8 @@ def week_end_date(week: int, year: int = 2024) -> date:
 # Succession auto-generation
 # ---------------------------------------------------------------------------
 
-def generate_successions(crops: list[dict], year: int = 2024) -> list[dict]:
+def generate_successions(crops: list[dict], year: int = 2024,
+                         zone_names: list[str] | None = None) -> list[dict]:
     """
     Auto-generate all succession slots from crop definitions.
 
@@ -70,7 +73,14 @@ def generate_successions(crops: list[dict], year: int = 2024) -> list[dict]:
             "weeks":      list[int], e.g. [11, 12, 13]  (1-indexed)
             "phases":     list[int], 0=plant 1=grow 2=harvest (same length as weeks)
             "start_week": int,
+            "zone":       int,       index into zone_names (FX.4)
         }
+
+    Zones (FX.4): one slot per (start week, eligible zone). `zone_names` absent = the single
+    "Whole farm" zone, so every caller that predates zones gets the slots it always did. On a
+    farm with more than one zone every slot name carries its zone ("Kale W10 · High tunnel"):
+    keyed on the FARM, not the crop's eligibility, so editing one crop's zones renames nothing
+    else. The structured identity is (crop, start_week, zone); the name is for display.
 
     Phase sequence: planting_weeks × [0]  +  grow_weeks × [1]  +  harvest_weeks × [2]
 
@@ -79,8 +89,10 @@ def generate_successions(crops: list[dict], year: int = 2024) -> list[dict]:
         field weeks = ceil(days_to_maturity / 7) + harvest_weeks
     """
     successions = []
+    zone_names = [WHOLE_FARM] if zone_names is None else list(zone_names)
 
     for crop_idx, crop in enumerate(crops):
+        eligible = crop_zone_names(crop, zone_names)
         # days_to_maturity is PLANT TO FIRST HARVEST — the grower's definition, and what every
         # seed catalogue and extension budget publishes. It is NOT total field occupancy.
         #
@@ -144,13 +156,16 @@ def generate_successions(crops: list[dict], year: int = 2024) -> list[dict]:
 
                 # 1-indexed weeks, wrapping 52 -> 1.
                 weeks = [((slot_start - 1 + k) % 52) + 1 for k in range(total_weeks)]
-                successions.append({
-                    "name":       f"{crop['name']} W{slot_start:02d}",
-                    "crop":       crop_idx,
-                    "weeks":      weeks,
-                    "phases":     phases.copy(),
-                    "start_week": slot_start,
-                })
+                name = f"{crop['name']} W{slot_start:02d}"
+                for zone in eligible:
+                    successions.append({
+                        "name":       f"{name} · {zone}" if len(zone_names) > 1 else name,
+                        "crop":       crop_idx,
+                        "weeks":      list(weeks),
+                        "phases":     phases.copy(),
+                        "start_week": slot_start,
+                        "zone":       zone_names.index(zone),
+                    })
 
     return successions
 

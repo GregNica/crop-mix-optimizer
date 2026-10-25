@@ -25,6 +25,7 @@ from farm_v2.utils.water import WATER_MODES
 
 import math
 from farm_v2.utils.calendar import generate_successions, week_of_year
+from farm_v2.utils.zones import crop_zone_names, resolve_zones
 
 
 # ---------------------------------------------------------------------------
@@ -65,6 +66,7 @@ def validate_params(
     hire_enabled: bool = False,
     hire_productivity_pct: float = 70.0,
     hire_cost_per_head: float = 800.0,
+    zones: list | None = None,            # FX.4 — [{name, acres}]; absent = one "Whole farm"
     **_kwargs,  # absorb unused kwargs for forward-compatibility
 ) -> list[str]:
     """
@@ -86,6 +88,9 @@ def validate_params(
         raise ValueError(f"credit_line must be ≥ 0, got {credit_line}.")
     if not (1 <= operating_weeks <= 52):
         raise ValueError(f"operating_weeks must be in [1, 52], got {operating_weeks}.")
+    # FX.4 — the same resolution the solver uses, so a zone it would refuse is refused here.
+    zone_acres = {z["name"]: z["acres"] for z in resolve_zones(zones, total_land)}
+    zone_names = list(zone_acres)
 
     # 2. Rainfall array
     import numpy as np
@@ -234,6 +239,13 @@ def validate_params(
                 f"Crop '{crop['name']}' has {committed:g} acres already committed, more than "
                 f"the farm's {total_land:g} acres. No plan can be built around it."
             )
+        # FX.4 — a crop's zones must be the farm's, and its commitment must fit in them.
+        eligible_acres = sum(zone_acres[z] for z in crop_zone_names(crop, zone_names))
+        if committed > eligible_acres + 1e-9:
+            raise ValueError(
+                f"Crop '{crop['name']}' has {committed:g} acres already committed, but the "
+                f"zones it may stand in hold only {eligible_acres:g} acres."
+            )
         if committed > 0:
             # NOT checked here any more: `committed_acres < min_acreage_if_planted`. That was
             # added on a mis-diagnosis and rejected farms that solve perfectly well — C15 is a
@@ -267,7 +279,7 @@ def validate_params(
 
     # 8. Global succession check
     try:
-        succs = generate_successions(crops, year)
+        succs = generate_successions(crops, year, zone_names)
     except ValueError as e:
         raise ValueError(f"Succession generation failed: {e}") from e
 

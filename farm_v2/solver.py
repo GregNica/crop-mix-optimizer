@@ -57,6 +57,7 @@ from farm_v2.utils.water import (
 )
 from farm_v2.utils.labor import compute_labor_arrays, compute_labor_rates
 from farm_v2.utils.demand import build_demand_table, build_annual_caps
+from farm_v2.utils.zones import resolve_zones
 from farm_v2.validate import validate_params
 
 
@@ -411,6 +412,8 @@ def solve_farm_v2(
     # --- Crops and channels ---
     crops: list | None = None,
     channels: list | None = None,     # each {"name", optional "fixed_selling_cost_per_wk"}
+    # --- Zones (FX.4) ---
+    zones: list | None = None,        # [{"name", "acres"}]; absent = one "Whole farm" zone
     # --- Year ---
     year: int = 2024,
     # --- Solver options ---
@@ -548,6 +551,7 @@ def solve_farm_v2(
             hire_enabled=hire_enabled,
             hire_productivity_pct=hire_productivity_pct,
             hire_cost_per_head=hire_cost_per_head,
+            zones=zones,
             city_water_enabled=city_water_enabled,
             well_enabled=well_enabled,
             catchment_enabled=catchment_enabled,
@@ -578,7 +582,13 @@ def solve_farm_v2(
     # -----------------------------------------------------------------------
     # Step 1 — Generate successions and lookup tables
     # -----------------------------------------------------------------------
-    successions = generate_successions(crops, year)
+    # FX.4 — resolved here as well as in validation: Step 0 fails OPEN when the guard crashes,
+    # and a zone or eligibility the farm cannot honour must still be refused, never solved.
+    try:
+        zone_list = resolve_zones(zones, total_land)
+        successions = generate_successions(crops, year, [z["name"] for z in zone_list])
+    except ValueError as ve:
+        return _invalid([str(ve)])
     N_S = len(successions)
     if N_S == 0:
         # Normally unreachable — validate_params raises first and Step 0 turns it into
@@ -1197,14 +1207,18 @@ def solve_farm_v2(
         st_i = crop_i.get("sell_through_fraction", sell_through_fraction)
         succ_weekly_sellable_lbs.append(st_i * total_land * crop_i["yield_per_acre"] / n_harv)
 
-    # C1 — Land: Σ x[i] ≤ 1 for each week w
-    for w in range(1, N_WEEKS + 1):
-        cols = [
-            (idx_x_start + i, 1.0)
-            for i in range(N_S)
-            if phase_table[i][w] is not None
-        ]
-        add_row(cols, -np.inf, 1.0)
+    # C1 — Land: one row per ZONE per week (FX.4), Σ x[i in z] ≤ acres_z / total_land — x is
+    # a fraction of the whole farm. With no zones this is the old single Σ x ≤ 1 row per week.
+    # stands_in[z][w-1] = the successions in the ground in zone z, week w: the one definition
+    # the rows and the zones report both read, built in one pass over each succession's weeks.
+    stands_in = [[[] for _ in range(N_WEEKS)] for _ in zone_list]
+    for i, s in enumerate(successions):
+        for w in phase_weeks_of(s, None, N_WEEKS):
+            stands_in[s["zone"]][w - 1].append(i)
+    for zone, weeks in zip(zone_list, stands_in):
+        for members in weeks:
+            add_row([(idx_x_start + i, 1.0) for i in members],
+                    -np.inf, zone["acres"] / total_land)
 
     # Crop labour hours in week w, as constraint coefficients on x. Built ONCE because two rows
     # need it: C2 caps it at capacity, and the reporting below sums the same hours.
@@ -2065,6 +2079,15 @@ def solve_farm_v2(
     city_weekly = (z[idx_cw_start   : idx_cw_start   + N_WEEKS]
                    if (city_water_enabled and idx_cw_start is not None) else np.zeros(N_WEEKS))
 
+    # FX.4 — acres standing in each zone, by week: the used side of C1's per-zone rows. Not a
+    # capacity_series entry: the unplanted-crop diagnosis scans those farm-wide, and a zone's
+    # land only limits the crops allowed in it.
+    zones_out = [
+        {"name": zone["name"], "acres": zone["acres"],
+         "used_acres": [float(x_sol[members].sum()) * total_land for members in weeks]}
+        for zone, weeks in zip(zone_list, stands_in)
+    ]
+
     capacity_series = {
         "labor":   {"used": [float(v) for v in labor_used_weekly[1:]],
                     "cap":  [float(labor_capacity[w] + overtime_hours_weekly[w] + hired_hours_weekly[w])
@@ -2172,6 +2195,7 @@ def solve_farm_v2(
         "storage_peak_m3":  max(storage_m3_weekly) if storage_m3_weekly else 0.0,
         "ambient_peak_m3":  max(ambient_m3_weekly) if ambient_m3_weekly else 0.0,
         "successions":      successions,
+        "zones":            zones_out,
         "crops":            crops,
         "channels":         channels,
     }

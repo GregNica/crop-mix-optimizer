@@ -822,6 +822,9 @@ before E lands; re-check the shortfall report after E.
 named land pools ("2 ac high tunnel, 6 ac part sun, 10 ac open field") and a crop × zone
 eligibility table. Acres split by zone; C1 land becomes per zone per week. Variable count grows
 by ×zones — fine at 3–5.
+✅ BUILT 2026-10-25 (solver/validate/adapter; UI with the FX UI step) — see `SPEC_batchFX.md` §3
+"FX.4 as built". Golden unchanged to the cent; a 2-ac tunnel fixture binds (tomatoes 5 → 2 ac,
+−$42,593); 11/11 targeted mutants caught.
 
 **FX.5 · Zone-specific growing behaviour = a separate crop name (grower ruling).** "Tomatoes" vs
 "High-tunnel Tomatoes", each with its own windows/yield/costs, eligible only in its zone — no

@@ -407,6 +407,7 @@
     overtime_enabled:            { unsent: 'server off-switch for overtime; the form caps it per role (max_ot_hrs = 0 means none)' },
     payroll_load_pct:            { unsent: 'legacy single payroll load (pre-L.5 server callers); the adapter splits it into fica + straight-time' },
     operating_weeks:             { unsent: 'deprecated; the solver ignores it (cost-accounting basis)' },
+    zones:                       { unsent: 'FX.4 named land pools [{name, acres}]; solver + adapter done, the zones card lands with the Batch FX UI' },
     storage_loss_frac_per_week:  { unsent: 'solver supports in-store shrink; no input yet — DECISIONS GROUP E3' },
     city_water_fixed_fee_per_week: { unsent: 'solver + P&L carry a city-water standing charge; no input yet (found by E5b)' },
   };

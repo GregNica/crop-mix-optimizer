@@ -58,6 +58,26 @@ unchanged). Crop gains `zones: [names]` (absent = all). Successions are generate
 zone (`x[i,z]`); C1 becomes one row per zone per week, RHS `acres_z/total_land`. Variables grow
 ×(eligible zones) — fine at 3–5 zones. A planting in a zone not on the farm is not generated.
 
+**FX.4 as built (2026-10-25).** `farm_v2/utils/zones.py` (`resolve_zones`, `crop_zone_names`),
+shared by validation and the solver. Decisions taken in the build, open to the grower:
+- **One zone may leave acres blank and take the rest** ("2 ac tunnel, the rest open field", the
+  toy's remainder zone); otherwise zones must add up to `total_land` exactly — a gap is refused,
+  never left as land the plan cannot use. Acres must be a real number > 0 (bool/str refused).
+- **Eligibility can only name the farm's zones.** An unknown name or an empty list is REFUSED,
+  never skipped (the toy's absent-zone leak). The solver re-resolves zones itself, so a crashed
+  pre-flight guard (Step 0 fails open) still cannot let one through.
+- **Slot names carry the zone whenever the FARM has >1 zone** ("Kale W10 · High tunnel"), not
+  per crop, so editing one crop's eligibility renames nothing. Identity = (crop, start_week, zone).
+- Result: `zones: [{name, acres, used_acres[52]}]` (not in `capacity_series`, which the
+  unplanted-crop diagnosis scans farm-wide); schedule rows carry `zone`; `weekly_land_frac` is now
+  summed from it instead of re-walked in the adapter.
+- ⚠️ **OPEN — C10 `min_acreage_if_planted` now applies per (start week, ZONE) slot**, i.e. per zone
+  separately, and y binaries grow ×zones. Fine for a variant pinned to one zone (the toy's 0.25-ac
+  tunnel minimum); for a crop in two zones the grower may mean the minimum of the planting as a
+  whole. Raise with FX.5.
+- Measured: splitting land every crop may use changes nothing (objective identical at gap 1e-9;
+  ~$20 apart at the shipped 1e-4 gap — tolerance, not an effect).
+
 **FX.5 Variants.** Crop gains optional `sells_as: "<crop name>"` (must name a crop that exists; no
 chains). Demand caps, contract floors and **channel reporting** key on the identity. Each name keeps
 its own windows/yield/costs. Diversity: see Q3.

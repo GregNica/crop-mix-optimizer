@@ -369,6 +369,9 @@ def run_from_js(params_json):
             overtime_rate_multiplier=overtime_rate_multiplier,
             crops=crops,
             channels=channels,
+            # FX.4 — named land pools, forwarded as sent: ABSENT = one "Whole farm" zone, and
+            # the solver (not this seam) refuses a malformed list by name.
+            zones=p.get('zones'),
             solver_time_limit=75.0,
         )
         result = solve_farm_v2(**solve_kwargs)
@@ -416,6 +419,7 @@ def run_from_js(params_json):
         fixed_selling_cost = float(result['fixed_selling_cost'])
 
         # Succession schedule for Gantt calendar and pie chart
+        zones_res = result['zones']     # strict: every planting below names its zone
         sched = []
         for i, s in enumerate(succs):
             frac2 = float(x_sol[i])
@@ -425,6 +429,7 @@ def run_from_js(params_json):
             sched.append({
                 'name':   s['name'],
                 'crop':   cr[s['crop']]['name'],
+                'zone':   zones_res[s['zone']]['name'],
                 'acres':  round(frac2 * total_land, 1),
                 'weeks':  list(s['weeks']),
                 'phases': list(s['phases']),
@@ -456,14 +461,9 @@ def run_from_js(params_json):
         weekly_labor_used   = list(_cap.get('labor', {}).get('used', _z52))
         weekly_labor_supply = list(_cap.get('labor', {}).get('cap', _z52))
 
-        weekly_land_frac = [0.0] * 52
-        for i, s in enumerate(succs):
-            frac2 = float(x_sol[i])
-            if frac2 < 1e-6:
-                continue
-            for w in s['weeks']:
-                if 1 <= w <= 52:
-                    weekly_land_frac[w-1] += frac2
+        # The farm's share of land standing each week, off the solver's per-zone C1 series.
+        weekly_land_frac = [sum(z['used_acres'][w] for z in zones_res) / total_land
+                            for w in range(52)]
 
         # W1 / D4 — the REAL per-channel weekly sales schedule, off the solver's own 'v'.
         # The client used to rebuild this from gross harvest x demand x price, which ignored
@@ -574,6 +574,10 @@ def run_from_js(params_json):
                 for r in result.get('overtime_by_role', [])],
             'peak_borrowing': peak_borrow,
             'succession_schedule': sched,
+            # FX.4 — each zone's size and the acres standing in it by week (52, 0-indexed).
+            'zones': [{'name': z['name'], 'acres': z['acres'],
+                       'used_acres': [round(float(v), 3) for v in z['used_acres']]}
+                      for z in zones_res],
             'crop_names':          crop_names,
             'weekly_land_frac':    [round(v, 4) for v in weekly_land_frac],
             'weekly_harvest_vol':  [round(v, 2) for v in weekly_harvest_vol],
