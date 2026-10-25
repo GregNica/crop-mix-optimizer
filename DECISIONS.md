@@ -1104,6 +1104,12 @@ the overhead ledger now tells the grower to take ALL utilities out of overhead: 
 pump share would leave cooling and buildings charged nowhere. The tooltip says so. Reverse this only
 together with putting the non-irrigation share back into the overhead ledger's COVERS.
 
+**FX.5 ruling (2026-10-25, accepted as recommended).** A variant inherits channels/prices/caps,
+diversity, labour and storage/shelf life (`farm_v2/utils/variants.py` `INHERITED_KEYS`); it keeps its
+OWN `sell_through_fraction`, `committed_acres` and `overwinters`. Deferred to the FX UI step:
+saturation labelled by the parent when only the variant sold; What-If sends variants without
+inherited keys; typed-value comparison ("4" vs 4). Detail: SPEC_batchFX §3 "FX.5 as built".
+
 ## GROUP H — The Batch 2 re-pin: the measurement contradicts the plan (2026-10-19; RULED 2026-10-21)
 
 **✅ RULING (grower, 2026-10-21): Option (B) — itemize overhead — expressed in DOLLARS, not

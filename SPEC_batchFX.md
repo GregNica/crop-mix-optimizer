@@ -124,8 +124,9 @@ inherited fields present); the solver is where a bad variant is refused.
   the same cooler — `cold_storage`, `crop_size_m3_per_lb`, shelf life / spread, storage loss.
   Omitted → the parent's; sent equal → fine; sent DIFFERENT → refused by name ("make it its own
   crop") — the payload twin of ruling 3's "price or cap edit → prompt for a new card".
-  ⚠️ Open to the grower: **`sell_through_fraction` stays the variant's own** (grade-out is a
-  property of how it was grown), as do `committed_acres` and `overwinters`.
+  **Grower ruling 2026-10-25 (accepted as recommended): `sell_through_fraction` stays the
+  variant's own** (grade-out is a property of how it was grown), as do `committed_acres` and
+  `overwinters`. The three `/code-review` deferrals below are accepted for the UI step.
 - **Rows.** Every cap row is per IDENTITY (a crop with no variant is an identity of one, so the
   golden farm's rows are the same rows in the same order). The market's cap is the max of the
   members' copies — equal, since channels are inherited, until the margin hurdle zeroes one, which
