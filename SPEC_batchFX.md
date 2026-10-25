@@ -89,10 +89,14 @@ warning). (4) Commitments overfilling one zone TOGETHER (each fits alone) gave a
 "infeasible"; now refused by Hall's condition over zone groups (a per-zone sum would wrongly
 refuse a crop that may spill into another zone — mutant N3 pins that).
 Deferred, on the record:
-- **(6) Rain falls on the tunnel → BUILDING (grower, 2026-10-25: "if it's easy").** Rain offset
-  is farm-wide, so a covered zone's crops got rain credit they cannot receive. Zone gains
-  `covered: true` → no rain offset for its plantings, in `compute_net_water_rates` (which C3, the
-  water cost and the Rain-fed plantable test all read) and its wording twin `rain_coverage`.
+- **(6) Rain falls on the tunnel → BUILT (grower, 2026-10-25: "if it's easy").** Rain offset
+  was farm-wide, so a covered zone's crops got rain credit they cannot receive. Zone gains
+  `covered: true` (default false). The solver builds ONE per-succession rain fraction (0 when
+  covered) and both rain readers take it — `compute_net_water_rates` (C3, water cost, Rain-fed
+  plantability) and `rain_coverage` (the refusal wording); water.py stays zone-agnostic, and a
+  partial-rain zone (shade cloth) would later need only a per-zone fraction, not new plumbing.
+  Measured: covering the 2-ac tunnel adds 3,390,856 L of irrigation, matching a hand rebuild
+  from the crop's phase needs to rounding; same plan. 5/5 targeted mutants caught.
 - (5) A crop eligible in N zones gets N identical copies of each slot (symmetry): measured 3.3 s →
   5.9 s on the golden farm with two all-eligible zones. Watch it on FX.7's fixture; symmetry-break
   or aggregate unrestricted crops if solves near the time limit.

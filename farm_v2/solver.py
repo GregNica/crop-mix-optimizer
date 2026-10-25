@@ -613,8 +613,12 @@ def solve_farm_v2(
         well_enabled, well_weekly_cap_L,
     )  # shape (52,)
 
+    # FX.4 — the rain credit per succession: none in a covered zone (high tunnel). Both rain
+    # readers take this one list, so the rule is written once.
+    rain_frac = [0.0 if zone_list[s["zone"]]["covered"] else rainfall_offset_fraction
+                 for s in successions]
     net_water_rate = compute_net_water_rates(
-        successions, crops, rainfall_weekly_L_per_acre, rainfall_offset_fraction,
+        successions, crops, rainfall_weekly_L_per_acre, rain_frac,
     )  # shape (N_S, 53)
 
     # Rain-fed (Batch W): with no source, C3's supply is zero and only a succession whose every
@@ -629,7 +633,7 @@ def solve_farm_v2(
         # supply. Coverage only words the answer, so a ratio rounding to 1.0 cannot disagree.
         plantable = ~net_water_rate[:, 1:].any(axis=1)
         cover = rain_coverage(successions, crops, np.asarray(rainfall_weekly_L_per_acre, dtype=float),
-                              rainfall_offset_fraction)
+                              rain_frac)
         for c_idx in {s["crop"] for s in successions}:
             idx = [i for i, s in enumerate(successions) if s["crop"] == c_idx]
             if not plantable[idx].any():
@@ -2083,7 +2087,7 @@ def solve_farm_v2(
     # capacity_series entry: the unplanted-crop diagnosis scans those farm-wide, and a zone's
     # land only limits the crops allowed in it.
     zones_out = [
-        {"name": zone["name"], "acres": zone["acres"],
+        {"name": zone["name"], "acres": zone["acres"], "covered": zone["covered"],
          "used_acres": [float(x_sol[members].sum()) * total_land for members in weeks]}
         for zone, weeks in zip(zone_list, stands_in)
     ]

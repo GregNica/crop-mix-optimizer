@@ -6,10 +6,15 @@ that BINDS, measured: tomatoes confined to it fall 5.0 → 2.0 acres and profit 
 """
 import json
 
+import numpy as np
 import pytest
 
 from farm_v2.adapter import run_from_js
 from farm_v2.utils.calendar import generate_successions
+from farm_v2.utils.water import (
+    RAINFALL_OFFSET_FRACTION, WATER_PHASE_KEYS, compute_net_water_rates, get_rainfall_weekly,
+    rain_coverage,
+)
 from farm_v2.utils.zones import WHOLE_FARM, resolve_zones
 from tests.helpers import golden_payload
 
@@ -23,11 +28,16 @@ TUNNEL = [{"name": "High tunnel", "acres": 2}, {"name": "Open field"}]
 class TestResolveZones:
     @pytest.mark.parametrize("zones", [None, []])
     def test_absent_is_the_whole_farm(self, zones):
-        assert resolve_zones(zones, 80) == [{"name": WHOLE_FARM, "acres": 80.0}]
+        assert resolve_zones(zones, 80) == [{"name": WHOLE_FARM, "acres": 80.0, "covered": False}]
 
     def test_one_blank_zone_takes_the_rest(self):
-        assert resolve_zones(TUNNEL, 80) == [{"name": "High tunnel", "acres": 2.0},
-                                             {"name": "Open field", "acres": 78.0}]
+        assert resolve_zones(TUNNEL, 80) == [
+            {"name": "High tunnel", "acres": 2.0, "covered": False},
+            {"name": "Open field", "acres": 78.0, "covered": False}]
+
+    def test_covered_is_kept(self):
+        z = resolve_zones([{"name": "High tunnel", "acres": 2, "covered": True}, {"name": "F"}], 80)
+        assert [x["covered"] for x in z] == [True, False]
 
     @pytest.mark.parametrize("zones, match", [
         ([{"name": "A", "acres": 30}, {"name": "B", "acres": 30}], "add up to 60"),
@@ -44,6 +54,7 @@ class TestResolveZones:
         ("High tunnel", "list of"),                        # shapes that used to raise
         (["High tunnel"], "list of"),                      # AttributeError → a traceback,
         ({"name": "A", "acres": 80}, "list of"),           # not a refusal (/code-review)
+        ([{"name": "A", "acres": 2, "covered": "yes"}, {"name": "B"}], "true or false"),
     ])
     def test_malformed_zones_are_refused_by_name(self, zones, match):
         with pytest.raises(ValueError, match=match):
@@ -249,3 +260,51 @@ class TestZonesThroughTheAdapter:
         p = golden_payload(zones=TUNNEL)
         p["crops"][0]["zones"] = ["Shade house"]
         _refused(p, "does not have")
+
+
+# ---------------------------------------------------------------------------
+# Covered zones — no rain reaches a high tunnel (grower, 2026-10-25)
+# ---------------------------------------------------------------------------
+
+class TestCoveredZones:
+    def test_a_covered_planting_gets_no_rain_credit(self, spinach_crop):
+        # A covered slot carries rain fraction 0 (the solver's wiring is tested end to end below).
+        succs = generate_successions([spinach_crop])[:1]
+        rain = np.full(52, 50_000.0)                          # rain in every week
+        open_, shut = (compute_net_water_rates(succs, [spinach_crop], rain, [f])
+                       for f in (0.65, 0.0))
+        weeks = succs[0]["weeks"]
+        assert (open_[0, weeks] < shut[0, weeks]).all()       # rain helped in the open
+        assert list(shut[0, weeks]) == [spinach_crop[WATER_PHASE_KEYS[p]]
+                                         for p in succs[0]["phases"]]
+        assert rain_coverage(succs, [spinach_crop], rain, [0.0])[0] == 0.0
+        assert rain_coverage(succs, [spinach_crop], rain, [0.65])[0] > 0.0
+
+    def test_covering_the_tunnel_adds_exactly_its_lost_rain(self, tunnel_tomatoes):
+        # Same plan, measured; the delta is rebuilt by hand from the crop's phase needs and the
+        # climate's rain, independently of the solver's water rows.
+        covered = _solve(zones=[dict(TUNNEL[0], covered=True), TUNNEL[1]],
+                         tunnel_only=("Tomatoes",))
+        assert covered["status"] == "optimal"
+        assert covered["zones"][0]["covered"] is True
+        plan = lambda o: [(s["name"], s["acres"]) for s in o["succession_schedule"]]
+        assert plan(covered) == plan(tunnel_tomatoes)
+        p = golden_payload()
+        tom = next(c for c in p["crops"] if c["name"] == "Tomatoes")
+        rain = get_rainfall_weekly(p["climate_zone"])
+        offset = rain * RAINFALL_OFFSET_FRACTION
+        lost = sum(s["acres"] * min(tom[WATER_PHASE_KEYS[ph]], offset[w - 1])
+                   for s in covered["succession_schedule"] if s["zone"] == "High tunnel"
+                   for w, ph in zip(s["weeks"], s["phases"]))
+        assert lost > 1_000_000                               # the effect is not negligible
+        delta = sum(covered["weekly_water_used"]) - sum(tunnel_tomatoes["weekly_water_used"])
+        assert delta == pytest.approx(lost, rel=1e-4)
+
+    def test_rain_fed_wording_knows_the_tunnel_is_dry(self):
+        # rain_coverage only WORDS the Rain-fed refusal, so nothing else pins its wiring: with
+        # every crop in a covered tunnel, the closest crop must read 0%, not the open-field 44%.
+        p = golden_payload(water_mode="rainfed",
+                           zones=[dict(TUNNEL[0], covered=True), TUNNEL[1]])
+        for c in p["crops"]:
+            c["zones"] = ["High tunnel"]
+        _refused(p, "rain covers 0%")

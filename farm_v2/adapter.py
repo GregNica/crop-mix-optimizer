@@ -578,7 +578,7 @@ def run_from_js(params_json):
             'peak_borrowing': peak_borrow,
             'succession_schedule': sched,
             # FX.4 — each zone's size and the acres standing in it by week (52, 0-indexed).
-            'zones': [{'name': z['name'], 'acres': z['acres'],
+            'zones': [{'name': z['name'], 'acres': z['acres'], 'covered': z['covered'],
                        'used_acres': [round(float(v), 3) for v in z['used_acres']]}
                       for z in zones_res],
             'crop_names':          crop_names,

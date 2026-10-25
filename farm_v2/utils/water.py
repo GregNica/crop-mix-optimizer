@@ -218,7 +218,7 @@ def compute_net_water_rates(
     successions: list[dict],
     crops: list[dict],
     rainfall_weekly_L_per_acre: np.ndarray,
-    rainfall_offset_fraction: float = RAINFALL_OFFSET_FRACTION,
+    rainfall_offset_fraction: float | list[float] = RAINFALL_OFFSET_FRACTION,
 ) -> np.ndarray:
     """
     Return a 2-D array ``net_water_rate[i][w]`` (shape: n_successions × 53,
@@ -238,17 +238,22 @@ def compute_net_water_rates(
 
     Phase keys in crop dict:
         "water_plant", "water_grow", "water_harv"
+
+    ``rainfall_offset_fraction`` is one farm-wide value or one per succession (FX.4: 0 for a
+    planting in a covered zone, where no rain reaches the crop).
     """
     n = len(successions)
     result = np.zeros((n, 53), dtype=float)  # col 0 unused (1-indexed weeks)
+    fracs = np.broadcast_to(np.asarray(rainfall_offset_fraction, dtype=float), (n,))
 
     for i, s in enumerate(successions):
         crop = crops[s["crop"]]
+        frac = fracs[i]
         for week, phase in zip(s["weeks"], s["phases"]):
             if not (1 <= week <= 52):
                 continue
             raw_rate = crop[WATER_PHASE_KEYS[phase]]
-            offset = rainfall_weekly_L_per_acre[week - 1] * rainfall_offset_fraction
+            offset = rainfall_weekly_L_per_acre[week - 1] * frac
             result[i][week] = max(0.0, raw_rate - offset)
 
     return result
@@ -259,7 +264,7 @@ def rain_coverage(
     successions: list[dict],
     crops: list[dict],
     rainfall_weekly_L_per_acre: np.ndarray,
-    rainfall_offset_fraction: float = RAINFALL_OFFSET_FRACTION,
+    rainfall_offset_fraction: float | list[float] = RAINFALL_OFFSET_FRACTION,
 ) -> np.ndarray:
     """
     Per succession, the share of its need rain covers in its DRIEST active week (capped at 1.0).
@@ -269,11 +274,13 @@ def rain_coverage(
     so a ratio that rounds to 1.0 cannot make a different call.
     """
     cover = np.ones(len(successions))
+    fracs = np.broadcast_to(np.asarray(rainfall_offset_fraction, dtype=float), (len(successions),))
     for i, s in enumerate(successions):
         crop = crops[s["crop"]]
+        frac = fracs[i]
         for week, phase in zip(s["weeks"], s["phases"]):
             need = crop[WATER_PHASE_KEYS[phase]]
             if 1 <= week <= 52 and need > 0:
-                rain = rainfall_weekly_L_per_acre[week - 1] * rainfall_offset_fraction
+                rain = rainfall_weekly_L_per_acre[week - 1] * frac
                 cover[i] = min(cover[i], rain / need)
     return cover

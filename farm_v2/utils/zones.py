@@ -2,9 +2,10 @@
 zones.py — named land pools (FX.4): "2 ac high tunnel, the rest open field".
 
 A zone is a share of the farm's land with its own weekly land row (C1). Crops name the zones they
-may stand in. Absent zones are one zone, "Whole farm", so a farm that names none is the farm every
-caller described before zones existed. Read by validation and the solver alike, so a zone one of
-them would refuse, the other refuses too.
+may stand in, and a `covered` zone (a high tunnel) gets no rain credit on its crops' water need.
+Absent zones are one zone, "Whole farm", so a farm that names none is the farm every caller
+described before zones existed. Read by validation and the solver alike, so a zone one of them
+would refuse, the other refuses too.
 """
 
 import math
@@ -13,14 +14,14 @@ WHOLE_FARM = "Whole farm"
 
 
 def resolve_zones(zones: list[dict] | None, total_land: float) -> list[dict]:
-    """[{name, acres}] with every acreage filled in, or ValueError naming what is wrong.
+    """[{name, acres, covered}] with every acreage filled in, or ValueError naming what is wrong.
 
     At most one zone may leave `acres` out: it takes what the others leave of `total_land`.
     Otherwise the zones must add up to the farm. A shortfall is refused rather than left
     unusable — a plan quietly unable to use land the grower owns is a silent failure.
     """
     if not zones:
-        return [{"name": WHOLE_FARM, "acres": float(total_land)}]
+        return [{"name": WHOLE_FARM, "acres": float(total_land), "covered": False}]
     # Shape first: a str or a list of names would otherwise raise AttributeError, which the
     # solver's refusal path does not catch — the grower got a traceback, not a reason.
     if not isinstance(zones, list) or not all(isinstance(z, dict) for z in zones):
@@ -34,6 +35,7 @@ def resolve_zones(zones: list[dict] | None, total_land: float) -> list[dict]:
         raise ValueError(f"Zone names must be unique — crops name their zones. Rename: {dupes}.")
 
     acres = []                                  # None = the zone taking the rest of the farm
+    covered = []
     for name, z in zip(names, zones):
         a = z.get("acres")
         # bool and str refused, as validate._is_number refuses them for every money input:
@@ -43,6 +45,10 @@ def resolve_zones(zones: list[dict] | None, total_land: float) -> list[dict]:
         if a is not None and not (math.isfinite(a) and a > 0):
             raise ValueError(f"Zone '{name}': acres must be > 0, got {a:g}.")
         acres.append(None if a is None else float(a))
+        c = z.get("covered", False)
+        if not isinstance(c, bool):
+            raise ValueError(f"Zone '{name}': covered must be true or false, got {c!r}.")
+        covered.append(c)
 
     remainder = [n for n, a in zip(names, acres) if a is None]
     if len(remainder) > 1:
@@ -61,7 +67,8 @@ def resolve_zones(zones: list[dict] | None, total_land: float) -> list[dict]:
             f"Zones add up to {fixed:g} acres but the farm is {total_land:g}. Make them add up, "
             f"or leave one zone's acres blank to take the rest."
         )
-    return [{"name": n, "acres": rest if a is None else a} for n, a in zip(names, acres)]
+    return [{"name": n, "acres": rest if a is None else a, "covered": c}
+            for n, a, c in zip(names, acres, covered)]
 
 
 def crop_zone_names(crop: dict, zone_names: list[str]) -> list[str]:
