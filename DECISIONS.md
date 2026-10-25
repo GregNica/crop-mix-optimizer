@@ -1064,6 +1064,36 @@ costs $49,240. Different promises. The overwintering carry-in (C15) is the stand
 one-week window, so it folds into the same mechanism. Full findings and six open questions for the
 grower: `SPEC_batchFX.md`. P2 (allocation by stake) is NOT in this batch; it remains parked.
 
+**Rulings on the six FX questions (grower, 2026-10-25)** — `SPEC_batchFX.md` §5:
+
+1. **Overwintered crops are a pre-commitment; the app makes no decision about next year.** Planning
+   happens in winter, after the garlic is in. A committed overwintering crop is PINNED at its
+   carried-in acres (floor = ceiling), not floored. Because the planning year is cyclic, the same
+   pin also reserves this fall's ground, labour and storage for replanting the same quantity — the
+   grower's "is there room in the fall?" check, for free, with no new labels. A plan that cannot
+   fit the replant is refused with its cause. Splitting carry-in from the fall replant → BACKLOG X7.
+2. **⚠️ AMENDS ruling 3 above.** A blank penalty would make a contract meaningless (the plan just
+   sells those pounds where they pay best). Each contract REQUIRES a choice: **Must deliver**
+   (hard; may be infeasible — the refusal names the contract and weeks) or **Pay a penalty**
+   (amount required). No default either way.
+3. **Variants are a sub-section of the crop card,** not a new card. A variant inherits channels,
+   prices, demand caps, contracts, diversity AND labour from its parent; it may edit days to
+   maturity / windows, yield, seed + per-acre costs, zones, minimum acres. Editing a price or
+   demand cap → the app prompts for a new crop card. (Labour was in my proposal; the grower struck
+   it as too much detail for a variant — which raised BACKLOG BC10.)
+4. **One top-of-form commitments table,** as recommended.
+5. **Zone structures are SUNK costs.** No depreciation or loan line yet, and the optimiser cannot
+   weigh new infrastructure (multi-year payback, a build binary, financing — a different model).
+   The with/without delta already gives the grower the yearly value to judge it themselves. A
+   structure's running costs (plastic, heat) go in overhead. Investment options → BACKLOG X6.
+6. **A perennial is a planting CARD per block,** always a commitment, never an optimiser choice:
+   acres, year planted, THIS year's expected yield (0 while establishing), this year's costs and
+   labour, harvest weeks. A mature block's establishment cost is SUNK (as 5) — ⚠️ this overrides
+   OWN→depreciate (`cost-accounting-basis`) for perennials and structures, for now. Stage
+   (establishing/bearing) is SHOWN from this year's harvest (none = establishing — the toy
+   reads the block's calendar row); the planting year is kept so next year the assistant can
+   prompt for the first yield. The app does NOT model the yield ramp — the grower types this year's number.
+
 ---
 
 ### W10 sub-question — whole bill or irrigation share (2026-10-19, shipped as WHOLE BILL, disclosed)

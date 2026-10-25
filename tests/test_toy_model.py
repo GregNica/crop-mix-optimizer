@@ -1171,8 +1171,10 @@ def test_must_plant_is_unconditional_and_min_acreage_is_not(model):
     """
     d = _lp_probe(
         "lp.CROPS['Garlic']['seed_transplant_cost_per_acre'] = 60000.0\n"
-        "free = lp.solve(must_stand=[], must_annual={})\n"
-        "held = lp.solve(must_stand=[('Garlic', 5.0, 1, 1)], must_annual={})\n"
+        # garlic's carry-in is PINNED by default, which would hide the escape — unpin it
+        "free = lp.solve(must_stand=[], must_annual={}, carry_in={'Garlic': None})\n"
+        "held = lp.solve(must_stand=[('Garlic', 5.0, 1, 1)], must_annual={},\n"
+        "                carry_in={'Garlic': None})\n"
         "g = lambda r: sum(v for k, v in r['acres'].items() if k.startswith('Garlic'))\n"
         "print(json.dumps([g(free), g(held), free['obj_value'] - held['obj_value']]))")
     free, held, cost = d
@@ -1194,7 +1196,7 @@ def test_an_unmeetable_contract_is_a_shortfall_not_infeasible():
     must carry it instead, never short by more than was ordered, and price every pound.
     """
     d = _lp_probe(
-        "c = [('Kale', 'Wholesale', 1_000_000.0, 20, 22, 0.10)]\n"
+        "c = [('Kale', 'Wholesale', 1_000_000.0, 20, 22, 'penalty', 0.10)]\n"
         "r = lp.solve(contracts=c)\n"
         "print(json.dumps([r['short_lb'][0], r['shortfall_cost'], max(r['short'].values())]))")
     short, cost, worst = d
@@ -1204,11 +1206,12 @@ def test_an_unmeetable_contract_is_a_shortfall_not_infeasible():
 
 
 def test_the_perennial_is_committed_ground_outside_the_calendar(model):
-    """FX.2: the calendar refuses cycles over 52 weeks, so a perennial is written straight in.
+    """FX.2: the calendar refuses cycles over 52 weeks, so each perennial BLOCK is written in.
 
-    Its acres are an INPUT (the grower already has them), its row sits OUTSIDE the solver's
-    changing cells, it stands in all 52 weeks, and its cost line reads the depreciation block —
-    establishment over its life, never this year's seed.
+    Per block (grower ruling 2026-10-25): acres are an INPUT, the row sits OUTSIDE the solver's
+    changing cells, it stands all 52 weeks, and its cost line reads THAT block's own $/acre
+    this year — no depreciation (a mature block's establishment is sunk), never seed. A block
+    still establishing has no H at all.
     """
     from farm_v2.utils.calendar import generate_successions
     asparagus = dict(name="Asparagus", planting_weeks=1, harvest_weeks=8, days_to_maturity=700,
@@ -1216,26 +1219,113 @@ def test_the_perennial_is_committed_ground_outside_the_calendar(model):
     with pytest.raises(ValueError, match="52-week"):
         generate_successions([asparagus], 2024)
     rows = _sheet_succession_rows(model)
-    r = rows["Asparagus"]
-    def _rgb(c):
-        f = model.cell(row=r, column=c).fill
-        return (f.fgColor.rgb or "")[-6:].upper() if f and f.fill_type == "solid" else ""
-    assert _rgb(3) == "FFF2CC", "the perennial's acres are not an input"
-    assert str(model.cell(row=r, column=4).value).startswith("="), "its PLANT? is not derived"
-    assert all(model.cell(row=r, column=_wc(model, w)).value in ("G", "H") for w in range(1, 53)), (
-        "the perennial does not stand all 52 weeks")
-    assert max(rows.values()) == r, "the perennial must be the LAST calendar row"
     labels = _labelled_rows(model)
-    est = labels["Establishment $/acre"][0]
-    per_wk = labels["-> $/acre per week"][0]
-    f = str(model.cell(row=per_wk, column=2).value)
-    assert f"$B${est}" in f and f"$B${labels['Bearing life, years'][0]}" in f, (
-        f"establishment is not depreciated over the bearing life: {f!r}")
+    blocks = ["Asparagus", "Asparagus (new)"]
+    assert sorted(rows.values())[-len(blocks):] == sorted(rows[b] for b in blocks), (
+        "the perennial blocks must be the LAST calendar rows")
+    cash = labels["perennial blocks (this year's cost)"][0]
+    f = str(model.cell(row=cash, column=_wc(model, 20)).value)
+    for b in blocks:
+        r = rows[b]
+        def _rgb(c):
+            fl = model.cell(row=r, column=c).fill
+            return (fl.fgColor.rgb or "")[-6:].upper() if fl and fl.fill_type == "solid" else ""
+        assert _rgb(3) == "FFF2CC", f"{b}: acres are not an input"
+        assert str(model.cell(row=r, column=4).value).startswith("="), f"{b}: PLANT? not derived"
+        strip = [model.cell(row=r, column=_wc(model, w)).value for w in range(1, 53)]
+        assert all(v in ("G", "H") for v in strip), f"{b} does not stand all 52 weeks"
+        cost = labels[f"{b} — $/acre this year"][0]
+        assert f"$C${r}*$B${cost}" in f, f"{b}: the cost line does not read its own block: {f!r}"
+    assert "H" not in [model.cell(row=rows["Asparagus (new)"], column=_wc(model, w)).value
+                       for w in range(1, 53)], "the establishing block harvests"
+    assert "Establishment $/acre" not in labels and "Bearing life, years" not in labels, (
+        "a depreciation block survived — a mature block's establishment is sunk")
     crop_r = next(x for x in labels["Asparagus"] if model.cell(row=x, column=8).value is not None)
     seed = model.cell(row=crop_r, column=8)
     assert seed.value in (0, "=0"), f"the perennial carries a seed cost: {seed.value!r}"
     # and it is not a box you can type in — a seed cost means nothing for committed ground
     assert (seed.fill.fgColor.rgb or "")[-6:].upper() != "FFF2CC", "the perennial's seed is an input"
+
+
+def test_the_carry_in_is_pinned_and_holds_the_fall_replant(model):
+    """C15 (grower ruling 2026-10-25): what went in last fall is PINNED, not floored.
+
+    The year is cyclic, so the garlic standing in week 1 IS this fall's planting: the pin makes
+    the plan replant exactly the carried-in acres — no decisions about next year — and an
+    overwintering crop with nothing carried in cannot be planted at all. A floor would let the
+    plan plant MORE than the carry-in, which is the half this test pins down.
+    """
+    d = _lp_probe(
+        "wk1 = lambda r: sum(r['acres'][s['name']] for s in lp.SUCCS\n"
+        "                    if lp.CROP_NAMES[s['crop']] == 'Garlic' and lp.stands(s, 1))\n"
+        "fall = lambda r: sum(r['acres'][s['name']] for s in lp.SUCCS\n"
+        "                     if lp.CROP_NAMES[s['crop']] == 'Garlic' and s['weeks'][0] >= 40)\n"
+        "free = lp.solve(carry_in={'Garlic': None})\n"
+        "low = lp.solve(carry_in={'Garlic': 15.0})\n"
+        "none = lp.solve(carry_in={})\n"
+        "print(json.dumps([wk1(free), wk1(low), fall(low), wk1(none), fall(none)]))")
+    free, low, low_fall, none, none_fall = d
+    assert free > 15.0 + 0.5, f"garlic free plants only {free:.2f} ac — 15 would not be a ceiling"
+    assert abs(low - 15.0) < 1e-6, f"a 15-acre carry-in stood {low:.2f} ac — it is a floor, not a pin"
+    assert abs(low_fall - 15.0) < 1e-6, f"this fall's replant is {low_fall:.2f} ac, not the 15 carried in"
+    assert none < 1e-9 and none_fall < 1e-9, "garlic planted with nothing carried in"
+    # and on the sheet: an EQUALITY in the recipe, reading the 'sells as' column in week 1
+    rows = _labelled_rows(model)
+    r = rows["Garlic in the ground, week 1"][0]
+    assert model.cell(row=r, column=3).value == "=", "the carry-in row is not an equality"
+    recipe = [str(model.cell(row=x, column=2).value) for x in rows["Constraint — carry-in PINNED"]]
+    assert recipe == [f"$B${r}  =  $D${r}"], f"the solver recipe does not pin it: {recipe!r}"
+
+
+def test_a_contract_must_say_penalty_or_deliver():
+    """FX.3 (grower ruling 2026-10-25): a blank penalty makes a contract mean nothing.
+
+    So the mode is required, 'penalty' needs a price above 0, and 'deliver' has NO shortfall:
+    met in full when it can be, and refused BY NAME when it cannot — never silently shorted.
+    """
+    d = _lp_probe(
+        "out = []\n"
+        "for c in [('Kale', 'Wholesale', 100.0, 20, 22, None, 0.5),\n"
+        "          ('Kale', 'Wholesale', 100.0, 20, 22, 'penalty', None),\n"
+        "          ('Kale', 'Wholesale', 100.0, 20, 22, 'penalty', 0.0)]:\n"
+        "    try:\n"
+        "        lp.solve(contracts=[c]); out.append('solved')\n"
+        "    except ValueError as e:\n"
+        "        out.append('refused')\n"
+        "ok = lp.solve(contracts=[('Kale', 'Wholesale', 1_500.0, 20, 30, 'deliver', None)])\n"
+        "out.append(ok['short_lb'][0])\n"
+        "try:\n"
+        "    lp.solve(contracts=[('Kale', 'Wholesale', 1_500.0, 20, 40, 'deliver', None)])\n"
+        "    out.append('solved')\n"
+        "except RuntimeError as e:\n"
+        "    out.append(str(e))\n"
+        "print(json.dumps(out))")
+    assert d[:3] == ["refused"] * 3, f"a contract with no mode / no price was accepted: {d[:3]}"
+    assert d[3] == 0.0, f"a meetable 'deliver' contract went {d[3]:,.0f} lb short"
+    assert "Kale/Wholesale" in d[4] and "36" in d[4], (
+        f"an unmeetable 'deliver' contract was not refused by name and week: {d[4]!r}")
+
+
+def test_a_deliver_contract_has_no_price_box(model):
+    """A 'deliver' contract has no shortfall, so a yellow $/lb box beside it is read by nothing.
+
+    Survived mutation: the dead-input guard passed, because the penalty row still REFERENCES the
+    price cell — it multiplies it by a shortfall that is always 0. Wired, and inert. So the
+    sheet's own mode column decides it: penalty rows carry a yellow price, deliver rows do not.
+    """
+    rows = _labelled_rows(model)
+    top = rows["5d — CONTRACTS  (what you have already promised to deliver)"][0]
+    seen = {}
+    for r in range(top, top + 12):
+        mode = model.cell(row=r, column=7).value
+        if mode not in ("penalty", "deliver"):
+            continue
+        price = model.cell(row=r, column=6)
+        yellow = (price.fill.fgColor.rgb or "")[-6:].upper() == "FFF2CC"
+        assert yellow == (mode == "penalty"), (
+            f"row {r} ({mode}): price cell {price.value!r} is {'an input' if yellow else 'not an input'}")
+        seen[mode] = seen.get(mode, 0) + 1
+    assert set(seen) == {"penalty", "deliver"}, f"the fixture must carry both modes, found {seen}"
 
 
 def test_eligibility_is_wired_into_max_acres(model):
@@ -1289,8 +1379,8 @@ def test_committed_perennial_acres_do_not_count_as_planted_this_year():
 def test_floors_aggregate_by_identity_not_by_name(model):
     """A floor on an identity sold by TWO names must count both.
 
-    The shipped floors are on garlic and kale, each its own sole name, so name-vs-identity was
-    never exercised — every floor guard passed with the aggregation keyed by name (code-review).
+    The shipped floors are on kale (garlic is a pinned carry-in), its own sole name, so
+    name-vs-identity was never exercised — every floor guard passed with the aggregation keyed by name (code-review).
     Spinach is the one shared identity, and in weeks 2-3 only TUNNEL spinach can stand: a
     Spinach floor there is meetable only if the variant counts.
     """

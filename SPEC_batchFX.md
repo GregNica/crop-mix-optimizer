@@ -1,6 +1,6 @@
 # SPEC — Batch FX: the fixed layer
 
-**Status:** DRAFT 2026-10-24 — for grower rulings (§5). FX.0 (the toy prototype) is BUILT:
+**Status:** RULED 2026-10-25 (§5). FX.0 (the toy prototype) is BUILT:
 `toy_models/farm_toy_v12_fixed_layer.xlsx` + `toy_v12_lp.py` (oracle) + `verify_toy_v12.py`.
 Source: PLAN "Batch FX", DECISIONS **GROUP G** (rulings 2026-10-19), memory `fixed-layer-batch-fx`.
 
@@ -96,26 +96,29 @@ migration) → FX.3 contracts (+ shortfall report) → FX.7 fixture and guards �
 card eligibility/`sells_as`/perennial, a "Committed" section, a contracts table) → `/simplify` →
 `/code-review max` (money path) → browser check. FX.6 templates stay in Batch 3 (sourced data).
 
-## 5. Questions for the grower (recommendation first)
+## 5. Grower rulings (2026-10-25) — full text in DECISIONS GROUP G
 
-1. **Carry-in vs this autumn's planting.** In the cyclic year the app uses, garlic planted in
-   November IS the garlic standing on 1 January — so "already in the ground" and "will plant
-   this autumn" are forced to the same acres. *Recommend:* ship FX as cyclic (C15 semantics,
-   unchanged) and backlog a calendar-year mode with a separate carry-in block. Changing the year
-   model is its own batch.
-2. **Default shortfall penalty.** *Recommend:* no default — the contract row requires it, with a
-   tooltip ("what a missed pound costs you: cover purchase, lost account"). A default would decide
-   contracts on a number nobody sourced.
-3. **Diversity (C8) for variants** — per name or per identity? *Recommend:* per IDENTITY (it is
-   market/risk exposure; two names of one crop are one exposure).
-4. **Where must-plant lives** — on the crop card or a "What's already decided" table at the top?
-   *Recommend:* a top-of-form table (the grower's "first page"), one row per floor or contract,
-   which the wizard (Batch 7) can later own.
-5. **Zone costs** (a tunnel costs money to own) — *Recommend:* out of FX; a zone's structure is an
-   owned asset and belongs in the depreciation ledger (an asset row tagged to the zone) later.
-6. **Perennial establishment cost basis** — depreciate the ORIGINAL establishment cost over the
-   bearing life (as built), or ask only for the annual depreciation $? *Recommend:* as built (two
-   numbers a grower knows), shown as $/yr beside the box.
+1. **Overwintered crops are a pre-commitment, PINNED at the carried-in acres** (floor = ceiling).
+   The cyclic year makes the same pin reserve this fall's replant, so a plan with no room for it is
+   refused with its cause. No decisions about next year. Separating the two → BACKLOG X7.
+2. **Each contract requires a mode: Must deliver** (hard; a refusal names the contract + weeks)
+   **or Pay a penalty** (amount required). No default. Amends GROUP G ruling 3.
+3. **Variants are a sub-section of the crop card.** Inherit channels, prices, caps, contracts,
+   diversity (C8 per IDENTITY) and labour; edit windows/days to maturity, yield, seed + per-acre
+   costs, zones, min acres. Price or cap edits → prompt for a new card. Labour classes → BC10.
+4. **One top-of-form commitments table.**
+5. **Zone structures are sunk.** No cost line in FX; no optimiser investment choice (BACKLOG X6).
+6. **A perennial is a planting card per block, always committed:** acres, year planted, this
+   year's yield (0 while establishing), this year's costs + labour, harvest weeks. Establishment
+   of a mature block is SUNK (overrides OWN→depreciate for now). No yield-ramp model.
+
+**What the rulings change in §3:** FX.1 — C15 becomes a PIN (`must_stand` with an equal ceiling)
+for committed overwintering crops, and an uncommitted overwintering crop cannot be planted.
+FX.2 — the perennial block takes `{acres, planted_year, yield_this_year, cost_this_year,
+labour, harvest_weeks}`; no `establish_per_acre`/`life_years`, no depreciation line. FX.3 — a
+contract gains `mode: "deliver" | "penalty"`; `deliver` has no short variable, and its
+infeasibility is diagnosed by the elastic re-solve. FX.5 — the variant inherits labour.
+The toy (v12) is updated to these before FX.4 starts.
 
 ## 6. Forward compatibility — the plan-first co-pilot (BACKLOG **X5**, tag `COPILOT`, tabled)
 

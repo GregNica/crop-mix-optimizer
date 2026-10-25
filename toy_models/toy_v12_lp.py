@@ -13,17 +13,20 @@ decided, owes, or physically has, which constrain the plan BEFORE the optimiser 
                      windows, and a `sells_as` identity. ⚠️ Demand caps and contract floors are
                      keyed by the IDENTITY, not the name — otherwise two variants each get the
                      whole market (measured below: `share_caps=False`).
-  PERENNIAL (FX.2)   committed ground standing all 52 weeks: a PINNED pseudo-succession that
-                     never goes through the calendar generator (which refuses cycles > 52 wk).
-                     Upkeep is a yearly cost; establishment is DEPRECIATED, never seed.
+  PERENNIAL (FX.2)   committed ground standing all 52 weeks: one PINNED pseudo-succession per
+                     planting BLOCK, never through the calendar generator (which refuses cycles
+                     > 52 wk). A block carries THIS year's cost; a mature block's establishment
+                     is SUNK (grower ruling 2026-10-25), and an ESTABLISHING block has no harvest.
   MUST-PLANT (FX.1)  UNCONDITIONAL floors, in the two forms the plan said to decide here:
                        standing   acres in the ground in EVERY week of a window
                        annual     acres planted, summed over the year's plantings
-                     The overwintering carry-in (the app's C15) is the standing form with a
-                     one-week window at week 1 — same row, so it is stated once.
-  CONTRACTS (FX.3)   sold >= floor per identity x channel x week, with a SHORTFALL slack priced
-                     at a penalty: an unmeetable contract is a reported shortfall, never "no
-                     feasible plan" (grower ruling G3).
+  CARRY-IN (C15)     an overwintering crop already in the ground is PINNED: acres standing in
+                     week 1 == what was planted last fall. The year is cyclic, so the same row
+                     also reserves THIS fall's replant — and with no carry-in the crop cannot
+                     be planted at all (no decisions about next year; grower ruling 2026-10-25).
+  CONTRACTS (FX.3)   sold >= floor per identity x channel x week, in one of two MODES the grower
+                     must choose: 'penalty' (a SHORTFALL slack priced per lb short) or 'deliver'
+                     (hard — no slack; an unmeetable one is refused, naming its weeks).
 
 WHY THIS EXISTS. v4 is the first version whose answer is not arithmetic — it is a CHOICE, made
 by a solver. So "is the sheet right?" splits in two:
@@ -103,6 +106,7 @@ from __future__ import annotations
 import json
 import pathlib
 import sys
+from typing import NamedTuple
 
 import numpy as np
 from scipy.optimize import milp, LinearConstraint, Bounds
@@ -140,41 +144,76 @@ ELIGIBLE = {"Spinach": ["Open field"], "Kale": ["Open field", "High tunnel"],
 # ---- FX.2 THE PERENNIAL -----------------------------------------------------------------
 # ⚠️ TOY PLACEHOLDER DATA, sourced where a source was found and LABELLED where not. Templates
 # proper are FX.6 under Batch 3's data discipline; the toy needs a shape, not a library entry.
-#   establishment $4,082/ac          MSU Ext. E3315 (2016), years 0-2 excl. harvest
 #   mature yield 1,750 lb/ac         Univ. Kentucky asparagus budget (2016) base case
 #   upkeep $1,296/ac/yr              UKY 2016, full-harvest-year total cost
 #   wholesale $1.75/lb               UKY 2016
-#   life 10 bearing years            WSU EB1779 amortises establishment over 10 yr
+#   establishing-year $2,000/ac      ⚠️ UNSOURCED SHARE: MSU Ext. E3315 (2016) puts establishment
+#                                    at $4,082/ac over years 0-2 and does not split it by year
 #   UNSOURCED: harvest weeks 18-25, the FM price and caps, the per-acre labour, the pack
 #   volume and shelf life — round figures in the right order, to be replaced in FX.6.
-PERENNIAL_ACRES = 3.0
-PERENNIAL_SPEC = dict(establish_per_acre=4_082.0, life_years=10, upkeep_per_acre_yr=1_296.0,
-                      harvest_weeks=list(range(18, 26)), labour_grow=0.5, labour_harv=5.5)
+# ONE ENTRY PER PLANTING BLOCK (grower ruling 2026-10-25): blocks of one crop differ by age, so
+# each carries its own acres and THIS year's cost. A mature block's establishment is SUNK, like
+# the tunnel's structure. A block still establishing has NO harvest this year; it is committed
+# ground with costs and labour, and next year the grower types its first yield. No yield ramp.
+PERENNIAL_SPEC = dict(harvest_weeks=list(range(18, 26)), labour_grow=0.5, labour_harv=5.5)
+PERENNIAL_BLOCKS = [
+    dict(name=PERENNIAL, acres=3.0, cost_per_acre_yr=1_296.0, bearing=True),
+    dict(name=f"{PERENNIAL} (new)", acres=1.0, cost_per_acre_yr=2_000.0, bearing=False),
+]
+
+# ---- C15 CARRY-IN ----------------------------------------------------------------------
+#   identity -> acres planted LAST FALL and standing on 1 January. PINNED (floor = ceiling), for
+#   every crop flagged `overwinters`; an overwintering crop not listed is pinned at 0.
+# ⚠️ Pinned, not floored (grower ruling 2026-10-25), so it can bind in BOTH directions: left
+# free, garlic plants 17.76 ac (measured), so 18.3 pushes it UP — and a carry-in of 17 holds it
+# DOWN, which a floor never could. verify_toy_v12 prices both.
+CARRY_IN = {"Garlic": 18.3}
 
 # ---- FX.1 MUST-PLANT -------------------------------------------------------------------
-# ⚠️ FLOORS INTERACT: with the kale floors on, garlic rises to its ~18.58 ac ceiling unasked, so
-# the carry-in is SLACK at the full default — verify_toy_v12 checks it binding on its own fixture.
 # Every floor below BINDS at the unfloored v12 optimum, on purpose — measured, each one moves
 # the objective: a floor the optimum already clears is a guard that cannot fail (the L4 /
-# "defaulted off" trap in its quieter form). Unfloored: garlic 17.84 ac (18.06 with no contracts or perennial either), kale 4.4 ac standing
-# in weeks 10-20 and 32.9 ac planted. Costs, each added on top of the previous: garlic $1,017,
-# kale standing $4,559, kale annual $3,762.
+# "defaulted off" trap in its quieter form). Unfloored (garlic unpinned): kale 4.4 ac standing
+# in weeks 10-20 and 35.0 ac planted. Costs, each added on top of the previous (measured
+# 2026-10-25): kale standing $4,787, kale annual $2,488, then the garlic pin $3,518.
 #
-# ⚠️ GARLIC'S CEILING IS ~18.6 AC, and it is set by TWO rows at once: the winter crew's 108 h
+# ⚠️ GARLIC'S CEILING IS ~18.5 AC (18.5 solves, 18.6 is refused — measured 2026-10-25), and
+# it is set by TWO rows at once: the winter crew's 108 h
 # in the planting weeks (6.7 h/ac) and the 150 m3 barn at harvest. Relaxing either alone left
-# it infeasible — so "check the land" is not what an infeasible must-plant should tell anyone.
+# it infeasible — so "check the land" is not what an infeasible carry-in should tell anyone.
 #   (identity, acres, first week, last week)  — acres standing in EVERY week of the window
-MUST_STAND = [("Garlic", 18.3, 1, 1),        # overwintering carry-in: the app's C15
-              ("Kale", 8.0, 10, 20)]         # "keep kale in the ground for the CSA, spring"
+MUST_STAND = [("Kale", 8.0, 10, 20)]         # "keep kale in the ground for the CSA, spring"
 #   identity -> acres planted, summed across the year (legitimate for a succession crop)
 MUST_ANNUAL = {"Kale": 45.0}
 
 # ---- FX.3 CONTRACTS --------------------------------------------------------------------
-#   (identity, channel, lb per week, first week, last week, penalty $ per lb short)
-# Spinach's is deliberately PARTLY UNMEETABLE: weeks 33-36 sit in the summer gap between the
-# spring and autumn plantings, and shelf life is 2 weeks, so the slack has to carry it.
-CONTRACTS = [("Kale", "Wholesale", 1_500.0, 20, 40, 0.50),
-             ("Spinach", "Wholesale", 2_000.0, 28, 36, 0.50)]
+#   (identity, channel, lb per week, first week, last week, mode, penalty $ per lb short)
+# MODE IS REQUIRED (grower ruling 2026-10-25): with a blank penalty a contract would mean
+# nothing — the plan just sells those pounds where they pay best. 'penalty' needs an amount;
+# 'deliver' takes None and has no shortfall at all.
+CONTRACT_MODES = ("penalty", "deliver")
+
+
+class Contract(NamedTuple):
+    """One contract, by NAME — it was a positional tuple, and adding `mode` shifted every index
+    and slice in four files. Plain 7-tuples are still accepted by `solve()` and wrapped there."""
+    gid: str
+    channel: str
+    lb: float
+    first: int
+    last: int
+    mode: str
+    pen: float | None
+
+
+# Kale's and spinach's are 'penalty' and PARTLY UNMEETABLE — kale has no harvest in weeks 36-37,
+# spinach's weeks 35-36 sit in the summer gap — so neither could be 'deliver' (measured: both are
+# refused, naming those weeks). Asparagus is 'deliver' and meetable: 500 lb/wk of a 3-acre block
+# pulls pounds off the dearer farmers market, so it BINDS (costs ~$2,000), and 700 is refused.
+CONTRACTS = [Contract("Kale", "Wholesale", 1_500.0, 20, 40, "penalty", 0.50),
+             Contract("Spinach", "Wholesale", 2_000.0, 28, 36, "penalty", 0.50),
+             Contract(PERENNIAL, "Wholesale", 500.0, 18, 25, "deliver", None)]
+DELIVER_K = [k for k, c in enumerate(CONTRACTS) if c.mode == "deliver"]
+PENALTY_K = [k for k, c in enumerate(CONTRACTS) if c.mode == "penalty"]
 
 
 def load():
@@ -208,19 +247,19 @@ def load():
         for z in ELIGIBLE[cn]:
             succs.append(dict(s, zone=z, name=s["name"] if len(ELIGIBLE[cn]) == 1
                               else f"{s['name']} {ZONE_CODE[z]}"))
-    # The perennial as a PINNED pseudo-succession: in the ground every week, harvesting in its
-    # window, acres fixed. Everything downstream (land, labour, stock, cash) then treats it like
-    # any planting, and nothing has to know a perennial exists except the acres bound.
-    # Its cost rides on the row as DATA: upkeep is this year's, establishment is capital and so
-    # DEPRECIATED over the bearing life (the locked OWN->depreciate basis), never seed. Flat over
-    # 52 weeks like the farm's other fixed costs.
-    ps = PERENNIAL_SPEC
-    hw = set(ps["harvest_weeks"])
-    succs.append(dict(name=PERENNIAL, crop=CROP_NAMES.index(PERENNIAL), zone="Open field",
-                      weeks=list(range(1, N_WEEKS + 1)), start_week=1, perennial=True,
-                      cost_per_acre_wk=(ps["upkeep_per_acre_yr"]
-                                        + ps["establish_per_acre"] / ps["life_years"]) / N_WEEKS,
-                      phases=[2 if w in hw else 1 for w in range(1, N_WEEKS + 1)]))
+    # Each perennial BLOCK as a PINNED pseudo-succession: in the ground every week, acres fixed.
+    # Everything downstream (land, labour, stock, cash) then treats it like any planting, and
+    # nothing has to know a perennial exists except the acres bound. A bearing block harvests in
+    # the crop's window; an establishing one is all G — no H, so it packs out nothing.
+    # Its cost rides on the row as DATA: THIS year's, flat over 52 weeks like the farm's other
+    # fixed costs. No depreciation line — a mature block's establishment is sunk.
+    hw = set(PERENNIAL_SPEC["harvest_weeks"])
+    for b in PERENNIAL_BLOCKS:
+        succs.append(dict(name=b["name"], crop=CROP_NAMES.index(PERENNIAL), zone="Open field",
+                          weeks=list(range(1, N_WEEKS + 1)), start_week=1, perennial=True,
+                          cost_per_acre_wk=b["cost_per_acre_yr"] / N_WEEKS,
+                          phases=[2 if (b["bearing"] and w in hw) else 1
+                                  for w in range(1, N_WEEKS + 1)]))
     return payload, crops, ch_order, succs
 
 
@@ -246,6 +285,21 @@ IDENTITIES = list(dict.fromkeys(identity(c) for c in CROP_NAMES))   # Spinach Ka
 def members(gid):
     """Every crop NAME that sells as identity `gid` — the FX.5 grouping, stated once."""
     return [c for c in CROP_NAMES if identity(c) == gid]
+
+
+def stands(s, w):
+    """Is planting `s` in the ground in week `w` of the cyclic year? THE definition — the land
+    rows, the floors, the carry-in pin and the guards that check them all read this one."""
+    return any(((wk - 1) % N_WEEKS) + 1 == w for wk in s["weeks"])
+
+
+def weeks_short(res, k):
+    """The weeks contract `k` came out short in a solve result."""
+    return sorted(w for (kk, w), v in res["short"].items() if kk == k and v > 1e-6)
+
+
+# Identities the C15 carry-in pin applies to: any with a member flagged `overwinters`.
+OVERWINTERING = [g for g in IDENTITIES if any(CROPS[m].get("overwinters") for m in members(g))]
 
 
 def payroll_load():
@@ -294,6 +348,8 @@ for _e in PAYLOAD.get("employees", []):
 CH_NAMES = [c["name"] for c in CH_ORDER]
 FM = next(h for h in CH_NAMES if h.startswith("Farmers"))
 PERENNIAL_NAMES = {s["name"] for s in SUCCS if s.get("perennial")}
+PERENNIAL_BY_NAME = {b["name"]: b for b in PERENNIAL_BLOCKS}
+NO_PERENNIAL = {n: 0.0 for n in PERENNIAL_BY_NAME}   # the "without" side of its delta
 # ⚠️ CAPS ARE BUILT PER IDENTITY, never per name — the variant has no cap of its own. Handing
 # the app's demand builder the variant too is exactly the FX.5 trap: it would mint a second,
 # full-size Spinach market.
@@ -469,7 +525,7 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
           piece_max_hours_per_week=None, piece_rate_per_lb=None,
           piece_var_cost_per_lb=0.02, piece_fixed_cost=2_500.0,
           wage_floor_per_hr=16.07,
-          zones=None, share_caps=True, perennial_acres=None,
+          zones=None, share_caps=True, perennial_acres=None, carry_in=None,
           must_stand=None, must_annual=None, contracts=None):
     """Maximise revenue - growing cost, as a MILP. Returns a dict of the optimum.
 
@@ -477,14 +533,26 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
     what the minimum-acreage rule costs, never as an answer.
 
     v12 fixed-layer arguments default to the module's toy settings; pass `[]` / `{}` to switch a
-    piece OFF (that is how the with/without deltas are measured). `share_caps=False` is the
-    FX.5 TRAP, kept only so it can be measured: every crop NAME gets its own full market.
+    piece OFF (that is how the with/without deltas are measured). `perennial_acres` is
+    {block name: acres}, merged over each block's default — `NO_PERENNIAL` switches all off.
+    `share_caps=False` is the FX.5 TRAP, kept only so it can be measured: every crop NAME gets
+    its own full market.
     """
+    _args = dict(locals())   # MUST STAY FIRST: the caller's arguments, for the re-solve below
     zone_cap = zone_acres(zones, land)
-    perennial_acres = PERENNIAL_ACRES if perennial_acres is None else perennial_acres
+    # {block: acres}. A bare number (the pre-blocks API) or an unknown name is REFUSED: either one
+    # silently kept the default acres, so `perennial_acres=0.0` "removed" nothing.
+    if perennial_acres is not None and not isinstance(perennial_acres, dict):
+        raise ValueError(f"perennial_acres is {{block: acres}}, got {perennial_acres!r}")
+    for n, ac in (perennial_acres or {}).items():
+        if n not in PERENNIAL_BY_NAME or ac < 0:
+            raise ValueError(f"perennial block {n!r}: {ac} acres (blocks: {list(PERENNIAL_BY_NAME)})")
+    perennial_acres = {**{n: b["acres"] for n, b in PERENNIAL_BY_NAME.items()},
+                       **(perennial_acres or {})}
+    carry_in = CARRY_IN if carry_in is None else carry_in
     must_stand = MUST_STAND if must_stand is None else must_stand
     must_annual = MUST_ANNUAL if must_annual is None else must_annual
-    contracts = CONTRACTS if contracts is None else contracts
+    contracts = [Contract(*c) for c in (CONTRACTS if contracts is None else contracts)]
     # Windows are WEEKS OF THIS YEAR. Unchecked, a week 53 indexed straight into the NEXT
     # crop-channel's week-1 offered cell (off_i is a flat index), so a contract was "met" by
     # another crop's January sales with no error. And one floor or contract per identity
@@ -492,13 +560,26 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
     for gid, _ac, a, b in must_stand:
         if not 1 <= a <= b <= N_WEEKS:
             raise ValueError(f"must-plant {gid}: window {a}-{b} is not inside weeks 1-{N_WEEKS}")
-    for gid, h, _lb, a, b, _p in contracts:
+    for gid, h, _lb, a, b, mode, pen in contracts:
         if not 1 <= a <= b <= N_WEEKS:
             raise ValueError(f"contract {gid}/{h}: window {a}-{b} is not inside weeks 1-{N_WEEKS}")
+        # The mode is a choice the grower MUST make, and 'penalty' must carry its price: a blank
+        # or $0 penalty is a contract that binds nobody — exactly what the ruling forbids.
+        if mode not in CONTRACT_MODES:
+            raise ValueError(f"contract {gid}/{h}: mode {mode!r} is not one of {CONTRACT_MODES}")
+        if mode == "penalty" and not (pen is not None and pen > 0):
+            raise ValueError(f"contract {gid}/{h}: 'penalty' needs a $/lb above 0, got {pen!r}")
+    for gid, ac in carry_in.items():
+        if ac is not None and ac < 0:
+            raise ValueError(f"carry-in {gid}: {ac} acres")
+        if gid not in OVERWINTERING:
+            raise ValueError(f"carry-in {gid}: nothing that sells as it overwinters")
     for what, keys in (("standing floor", [f[0] for f in must_stand]),
-                       ("contract", [(c[0], c[1]) for c in contracts])):
+                       ("contract", [(c.gid, c.channel) for c in contracts])):
         if len(keys) != len(set(keys)):
             raise ValueError(f"the toy carries one {what} per identity — got {keys}")
+    # Validated, so normalised ONCE: a 'deliver' contract has no price, and every use below reads 0.
+    contracts = [c._replace(pen=c.pen or 0.0) for c in contracts]
     shrink = shrink or {n: 0.0 for n in CROP_NAMES}
     land = PAYLOAD["total_land"] if land is None else land
     cold_cap = PAYLOAD["harvest_storage_cap"] if cold_cap is None else cold_cap
@@ -522,7 +603,7 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
     n_piece = len(PIECE_CROPS) * N_WEEKS if piece else 0
     n_pbin = 1 if piece else 0
     # FX.3: one shortfall cell per contract week. Weeks listed once per contract, in order.
-    short_keys = [(k, w) for k, (_i, _h, _lb, a, b, _pen) in enumerate(contracts)
+    short_keys = [(k, w) for k, (_i, _h, _lb, a, b, _m, _pen) in enumerate(contracts)
                   for w in range(a, b + 1)]
     n_short = len(short_keys)
     N = n_s + n_off + n_y + n_ot + n_extra + n_piece + n_pbin + n_short
@@ -602,9 +683,8 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
     # inventing a price here would make the toy disagree with the thing it is checking.
     fert_rate, fuel_rate = PAYLOAD["cost_fert_per_lb"], PAYLOAD["cost_fuel_per_L"]
     var_week = np.zeros((n_s, N_WEEKS + 1))
-    # FX.2: the perennial's year. Upkeep is a cost of THIS year; establishment is capital, so it
-    # is depreciated over the bearing life (the locked OWN->depreciate basis) and NEVER charged
-    # as this year's seed. Both are spread flat over 52 weeks like the farm's other fixed costs.
+    # FX.2: a perennial block carries THIS year's cost, spread flat over 52 weeks like the farm's
+    # other fixed costs, and NEVER as seed. A mature block's establishment is sunk.
     for i, s_ in enumerate(SUCCS):
         c = CROPS[CROP_NAMES[s_["crop"]]]
         if "cost_per_acre_wk" in s_:          # FX.2: committed ground carries its own cost
@@ -728,14 +808,14 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
     # The slack is what makes an unmeetable contract a REPORTED SHORTFALL instead of an
     # infeasible model, and its penalty is what makes the solver try before it gives up.
     for (k, w) in short_keys:
-        gid, hn, lb, _a, _b, pen = contracts[k]
+        gid, hn, lb, _a, _b, _mode, pen = contracts[k]
         e = np.zeros(N)
         for p, (cn, h2) in enumerate(pairs):
             if identity(cn) == gid and h2 == hn:
                 e[off_i(p, w)] = defaults(cn, h2)[0]
         e[short_i[(k, w)]] = 1.0
         add(e, lb, np.inf)
-        c_obj[short_i[(k, w)]] += pen
+        c_obj[short_i[(k, w)]] += pen             # 'deliver': 0, and the short cell is bounded to 0
 
     # C4c — shelf life. Nothing in store may be older than its shelf life, so held stock is
     # bounded by what arrived in the last L weeks (L counts the harvest week, so the window is
@@ -912,7 +992,6 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
     # ⚠️ Rows for EVERY zone a planting names, at 0 acres if the farm lacks it. Built only over the
     # farm's zones (as first written), a planting in a missing zone had NO land row and was
     # unbounded — measured: dropping the tunnel "raised" profit $91k on ground that did not exist.
-    stands = lambda s_, w: any(((wk - 1) % N_WEEKS) + 1 == w for wk in s_["weeks"])
     for z in dict.fromkeys(s_["zone"] for s_ in SUCCS):
         for w in range(1, N_WEEKS + 1):
             e = np.zeros(N)
@@ -927,23 +1006,38 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
     #   standing  every week of [a, b]:  acres of the identity in the ground >= floor
     #   annual    acres planted across the year's successions >= floor (perennial excluded:
     #             its acres are committed, not planted this year)
-    def floor_row(gid, ac, keep, what):
-        """>= floor over the identity's plantings that pass `keep` — REFUSED, with the reason,
-        when none can (an empty row would only surface as a generic 'infeasible')."""
+    def floor_row(gid, ac, keep, what, hi=np.inf, kind="must-plant"):
+        """ac <= acres over the identity's plantings that pass `keep` <= hi — a FLOOR by default,
+        a PIN with hi=ac. REFUSED, with the reason, when nothing can qualify (an empty row would
+        only surface as a generic 'infeasible') — except a pin at 0, which an empty row meets."""
         e = np.zeros(N)
         for i, s in enumerate(SUCCS):
             if identity(CROP_NAMES[s["crop"]]) == gid and keep(i, s):
                 e[i] = 1.0
         if not e.any():
-            raise RuntimeError(f"must-plant: {ac:g} ac of {gid} {what}, but nothing it can grow "
+            if ac == hi == 0:
+                return
+            raise RuntimeError(f"{kind}: {ac:g} ac of {gid} {what}, but nothing it can grow "
                                f"qualifies — refused, not silently dropped")
-        add(e, ac, np.inf)
+        add(e, ac, hi)
 
     for gid, ac, a, b in must_stand:
         for w in range(a, b + 1):
             floor_row(gid, ac, lambda i, s, w=w: stands(s, w), f"must stand in week {w}")
     for gid, ac in must_annual.items():
         floor_row(gid, ac, lambda i, s: not is_per[i], "must be planted this year")
+
+    # C15 — the carry-in PIN. For every identity with an overwintering member: acres standing in
+    # week 1 == what is already in the ground. In the cyclic year those are the plantings that
+    # WRAP — the same acres replanted this fall — so the one row both honours last fall and
+    # holds back this fall's ground, crew and storage for the replant. Unlisted -> pinned at 0.
+    # The SAME row builder as the floors, with an equal ceiling — one mechanism, as the spec asks.
+    for gid in OVERWINTERING:
+        if gid in carry_in and carry_in[gid] is None:
+            continue          # MEASUREMENT ONLY: unpinned, so a test can price the pin itself
+        ac = float(carry_in.get(gid, 0.0))
+        floor_row(gid, ac, lambda i, s: stands(s, 1), "in the ground on 1 January", hi=ac,
+                  kind="carry-in")
 
     # C9 / C10 — the plant / do-not-plant decision, exactly as farm_v2 states it:
     #     x_i <= land x y_i        (cannot plant acres without deciding to plant)
@@ -985,22 +1079,44 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
         if is_per[i]:
             # FX.2: committed ground. Acres are an INPUT, so the bound IS the decision; the
             # binary is pinned on (min acreage 0) so C9/C10 hold trivially.
-            lb_v[i] = ub_v[i] = float(perennial_acres)
+            ac = float(perennial_acres[SUCCS[i]["name"]])
+            lb_v[i] = ub_v[i] = ac
             if min_acreage:
-                lb_v[y_i(i)] = ub_v[y_i(i)] = 1.0 if perennial_acres > 0 else 0.0
+                lb_v[y_i(i)] = ub_v[y_i(i)] = 1.0 if ac > 0 else 0.0
     for kw in short_keys:
-        ub_v[short_i[kw]] = contracts[kw[0]][2]       # cannot be short more than the order
+        # cannot be short more than the order — and a 'deliver' contract cannot be short at all
+        c_ = contracts[kw[0]]
+        ub_v[short_i[kw]] = c_.lb if c_.mode == "penalty" else 0.0
     res = milp(c=c_obj, constraints=LinearConstraint(A, lo, hi), integrality=integrality,
                bounds=Bounds(lb_v, ub_v), options={"disp": False, "time_limit": 300,
                                               # v12: the default 1e-4 gap is ~$50 of noise on a
                                               # $490k plan — larger than some FX deltas measured.
                                               "mip_rel_gap": 1e-7})
     if not res.success:
-        # ⚠️ With FX.1 floors this is reachable by INPUT, not only by a bug: must-plant floors
-        # are hard (contracts are not — they carry a slack). Say which kind of thing to check.
-        raise RuntimeError(f"LP did not solve: {res.message} — if must-plant floors are set, "
-                           f"check them against land, the crew in the planting and harvest "
-                           f"weeks, and storage: any of the three can make one unplantable")
+        # ⚠️ Reachable by INPUT, not only by a bug: floors, the carry-in pin and 'deliver'
+        # contracts are all hard. A 'deliver' contract is diagnosed by name: re-solve with it as
+        # a heavily-penalised shortfall, and the weeks still short are the ones no plan can fill.
+        hard = [k for k, c_ in enumerate(contracts) if c_.mode == "deliver"]
+        if hard:
+            soft = [c_._replace(mode="penalty", pen=1_000.0) if k in hard else c_
+                    for k, c_ in enumerate(contracts)]
+            try:
+                el = solve(**{**_args, "contracts": soft})
+            except RuntimeError:
+                el = None
+            # Only blame a 'deliver' contract the soft re-solve actually shows short — otherwise
+            # the cause is elsewhere and the general message below is the honest one.
+            if el is not None and any(el["short_lb"][k] > 1e-6 for k in hard):
+                why = "; ".join(
+                    f"{contracts[k].gid}/{contracts[k].channel} {el['short_lb'][k]:,.0f} lb short "
+                    f"(weeks {', '.join(map(str, weeks_short(el, k)))})"
+                    for k in hard if el["short_lb"][k] > 1e-6)
+                raise RuntimeError(f"no plan can deliver every 'deliver' contract: {why} — "
+                                   f"switch it to a penalty or change the order")
+        raise RuntimeError(f"LP did not solve: {res.message} — if must-plant floors or a "
+                           f"carry-in are set, check them against land, the crew in the "
+                           f"planting and harvest weeks, and storage: any of the three can make "
+                           f"one unplantable")
 
     x = res.x
     acres = {SUCCS[i]["name"]: float(x[i]) for i in range(n_s)}
@@ -1009,13 +1125,13 @@ def solve(pack_out=1.00, shrink=None, land=None, cold_cap=None, amb_cap=None,
     sold = {k: sum(v) * defaults(*k)[0] for k, v in offered.items()}
     revenue = sum(sold[(cn, hn)] * CROPS[cn].get("channels", {}).get(hn, {}).get("price_per_lb", 0.0)
                   for cn, hn in pairs)
-    # FX.2 reported on its own line: upkeep and depreciation are not "growing cost" a grower
-    # would recognise, and folding them in would hide what the perennial costs.
+    # FX.2 reported on its own line: a block's year is not "growing cost" a grower would
+    # recognise, and folding it in would hide what the perennial costs.
     cost_i = x[:n_s] * var_week[:, 1:].sum(axis=1)
     per_mask = np.array(is_per)
     growing, perennial_cost = float(cost_i[~per_mask].sum()), float(cost_i[per_mask].sum())
     short = {kw: float(x[short_i[kw]]) for kw in short_keys}
-    shortfall_cost = sum(short[kw] * contracts[kw[0]][5] for kw in short_keys)
+    shortfall_cost = sum(short[kw] * contracts[kw[0]].pen for kw in short_keys)
     packaging = sum(sold[(cn, hn)] * CROPS[cn].get("channels", {}).get(hn, {})
                     .get("packaging_cost_per_lb", 0.0) for cn, hn in pairs)
     fixed = fixed_wk * N_WEEKS

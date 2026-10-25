@@ -4,8 +4,8 @@ verify_toy_v12.py — EVALUATE the v12 workbook and prove it is the same problem
 Run:  .venv/bin/python toy_models/verify_toy_v12.py
 
 v12 (the fixed layer) adds rows the simulator must reproduce INDEPENDENTLY, not read back: land
-per zone, the shared market per identity, the perennial's cost line, the must-plant floors and
-the contract rows. Each gets a feasibility check at the optimum AND a "does it bind" check —
+per zone, the shared market per identity, the perennial blocks' cost line, the must-plant floors,
+the pinned carry-in and the contract rows (both modes). Each gets a feasibility check at the optimum AND a "does it bind" check —
 a floor nothing ever reaches proves nothing.
 
 v4's answer is not arithmetic, it is a CHOICE, so "is the sheet right?" splits in two and both
@@ -153,7 +153,9 @@ def _one(label):
 
 ZONE_ROW = {z: _one(z) for z in LP.ZONE_NAMES}
 PER = LP.PERENNIAL
-PER_ROW = _one("Upkeep $/acre/yr")
+PER_NAMES = list(LP.PERENNIAL_BY_NAME)
+PER_COST = {b: _one(f"{b} — $/acre this year") for b in PER_NAMES}
+PER_LINE = "perennial blocks (this year's cost)"
 assert len(SUCC_ROW) == len(LP.SUCCS), (
     f"found {len(SUCC_ROW)} succession rows, the app offers {len(LP.SUCCS)} — v5 must carry ALL "
     f"of them; a hand-picked subset is the exact defect v5 exists to remove")
@@ -266,11 +268,10 @@ def simulate(acres, offered, packout=None, shrink=None, caps=None,
                 rev[w] += sold[(n, h)][w] * spec.get("price_per_lb", 0.0)
                 pkg[w] += sold[(n, h)][w] * spec.get("packaging_cost_per_lb", 0.0)
     key = ["plant", "grow", "harv"]
-    # FX.2: the perennial's line, from its own inputs — upkeep + establishment / life, flat.
-    _ps = {**LP.PERENNIAL_SPEC, **fx.get("perennial", {})}
-    per_wk = (_ps["upkeep_per_acre_yr"] + _ps["establish_per_acre"] / _ps["life_years"]) / 52
-    per = [0.0] + [sum(acres[s_["name"]] for s_ in LP.SUCCS if s_.get("perennial")) * per_wk
-                   for _ in range(52)]
+    # FX.2: the perennial blocks' line, from their own inputs — each block's acres x THIS
+    # year's $/acre, flat. No depreciation: a mature block's establishment is sunk.
+    per = [0.0] + [sum(acres[n] * b["cost_per_acre_yr"]
+                       for n, b in LP.PERENNIAL_BY_NAME.items()) / 52] * 52
     for s_ in LP.SUCCS:
         if s_.get("perennial"):
             continue                       # never seed, never fertiliser: its own line above
@@ -365,10 +366,12 @@ def simulate(acres, offered, packout=None, shrink=None, caps=None,
     short = adv.get("short", {})
     con = []
     pen = [0.0] * 53
-    for k, (g, h, lb, a, b, p) in enumerate(contracts):
+    for k, (g, h, lb, a, b, mode, p) in enumerate(contracts):
+        p = p or 0.0                       # a 'deliver' row carries no price (the sheet's "-")
         sh = [0.0] + [float(short.get((k, w), 0.0)) for w in range(1, 53)]
         owed = [0.0] + [lb if a <= w <= b else 0.0 for w in range(1, 53)]
         con.append(dict(ds=[gsold[(g, h)][w] + sh[w] for w in range(53)], owed=owed,
+                        mx=[o if mode == "penalty" else 0.0 for o in owed],
                         pen=[sh[w] * p for w in range(53)]))
         for w in range(1, 53):
             pen[w] += sh[w] * p
@@ -462,7 +465,7 @@ def flex_overrides(opt):
     ov[f"B{LBL['ENGAGED?'][0]}"] = 1.0 if opt["piece_used"] else 0.0
     # v12: the contract shortfall cells
     for (k, w), v in opt.get("short", {}).items():
-        g, h = LP.CONTRACTS[k][0], LP.CONTRACTS[k][1]
+        g, h = LP.CONTRACTS[k].gid, LP.CONTRACTS[k].channel
         ov[f"{col(w)}{_one(f'{g} / {h} — SHORTFALL')}"] = float(v)
     return ov
 
@@ -481,8 +484,8 @@ def acre_overrides(acres, binaries=True):
     ov = {}
     for k, v in acres.items():
         ov[f"C{SUCC_ROW[k]}"] = float(v)
-        # the perennial's PLANT? is a formula of its acres, not a decision — never written
-        if binaries and k != PER:
+        # a perennial block's PLANT? is a formula of its acres, not a decision — never written
+        if binaries and k not in PER_NAMES:
             ov[f"D{SUCC_ROW[k]}"] = 1 if v > 1e-9 else 0
     return ov
 
@@ -567,14 +570,21 @@ def check_values(tag, overrides, acres, offered, **kw):
     for k, (g, h, *_r) in enumerate(LP.CONTRACTS):
         sh = _one(f"{g} / {h} — SHORTFALL")
         # the three rows below the decision, CHECKED by name before they are read by offset
-        for off, lab in ((1, "delivered + short"), (2, "owed"), (3, "penalty")):
+        for off, lab in ((1, "delivered + short"), (2, "owed"), (3, "may be short"),
+                         (4, "penalty")):
             got = str(ws.cell(row=sh + off, column=1).value or "").strip()
             assert got.startswith(lab), f"contract {k}: row +{off} is {got!r}, wanted {lab!r}"
         compare(f"[{tag}] contract {k} delivered + short", row(d, sh + 1), s["contracts"][k]["ds"])
         compare(f"[{tag}] contract {k} owed", row(d, sh + 2), s["contracts"][k]["owed"])
-        compare(f"[{tag}] contract {k} penalty", row(d, sh + 3), s["contracts"][k]["pen"], 1e-4)
-    compare(f"[{tag}] perennial upkeep + depreciation",
-            row(d, _one("perennial upkeep + depreciation")), s["per"], 1e-4)
+        compare(f"[{tag}] contract {k} may be short", row(d, sh + 3), s["contracts"][k]["mx"])
+        compare(f"[{tag}] contract {k} penalty", row(d, sh + 4), s["contracts"][k]["pen"], 1e-4)
+    # C15 — the carry-in's left side is acres standing in week 1, per overwintering identity
+    for g in LP.OVERWINTERING:
+        got = d.get(f"B{_one(f'{g} in the ground, week 1')}")
+        report(abs(float(got) - s["standing"][g][1]) < 1e-6,
+               f"[{tag}] {g} in the ground, week 1 (sheet {float(got):.3f}, "
+               f"sim {s['standing'][g][1]:.3f})")
+    compare(f"[{tag}] {PER_LINE}", row(d, _one(PER_LINE)), s["per"], 1e-4)
     compare(f"[{tag}] contract shortfall penalty",
             row(d, _one("contract shortfall penalty")), s["pen"], 1e-4)
     compare(f"[{tag}] COLD STORE", row(d, LBL["COLD STORE"][0]), [0] + s["cold"], 1e-4)
@@ -728,12 +738,17 @@ STAND_IN = {ws.cell(row=r_, column=1).value: r_ for r_ in range(1, ws.max_row + 
 CON_IN = [r_ for r_ in range(1, ws.max_row + 1)
           if ws.cell(row=r_, column=1).value in LP.IDENTITIES
           and ws.cell(row=r_, column=2).value in CH
-          and isinstance(ws.cell(row=r_, column=6).value, (int, float))
+          and ws.cell(row=r_, column=7).value in LP.CONTRACT_MODES
           and isinstance(ws.cell(row=r_, column=3).value, (int, float))
           and r_ > LBL["5d — CONTRACTS  (what you have already promised to deliver)"][0]]
 ANN_IN = {ws.cell(row=r_, column=1).value: r_ for r_ in range(1, ws.max_row + 1)
           if str(ws.cell(row=r_, column=5).value or "").startswith("ANNUAL")}
+CARRY_IN = {ws.cell(row=r_, column=1).value: r_ for r_ in range(1, ws.max_row + 1)
+            if str(ws.cell(row=r_, column=5).value or "").startswith("PINNED")}
 assert len(STAND_IN) == len(LP.MUST_STAND) and len(CON_IN) == len(LP.CONTRACTS), (STAND_IN, CON_IN)
+assert set(CARRY_IN) == set(LP.OVERWINTERING), CARRY_IN
+_DEL = LP.DELIVER_K
+assert _DEL and len(_DEL) < len(LP.CONTRACTS), "the fixture must carry BOTH contract modes"
 WS_ = [h for h in CH if h.lower().startswith("wholesale")][0]
 base_cold = peak(d0, "COLD STORE")
 
@@ -811,12 +826,26 @@ for tag, ov, pred in [
                    if s["zone"] == "High tunnel" and CROPS[s["crop"]] == "Kale")
                and any(float(d[f"{C_MAXA}{SUCC_ROW[s['name']]}"]) > 0 for s in LP.SUCCS
                        if s["zone"] == "Open field" and CROPS[s["crop"]] == "Kale")),
-    ("perennial      upkeep -> $10,000/ac", {f"B{PER_ROW}": 10_000.0},
-     lambda d: total_lab(d, "perennial upkeep + depreciation")
-               > total_lab(d0, "perennial upkeep + depreciation") * 3),
+    # each block's cost is its OWN input: moving one moves the line by exactly acres x delta
+    *[(f"perennial      {b} $/ac -> +5,200", {f"B{PER_COST[b]}": float(
+          ws.cell(row=PER_COST[b], column=2).value) + 5_200.0},
+       (lambda b_: lambda d: abs(total_lab(d, PER_LINE) - total_lab(d0, PER_LINE)
+                                 - 5_200.0 * float(d[f"C{SUCC_ROW[b_]}"])) < 1e-6)(b))
+      for b in PER_NAMES],
     ("perennial      acres -> 6", {f"C{SUCC_ROW[PER]}": 6.0},
      lambda d: max(row_f(d, _one("LAND in the ground — Open field")))
                >= max(row_f(d0, _one("LAND in the ground — Open field"))) + 2.999),
+    # a block is 'establishing' exactly when its calendar row has no H
+    # PERTURBED, not read at the default: an H typed on the establishing block's row must flip
+    # its label — a label hard-coded per row passes any check that only reads the default
+    *[(f"perennial      {b['name']} stage follows its calendar",
+       ({f"{col(w)}{SUCC_ROW[b['name']]}": "G" for w in LP.PERENNIAL_SPEC["harvest_weeks"]}
+        if b["bearing"] else {f"{col(20)}{SUCC_ROW[b['name']]}": "H"}),
+       (lambda b_: lambda d: str(d[f"C{PER_COST[b_['name']]}"]).startswith("bearing")
+                             == (not b_["bearing"]))(b))
+      for b in LP.PERENNIAL_BLOCKS],
+    ("carry-in       Garlic -> 12 ac", {f"B{CARRY_IN['Garlic']}": 12.0},
+     lambda d: float(d[f"D{_one('Garlic in the ground, week 1')}"]) == 12.0),
     ("must-plant     Kale standing -> 9 ac", {f"B{STAND_IN['Kale']}": 9.0},
      lambda d: max(row_f(d, _one("must stand (row %d)" % STAND_IN["Kale"]))) == 9.0),
     ("must-plant     window -> wk 12-14", {f"C{STAND_IN['Kale']}": 12, f"D{STAND_IN['Kale']}": 14},
@@ -829,6 +858,12 @@ for tag, ov, pred in [
     ("contract       penalty -> $7 with 100 lb short",
      {f"F{CON_IN[0]}": 7.0, f"{col(25)}{_one('Kale / Wholesale — SHORTFALL')}": 100.0},
      lambda d: abs(total_lab(d, "contract shortfall penalty") - 700.0) < 1e-6),
+    # MODE IS LIVE both ways: 'deliver' closes the shortfall, 'penalty' opens it to the order
+    ("contract       Kale mode -> deliver", {f"G{CON_IN[0]}": "deliver"},
+     lambda d: max(row_f(d, _one(f"may be short (row {CON_IN[0]})"))) == 0.0),
+    ("contract       deliver row mode -> penalty", {f"G{CON_IN[_DEL[0]]}": "penalty"},
+     lambda d: max(row_f(d, _one(f"may be short (row {CON_IN[_DEL[0]]})")))
+               == float(ws.cell(row=CON_IN[_DEL[0]], column=3).value)),
 ]:
     try:
         ok = pred(calc({**BASE_ACRES, **ov}))
@@ -908,6 +943,27 @@ report(worst(d_opt, "LAND in the ground — High tunnel") <= 1e-6,
 _free = LP.solve(must_stand=[], must_annual={})["obj_value"]
 _floor_cost = {f[0]: _free - LP.solve(must_stand=[f], must_annual={})["obj_value"]
                for f in LP.MUST_STAND}
+# C15 — the carry-in is PINNED, so it is checked as an EQUALITY on the sheet, and it must bind in
+# BOTH directions: the default pushes garlic UP from where it would sit free, and a smaller
+# carry-in must hold it DOWN — the half a floor could never do, and the reason it is a pin.
+for _g in LP.OVERWINTERING:
+    _cr = _one(f"{_g} in the ground, week 1")
+    _l, _r = float(d_opt[f"B{_cr}"]), float(d_opt[f"D{_cr}"])
+    report(abs(_l - _r) < 1e-6, f"{_g}: carry-in PINNED at the optimum ({_l:.3f} = {_r:.3f})")
+    _unp = LP.solve(carry_in={_g: None})
+    # what the pin governs: acres of the identity STANDING IN WEEK 1, left free
+    _free_ac = sum(_unp["acres"][s_["name"]] for s_ in LP.SUCCS
+                   if LP.identity(LP.CROP_NAMES[s_["crop"]]) == _g and LP.stands(s_, 1))
+    _up = _unp["obj_value"] - OPT["obj_value"]
+    _dn = _unp["obj_value"] - LP.solve(carry_in={_g: round(_free_ac - 0.7, 2)})["obj_value"]
+    report(_r > _free_ac + 1e-3 and _up > 1.0,
+           f"{_g}: the pin pushes it UP from {_free_ac:.2f} ac free (costs ${_up:,.0f})")
+    report(_dn > 1.0, f"{_g}: and a carry-in below that holds it DOWN (costs ${_dn:,.0f}) — "
+                      f"a floor could not")
+    # no carry-in = cannot plant: no decisions about next year's crop
+    _none = LP.solve(carry_in={})
+    report(all(v < 1e-9 for k, v in _none["acres"].items() if k.startswith(f"{_g} ")),
+           f"{_g}: with nothing carried in, none is planted (no decisions about next year)")
 for _g, _ac, _a, _b in LP.MUST_STAND:
     _st = row_f(d_opt, _one(f"{_g} standing"))
     _fl = row_f(d_opt, _one(f"must stand (row {STAND_IN[_g]})"))
@@ -926,16 +982,36 @@ _any_short = 0.0
 for _k, (_g, _h, *_r) in enumerate(LP.CONTRACTS):
     _sh = _one(f"{_g} / {_h} — SHORTFALL")
     _ds, _ow, _s = row_f(d_opt, _sh + 1), row_f(d_opt, _sh + 2), row_f(d_opt, _sh)
-    _bad = [w + 1 for w in range(52) if _ds[w] < _ow[w] - 1e-6 or _s[w] > _ow[w] + 1e-6]
-    report(not _bad, f"contract {_g}/{_h}: delivered + short >= owed, and short <= owed"
+    _mx = row_f(d_opt, _sh + 3)
+    _bad = [w + 1 for w in range(52) if _ds[w] < _ow[w] - 1e-6 or _s[w] > _mx[w] + 1e-6]
+    report(not _bad, f"contract {_g}/{_h}: delivered + short >= owed, and short <= may be short"
            + (f" (weeks {_bad[:4]})" if _bad else ""))
     _any_short += sum(_s)
 report(_any_short > 0, f"and some contract IS short at the optimum ({_any_short:,.0f} lb) — the "
                        f"slack that keeps an unmeetable contract solvable is exercised")
+# 'deliver' — met IN FULL by sales alone, it BINDS, and past what the farm grows it is REFUSED
+# by name. Each half needs the other: a deliver contract the plan meets anyway proves nothing.
+for _k in _DEL:
+    _g, _h = LP.CONTRACTS[_k].gid, LP.CONTRACTS[_k].channel
+    _sh = _one(f"{_g} / {_h} — SHORTFALL")
+    _sold = [a_ - b_ for a_, b_ in zip(row_f(d_opt, _sh + 1), row_f(d_opt, _sh))]
+    _ow = row_f(d_opt, _sh + 2)
+    report(sum(row_f(d_opt, _sh)) == 0.0 and all(_sold[w] >= _ow[w] - 1e-6 for w in range(52)),
+           f"deliver {_g}/{_h}: met in full by sales, no shortfall")
+    _wo = LP.solve(contracts=[c_ for k_, c_ in enumerate(LP.CONTRACTS) if k_ != _k])
+    report(_wo["obj_value"] - OPT["obj_value"] > 1.0,
+           f"deliver {_g}/{_h}: and it BINDS (costs ${_wo['obj_value'] - OPT['obj_value']:,.0f})")
+    try:
+        LP.solve(contracts=[c_._replace(lb=c_.lb * 1.4) if k_ == _k else c_
+                            for k_, c_ in enumerate(LP.CONTRACTS)])
+        report(False, f"deliver {_g}/{_h} at 1.4x: SOLVED — expected a refusal")
+    except RuntimeError as e_:
+        report(f"{_g}/{_h}" in str(e_) and "weeks" in str(e_),
+               f"deliver {_g}/{_h} at 1.4x: refused BY NAME ({str(e_)[:90]}...)")
 _pen_sheet = sum(row_f(d_opt, _one("contract shortfall penalty")))
 report(abs(_pen_sheet - OPT["shortfall_cost"]) < 1e-3,
        f"sheet shortfall penalty ${_pen_sheet:,.2f} = LP ${OPT['shortfall_cost']:,.2f}")
-_per_sheet = sum(row_f(d_opt, _one("perennial upkeep + depreciation")))
+_per_sheet = sum(row_f(d_opt, _one(PER_LINE)))
 report(abs(_per_sheet - OPT["perennial_cost"]) < 1e-3,
        f"sheet perennial line ${_per_sheet:,.2f} = LP ${OPT['perennial_cost']:,.2f}")
 _lu = [float(x) for x in row(d_opt, LBL["CROP HOURS needed"][0])]

@@ -34,6 +34,17 @@ Sequence that works:
 
 Not a reason to defer guards indefinitely: step 2 still needs enough coverage that step 3 cannot break the thing silently. The rule is about *when the expensive, mutation-verified layer* gets built, not about writing tests late.
 
+### Mutation testing — where it earns its cost, and how to keep it fast (grower ruling 2026-10-25)
+
+Mutations rarely find a bug in the code; they find **guards that cannot fail** (W6's four inert guards, the overtime cap, the toy's "annual floor counts the perennial", a deliver contract's dead price box). That is worth paying for where a green suite would otherwise mean nothing — and only there.
+
+- **App money path** (solver, payload fields, cost/accounting math, units): mutation-test, once, after `/simplify`.
+- **Toy model:** only when a new verifier/sheet check is added, and keep it to ~5–8 targeted mutants. The toy already has an independent second derivation (sheet = simulator = LP to the cent).
+- **Docs, UI copy, mechanical edits:** none.
+- **Keep it fast:** run each mutant against ONLY the test(s) written to catch it (seconds, not a 7-minute suite), in parallel, each in its own repo copy (never mutate the real tree — an interrupted run then cannot leave a mutant behind). Run the full suite only to confirm a survivor.
+- **After `/code-review` fixes:** re-run only the mutants that touch changed code, never the whole set.
+- **Review depth by stakes:** `/code-review medium` for toy and doc changes; high/max for the app money path and branch landings.
+
 ### Verify first, and verify twice when the fix looks like one line
 
 A backlog entry that names the fix is a hypothesis, not a spec. W6's entry said "swap the numerator, the honest one now exists" — true, and shipping only that would have replaced one wrong number with another (Garlic/Farmers Market reads 50% on the annual basis while its weekly cap binds in every week it sells). The first measurement confirmed the defect; the **second** measurement, on a different axis, is what showed the prescribed fix was also wrong. Measure the axis the fix does *not* mention.
