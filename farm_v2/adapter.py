@@ -382,6 +382,9 @@ def run_from_js(params_json):
             # FX.4 — named land pools, forwarded as sent: ABSENT = one "Whole farm" zone, and
             # the solver (not this seam) refuses a malformed list by name.
             zones=p.get('zones'),
+            # FX.2 — the farm-level commitments table (perennial blocks so far), forwarded as
+            # sent for the same reason: the solver refuses a malformed entry by name.
+            commitments=p.get('commitments'),
             solver_time_limit=75.0,
         )
         result = solve_farm_v2(**solve_kwargs)
@@ -443,6 +446,9 @@ def run_from_js(params_json):
                 # The client labels the Gantt by this, not by parsing the name — a zone suffix
                 # ("Kale W10 · Tunnel 2") put a different number at the end of it.
                 'start_week': int(s['start_week']),
+                # FX.2 — a perennial block's row names the commitment it came from; None for
+                # every planting the optimiser chose.
+                'commitment_id': s.get('commitment_id'),
                 'acres':  round(frac2 * total_land, 1),
                 'weeks':  list(s['weeks']),
                 'phases': list(s['phases']),
@@ -591,6 +597,9 @@ def run_from_js(params_json):
             'zones': [{'name': z['name'], 'acres': z['acres'], 'covered': z['covered'],
                        'used_acres': [round(float(v), 3) for v in z['used_acres']]}
                       for z in zones_res],
+            # FX.2 — each perennial block, by commitment id: stage, this year's cost, sellable
+            # lb and hours. Floats as the solver computed them; the client rounds for display.
+            'perennial_blocks': result['perennial_blocks'],
             'crop_names':          crop_names,
             'weekly_land_frac':    [round(v, 4) for v in weekly_land_frac],
             'weekly_harvest_vol':  [round(v, 2) for v in weekly_harvest_vol],

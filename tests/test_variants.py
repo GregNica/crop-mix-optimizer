@@ -7,14 +7,13 @@ read $757,459; with one market per identity it is $705,841 (the golden farm, $65
 untouched — it has no variants, the L4 trap, hence this fixture).
 """
 import copy
-import json
 
 import pytest
 
-from farm_v2.adapter import run_from_js
 from farm_v2.solver import DEMAND_AT_CAP_FRACTION
 from farm_v2.utils.variants import INHERITED_KEYS, identity_groups, resolve_variants
-from tests.helpers import expand_weekly_caps, golden_payload, saturation_entries
+from tests.helpers import (expand_weekly_caps, golden_payload, saturation_entries,
+                           solve_payload as solve, solve_payload_optimal as solve_optimal)
 
 SPINACHES = ("Spinach", "Tunnel Spinach")
 
@@ -46,16 +45,6 @@ def variant_farm(**spinach):
         yield_per_acre=6500, min_acreage_if_planted=0.25,
         seasons=[{"start": "01-10", "end": "12-10"}]))
     return p
-
-
-def solve(p):
-    return json.loads(run_from_js(json.dumps(p)))
-
-
-def solve_optimal(p):
-    r = solve(p)
-    assert r["status"] == "optimal", r.get("errors") or r.get("error")
-    return r
 
 
 @pytest.fixture(scope="module")

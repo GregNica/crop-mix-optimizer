@@ -92,6 +92,10 @@ def generate_successions(crops: list[dict], year: int = 2024,
     zone_names = [WHOLE_FARM] if zone_names is None else list(zone_names)
 
     for crop_idx, crop in enumerate(crops):
+        # FX.2 — a perennial has no planting window: its blocks are pinned plantings built by
+        # perennials.perennial_successions from the commitments table, not slots to choose from.
+        if crop.get("perennial"):
+            continue
         eligible = crop_zone_names(crop, zone_names)
         # days_to_maturity is PLANT TO FIRST HARVEST — the grower's definition, and what every
         # seed catalogue and extension budget publishes. It is NOT total field occupancy.
@@ -123,13 +127,14 @@ def generate_successions(crops: list[dict], year: int = 2024,
         overwinters = bool(crop.get("overwinters", False))
 
         # A cycle longer than the planning year would wrap onto itself and occupy the same week
-        # twice. That is a perennial, which the single cyclic year cannot represent — say so
-        # rather than silently double-charging its land and labour.
+        # twice — silently double-charging its land and labour. That is a perennial, which is a
+        # committed block (FX.2), not a slot the optimiser may choose.
         if total_weeks > 52:
             raise ValueError(
                 f"Crop '{crop['name']}': cycle is {total_weeks} weeks "
                 f"({crop['days_to_maturity']} days_to_maturity), which exceeds the 52-week "
-                f"planning year. Perennial and multi-year crops cannot be modelled here."
+                f"planning year. A perennial cannot be a planting window: tick "
+                f"'perennial' on its card and enter its blocks in the commitments table."
             )
 
         for season in crop["seasons"]:
@@ -140,12 +145,7 @@ def generate_successions(crops: list[dict], year: int = 2024,
             # cycle runs from there. Previously the whole cycle had to fit inside the window,
             # which silently produced ZERO successions for any crop whose harvest fell outside
             # it. The window itself may also wrap (start > end), e.g. a Nov-to-Feb planting.
-            if end_w >= start_w:
-                starts = list(range(start_w, end_w + 1))
-            else:
-                starts = list(range(start_w, 53)) + list(range(1, end_w + 1))
-
-            for slot_start in starts:
+            for slot_start in week_span(start_w, end_w):
                 # Wrap is OPT-IN, via the crop's `overwinters` flag. Every window in the
                 # library was authored under the old whole-cycle meaning, so making wrap
                 # universal reinterprets all of them at once and lets frost-tender crops be
@@ -168,6 +168,23 @@ def generate_successions(crops: list[dict], year: int = 2024,
                     })
 
     return successions
+
+
+def week_span(first: int, last: int) -> list[int]:
+    """Weeks first..last inclusive; a span that ends before it starts wraps the year
+    (a Nov-to-Feb planting window, a harvest that runs over New Year)."""
+    if last >= first:
+        return list(range(first, last + 1))
+    return list(range(first, 53)) + list(range(1, last + 1))
+
+
+def planting_value(s: dict, crop: dict, key: str, default=None):
+    """`key` for planting `s`: its own value when it carries one, else its crop card's.
+
+    A pinned planting may differ from its card (FX.2: a perennial patch's yield this year, its
+    labour, no seed), so it carries the override under the card's own key and every reader asks
+    here rather than "is this a perennial"."""
+    return s[key] if key in s else crop.get(key, default)
 
 
 # ---------------------------------------------------------------------------

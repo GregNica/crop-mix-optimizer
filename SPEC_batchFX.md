@@ -171,6 +171,67 @@ pseudo-succession standing weeks 1–52 (phase G, H in the harvest window), `x` 
 acres/total_land, `y` = 1. Cost lines: upkeep (this year) + establishment ÷ life (depreciation,
 OWN→depreciate — never seed). Its harvest flows through inventory and channels like any crop.
 
+**FX.2 as built (2026-10-25).** `farm_v2/utils/perennials.py` (`resolve_perennial_blocks`,
+`perennial_successions`), read by validation and the solver alike. Measured first: the app
+refused any perennial outright (`calendar.py`, "cycle is 113 weeks … exceeds the 52-week year").
+- **Shape.** The crop card is flagged `perennial: true` and describes the PRODUCT (channels,
+  storage, shelf life, and grow/harvest-phase labour, water, fertiliser and fuel rates, plus crop
+  protection); it needs none of an annual's calendar keys. Each BLOCK (one planting, "patch") is
+  a farm-level `commitments[]` entry (§6.1): `{id, kind: "perennial", source, crop, acres, zone,
+  planted_year, yield_per_acre, harvest_from_week, harvest_to_week, extra_cost_per_acre?,
+  labor_grow?, labor_harv?}`. Yield is THIS year's and REQUIRED (no default). Yield 0 =
+  establishing: all grow, no harvest weeks. Stage is reported from the harvest, never stored. A
+  harvest window may wrap the year. **Labour override per block KEPT (grower, 2026-10-25).**
+- **The pin.** One pseudo-succession per block, weeks 1–52, phase G with H in its harvest weeks,
+  appended AFTER the generated slots (so every annual index is unchanged → golden identical). Its
+  x is bounded lb = ub = acres/total_land and y = 1, so C1/C2/C3/C4/C12/C13 see it as any planting.
+  **C8 diversity and C10 minimum skip it** (committed ground is not a rotation or lot-size choice;
+  in either row it could only produce a bare infeasible). The pin is generic: the solver core
+  reads PLANTING properties, never "is this a perennial" — `pinned_acres` (bounds, C8, C10),
+  `commitment_id`, and overrides under the card's own keys (`yield_per_acre`, `labor_grow/harv`,
+  seed 0) via `calendar.planting_value`, plus `extra_cost_per_acre`. A hand-placed annual pin
+  (§6.2) would be one more source of the same dict; no payload kind exposes it yet.
+- **Costs — itemised (grower, 2026-10-25: "perennials still need those").** A block pays the
+  card's fertiliser, fuel, metered water and crop protection exactly as any crop does, in their
+  own P&L columns — and NEVER seed: establishment is sunk (ruling 6), so a seed figure on the card
+  is ignored for blocks. `extra_cost_per_acre` (default 0) is what that patch alone costs this
+  year (e.g. an establishing patch's extra work), its own VC column `perennial_extra`, flat over
+  52 weeks. (First build had ONE all-in cost per block and charged no inputs — overruled.) Labour
+  is wages as for any crop (W12). Overhead ledger: EXCLUDES "perennial"; tooltip, assistant
+  description and P&L labels updated.
+- **Margin kernel.** Per planting at its own yield; a perennial's per-crop rates use the
+  acre-weighted yield of its BEARING blocks (an establishing block sells nothing, so carries no
+  per-pound cost).
+- **Refused by name:** unknown/non-perennial crop, acres ≤ 0 or non-numeric, missing yield/cost,
+  bad harvest weeks, zone not on the farm or not eligible, no zone when the crop may stand in
+  several, duplicate ids, unknown kind, the three FX.1/FX.3 kinds ("not supported yet"), a bad
+  `source`, a perennial crop with no block, a perennial with `committed_acres` or `overwinters`.
+  Blocks join the week-1 land check and FX.4's Hall's-condition zone check.
+- **Result:** `perennial_blocks: [{id, source, crop, zone, name, acres, planted_year, stage,
+  yield_per_acre, harvest_weeks, cost, sellable_lbs, labor_hours}]`; schedule rows carry
+  `commitment_id` (None for chosen plantings).
+- **Measured on the first build (golden + toy asparagus, 3 ac bearing + 1 ac establishing, one
+  all-in cost):** upkeep $5,888 = 3×$1,296 + $2,000 exactly; 5,250 lb sellable, all sold (FM 300×8 + Wholesale 2,850); hours
+  198 = 3×(44×0.5 + 8×5.5) and 26 = 52×0.5; profit $629,903 (−$22,974 vs golden: 4 ac taken from
+  annuals all year). Golden unchanged at $652,876 with `commitments` absent or []. In a covered
+  tunnel a block gets no rain credit (100,000 vs 42,800 L/ac in week 20) — and the FARM total
+  can be identical when the same acreage sits in the tunnel either way (rain offset is per
+  acre, not per crop): an explained coincidence, not a bug.
+- **Suggestions do not bind (grower, 2026-10-25).** An entry with `source: "suggested"` is
+  validated but left out of the plan; a co-pilot "try it" solve prices it by sending it as
+  `accepted`. Mechanics only — the co-pilot itself is not designed (X5).
+- **Guards:** `tests/test_perennials.py` (39). `/simplify` (4 lenses) made the pin generic (planting
+  properties, `calendar.planting_value`; C8/C10 keyed on the PIN, not on "perennial"), derived
+  stage, shared `utils/numbers.is_number` and `calendar.week_span`. **16 targeted mutants, 16
+  caught** — after five were found INERT on the default farm before guards were written for
+  them: the ceiling (the blocks lose money, so a floor-only pin passes), C8 and C10 (the card has
+  no cap or minimum), the kernel's acre weighting (no test read a perennial margin), and the
+  extra cost's flat spread (totals agree if charged in one week). Each guard forces the second
+  condition. Two fast kills checked by hand: real (80 ac without the ceiling; presolve-infeasible).
+- **Deferred:** the per-entry with/without delta (§6.3) to FX.3, built once for every kind.
+  Hand-placed plantings of an annual (§6.2) stay unexposed: FX.1's floors cover "this crop is
+  committed"; a fixed-date pin waits for the co-pilot work.
+
 **FX.1 Must-plant.** Two lists on the crop (or a farm-level table, Q4):
 `must_stand: [{acres, from_week, to_week}]` → Σ standing x of the identity ≥ acres/total_land in
 every week of the window; `must_plant_annual: acres` → Σ x over the identity's plantings (perennial

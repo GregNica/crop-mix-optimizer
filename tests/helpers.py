@@ -34,6 +34,20 @@ def index_src() -> str:
     return INDEX.read_text()
 
 
+def solve_payload(p: dict) -> dict:
+    """`p` solved through the app's adapter, as the browser would — the decoded result."""
+    import json
+    from farm_v2.adapter import run_from_js
+    return json.loads(run_from_js(json.dumps(p)))
+
+
+def solve_payload_optimal(p: dict) -> dict:
+    """solve_payload, asserting a plan came back (with the refusal's reasons if not)."""
+    r = solve_payload(p)
+    assert r["status"] == "optimal", r.get("errors") or r.get("error")
+    return r
+
+
 # ---------------------------------------------------------------------------
 # Shared solve cache
 # ---------------------------------------------------------------------------

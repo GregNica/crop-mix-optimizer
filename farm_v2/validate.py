@@ -26,6 +26,8 @@ from farm_v2.utils.water import WATER_MODES
 import math
 from farm_v2.utils.calendar import generate_successions, week_of_year
 from farm_v2.utils.zones import crop_zone_names, resolve_zones
+from farm_v2.utils.perennials import resolve_perennial_blocks
+from farm_v2.utils.numbers import is_number as _is_number
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +69,7 @@ def validate_params(
     hire_productivity_pct: float = 70.0,
     hire_cost_per_head: float = 800.0,
     zones: list | None = None,            # FX.4 — [{name, acres}]; absent = one "Whole farm"
+    commitments: list | None = None,      # FX.2 — [{id, kind, ...}]; perennial blocks so far
     **_kwargs,  # absorb unused kwargs for forward-compatibility
 ) -> list[str]:
     """
@@ -221,7 +224,7 @@ def validate_params(
         )
 
     total_committed = 0.0
-    commitments = []                        # (crop, committed acres, zones it may stand in)
+    standing = []                           # (crop, acres in the ground in week 1, zones it may stand in)
     for crop in crops:
         # R1: charged straight into the objective — a negative rate PAYS the farm (reproduced:
         # -$2,000/acre turned a -$99k farm into +$139k "optimal"), NaN crashes scipy.
@@ -263,7 +266,7 @@ def validate_params(
                 f"Crop '{crop['name']}' cannot be planted in {', '.join(too_small)}: its "
                 f"{min_acres:g}-acre minimum planting is larger than the zone."
             )
-        commitments.append((crop["name"], committed, set(eligible)))
+        standing.append((crop["name"], committed, set(eligible)))
         if committed > 0:
             # NOT checked here any more: `committed_acres < min_acreage_if_planted`. That was
             # added on a mis-diagnosis and rejected farms that solve perfectly well — C15 is a
@@ -289,6 +292,12 @@ def validate_params(
                     f"planning year, so only an overwintering crop can hold any."
                 )
         total_committed += committed
+    # FX.2 — a perennial block stands in its zone all year, so in week 1 it competes for ground
+    # with the overwintered acres above: both join the land and zone checks that follow.
+    blocks = resolve_perennial_blocks(commitments, crops, zone_names)
+    for b in blocks:
+        standing.append((f"{b['crop']} (block {b['id']})", b["acres"], {b["zone"]}))
+        total_committed += b["acres"]
     # FX.5 — C8 is one row per identity, so a crop's commitments and its variants' share one
     # diversity ceiling: each can fit it alone and together not, which HiGHS reports as a bare
     # "infeasible". Measured: Garlic + a Hardneck variant at 33.6 ac each against a 48-ac ceiling.
@@ -319,7 +328,7 @@ def validate_params(
     from itertools import combinations
     for k in range(1, len(zone_names)):
         for group in combinations(zone_names, k):
-            inside = [(n, a) for n, a, el in commitments if a > 0 and el <= set(group)]
+            inside = [(n, a) for n, a, el in standing if a > 0 and el <= set(group)]
             need = sum(a for _, a in inside)
             room = sum(zone_acres[z] for z in group)
             if need > room + 1e-9:
@@ -335,7 +344,7 @@ def validate_params(
     except ValueError as e:
         raise ValueError(f"Succession generation failed: {e}") from e
 
-    if not succs:
+    if not succs and not blocks:
         raise ValueError(
             "No successions generated for any crop. Season windows are PLANTING windows, so "
             "check that each one holds at least one start week whose cycle finishes by week 52 "
@@ -346,7 +355,7 @@ def validate_params(
     # Per-crop check
     for c_idx, crop in enumerate(crops):
         crop_succs = [s for s in succs if s["crop"] == c_idx]
-        if not crop_succs:
+        if not crop_succs and not crop.get("perennial"):
             warnings.append(
                 f"Crop '{crop['name']}': no successions generated. "
                 f"Season window(s) may be too narrow for the crop cycle length."
@@ -389,9 +398,25 @@ def validate_params(
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _is_number(v) -> bool:
-    """A real, finite number — not a bool (which Python counts as an int), not None, not NaN."""
-    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+def _validate_perennial_crop(crop: dict, name: str) -> None:
+    """FX.2 — a perennial card describes the PRODUCT (channels, storage, and per-week labour,
+    water, fertiliser and fuel rates for its grow and harvest phases — there is no planting phase);
+    its blocks in the commitments table carry acres, this year's yield and harvest weeks.
+    So it needs none of an annual's calendar keys, and the two carry-in fields have no meaning on
+    it: the block IS the ground already standing. Refused rather than ignored."""
+    if crop.get("perennial") is not True:
+        raise ValueError(f"Crop '{name}': perennial must be true or false, got {crop['perennial']!r}.")
+    missing = {"name", "crop_size_m3_per_lb", "labor_grow", "labor_harv", "water_grow",
+               "water_harv", "fert_grow", "fert_harv", "fuel_grow", "fuel_harv"} - crop.keys()
+    if missing:
+        raise ValueError(f"Crop '{name}' missing required keys: {missing}.")
+    if crop["crop_size_m3_per_lb"] < 0:
+        raise ValueError(f"Crop '{name}' crop_size_m3_per_lb must be ≥ 0.")
+    if float(crop.get("committed_acres", 0.0) or 0.0) > 0 or crop.get("overwinters"):
+        raise ValueError(
+            f"Crop '{name}' is perennial, so its ground is its blocks in the commitments table — "
+            f"clear its committed acres and 'overwinters'."
+        )
 
 
 def _check_nonneg(val, name: str) -> None:
@@ -515,6 +540,10 @@ def _validate_crop(crop: dict, ch_names: list[str], year: int) -> list[str]:
     """Validate a single crop dict. Returns list of warnings."""
     warnings = []
     name = crop.get("name", "<unnamed>")
+    if crop.get("perennial"):
+        _validate_perennial_crop(crop, name)
+        _validate_crop_channels(crop, ch_names, name)
+        return warnings
 
     required_keys = {
         "name", "days_to_maturity", "planting_weeks", "harvest_weeks",
@@ -587,7 +616,11 @@ def _validate_crop(crop: dict, ch_names: list[str], year: int) -> list[str]:
                 f"fall-planted and harvested the following year."
             )
 
-    # Channel validation
+    _validate_crop_channels(crop, ch_names, name)
+    return warnings
+
+
+def _validate_crop_channels(crop: dict, ch_names: list[str], name: str) -> None:
     crop_channels = crop.get("channels", {})
     for ch_name in ch_names:
         if ch_name not in crop_channels:
@@ -607,5 +640,3 @@ def _validate_crop(crop: dict, ch_names: list[str], year: int) -> list[str]:
                 f"Crop '{name}', channel '{ch_name}': demand_cap_type must be "
                 f"'annual', 'weekly_flat', or 'weekly_varying', got '{cap_type}'."
             )
-
-    return warnings

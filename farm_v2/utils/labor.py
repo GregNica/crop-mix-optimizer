@@ -37,6 +37,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from farm_v2.utils.calendar import planting_value
+
 # The two accepted seasonal type spellings. PT is a legacy alias — the two take identical
 # code paths (wage, capacity, committed-wage treatment all the same); the app's adapter maps
 # its own 'seasonal' type to 'FT'. One definition, imported by validate.py, so the accepted
@@ -269,6 +271,9 @@ def compute_labor_rates(
     Each rate is PER WEEK of its phase, charged once for every week the phase occupies —
     a crop with planting_weeks 2 costs 2 x labor_plant per acre to plant. Comparing the
     raw fields across crops is therefore only valid at equal phase length.
+
+    A pinned planting may carry its own rates (FX.2: a perennial patch's this-year labour),
+    read through calendar.planting_value.
     """
     _LABOR_KEY = ["labor_plant", "labor_grow", "labor_harv"]
     n = len(successions)
@@ -278,6 +283,6 @@ def compute_labor_rates(
         crop = crops[s["crop"]]
         for week, phase in zip(s["weeks"], s["phases"]):
             if 1 <= week <= n_weeks:
-                result[i][week] = crop[_LABOR_KEY[phase]]
+                result[i][week] = planting_value(s, crop, _LABOR_KEY[phase])
 
     return result

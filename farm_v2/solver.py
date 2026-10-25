@@ -24,6 +24,8 @@ Constraint order (rows of A):
   C6b  sales ≤ ANNUAL cap — one row per identity-channel that has one
   C8   crop diversity — annual acre-weeks per identity (a variant shares its parent's)
   C9   binary linkage upper x[i] ≤ y[i]  (N_S)
+       FX.2: a perennial block is a PINNED x (bounds lb = ub = its acres, y = 1), standing all
+       52 weeks — every row below sees it like any planting except C8 and C10, which skip it
   C15  committed acres — floor on ground STANDING in week 1 (one row per committed crop)
   C10  min acreage lower   x[i] ≥ y[i]×min_frac  (N_S)
   C11  max plant acres/week (52)
@@ -48,6 +50,7 @@ from farm_v2.utils.calendar import (
     build_phase_table,
     harvest_weeks_of,
     phase_weeks_of,
+    planting_value,
 )
 from farm_v2.utils.water import (
     rain_coverage,
@@ -60,6 +63,7 @@ from farm_v2.utils.labor import compute_labor_arrays, compute_labor_rates
 from farm_v2.utils.demand import build_demand_table, build_annual_caps
 from farm_v2.utils.zones import resolve_zones
 from farm_v2.utils.variants import identity_groups, resolve_variants
+from farm_v2.utils.perennials import perennial_successions, resolve_perennial_blocks
 from farm_v2.validate import validate_params
 
 
@@ -83,7 +87,9 @@ DEMAND_AT_CAP_FRACTION = 0.95   # a week counts as "at cap" in demand_saturation
 # Labour is NOT here (W12): every listed worker is paid for their stated hours whether or not the
 # crops need them, so wages are a committed weekly cost, not a per-acre one. The marginal crop hour
 # is free and is rationed by C2's capacity rather than by price. See `committed_weekly_wages`.
-VC_CATEGORIES = ("water", "fertilizer", "fuel", "seed", "crop_protection")
+# FX.2: what one perennial patch alone costs this year (its `extra_cost_per_acre`) is its own
+# column; its fertiliser, fuel and crop protection are charged in theirs, like any crop's.
+VC_CATEGORIES = ("water", "fertilizer", "fuel", "seed", "crop_protection", "perennial_extra")
 
 # R8 — overhead is a defined RESIDUAL, not a bucket. `overhead_pct_of_revenue` is one number the
 # grower enters, and by its own definition it once "contained" insurance, taxes, repairs and
@@ -116,6 +122,7 @@ OVERHEAD_EXCLUDES = {
     "inputs":     (("water", "fertilizer", "fuel", "seed"), ("seed", "water", "fert", "fuel")),
     "packaging":  (("packaging",), ("packaging",)),
     "protection": (("crop_protection",), ("crop protection",)),     # R1
+    "perennial":  (("perennial_extra",), ("perennial",)),           # FX.2
     "selling":    (("fixed_selling",), ("selling",)),
     "debt":       (("other_debt_service",), ("debt",)),
     "interest":   (("interest",), ("interest",)),
@@ -416,6 +423,8 @@ def solve_farm_v2(
     channels: list | None = None,     # each {"name", optional "fixed_selling_cost_per_wk"}
     # --- Zones (FX.4) ---
     zones: list | None = None,        # [{"name", "acres"}]; absent = one "Whole farm" zone
+    # --- Commitments (FX) --- [{id, kind, ...}]; FX.2 builds kind "perennial" (one per block)
+    commitments: list | None = None,
     # --- Year ---
     year: int = 2024,
     # --- Solver options ---
@@ -563,6 +572,7 @@ def solve_farm_v2(
             hire_productivity_pct=hire_productivity_pct,
             hire_cost_per_head=hire_cost_per_head,
             zones=zones,
+            commitments=commitments,
             city_water_enabled=city_water_enabled,
             well_enabled=well_enabled,
             catchment_enabled=catchment_enabled,
@@ -595,9 +605,14 @@ def solve_farm_v2(
     # -----------------------------------------------------------------------
     # FX.4 — resolved here as well as in validation: Step 0 fails OPEN when the guard crashes,
     # and a zone or eligibility the farm cannot honour must still be refused, never solved.
+    # FX.2 — perennial blocks, resolved for the same reason: each becomes one PINNED planting
+    # appended after the slots the optimiser chooses from.
     try:
         zone_list = resolve_zones(zones, total_land)
-        successions = generate_successions(crops, year, [z["name"] for z in zone_list])
+        zone_names = [z["name"] for z in zone_list]
+        blocks = resolve_perennial_blocks(commitments, crops, zone_names)
+        successions = (generate_successions(crops, year, zone_names)
+                       + perennial_successions(blocks, crops, zone_names))
     except ValueError as ve:
         return _invalid([str(ve)])
     N_S = len(successions)
@@ -612,6 +627,10 @@ def solve_farm_v2(
         ])
 
     phase_table = build_phase_table(successions, N_WEEKS)  # [i][w] = 0/1/2/None
+    # This year's yield per acre of each planting: its card's, or its own (FX.2 perennial patch).
+    succ_yield = [float(planting_value(s, crops[s["crop"]], "yield_per_acre")) for s in successions]
+    # PINNED plantings (FX.2): acres are an input, not a decision — bounds, C8 and C10 read this.
+    pinned = [i for i, s in enumerate(successions) if "pinned_acres" in s]
 
     # -----------------------------------------------------------------------
     # Step 2 — Pre-compute derived arrays
@@ -745,7 +764,12 @@ def solve_farm_v2(
 
     for i, s in enumerate(successions):
         crop = crops[s["crop"]]
-        seed_cost = crop.get("seed_transplant_cost_per_acre", 0.0)
+        # FX.2: a perennial patch carries a zero seed cost (its establishment is sunk, ruling 6)
+        # and what it alone costs this year, spread flat; its inputs and crop protection are
+        # charged below from the card, like any crop's.
+        seed_cost = planting_value(s, crop, "seed_transplant_cost_per_acre", 0.0)
+        vc_weekly_split[i, 1:, _CAT["perennial_extra"]] += (
+            total_land * s.get("extra_cost_per_acre", 0.0) / N_WEEKS)
 
         # Seed cost charged in the first week of the succession
         first_week = s["weeks"][0] if s["weeks"] else None
@@ -820,17 +844,24 @@ def solve_farm_v2(
     # Per pound sold, the objective credits net_after_price (price - packaging - overhead
     # share) and pays the growing cost. Only sell_through of what is grown can be sold, so the
     # full growing cost is carried by the sold pounds.
+    #
+    # Per planting, at its own yield: a perennial block's is this year's (FX.2), and a block still
+    # establishing sells nothing, so it carries no per-pound cost — it is committed, not chosen.
+    # `kernel_yield` is the per-acre yield the per-crop rates below read: the crop's, or for a
+    # perennial the acre-weighted yield of its bearing blocks.
     var_cost_per_lb = np.zeros(n_crops, dtype=float)
+    kernel_yield = np.zeros(n_crops, dtype=float)
     for c_idx, crop in enumerate(crops):
-        ypa = float(crop.get("yield_per_acre", 0.0) or 0.0)
         stf = float(crop.get("sell_through_fraction", sell_through_fraction) or 0.0)
-        sold_lbs_per_unit_x = total_land * ypa * stf          # lbs sold when x[i] = 1
-        costs = [
-            var_cost_coeff[i] / sold_lbs_per_unit_x
-            for i, s in enumerate(successions)
-            if s["crop"] == c_idx and sold_lbs_per_unit_x > 0
-        ]
+        own = [i for i, s in enumerate(successions) if s["crop"] == c_idx and succ_yield[i] * stf > 0]
+        costs = [var_cost_coeff[i] / (total_land * succ_yield[i] * stf) for i in own]
         var_cost_per_lb[c_idx] = float(np.mean(costs)) if costs else 0.0
+        if crop.get("perennial"):
+            acres = sum(successions[i]["pinned_acres"] for i in own)
+            kernel_yield[c_idx] = (sum(succ_yield[i] * successions[i]["pinned_acres"] for i in own)
+                                   / acres) if acres else 0.0
+        else:
+            kernel_yield[c_idx] = float(crop.get("yield_per_acre", 0.0) or 0.0)
 
     # Land-occupancy days per crop: planting through the LAST harvest week, not days-to-maturity
     # — a crop harvested over several weeks occupies the ground for all of them, and charging it
@@ -867,9 +898,8 @@ def solve_farm_v2(
 
     channel_margins = {}
     for c_idx, crop in enumerate(crops):
-        ypa = float(crop.get("yield_per_acre", 0.0) or 0.0)
         stf = float(crop.get("sell_through_fraction", sell_through_fraction) or 0.0)
-        sold_lbs_per_acre = ypa * stf
+        sold_lbs_per_acre = kernel_yield[c_idx] * stf
         for ch_idx, ch in enumerate(channels):
             gross = gross_price[c_idx, ch_idx]
             if gross <= 0:
@@ -1153,6 +1183,12 @@ def solve_farm_v2(
     # y_sol for the "was this planted" report read below. Bounding it costs nothing and restores
     # the documented semantics.
     ub[idx_y_start : idx_y_start + N_S] = 1.0
+    # FX.2 — a perennial block is committed ground: its acres are an INPUT, so the bound IS the
+    # decision, and its plant flag is on. Everything that rations land, labour, water, storage
+    # and cash then sees it exactly as it sees a chosen planting.
+    for i in pinned:
+        lb[idx_x_start + i] = ub[idx_x_start + i] = successions[i]["pinned_acres"] / total_land
+        lb[idx_y_start + i] = 1.0
     # The tank holds at most its capacity. At 0 this pins the block and presolve drops it.
     # Unlimited (Batch W) writes no C3 row, so the tank would be a free column whose level means
     # nothing; pinning it to 0 also makes the published water cap 0 without a special case.
@@ -1225,7 +1261,7 @@ def solve_farm_v2(
         n_harv = max(1, len(harvest_weeks_of(successions[i], N_WEEKS)))  # max(1,…): no div-by-0
         succ_n_harv.append(n_harv)
         st_i = crop_i.get("sell_through_fraction", sell_through_fraction)
-        succ_weekly_sellable_lbs.append(st_i * total_land * crop_i["yield_per_acre"] / n_harv)
+        succ_weekly_sellable_lbs.append(st_i * total_land * succ_yield[i] / n_harv)
 
     # C1 — Land: one row per ZONE per week (FX.4), Σ x[i in z] ≤ acres_z / total_land — x is
     # a fraction of the whole farm. With no zones this is the old single Σ x ≤ 1 row per week.
@@ -1511,13 +1547,15 @@ def solve_farm_v2(
     # Σ_{i: crop sold as c} x[i] × len(weeks(i)) ≤ diversity_max[c] × N_WEEKS
     # Semantic: crop c may occupy at most (diversity_max × 100)% of the farm's
     # total annual planting capacity (acres × weeks), capturing rotation intent.
+    # A pinned planting (FX.2) is not in it: committed ground is not a rotation choice, and in
+    # the row it could only turn the pin into a bare "infeasible".
     for root, members in members_of.items():
         div_max = crops[root].get("crop_diversity_max", 1.0)
         rhs = div_max * N_WEEKS
         cols = [
             (idx_x_start + i, float(len(successions[i]["weeks"])))
             for i in range(N_S)
-            if successions[i]["crop"] in members
+            if successions[i]["crop"] in members and "pinned_acres" not in successions[i]
         ]
         if cols:
             add_row(cols, -np.inf, rhs)
@@ -1565,10 +1603,11 @@ def solve_farm_v2(
             ], successions=successions)
         add_row(cols, -np.inf, -committed)
 
-    # C10 — Min acreage lower: x[i] ≥ y[i] × min_frac
+    # C10 — Min acreage lower: x[i] ≥ y[i] × min_frac. A pinned planting's acres are given (FX.2),
+    # so it has no minimum — 0 keeps the row, and the row count, uniform.
     for i in range(N_S):
         crop = crops[successions[i]["crop"]]
-        min_acres = crop.get("min_acreage_if_planted", 0.0)
+        min_acres = 0.0 if "pinned_acres" in successions[i] else crop.get("min_acreage_if_planted", 0.0)
         min_frac = min_acres / total_land
         add_row(
             [(idx_x_start + i, -1.0), (idx_y_start + i, min_frac)],
@@ -2128,6 +2167,24 @@ def solve_farm_v2(
         for zone, weeks in zip(zone_list, stands_in)
     ]
 
+    # FX.2 — each perennial block as it entered this plan, by its commitment id: what it costs
+    # this year, what it can sell, and the hours it takes. Stage is read off its harvest (none =
+    # establishing), never stored beside it.
+    perennial_blocks_out = []
+    for i in pinned:
+        b = successions[i].get("block")
+        if b is None:
+            continue
+        perennial_blocks_out.append({
+            "id": b["id"], "source": b["source"], "crop": b["crop"], "zone": b["zone"],
+            "name": successions[i]["name"], "acres": b["acres"], "planted_year": b["planted_year"],
+            "stage": "bearing" if b["harvest_weeks"] else "establishing",
+            "yield_per_acre": b["yield_per_acre"], "harvest_weeks": list(b["harvest_weeks"]),
+            "cost": float(x_sol[i] * var_cost_coeff[i]),          # every column, inputs included
+            "sellable_lbs": float(succ_weekly_sellable_lbs[i] * x_sol[i] * succ_n_harv[i]),
+            "labor_hours": float(total_land * x_sol[i] * labor_rate[i][1:].sum()),
+        })
+
     capacity_series = {
         "labor":   {"used": [float(v) for v in labor_used_weekly[1:]],
                     "cap":  [float(labor_capacity[w] + overtime_hours_weekly[w] + hired_hours_weekly[w])
@@ -2236,6 +2293,7 @@ def solve_farm_v2(
         "ambient_peak_m3":  max(ambient_m3_weekly) if ambient_m3_weekly else 0.0,
         "successions":      successions,
         "zones":            zones_out,
+        "perennial_blocks": perennial_blocks_out,
         "crops":            crops,
         "channels":         channels,
     }
