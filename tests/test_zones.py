@@ -41,6 +41,9 @@ class TestResolveZones:
         ([{"name": "A", "acres": float("nan")}, {"name": "B"}], "must be > 0"),
         ([{"name": "A", "acres": "2"}, {"name": "B"}], "must be a number"),
         ([{"name": "A", "acres": True}, {"name": "B"}], "must be a number"),
+        ("High tunnel", "list of"),                        # shapes that used to raise
+        (["High tunnel"], "list of"),                      # AttributeError → a traceback,
+        ({"name": "A", "acres": 80}, "list of"),           # not a refusal (/code-review)
     ])
     def test_malformed_zones_are_refused_by_name(self, zones, match):
         with pytest.raises(ValueError, match=match):
@@ -182,6 +185,51 @@ class TestZonesThroughTheAdapter:
         if crop_zones is not None:
             p["crops"][0]["zones"] = crop_zones
         _refused(p, match)
+
+    @pytest.mark.parametrize("zones", ["High tunnel", ["High tunnel"]])
+    def test_a_malformed_zones_payload_is_refused_not_a_traceback(self, zones):
+        _refused(golden_payload(zones=zones), "list of")
+
+    def test_the_schedule_carries_its_start_week(self, tunnel_tomatoes):
+        # The Gantt labels by this field: parsing the name read "2" off "Kale W10 · Tunnel 2".
+        for s in tunnel_tomatoes["succession_schedule"]:
+            assert s["start_week"] == s["weeks"][0]
+            assert f"W{s['start_week']:02d} · " in s["name"]
+
+    def test_a_minimum_planting_no_eligible_zone_can_hold_is_refused(self):
+        p = golden_payload(zones=TUNNEL)
+        tom = next(c for c in p["crops"] if c["name"] == "Tomatoes")
+        tom["zones"], tom["min_acreage_if_planted"] = ["High tunnel"], 3
+        _refused(p, "every zone it may stand in is smaller")
+
+    def test_a_minimum_planting_one_zone_cannot_hold_is_a_warning(self):
+        p = golden_payload(zones=TUNNEL)
+        tom = next(c for c in p["crops"] if c["name"] == "Tomatoes")
+        tom["min_acreage_if_planted"] = 3
+        out = json.loads(run_from_js(json.dumps(p)))
+        assert out["status"] == "optimal"
+        assert any("cannot be planted in High tunnel" in w for w in out["warnings"])
+
+    def test_commitments_that_overfill_one_zone_together_are_refused(self):
+        # Each fits the 2-ac tunnel alone; together they need 3. Was a bare HiGHS "infeasible".
+        p = golden_payload(zones=TUNNEL)
+        for name, acres in (("Garlic", 2), ("Kale", 1)):
+            c = next(c for c in p["crops"] if c["name"] == name)
+            c.update(zones=["High tunnel"], committed_acres=acres, overwinters=True)
+        _refused(p, "can only stand in High tunnel")
+
+    def test_a_commitment_that_may_spill_into_another_zone_is_not_refused(self):
+        # Hall's condition, not a per-zone sum: Kale may also use the field, so 2 + 1 fits.
+        p = golden_payload(zones=TUNNEL)
+        g = next(c for c in p["crops"] if c["name"] == "Garlic")
+        g.update(zones=["High tunnel"], committed_acres=2)
+        k = next(c for c in p["crops"] if c["name"] == "Kale")
+        k.update(committed_acres=1, overwinters=True)
+        out = json.loads(run_from_js(json.dumps(p)))
+        assert out["status"] == "optimal", out.get("errors")
+        tunnel, field = out["zones"]
+        assert tunnel["used_acres"][0] == pytest.approx(2.0, abs=1e-3)   # garlic fills it
+        assert field["used_acres"][0] >= 1.0 - 1e-3                      # kale stands outside
 
     def test_a_commitment_bigger_than_its_zones_is_refused(self):
         p = golden_payload(zones=TUNNEL)

@@ -21,6 +21,10 @@ def resolve_zones(zones: list[dict] | None, total_land: float) -> list[dict]:
     """
     if not zones:
         return [{"name": WHOLE_FARM, "acres": float(total_land)}]
+    # Shape first: a str or a list of names would otherwise raise AttributeError, which the
+    # solver's refusal path does not catch — the grower got a traceback, not a reason.
+    if not isinstance(zones, list) or not all(isinstance(z, dict) for z in zones):
+        raise ValueError(f"zones must be a list of {{name, acres}} entries, got {zones!r}.")
 
     names = [z.get("name") for z in zones]
     if any(not isinstance(n, str) or not n.strip() for n in names):

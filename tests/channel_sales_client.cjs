@@ -39,8 +39,8 @@ const RES = {
   revenue: 4900,
   crop_names: ['Spinach', 'Garlic'],
   succession_schedule: [
-    { crop: 'Spinach', acres: 10, weeks: [10, 11, 12], phases: [0, 1, 2], name: 'Spinach #1' },
-    { crop: 'Garlic',  acres:  5, weeks: [10, 11, 12], phases: [0, 1, 2], name: 'Garlic #1' },
+    { crop: 'Spinach', acres: 10, weeks: [10, 11, 12], phases: [0, 1, 2], name: 'Spinach #1', start_week: 10 },
+    { crop: 'Garlic',  acres:  5, weeks: [10, 11, 12], phases: [0, 1, 2], name: 'Garlic #1', start_week: 10 },
   ],
   channel_sales: {
     Wholesale: { lbs_sold: 900, revenue: 900, by_crop: {

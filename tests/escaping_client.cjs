@@ -64,11 +64,10 @@ function fixtures(NAME) {
     // unescaped. A fixture that misses the surface it is aimed at is the inert-guard mode this
     // repo keeps rediscovering; keep these weeks aligned with the slider default.
     succession_schedule: [
-      { crop: NAME, acres: 10, weeks: [19, 20, 21], phases: [0, 1, 2], name: 'S W19' },
-      // Name with NO trailing digits on purpose: succLabel returns the number when the name ends
-      // in one and falls back to the RAW name otherwise. With only 'S W19' in the fixture the
-      // fallback never ran, so its escaping was unpinned — reverting it left this harness green.
-      { crop: NAME, acres: 4, weeks: [19, 20], phases: [0, 2], name: NAME }],
+      { crop: NAME, acres: 10, weeks: [19, 20, 21], phases: [0, 1, 2], name: 'S W19', start_week: 19 },
+      // A hostile NAME on a planting: the Gantt labels by start_week since FX.4 (the name is no
+      // longer parsed), so the name must not reach the page unescaped by any other route.
+      { crop: NAME, acres: 4, weeks: [19, 20], phases: [0, 2], name: NAME, start_week: 19 }],
     weekly_land_frac: new Array(52).fill(0.2),
     weekly_harvest_vol: new Array(52).fill(10),
     weekly_labor_used: new Array(52).fill(50),

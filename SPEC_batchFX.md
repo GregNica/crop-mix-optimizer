@@ -77,6 +77,32 @@ shared by validation and the solver. Decisions taken in the build, open to the g
   whole. Raise with FX.5.
 - Measured: splitting land every crop may use changes nothing (objective identical at gap 1e-9;
   ~$20 apart at the shipped 1e-4 gap — tolerance, not an effect).
+- **Minimum acres: PER ZONE — grower ruling 2026-10-25.** The "overall planting" option is
+  BACKLOG X8. Zone limits = the crop × zone tick grid; attribute matching that pre-ticks it = X9.
+
+**`/code-review high` on `2befe7a` (2026-10-25): 10 findings, all reproduced before acting.**
+Fixed: (1) the Gantt label and its CSV parsed the start week off the END of the name, which a zone
+suffix broke ("Kale W10 · Tunnel 2" → "2"); the schedule now carries `start_week`. (2) A
+non-list `zones` raised AttributeError → a traceback; now refused by name. (3) A minimum planting
+larger than every eligible zone left the crop "outcompeted"; now refused (larger than SOME zone →
+warning). (4) Commitments overfilling one zone TOGETHER (each fits alone) gave a bare HiGHS
+"infeasible"; now refused by Hall's condition over zone groups (a per-zone sum would wrongly
+refuse a crop that may spill into another zone — mutant N3 pins that).
+Deferred, on the record:
+- **(6) Rain falls on the tunnel → BUILDING (grower, 2026-10-25: "if it's easy").** Rain offset
+  is farm-wide, so a covered zone's crops got rain credit they cannot receive. Zone gains
+  `covered: true` → no rain offset for its plantings, in `compute_net_water_rates` (which C3, the
+  water cost and the Rain-fed plantable test all read) and its wording twin `rain_coverage`.
+- (5) A crop eligible in N zones gets N identical copies of each slot (symmetry): measured 3.3 s →
+  5.9 s on the golden farm with two all-eligible zones. Watch it on FX.7's fixture; symmetry-break
+  or aggregate unrestricted crops if solves near the time limit.
+- (7) What-If land scaling multiplies `total_land` but not zones → refused / remainder takes it
+  all. Latent until the zones card; fix in the UI step (scale fixed zones, or scale the remainder).
+- (8) A full zone is invisible to the bottleneck ranking and the unplanted-crop diagnosis (both
+  farm-wide). UI step: name the binding zone; diagnose zone-limited crops by their zones.
+- Skipped: (9) `weekly_land_frac` now sums sub-1e-6 x values the old loop skipped — 4th-decimal,
+  nothing pins it, the full suite agrees; (10) validation + solver both generate successions —
+  pre-existing, now ×zones; revisit with the Step 0 fail-open question.
 
 **FX.5 Variants.** Crop gains optional `sells_as: "<crop name>"` (must name a crop that exists; no
 chains). Demand caps, contract floors and **channel reporting** key on the identity. Each name keeps

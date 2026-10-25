@@ -430,6 +430,9 @@ def run_from_js(params_json):
                 'name':   s['name'],
                 'crop':   cr[s['crop']]['name'],
                 'zone':   zones_res[s['zone']]['name'],
+                # The client labels the Gantt by this, not by parsing the name — a zone suffix
+                # ("Kale W10 · Tunnel 2") put a different number at the end of it.
+                'start_week': int(s['start_week']),
                 'acres':  round(frac2 * total_land, 1),
                 'weeks':  list(s['weeks']),
                 'phases': list(s['phases']),

@@ -77,8 +77,8 @@ const RES = {
     } },
   },
   succession_schedule: [
-    { crop: HOSTILE_CROP,  acres: 10, weeks: [10, 11, 12], phases: [0, 1, 2], name: 'S W10' },
-    { crop: HOSTILE_CROP2, acres:  5, weeks: [20, 21],     phases: [0, 2],    name: 'G W20' },
+    { crop: HOSTILE_CROP,  acres: 10, weeks: [10, 11, 12], phases: [0, 1, 2], name: 'S W10', start_week: 10 },
+    { crop: HOSTILE_CROP2, acres:  5, weeks: [20, 21],     phases: [0, 2],    name: 'G W20', start_week: 20 },
   ],
   weekly_land_frac:   new Array(52).fill(0.2),
   weekly_harvest_vol: new Array(52).fill(10),

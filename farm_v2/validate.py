@@ -221,6 +221,7 @@ def validate_params(
         )
 
     total_committed = 0.0
+    commitments = []                        # (crop, committed acres, zones it may stand in)
     for crop in crops:
         # R1: charged straight into the objective — a negative rate PAYS the farm (reproduced:
         # -$2,000/acre turned a -$99k farm into +$139k "optimal"), NaN crashes scipy.
@@ -240,12 +241,29 @@ def validate_params(
                 f"the farm's {total_land:g} acres. No plan can be built around it."
             )
         # FX.4 — a crop's zones must be the farm's, and its commitment must fit in them.
-        eligible_acres = sum(zone_acres[z] for z in crop_zone_names(crop, zone_names))
+        eligible = crop_zone_names(crop, zone_names)
+        eligible_acres = sum(zone_acres[z] for z in eligible)
         if committed > eligible_acres + 1e-9:
             raise ValueError(
                 f"Crop '{crop['name']}' has {committed:g} acres already committed, but the "
                 f"zones it may stand in hold only {eligible_acres:g} acres."
             )
+        # A minimum planting no eligible zone can hold makes the crop unplantable, and the
+        # diagnosis would call it "outcompeted". C10 applies per zone slot (FX.4).
+        min_acres = float(crop.get("min_acreage_if_planted", 0.0) or 0.0)
+        too_small = [z for z in eligible if zone_acres[z] + 1e-9 < min_acres]
+        if too_small and len(too_small) == len(eligible):
+            raise ValueError(
+                f"Crop '{crop['name']}' needs at least {min_acres:g} acres per planting, but "
+                f"every zone it may stand in is smaller ({', '.join(too_small)}). Lower the "
+                f"minimum or allow a larger zone."
+            )
+        if too_small:
+            warnings.append(
+                f"Crop '{crop['name']}' cannot be planted in {', '.join(too_small)}: its "
+                f"{min_acres:g}-acre minimum planting is larger than the zone."
+            )
+        commitments.append((crop["name"], committed, set(eligible)))
         if committed > 0:
             # NOT checked here any more: `committed_acres < min_acreage_if_planted`. That was
             # added on a mis-diagnosis and rejected farms that solve perfectly well — C15 is a
@@ -276,6 +294,22 @@ def validate_params(
             f"Committed plantings total {total_committed:g} acres against a {total_land:g}-acre "
             f"farm. Reduce them, or the plan is infeasible before it starts."
         )
+    # FX.4 — the commitments must also fit zone by zone. A crop allowed in several zones can
+    # split its acres, so a per-zone sum is not the test; Hall's condition is: for every group
+    # of zones, the commitments that can ONLY stand inside it fit its acres. 2^zones groups,
+    # fine at the 3-5 zones a farm has. Otherwise HiGHS returns a bare "infeasible".
+    from itertools import combinations
+    for k in range(1, len(zone_names)):
+        for group in combinations(zone_names, k):
+            inside = [(n, a) for n, a, el in commitments if a > 0 and el <= set(group)]
+            need = sum(a for _, a in inside)
+            room = sum(zone_acres[z] for z in group)
+            if need > room + 1e-9:
+                raise ValueError(
+                    f"Committed acres of {', '.join(n for n, _ in inside)} ({need:g} ac) can "
+                    f"only stand in {', '.join(group)}, which hold{'s' if k == 1 else ''} "
+                    f"{room:g} acres."
+                )
 
     # 8. Global succession check
     try:

@@ -66,10 +66,10 @@ const RES = {
   demand_at_cap_threshold: 0.95,
   crop_names: ['Spinach', 'Garlic', 'Basil', 'Tomatoes'],
   succession_schedule: [
-    { crop: 'Spinach',  acres: 25, weeks: [10, 11, 12], phases: [0, 1, 2], name: 'Spinach #1' },
-    { crop: 'Garlic',   acres: 23, weeks: [28, 29, 30], phases: [0, 1, 2], name: 'Garlic #1' },
-    { crop: 'Basil',    acres:  6, weeks: [20, 21, 22], phases: [0, 1, 2], name: 'Basil #1' },
-    { crop: 'Tomatoes', acres: 11, weeks: [24, 25, 26], phases: [0, 1, 2], name: 'Tomatoes #1' },
+    { crop: 'Spinach',  acres: 25, weeks: [10, 11, 12], phases: [0, 1, 2], name: 'Spinach #1', start_week: 10 },
+    { crop: 'Garlic',   acres: 23, weeks: [28, 29, 30], phases: [0, 1, 2], name: 'Garlic #1', start_week: 28 },
+    { crop: 'Basil',    acres:  6, weeks: [20, 21, 22], phases: [0, 1, 2], name: 'Basil #1', start_week: 20 },
+    { crop: 'Tomatoes', acres: 11, weeks: [24, 25, 26], phases: [0, 1, 2], name: 'Tomatoes #1', start_week: 24 },
   ],
   demand_saturation: {
     'Farmers Market': {
