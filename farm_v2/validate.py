@@ -289,6 +289,24 @@ def validate_params(
                     f"planning year, so only an overwintering crop can hold any."
                 )
         total_committed += committed
+    # FX.5 — C8 is one row per identity, so a crop's commitments and its variants' share one
+    # diversity ceiling: each can fit it alone and together not, which HiGHS reports as a bare
+    # "infeasible". Measured: Garlic + a Hardneck variant at 33.6 ac each against a 48-ac ceiling.
+    by_identity = {}
+    for crop in crops:
+        committed = float(crop.get("committed_acres", 0.0) or 0.0)
+        if committed > 0:
+            by_identity.setdefault(crop.get("sells_as") or crop["name"], []).append(
+                (crop["name"], committed, float(crop.get("crop_diversity_max", 1.0) or 1.0)))
+    for parent, held in by_identity.items():
+        together = sum(c for _, c, _ in held)
+        ceiling = total_land * held[0][2]
+        if len(held) > 1 and together > ceiling + 1e-9:
+            raise ValueError(
+                f"{', '.join(n for n, _, _ in held)} sell as '{parent}' and share its diversity "
+                f"ceiling of {ceiling:g} acres, but have {together:g} acres committed between "
+                f"them. Raise the ceiling or correct the committed acreage."
+            )
     if total_committed > total_land:
         raise ValueError(
             f"Committed plantings total {total_committed:g} acres against a {total_land:g}-acre "

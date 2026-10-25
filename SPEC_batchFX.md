@@ -112,8 +112,9 @@ Deferred, on the record:
 chains). Demand caps, contract floors and **channel reporting** key on the identity. Each name keeps
 its own windows/yield/costs. Diversity: see Q3.
 
-**FX.5 as built (2026-10-25).** `farm_v2/utils/variants.py` (`resolve_variants`, `identity_of`),
-run by the solver before Step 0 (validation needs the inherited fields present).
+**FX.5 as built (2026-10-25).** `farm_v2/utils/variants.py` (`resolve_variants`, `identity_groups`),
+run by the adapter before it normalises and by the solver before Step 0 (validation needs the
+inherited fields present); the solver is where a bad variant is refused.
 - **Measured first, in the app** (golden + a covered 2-ac tunnel + a year-round Tunnel Spinach):
   keyed by name the two sold **12,000 lb/wk into Farmers Market's 6,000 in 10 weeks**, profit
   $757,459. With one market per identity: FM peaks at exactly 6,000, profit **$705,841**. Golden
@@ -136,9 +137,9 @@ run by the solver before Step 0 (validation needs the inherited fields present).
   pounds (the cap belongs to the parent card). `channel_sales`, `crop_contribution` and the
   schedule stay per name — they are different plantings with different costs, and still sum to
   the headline revenue.
-- **Adapter.** It defaults `cold_storage`/`sales_spread_weeks` on every crop; on a variant it
-  normalises a SENT value like the parent's but never defaults one, or a Garlic variant (parent ambient) would read cold and be refused for a box
-  never typed. Resolution and refusal live in the solver only (`invalid_input`, not a traceback).
+- **Adapter.** Resolves variants BEFORE normalising, so parent and variant get the same adjusted
+  prices and defaults for every inherited key (an earlier per-key skip covered 2 of 10). A variant
+  it cannot resolve goes through as sent; the solver refuses it as `invalid_input`.
 - Guards: `tests/test_variants.py` (26), incl. the hurdle × variant case (66% floor drops
   Spinach/Wholesale at 65.5%, keeps Tunnel Spinach at 67.5%). `/simplify` (4 lenses) folded the
   per-crop + shared row pairs into one loop per identity. **13 targeted mutants, 13 caught** after
@@ -146,6 +147,22 @@ run by the solver before Step 0 (validation needs the inherited fields present).
   reaches the cap in some week — `test_weeks_at_cap_count_both_names` rebuilds the at-cap weeks
   from the sales (31 together vs 24 alone). 13 s wall in parallel repo copies.
 - Contracts keyed by identity arrive with FX.3.
+- **`/code-review high` on `1a50f42` (2026-10-25): 9 findings, the money/refusal ones reproduced.**
+  Fixed: (1) an unnamed crop became a KeyError traceback (identity grouping ran before
+  validation) — now validation's refusal again; (2) commitments of a crop + its variant each fit
+  the per-name diversity check but not the shared C8 row → bare HiGHS infeasible (Garlic + Hardneck
+  at 33.6 ac each vs 48) — now refused by name; (4) the adapter skipped defaults for 2 of the 10
+  inherited keys → it now resolves before normalising; (5) duplicate names let a variant find the
+  wrong parent → refused first; (8) one `_sales_col` for every v-column site; (9) stale
+  `identity_of` name. Deferred to the UI step, on the record:
+  - (3)/(6) `demand_saturation` is keyed by the parent's name, so it shows "Spinach / FM n%" when
+    only Tunnel Spinach sold — beside an unplanted-Spinach banner, or beside Spinach/Wholesale in
+    `excluded_channels`. The number is right (it is Spinach's MARKET); the label must say so
+    ("Spinach market — sold by Tunnel Spinach"). Needs a members field → the saturation key set.
+  - (4b) A What-If that scales one crop's channels must scale the parent only and send the
+    variant WITHOUT inherited keys, or the re-solve is refused. Payload-builder contract.
+  - (7) `"4"` vs `4` on a sent inherited key is refused as a second value — only if a caller
+    sends both raw and differently typed; the form sends numbers.
 
 **FX.2 Perennials.** Crop gains `perennial: {acres, zone, harvest_weeks, upkeep_per_acre_yr,
 establish_per_acre, life_years}`. Not passed to `generate_successions`: injected as one pinned

@@ -15,6 +15,7 @@ import json
 import traceback
 
 from farm_v2.solver import PLAN_STATUSES, next_head_deltas, solve_farm_v2
+from farm_v2.utils.variants import resolve_variants
 from farm_v2.utils.water import get_rainfall_weekly
 
 def _legacy_ot_hours(e):
@@ -287,6 +288,15 @@ def run_from_js(params_json):
         # Subtract variable selling cost from each crop-channel price.
         # Normalise sales_spread_weeks: int 1-52 (the 8-week ceiling was lifted in B.3),
         # default 1 = sold in the harvest week under strict semantics.
+        # FX.5 — a variant takes its parent's channels and handling BEFORE they are normalised
+        # below, so both get the same adjusted price and the same defaults — every inherited
+        # key, not a hand-picked few. A variant that cannot be resolved goes through as sent:
+        # the solver refuses it by name as `invalid_input`, which raising here would turn into
+        # a traceback.
+        try:
+            raw_crops = resolve_variants(raw_crops)
+        except ValueError:
+            pass
         crops = []
         for crop in raw_crops:
             ac = dict(crop)
@@ -297,24 +307,16 @@ def run_from_js(params_json):
                     d['price_per_lb'] = max(0.0, float(d.get('price_per_lb', 0)) - ch_var_cost.get(ch_name, 0))
                     adj[ch_name] = d
                 ac['channels'] = adj
-            # FX.5 — a variant's handling is its parent's, copied by the solver (and refused
-            # there, by name, if it sends a different one). So a variant's keys are normalised
-            # when SENT, like the parent's, but never defaulted: an omitted cold_storage would
-            # read True beside a Garlic parent's False, and the variant would be refused for a
-            # box the grower never typed.
-            is_parent = ac.get('sells_as') is None
             # int 1-52; missing/blank/0 → 1
-            if is_parent or 'sales_spread_weeks' in ac:
-                raw_spread = ac.get('sales_spread_weeks', 1)
-                try:
-                    ac['sales_spread_weeks'] = max(1, min(52, int(raw_spread or 1)))
-                except (TypeError, ValueError):
-                    ac['sales_spread_weeks'] = 1
+            raw_spread = ac.get('sales_spread_weeks', 1)
+            try:
+                ac['sales_spread_weeks'] = max(1, min(52, int(raw_spread or 1)))
+            except (TypeError, ValueError):
+                ac['sales_spread_weeks'] = 1
             # Cold vs ambient. Default TRUE so a crop dict from anywhere that predates the flag
             # (saved plans, CSV imports, the chatbot) keeps the refrigerated behaviour it was
             # solved with, rather than silently moving to a barn that may have zero capacity.
-            if is_parent or 'cold_storage' in ac:
-                ac['cold_storage'] = bool(ac.get('cold_storage', True))
+            ac['cold_storage'] = bool(ac.get('cold_storage', True))
             crops.append(ac)
 
         # Pre-flight validation now lives inside solve_farm_v2 (Step 0), which is the point

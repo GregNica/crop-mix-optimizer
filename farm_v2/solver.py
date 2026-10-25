@@ -1024,6 +1024,11 @@ def solve_farm_v2(
     idx_x_start   = 0
     idx_y_start   = N_S
     idx_v_start   = 2 * N_S
+
+    def _sales_col(c_idx, ch_idx, w):
+        """Column of v[c, ch, w] — the one place a sales variable is addressed."""
+        return idx_v_start + _vcw_index(c_idx, ch_idx, w, n_channels, N_WEEKS)
+
     # inv[c,w] — lbs of crop c held in storage at the END of week w.
     # waste[c,w] — lbs discarded in week w (free disposal: earns nothing, costs nothing more).
     # Both always present: the inventory balance (C4′) is an equality, so `waste` is what keeps
@@ -1072,7 +1077,7 @@ def solve_farm_v2(
         for ch_idx in range(n_channels):
             net_after = net_after_price[c_idx, ch_idx]
             for w in range(1, N_WEEKS + 1):
-                flat_idx = idx_v_start + _vcw_index(c_idx, ch_idx, w, n_channels, N_WEEKS)
+                flat_idx = _sales_col(c_idx, ch_idx, w)
                 c_obj[flat_idx] -= net_after
 
     # City water cost
@@ -1329,7 +1334,7 @@ def solve_farm_v2(
                 cols.append((idx_inv_start + _cw_index(c_idx, w - 1, N_WEEKS),
                              -(1.0 - storage_loss[c_idx])))
             cols += [
-                (idx_v_start + _vcw_index(c_idx, ch_idx, w, n_channels, N_WEEKS), 1.0)
+                (_sales_col(c_idx, ch_idx, w), 1.0)
                 for ch_idx in range(n_channels)
             ]
             cols += [
@@ -1441,9 +1446,6 @@ def solve_farm_v2(
     # its channels) until the margin hurdle zeroes one, which it does per NAME because a
     # variant's costs, so margin, differ. A member at 0 is held there by a row of its own.
     # A crop with no variant is an identity of one, and gets exactly the rows it always had.
-    def _sales_col(c_idx, ch_idx, w):
-        return idx_v_start + _vcw_index(c_idx, ch_idx, w, n_channels, N_WEEKS)
-
     market_cap = {root: demand_table[members].max(axis=0) for root, members in members_of.items()}
 
     # C6 — Channel sales ≤ WEEKLY demand cap
@@ -1615,7 +1617,7 @@ def solve_farm_v2(
                 if np_val == 0.0:
                     continue
                 for w in range(1, W + 1):
-                    flat = idx_v_start + _vcw_index(c_idx, ch_idx, w, n_channels, N_WEEKS)
+                    flat = _sales_col(c_idx, ch_idx, w)
                     cols.append((flat, np_val))
         # Variable costs from x[i] (cumulative up to W)
         for i in range(N_S):

@@ -233,3 +233,32 @@ class TestRefusalsThroughThePayload:
         p["crops"][0]["sales_spread_weeks"] = 0
         p["crops"][-1]["sales_spread_weeks"] = 0
         assert solve(p)["status"] == "optimal"
+
+    def test_a_crop_without_a_name_is_still_refused_not_raised(self):
+        """/code-review: identity grouping ran before validation and indexed c["name"], so an
+        unnamed crop became a KeyError traceback instead of validation's own refusal."""
+        p = golden_payload()
+        del p["crops"][0]["name"]
+        r = solve(p)
+        assert r["status"] == "invalid_input"
+        assert any("missing required keys" in e for e in r["errors"])
+
+    def test_duplicate_names_are_refused_before_a_variant_finds_the_wrong_parent(self):
+        p = variant_farm()
+        # A second "Spinach" card that itself sells as Kale: found by name last-write-wins, it
+        # made the variant's refusal "Point it at 'Kale' directly" instead of the real problem.
+        p["crops"].append({**p["crops"][1], "name": "Spinach", "sells_as": "Kale"})
+        r = solve(p)
+        assert r["status"] == "invalid_input"
+        assert any("unique" in e for e in r["errors"])
+
+    def test_commitments_sharing_one_diversity_ceiling_are_refused_by_name(self):
+        """/code-review, measured: Garlic (0.6 of 80 = 48 ac) and a Hardneck variant at 33.6 ac
+        each pass the per-name check and gave a bare HiGHS 'infeasible' against the shared C8."""
+        p = golden_payload()
+        garlic = next(c for c in p["crops"] if c["name"] == "Garlic")
+        garlic["committed_acres"] = 33.6
+        p["crops"].append(variant_of(garlic, name="Hardneck Garlic", sells_as="Garlic"))
+        r = solve(p)
+        assert r["status"] == "invalid_input"
+        assert any("share its diversity ceiling of 48 acres" in e for e in r["errors"])

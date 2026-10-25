@@ -8,12 +8,12 @@ the same labour and the same diversity allowance (grower ruling, SPEC_batchFX §
 
 Why it exists, measured in the app before it was built: keyed by crop name, Spinach and a Tunnel
 Spinach copy each got the Farmers Market's 6,000 lb/wk and sold 12,000 lb into it in 10 weeks.
-The solver therefore groups every cap by IDENTITY (`identity_of`), and this module makes the
+The solver therefore groups every cap by IDENTITY (`identity_groups`), and this module makes the
 inherited fields the parent's own, so there is no second copy of a price or a cap to disagree.
 
-Resolved by the solver before validation (which needs the inherited fields present); the adapter
-only leaves a variant's handling fields undefaulted so the parent's are the ones it gets.
-Resolving twice is a no-op, so a re-solve of a result's own crops is safe.
+Resolved by the adapter before it normalises the payload (so parent and variant are normalised
+alike) and by the solver before validation (which needs the inherited fields present) — the
+solver is where a bad variant is REFUSED. Resolving twice is a no-op.
 """
 
 import copy
@@ -40,7 +40,17 @@ def resolve_variants(crops: list[dict]) -> list[dict]:
     name: a second price or cap is a second product, which is a new crop card, not a variant.
     Copies, never mutates — callers reuse their crop list across solves.
     """
-    by_name = {c.get("name"): c for c in crops}
+    if all(c.get("sells_as") is None for c in crops):
+        # No variants: nothing to resolve, and nothing here may pre-empt validation's own
+        # wording for a malformed crop (a missing name is ITS refusal to make).
+        return list(crops)
+    # Names before parents: a parent found by a duplicate or non-text name is the wrong card.
+    names = [c.get("name") for c in crops]
+    if any(not isinstance(n, str) for n in names) or len(names) != len(set(names)):
+        raise ValueError(
+            f"Crop names must be unique text before a variant can name its parent. Got: {names}."
+        )
+    by_name = dict(zip(names, crops))
     out = []
     for crop in crops:
         parent_name = crop.get("sells_as")
@@ -84,7 +94,7 @@ def identity_groups(crops: list[dict]) -> dict[int, list[int]]:
     are per identity: two names selling one product share one market. A crop with no variant is
     a group of one, so a farm with none groups exactly as it indexes.
     """
-    index = {c["name"]: i for i, c in enumerate(crops)}
+    index = {c.get("name"): i for i, c in enumerate(crops) if c.get("sells_as") is None}
     groups: dict[int, list[int]] = {}
     for i, c in enumerate(crops):
         root = index[c["sells_as"]] if c.get("sells_as") is not None else i
