@@ -19,9 +19,10 @@ Constraint order (rows of A):
   C4a  inventory balance — EQUALITY, inv[c,0]=0 (n_crops × 52)
   C4b  storage capacity on room occupancy — cold pool then ambient pool (2 × 52)
   C4c  shelf life — rolling bound on inv (n_crops × 52)
-  C6   sales ≤ WEEKLY sales-capacity cap (skipped for annual-cap channels)
-  C6b  sales ≤ ANNUAL cap — one row per crop-channel that has one
-  C8   crop diversity — annual acre-weeks per crop (n_crops)
+  C6   sales ≤ WEEKLY sales-capacity cap (skipped for annual-cap channels) — per IDENTITY:
+       a crop and its FX.5 variants share one row; a member at 0 gets a zero row of its own
+  C6b  sales ≤ ANNUAL cap — one row per identity-channel that has one
+  C8   crop diversity — annual acre-weeks per identity (a variant shares its parent's)
   C9   binary linkage upper x[i] ≤ y[i]  (N_S)
   C15  committed acres — floor on ground STANDING in week 1 (one row per committed crop)
   C10  min acreage lower   x[i] ≥ y[i]×min_frac  (N_S)
@@ -58,6 +59,7 @@ from farm_v2.utils.water import (
 from farm_v2.utils.labor import compute_labor_arrays, compute_labor_rates
 from farm_v2.utils.demand import build_demand_table, build_annual_caps
 from farm_v2.utils.zones import resolve_zones
+from farm_v2.utils.variants import identity_groups, resolve_variants
 from farm_v2.validate import validate_params
 
 
@@ -533,6 +535,15 @@ def solve_farm_v2(
         (equip_storage, rate_equip_storage),
         (fuel_storage, rate_fuel_storage),
     ), strict=True))
+
+    # FX.5 — before validation, which needs a variant's inherited fields (labour, diversity,
+    # channels) present. Not inside the fail-open block below: a variant the solver cannot
+    # resolve has no identity, so there is no plan to fall back to.
+    try:
+        crops = resolve_variants(crops)
+    except ValueError as ve:
+        return _invalid([str(ve)])
+    members_of = identity_groups(crops)
 
     try:
         validation_warnings = validate_params(
@@ -1424,17 +1435,33 @@ def solve_farm_v2(
                                  -succ_weekly_sellable_lbs[i] * weight))
             add_row(cols, -np.inf, 0.0)
 
+    # FX.5 — every cap is per IDENTITY: a variant sells into its parent's market, so its names
+    # share one row (keyed by name, two spinaches sold 12,000 lb/wk into a 6,000 lb market).
+    # The market's cap is the largest of the members' copies — they are equal (a variant inherits
+    # its channels) until the margin hurdle zeroes one, which it does per NAME because a
+    # variant's costs, so margin, differ. A member at 0 is held there by a row of its own.
+    # A crop with no variant is an identity of one, and gets exactly the rows it always had.
+    def _sales_col(c_idx, ch_idx, w):
+        return idx_v_start + _vcw_index(c_idx, ch_idx, w, n_channels, N_WEEKS)
+
+    market_cap = {root: demand_table[members].max(axis=0) for root, members in members_of.items()}
+
     # C6 — Channel sales ≤ WEEKLY demand cap
-    for c_idx in range(n_crops):
+    for root, members in members_of.items():
         for ch_idx in range(n_channels):
             for w in range(1, N_WEEKS + 1):
-                cap_w = demand_table[c_idx, ch_idx, w]
+                open_members = []
+                for c_idx in members:
+                    if demand_table[c_idx, ch_idx, w] == 0.0:
+                        add_row([(_sales_col(c_idx, ch_idx, w), 1.0)], -np.inf, 0.0)
+                    else:
+                        open_members.append(c_idx)
+                cap_w = market_cap[root][ch_idx, w]
                 # +inf means "no weekly ceiling" — an annual-cap channel, bounded by C6b
                 # instead. Emitting the row anyway would be a vacuous `v <= inf`.
-                if not np.isfinite(cap_w):
-                    continue
-                flat_idx = idx_v_start + _vcw_index(c_idx, ch_idx, w, n_channels, N_WEEKS)
-                add_row([(flat_idx, 1.0)], -np.inf, cap_w)
+                if open_members and np.isfinite(cap_w):
+                    add_row([(_sales_col(c, ch_idx, w), 1.0) for c in open_members],
+                            -np.inf, cap_w)
 
     # C6b — Channel sales ≤ ANNUAL demand cap (one row per crop-channel that has one).
     # A yearly total is a sum across weeks, which no per-week row can express; see
@@ -1449,18 +1476,20 @@ def solve_farm_v2(
     # row exists should be recorded where the row is created, not inferred twice. This mirrors
     # cold_room_cols / ambient_room_cols, which are captured at construction and evaluated later.
     annual_rows = set()
-    for (c_idx, ch_idx), annual_lbs in annual_caps.items():
-        # A channel dropped by the margin hurdle has its weekly caps zeroed above, which
-        # already forces v to 0; the annual row would be slack. Skip it rather than carry a row
-        # that can never bind.
-        if float(demand_table[c_idx, ch_idx, 1:].max()) == 0.0:
-            continue
-        annual_rows.add((c_idx, ch_idx))
-        cols = [
-            (idx_v_start + _vcw_index(c_idx, ch_idx, w, n_channels, N_WEEKS), 1.0)
-            for w in range(1, N_WEEKS + 1)
-        ]
-        add_row(cols, -np.inf, float(annual_lbs))
+    for root, members in members_of.items():
+        for ch_idx in range(n_channels):
+            if (root, ch_idx) not in annual_caps:
+                continue
+            # A member dropped by the margin hurdle has its weekly caps zeroed above, which
+            # already forces its v to 0; it joins no annual row. With none left, no row at all —
+            # it would be slack.
+            open_members = [c for c in members if float(demand_table[c, ch_idx, 1:].max()) != 0.0]
+            if not open_members:
+                continue
+            annual_rows.update((c, ch_idx) for c in open_members)
+            add_row([(_sales_col(c, ch_idx, w), 1.0)
+                     for c in open_members for w in range(1, N_WEEKS + 1)],
+                    -np.inf, float(annual_caps[(root, ch_idx)]))
 
     # C7 — DELETED (audit B1). It capped a succession's whole-cycle production at ONE week's
     # demand, which pinned any crop whose harvest is concentrated to `demand / yield` acres and
@@ -1476,17 +1505,17 @@ def solve_farm_v2(
     #     and C7 was accidentally holding production ≈ sales. A farm that grows 2× and sells 1×
     #     now pays overhead as if it were half its real size. Not fixed here.
 
-    # C8 — Crop diversity: annual acre-weeks per crop
-    # Σ_{i: crop c} x[i] × len(weeks(i)) ≤ diversity_max[c] × N_WEEKS
+    # C8 — Crop diversity: annual acre-weeks per IDENTITY (FX.5: a variant shares its parent's)
+    # Σ_{i: crop sold as c} x[i] × len(weeks(i)) ≤ diversity_max[c] × N_WEEKS
     # Semantic: crop c may occupy at most (diversity_max × 100)% of the farm's
     # total annual planting capacity (acres × weeks), capturing rotation intent.
-    for c_idx in range(n_crops):
-        div_max = crops[c_idx].get("crop_diversity_max", 1.0)
+    for root, members in members_of.items():
+        div_max = crops[root].get("crop_diversity_max", 1.0)
         rhs = div_max * N_WEEKS
         cols = [
             (idx_x_start + i, float(len(successions[i]["weeks"])))
             for i in range(N_S)
-            if successions[i]["crop"] == c_idx
+            if successions[i]["crop"] in members
         ]
         if cols:
             add_row(cols, -np.inf, rhs)
@@ -1876,26 +1905,31 @@ def solve_farm_v2(
     # these two must agree, because an absent row here is explained by `unplanted_crops` there.
     planted = {crop["name"] for crop in crops
                if float((crop_contribution.get(crop["name"]) or {}).get("acres_planted", 0.0)) > 1e-6}
+    #
+    # FX.5 — per IDENTITY, keyed by the parent's name: a variant fills its parent's market, so
+    # Tunnel Spinach's pounds count against Spinach's cap, beside Spinach's own — the same
+    # `market_cap` C6 was built from.
     demand_saturation = {}
     for ch_idx, ch in enumerate(channels):
         per_crop = {}
-        for c_idx, crop in enumerate(crops):
-            name = crop["name"]
-            if name not in planted:
+        for root, members in members_of.items():
+            name = crops[root]["name"]
+            if not any(crops[c]["name"] in planted for c in members):
                 continue
-            weekly_cap  = demand_table[c_idx, ch_idx, 1:]
-            sold        = float(sold_by_pair[c_idx, ch_idx])
+            weekly_cap  = market_cap[root][ch_idx, 1:]
+            sold        = float(sold_by_pair[members, ch_idx].sum())
+            sold_weekly = v_sol[members, ch_idx, 1:].sum(axis=0)
             finite      = np.isfinite(weekly_cap)
 
-            if (c_idx, ch_idx) in annual_rows:
+            if any((c, ch_idx) in annual_rows for c in members):
                 # C6b is the only row the solver emitted for this pair: a yearly total, and no
                 # weekly ceiling anywhere. Read off `annual_rows` rather than re-deriving it —
                 # see the note at C6b.
-                basis, cap, fracs = "annual", float(annual_caps[(c_idx, ch_idx)]), None
+                basis, cap, fracs = "annual", float(annual_caps[(root, ch_idx)]), None
             else:
                 basis, cap = "weekly", float(np.where(finite, weekly_cap, 0.0).sum())
                 # Weeks with no cap divide by +inf, which is 0.0 — no branch, no warning.
-                fracs = np.minimum(1.0, v_sol[c_idx, ch_idx, 1:]
+                fracs = np.minimum(1.0, sold_weekly
                                    / np.where(finite & (weekly_cap > 0), weekly_cap, np.inf))
             if cap <= 0:
                 continue

@@ -112,6 +112,41 @@ Deferred, on the record:
 chains). Demand caps, contract floors and **channel reporting** key on the identity. Each name keeps
 its own windows/yield/costs. Diversity: see Q3.
 
+**FX.5 as built (2026-10-25).** `farm_v2/utils/variants.py` (`resolve_variants`, `identity_of`),
+run by the solver before Step 0 (validation needs the inherited fields present).
+- **Measured first, in the app** (golden + a covered 2-ac tunnel + a year-round Tunnel Spinach):
+  keyed by name the two sold **12,000 lb/wk into Farmers Market's 6,000 in 10 weeks**, profit
+  $757,459. With one market per identity: FM peaks at exactly 6,000, profit **$705,841**. Golden
+  unchanged at $652,876 (no variants → identical row set).
+- **Inherited** (`INHERITED_KEYS`): channels (prices, packaging, caps), `crop_diversity_max`,
+  labour (plant/grow/harv), and — not named in the ruling, taken because it is the same pound in
+  the same cooler — `cold_storage`, `crop_size_m3_per_lb`, shelf life / spread, storage loss.
+  Omitted → the parent's; sent equal → fine; sent DIFFERENT → refused by name ("make it its own
+  crop") — the payload twin of ruling 3's "price or cap edit → prompt for a new card".
+  ⚠️ Open to the grower: **`sell_through_fraction` stays the variant's own** (grade-out is a
+  property of how it was grown), as do `committed_acres` and `overwinters`.
+- **Rows.** Every cap row is per IDENTITY (a crop with no variant is an identity of one, so the
+  golden farm's rows are the same rows in the same order). The market's cap is the max of the
+  members' copies — equal, since channels are inherited, until the margin hurdle zeroes one, which
+  it does per NAME because a variant's costs (so margin) differ. A zeroed member gets a zero row
+  of its own; the open members share one weekly row (C6) and one annual row (C6b). C8 diversity is
+  one row per identity at the parent's allowance. Inventory and storage stay per crop (two stocks
+  of the same pound in one cooler; selling is what is shared).
+- **Reports.** `demand_saturation` is per identity, under the parent's name, summing both names'
+  pounds (the cap belongs to the parent card). `channel_sales`, `crop_contribution` and the
+  schedule stay per name — they are different plantings with different costs, and still sum to
+  the headline revenue.
+- **Adapter.** It defaults `cold_storage`/`sales_spread_weeks` on every crop; on a variant it
+  normalises a SENT value like the parent's but never defaults one, or a Garlic variant (parent ambient) would read cold and be refused for a box
+  never typed. Resolution and refusal live in the solver only (`invalid_input`, not a traceback).
+- Guards: `tests/test_variants.py` (26), incl. the hurdle × variant case (66% floor drops
+  Spinach/Wholesale at 65.5%, keeps Tunnel Spinach at 67.5%). `/simplify` (4 lenses) folded the
+  per-crop + shared row pairs into one loop per identity. **13 targeted mutants, 13 caught** after
+  one survivor: saturation's weekly series read off the parent alone passed, because Spinach alone
+  reaches the cap in some week — `test_weeks_at_cap_count_both_names` rebuilds the at-cap weeks
+  from the sales (31 together vs 24 alone). 13 s wall in parallel repo copies.
+- Contracts keyed by identity arrive with FX.3.
+
 **FX.2 Perennials.** Crop gains `perennial: {acres, zone, harvest_weeks, upkeep_per_acre_yr,
 establish_per_acre, life_years}`. Not passed to `generate_successions`: injected as one pinned
 pseudo-succession standing weeks 1–52 (phase G, H in the harvest window), `x` fixed at
