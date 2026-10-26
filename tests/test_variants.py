@@ -52,9 +52,7 @@ def base():
     return solve_optimal(variant_farm())
 
 
-def weekly(r, channel, crop):
-    return (r["channel_sales"].get(channel, {}).get("by_crop", {}).get(crop, {})
-            .get("weekly_lbs") or [0.0] * 52)
+from tests.helpers import weekly  # noqa: E402  (shared with test_contracts)
 
 
 def acre_weeks(r, crops):

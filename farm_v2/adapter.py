@@ -370,6 +370,8 @@ def run_from_js(params_json):
             refuse_rain_short=bool(p.get('refuse_rain_short', True)),
             # ...and skip the infeasible-commitments diagnosis, which a draw would throw away.
             diagnose_infeasible=bool(p.get('diagnose_infeasible', True)),
+            # FX.3 §6.3 — one re-solve per commitment for its with/without delta; opt-in.
+            commitment_deltas=bool(p.get('commitment_deltas', False)),
             cost_fert_per_lb=cost_fert_per_lb,
             cost_fuel_per_L=cost_fuel_per_L,
             year_round_employees=year_round_employees,
@@ -605,6 +607,10 @@ def run_from_js(params_json):
             # FX.2 — each perennial block, by commitment id: stage, this year's cost, sellable
             # lb and hours. Floats as the solver computed them; the client rounds for display.
             'perennial_blocks': result['perennial_blocks'],
+            # FX.3 — each contract's delivery, shortfall (lb, $, fact/choice by week); and, when
+            # asked for, what each commitment costs on the objective (None otherwise).
+            'contracts': result['contracts'],
+            'commitment_deltas': result['commitment_deltas'],
             'crop_names':          crop_names,
             'weekly_land_frac':    [round(v, 4) for v in weekly_land_frac],
             'weekly_harvest_vol':  [round(v, 2) for v in weekly_harvest_vol],

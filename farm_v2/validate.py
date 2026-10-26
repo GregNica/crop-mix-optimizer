@@ -27,7 +27,7 @@ import math
 from farm_v2.utils.calendar import generate_successions, week_of_year
 from farm_v2.utils.zones import crop_zone_names, resolve_zones
 from farm_v2.utils.perennials import resolve_perennial_blocks
-from farm_v2.utils.commitments import committed_acres, resolve_floors
+from farm_v2.utils.commitments import committed_acres, resolve_contracts, resolve_floors
 from farm_v2.utils.numbers import (check_nonneg as _check_nonneg, check_positive as _check_positive,
                                    is_number as _is_number)
 
@@ -301,6 +301,7 @@ def validate_params(
     # re-solve) — a second model of the land rows here would have to stay in step with C1.
     blocks = resolve_perennial_blocks(commitments, crops, zone_names)
     floors = resolve_floors(commitments, crops, total_land)
+    resolve_contracts(commitments, crops, channels)   # FX.3: refused by name here too
     carry_ins = [f for f in floors if f["kind"] == "carry_in"]
     standing = [(f"{b['crop']} (block {b['id']})", b["acres"], {b["zone"]}) for b in blocks]
     standing += [(f["crop"], f["acres"], zones_of[f["crop"]]) for f in carry_ins if f["acres"] > 0]

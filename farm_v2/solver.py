@@ -11,6 +11,7 @@ Variable layout (all collected into one flat vector ``z`` for scipy.milp):
   next n_crops*52          waste[c,w]     — lbs discarded in week w (continuous)
   then, when enabled:      city_water[w] (52), ot[role][w] (52 per role), extra[role] (int)
   then always:             wstore[w]                            — 52 each
+  then, when any:          short[k,w]     — lb a "penalty" contract is short in week w (FX.3)
 
 Constraint order (rows of A):
   C1   land (52)
@@ -28,6 +29,8 @@ Constraint order (rows of A):
        52 weeks — every row below sees it like any planting except C8 and C10, which skip it
   C15  commitments (FX.1) — standing floors (one row per week of the window), annual floors,
        and the carry-in PIN of an overwintering crop (week 1, floor = ceiling)
+  C16  contracts (FX.3) — Σ identity sales on the channel (+ short, "penalty" mode) ≥ lb owed,
+       one row per week of the window; the penalty is in the objective and the P&L, NOT in C13
   C10  min acreage lower   x[i] ≥ y[i]×min_frac  (N_S)
   C11  max plant acres/week (52)
   C12  max harvest acres/week (52)
@@ -53,6 +56,8 @@ from farm_v2.utils.calendar import (
     harvest_weeks_of,
     phase_weeks_of,
     planting_value,
+    sell_weeks_of,
+    weeks_text,
 )
 from farm_v2.utils.water import (
     rain_coverage,
@@ -66,7 +71,7 @@ from farm_v2.utils.demand import build_demand_table, build_annual_caps
 from farm_v2.utils.zones import resolve_zones
 from farm_v2.utils.variants import identity_groups, resolve_variants
 from farm_v2.utils.perennials import perennial_successions, resolve_perennial_blocks
-from farm_v2.utils.commitments import describe, floor_columns, resolve_floors
+from farm_v2.utils.commitments import describe, floor_columns, resolve_contracts, resolve_floors
 from farm_v2.validate import validate_params
 
 
@@ -80,6 +85,15 @@ from farm_v2.validate import validate_params
 # have been describing whichever concept was edited last.
 NEAR_LIMIT_FRACTION = 0.95      # a resource is "near its limit" (unplanted-crop diagnosis)
 DIAGNOSIS_TIME_LIMIT = 20.0     # s per solve of the infeasible-commitments diagnosis (FX.1)
+# FX.3 — a contract shortfall is a FACT (no plan delivers that week) or a CHOICE (shorting was
+# cheaper than growing at the grower's penalty). Told apart by one re-solve with every short
+# pound priced at this much: a week still short then is short at any price the farm could face.
+CONTRACT_PROBE_PENALTY_PER_LB = 1_000.0
+SHORT_TOL_LB = 0.01             # below this a shortfall is solver noise, not a pound
+# FX.3 — budget per "without this commitment" re-solve (§6.3). Same reasoning as the one-more-head
+# budget: an unproved incumbent is not a figure, so a solve that runs out says so instead.
+COMMITMENT_DELTA_TIME_LIMIT = 45.0
+MIP_REL_GAP = 1e-4              # HiGHS's default relative MIP gap — the noise floor of one solve
 DEMAND_AT_CAP_FRACTION = 0.95   # a week counts as "at cap" in demand_saturation.weeks_at_cap
 
 # The columns of `vc_split`, in order — the ONE place the index-to-name mapping lives.
@@ -127,6 +141,7 @@ OVERHEAD_EXCLUDES = {
     "packaging":  (("packaging",), ("packaging",)),
     "protection": (("crop_protection",), ("crop protection",)),     # R1
     "perennial":  (("perennial_extra",), ("perennial",)),           # FX.2
+    "shortfall":  (("contract_shortfall",), ("shortfall",)),        # FX.3
     "selling":    (("fixed_selling",), ("selling",)),
     "debt":       (("other_debt_service",), ("debt",)),
     "interest":   (("interest",), ("interest",)),
@@ -302,14 +317,7 @@ def _limits_text(limits):
     parts = []
     for b in limits:
         w = b["weeks"]
-        runs = []                               # [12, 13, 14, 30] -> "12–14, 30"
-        for x in w:
-            if runs and x == runs[-1][1] + 1:
-                runs[-1][1] = x
-            else:
-                runs.append([x, x])
-        span = ", ".join(f"{a}" if a == z else f"{a}–{z}" for a, z in runs)
-        when = "" if not w else f"week {span}, " if len(w) == 1 else f"weeks {span}, "
+        when = f"{weeks_text(w)}, " if w else ""
         up = "up to " if len(w) > 1 else ""        # a weekless limit (diversity) is one quantity
         v = b["max_over"]
         # Never `.3g`: it prints 15,320 L as "1.53e+04".
@@ -452,9 +460,13 @@ def solve_farm_v2(
     # draw was silently dropped and the dry tail vanished (/code-review). A PLAN is still refused.
     refuse_rain_short: bool = True,
     # FX.1 — on an infeasible plan with commitments in it, two more solves say which limits they
-    # press on (`binding_limits`). Callers that read only the status (one-more-head re-solves,
-    # Monte Carlo draws) pass False and skip them.
+    # press on (`binding_limits`); FX.3 — on a plan with a contract shortfall, one more says
+    # whether each short week is a fact or a choice (`contracts[].by_week[].kind`). Callers that
+    # read only the status (one-more-head re-solves, Monte Carlo draws) pass False and skip them.
     diagnose_infeasible: bool = True,
+    # FX.3 / §6.3 — what each commitment costs: one re-solve per entry with it released, the
+    # OBJECTIVE difference returned per id (`commitment_deltas`). A solve per entry, so opt-in.
+    commitment_deltas: bool = False,
     # --- Labor ---
     year_round_employees: list | None = None,
     seasonal_employees: list | None = None,
@@ -584,6 +596,22 @@ def solve_farm_v2(
                               both totals. Iterate it, as with fixed_cost_split.
         "total_cost"        : float — fixed + variable + Σ bought_capacity_split, so that
                               revenue − total_cost == operating_profit.
+        "contracts"         : list[dict] — each contract (FX.3) as it came out: owed, delivered
+                              and short pounds, its penalty cost, and per week {week, owed,
+                              delivered, short, kind} where kind ∈ fact | choice | None (not
+                              short) | "unknown" (the probe did not finish / was skipped).
+                              `short_kind` sums the weeks: fact | choice | mixed | None.
+                              The penalty is `bought_capacity_split["contract_shortfall"]`:
+                              INSIDE operating_profit (the objective charged it) but NOT in
+                              `weekly_cash_flow` — settled with the buyer after the season.
+        "commitment_deltas" : list[dict] | None — when `commitment_deltas` was asked for: per
+                              commitment id {id, label, delta, tolerance, status}. `delta` = objective
+                              WITHOUT the entry − objective WITH it: what the entry costs
+                              (negative = it earns), on the objective, not profit — interest is
+                              post-solve and two plans with one objective can borrow differently.
+                              `tolerance` is the two solves' MIP-gap noise (~$200 on the golden
+                              farm): a delta inside it is zero. status ∈ optimal | infeasible
+                              (without it the rest cannot be met) | time_limit | base_not_optimal.
         "successions"       : list[dict]
         "crops"             : list[dict]
         "channels"          : list[dict]
@@ -709,6 +737,7 @@ def solve_farm_v2(
         zone_names = [z["name"] for z in zone_list]
         blocks = resolve_perennial_blocks(commitments, crops, zone_names)
         floors = resolve_floors(commitments, crops, total_land)
+        contracts = resolve_contracts(commitments, crops, channels)
         successions = (generate_successions(crops, year, zone_names)
                        + perennial_successions(blocks, crops, zone_names))
     except ValueError as ve:
@@ -1073,6 +1102,39 @@ def solve_farm_v2(
                         "crop": crop["name"], "channel": ch["name"],
                         "margin_pct": m["margin_pct"], "floor_pct": float(min_viable_margin_pct),
                     })
+    # FX.3 — the pounds a contract owes must fit the identity's MARKET on that channel, read off
+    # the very table C6/C6b enforce (the largest of the members' copies, after the hurdle): a
+    # contract above the market is a typo, and inside the solver it could only be a shortfall
+    # nothing fills or, for "deliver", a bare infeasible. One check, one source of truth — a
+    # second reading of the channel spec would have to stay in step with demand.py and miss the
+    # hurdle, which is the one way a validated market can be gone by the time the rows are built.
+    dropped = {(x["crop"], x["channel"]) for x in excluded_channels}
+    for c in contracts:
+        ch, who = c["channel"], f"{c['crop']} on {c['channel_name']}"
+        if all((crops[m]["name"], c["channel_name"]) in dropped for m in c["members"]):
+            return _invalid([
+                f"Contract {c['id']!r} sells {who}, but the minimum viable margin "
+                f"({min_viable_margin_pct:g}%) dropped that channel for it. Lower the hurdle, or "
+                f"remove the contract."], successions)
+        yearly = [annual_caps[(m, ch)] for m in c["members"] if (m, ch) in annual_caps]
+        owed = c["lb"] * len(c["weeks"])
+        if yearly and owed > max(yearly) + 1e-9:
+            return _invalid([
+                f"Contract {c['id']!r} owes {owed:,.0f} lb of {who} over its {len(c['weeks'])} "
+                f"weeks, but that market takes {max(yearly):,.0f} lb a year. A contract above the "
+                f"market cannot be delivered — check the pounds, the weeks, or the cap."], successions)
+        market = demand_table[c["members"], ch, :].max(axis=0)
+        for w in c["weeks"]:
+            if market[w] <= 0:
+                return _invalid([
+                    f"Contract {c['id']!r} owes {c['lb']:g} lb of {who} in week {w}, but that "
+                    f"market takes nothing from it that week. Check the contract's weeks against "
+                    f"the channel's demand weeks."], successions)
+            if c["lb"] > market[w] + 1e-9:
+                return _invalid([
+                    f"Contract {c['id']!r} owes {c['lb']:g} lb/wk of {who}, but that market takes "
+                    f"{market[w]:g} lb in week {w}. A contract above the market cannot be "
+                    f"delivered — check the pounds or raise the channel's cap."], successions)
 
     # -----------------------------------------------------------------------
     # Step 4 — Fixed cost
@@ -1194,6 +1256,12 @@ def solve_farm_v2(
     # water_storage_capacity is 0 the whole block is bounded to 0 and presolve removes it,
     # which keeps ONE water balance in the code instead of a tank path and a no-tank path.
     idx_ws_start = _next; _next += N_WEEKS
+    # short[k,w] — lb a "penalty" contract k is short in week w (FX.3). A "deliver" contract has
+    # no column: its row is hard, and a plan that cannot fill it is refused by name.
+    short_keys = [(k, w) for k, c in enumerate(contracts) if c["mode"] == "penalty"
+                  for w in c["weeks"]]
+    idx_sh_start = _next; _next += len(short_keys)
+    short_col = {kw: idx_sh_start + j for j, kw in enumerate(short_keys)}
     n_vars = _next
 
     def _ot(k: int, w0: int) -> int:
@@ -1223,6 +1291,13 @@ def solve_farm_v2(
     # City water cost
     if city_water_enabled and idx_cw_start is not None:
         c_obj[idx_cw_start : idx_cw_start + N_WEEKS] = city_water_cost_per_L
+
+    # Contract shortfall penalty (FX.3): the grower's $/lb, in the objective and the P&L. ⚠️ NOT
+    # in the C13 cash floor — charged there, an unavoidable shortfall at a big penalty made the
+    # toy infeasible (measured at $200/lb), which ruling G3 forbids. It is settled with the buyer
+    # after the season, like interest is post-solve.
+    for (k, w), col in short_col.items():
+        c_obj[col] = contracts[k]["penalty"]
 
     # Holding tie-break — a numerical device, NOT economics.
     #
@@ -1303,6 +1378,9 @@ def solve_farm_v2(
     # Unlimited (Batch W) writes no C3 row, so the tank would be a free column whose level means
     # nothing; pinning it to 0 also makes the published water cap 0 without a special case.
     ub[idx_ws_start : idx_ws_start + N_WEEKS] = float(water_storage_capacity) if water_limited else 0.0
+    # A contract cannot be short more than it owes (FX.3): the slack is the undelivered part.
+    for (k, w), col in short_col.items():
+        ub[col] = contracts[k]["lb"]
 
     # Per-week caps on the labor-flex levers (the "max additional capacity by period").
     # Overtime: each role's derived cap (labor._role: count × OT hours × field share, 0 outside its
@@ -1708,12 +1786,18 @@ def solve_farm_v2(
     # Each commitment that holds ground, by id: what releasing it frees — the pinned plantings'
     # bounds, the floor rows — and how a refusal names it. A failed plan releases them all; FX.3's
     # per-entry with/without delta releases one.
-    held = {}                   # id -> {"plantings": [...], "rows": [...], "label": str}
+    # `soft`: a "penalty" contract — released for its with/without delta like any entry, but it
+    # cannot make a plan infeasible (its slack absorbs any shortfall). The flag's one live effect
+    # is to keep it out of a refusal's list of causes; releasing it there would be harmless.
+    held = {}                   # id -> {"plantings": [...], "rows": [...], "label": str, "soft": bool}
+
+    def hold(cid, label, soft=False):
+        return held.setdefault(cid, {"plantings": [], "rows": [], "label": label, "soft": soft})
+
     for i in pinned:
         if successions[i]["pinned_acres"] > 0:
-            held[successions[i]["commitment_id"]] = {
-                "plantings": [i], "rows": [],
-                "label": f"{successions[i]['name']} ({successions[i]['pinned_acres']:g} ac)"}
+            hold(successions[i]["commitment_id"],
+                 f"{successions[i]['name']} ({successions[i]['pinned_acres']:g} ac)")["plantings"].append(i)
     lot_free = set()            # plantings with no lot-size minimum (C10)
     no_carry_in = set()         # crops pinned at 0 that have no other planting (the diagnosis)
     for f in floors:
@@ -1741,9 +1825,40 @@ def solve_farm_v2(
                            f"Check its season window, or the commitment's weeks.")
                 return _invalid([msg], successions=successions)
             if f["acres"]:
-                held.setdefault(f["id"], {"plantings": [], "rows": [], "label": describe(f)})["rows"].append(row)
+                hold(f["id"], describe(f))["rows"].append(row)
             add_row([(idx_x_start + i, total_land) for i in members],
                     f["acres"], f["acres"] if pin else np.inf)
+
+    # C16 — Contracts (FX.3): Σ_{m in identity} v[m, ch, w] (+ short[k, w]) ≥ lb, every week of
+    # the window. On the IDENTITY: a buyer contracted for spinach, not for a bed, so a Tunnel
+    # Spinach delivers a Spinach contract (and naming the variant counts the variant only).
+    # "deliver" has no slack: the row is hard, and a plan that cannot fill it is refused with
+    # the limit it presses on (the release → elastic path below). "penalty" may come up short at
+    # the grower's $/lb (objective, Step 6) — never priced in C13.
+    #
+    # A week no planting of the identity can SELL in — no harvest reaches it, even held to the
+    # end of its shelf life (calendar.sell_weeks_of, the relation C4c bounds stock by) — is a
+    # shortfall at any price. "deliver" is refused by name here instead of as an elastic
+    # "contradiction"; "penalty" carries it as a FACT without needing the probe (report below).
+    dead_weeks = []                 # per contract: the window weeks nothing can sell in
+    for k, c in enumerate(contracts):
+        sellable = {w for sc in successions if sc["crop"] in c["members"]
+                    for h in harvest_weeks_of(sc, N_WEEKS)
+                    for w in sell_weeks_of(h, shelf_life_weeks[sc["crop"]], N_WEEKS)}
+        dead_weeks.append(sorted(set(c["weeks"]) - sellable))
+        if c["mode"] == "deliver" and dead_weeks[k]:
+            return _invalid([
+                f"Contract {c['id']!r} must deliver {c['lb']:,.0f} lb of {c['crop']} on "
+                f"{c['channel_name']} in {weeks_text(dead_weeks[k])}, but no planting of it can "
+                f"be harvested and sold then. Change the contract's weeks, or make it a penalty "
+                f"contract."], successions)
+        entry = hold(c["id"], describe(c), soft=c["mode"] == "penalty")
+        for w in c["weeks"]:
+            entry["rows"].append(row)
+            cols = [(_sales_col(m, c["channel"], w), 1.0) for m in c["members"]]
+            if c["mode"] == "penalty":
+                cols.append((short_col[(k, w)], 1.0))
+            add_row(cols, c["lb"], np.inf)
 
     # C10 — Min acreage lower: x[i] ≥ y[i] × min_frac. A pinned planting's acres are given (FX.2),
     # so it has no minimum — 0 keeps the row, and the row count, uniform. Nor do the plantings of
@@ -1859,6 +1974,27 @@ def solve_farm_v2(
         options={"disp": False, "time_limit": solver_time_limit},
     )
 
+    def _solve(c=c_obj, released=(), time_limit=DIAGNOSIS_TIME_LIMIT):
+        """The same model solved again — every explanatory re-solve (FX.1 release, FX.3 probe
+        and per-entry delta) goes through here, so there is one `milp` call to keep in step.
+        `released` names commitments to solve WITHOUT: a pinned planting removed (x and y at 0),
+        a floor / pin / contract row open both ways (a carry-in is lo = hi = acres; freeing only
+        the floor would leave the crop capped at its pin, which prices "no more garlic than
+        today", not "no commitment"). One definition for the infeasibility release (every hard
+        entry) and the delta (one id)."""
+        lb_r, ub_r = lb.copy(), ub.copy()
+        lo_r, hi_r = np.array(lbs_con, dtype=float), np.array(ubs_con, dtype=float)
+        for cid in released:
+            h = held[cid]
+            cols = [idx_x_start + i for i in h["plantings"]] + [idx_y_start + i for i in h["plantings"]]
+            lb_r[cols] = 0.0
+            ub_r[cols] = 0.0
+            lo_r[h["rows"]] = -np.inf
+            hi_r[h["rows"]] = np.inf
+        return milp(c=c, constraints=LinearConstraint(A_sparse, lo_r, hi_r),
+                    integrality=integrality, bounds=Bounds(lb_r, ub_r),
+                    options={"disp": False, "time_limit": min(solver_time_limit, time_limit)})
+
     # -----------------------------------------------------------------------
     # Step 11 — Extract results
     # -----------------------------------------------------------------------
@@ -1874,17 +2010,12 @@ def solve_farm_v2(
         # the cause, and an elastic re-solve says WHICH limits they press on — the toy's garlic
         # needed the crew AND the barn together, so relaxing one limit at a time cannot say it.
         pin_errors, binding_limits, verdict = [], None, None
-        if result.status == 2 and held and diagnose_infeasible:
+        hard = [cid for cid, h in held.items() if not h["soft"]]
+        if result.status == 2 and hard and diagnose_infeasible:
             # A diagnosis, not the plan: it need not get the plan's whole time budget.
             opts = {"disp": False, "time_limit": min(solver_time_limit, DIAGNOSIS_TIME_LIMIT)}
-            lb_free, lo_free = lb.copy(), np.array(lbs_con, dtype=float)
-            for h in held.values():
-                lb_free[[idx_x_start + i for i in h["plantings"]]] = 0.0
-                lb_free[[idx_y_start + i for i in h["plantings"]]] = 0.0
-                lo_free[h["rows"]] = -np.inf
-            free = milp(c=c_obj, constraints=LinearConstraint(A_sparse, lo_free, ubs_con),
-                        integrality=integrality, bounds=Bounds(lb_free, ub), options=opts)
-            names = "; ".join(h["label"] for h in held.values())
+            free = _solve(released=hard)
+            names = "; ".join(held[cid]["label"] for cid in hard)
             if free.status != 2 and not (free.status == 0 or has_time_limited_incumbent(
                     free.status, getattr(free, "x", None) is not None)):
                 # The release re-solve itself ran out of time: say so, not a bare "infeasible".
@@ -2240,13 +2371,63 @@ def solve_farm_v2(
     overtime_cost = float(ot_cost_weekly.sum())
     hire_cost     = float(hire_cost_weekly.sum())
 
-    # The three costs bought OUTSIDE both totals above, as a split the P&L iterates (W8) — the
-    # exporter used to hand-name these three keys, the last hand-named list in the money path,
-    # and `total_cost` was never returned at all.
+    # FX.3 — each contract as it came out: owed, delivered (the identity's sales on that channel
+    # that week — more than the order is ordinary sales), short, and the penalty. A short week
+    # is a FACT or a CHOICE. A week nothing can sell in (`dead_weeks`, from the calendar) is a
+    # fact outright; for the rest one probe re-solve prices every short pound at
+    # CONTRACT_PROBE_PENALTY_PER_LB, and a week still short then is one no plan delivers (the
+    # toy: spinach's summer gap filled at $5 — a choice). The penalty is summed from the RAW
+    # slacks so it equals what the objective charged.
+    short_sol = {kw: float(z[col]) for kw, col in short_col.items()}
+    probe_short = None
+    if diagnose_infeasible and any(v > SHORT_TOL_LB and w not in dead_weeks[k]
+                                   for (k, w), v in short_sol.items()):
+        c_probe = c_obj.copy()
+        c_probe[list(short_col.values())] = CONTRACT_PROBE_PENALTY_PER_LB
+        probe = _solve(c=c_probe)
+        if probe.status == 0:
+            probe_short = {kw: float(probe.x[col]) for kw, col in short_col.items()}
+
+    def shortfall_kind(k, w, short):
+        if short <= SHORT_TOL_LB:
+            return None
+        if w in dead_weeks[k]:
+            return "fact"
+        if probe_short is None:
+            return "unknown"
+        return "fact" if probe_short[(k, w)] > SHORT_TOL_LB else "choice"
+
+    contracts_out = []
+    for k, c in enumerate(contracts):
+        by_week = [{"week": w, "owed": c["lb"],
+                    "delivered": float(v_sol[c["members"], c["channel"], w].sum()),
+                    "short": short_sol.get((k, w), 0.0),
+                    "kind": shortfall_kind(k, w, short_sol.get((k, w), 0.0))}
+                   for w in c["weeks"]]
+        kinds = {e["kind"] for e in by_week} - {None}
+        short_lbs = float(sum(e["short"] for e in by_week))
+        contracts_out.append({
+            "id": c["id"], "source": c["source"], "crop": c["crop"], "channel": c["channel_name"],
+            "mode": c["mode"], "lb_per_week": c["lb"], "weeks": list(c["weeks"]),
+            "penalty_per_lb": c["penalty"],
+            "owed_lbs": c["lb"] * len(c["weeks"]),
+            "delivered_lbs": float(sum(e["delivered"] for e in by_week)),
+            "short_lbs": short_lbs,
+            "penalty_cost": short_lbs * c["penalty"],
+            "short_kind": None if not kinds else "mixed" if len(kinds) > 1 else next(iter(kinds)),
+            "by_week": by_week,
+        })
+
+    # The costs bought OUTSIDE both totals above, as a split the P&L iterates (W8) — the
+    # exporter used to hand-name these keys, the last hand-named list in the money path,
+    # and `total_cost` was never returned at all. The contract shortfall penalty (FX.3) is
+    # charged by the objective, so it must sit inside operating_profit like the other three;
+    # unlike them it is NOT in the weekly cash curve (settled after the season).
     bought_capacity_split = {
         "city_water": float(city_water_cost),
         "overtime":   float(overtime_cost),
         "hire":       float(hire_cost),
+        "contract_shortfall": float(sum(c["penalty_cost"] for c in contracts_out)),
     }
     total_cost = fixed_cost + variable_cost + float(sum(bought_capacity_split.values()))
     operating_profit = revenue - total_cost  # what the solver maximized (before overhead, fixed selling + interest)
@@ -2400,6 +2581,28 @@ def solve_farm_v2(
                     "cap":  [float(harvest_storage_cap)] * N_WEEKS},
     }
 
+    # FX.3 / §6.3 — what each commitment costs: re-solve WITHOUT it (one id released, the rest
+    # held) and take the OBJECTIVE difference, never profit — interest is post-solve, and two
+    # plans with one objective can borrow differently (toy: a floor that did not bind "raised"
+    # profit $45 with the objective identical). Positive = the entry costs the farm that much;
+    # a pinned patch that pays its way comes out negative. One solve per entry, so opt-in.
+    deltas_out = None
+    if commitment_deltas:
+        deltas_out = []
+        for cid, h in held.items():
+            rec = {"id": cid, "label": h["label"], "delta": None, "tolerance": None,
+                   "status": "base_not_optimal"}
+            if status == "optimal":
+                free = _solve(released=[cid], time_limit=COMMITMENT_DELTA_TIME_LIMIT)
+                rec["status"] = ("optimal" if free.status == 0 else
+                                 "infeasible" if free.status == 2 else "time_limit")
+                if free.status == 0:
+                    # Two solves, each proved only to HiGHS's relative gap: a delta inside
+                    # `tolerance` is noise, not a cost (the golden carry-in read −$71 once).
+                    rec.update(delta=float(result.fun - free.fun),
+                               tolerance=float(MIP_REL_GAP * (abs(result.fun) + abs(free.fun))))
+            deltas_out.append(rec)
+
     return {
         "status":           status,
         # Present only when the solve stopped on its time budget: the plan below is the best
@@ -2491,6 +2694,9 @@ def solve_farm_v2(
         "successions":      successions,
         "zones":            zones_out,
         "perennial_blocks": perennial_blocks_out,
+        # FX.3 — each contract's delivery, shortfall and its kind; the penalty is in the split.
+        "contracts":        contracts_out,
+        "commitment_deltas": deltas_out,
         "crops":            crops,
         "channels":         channels,
     }

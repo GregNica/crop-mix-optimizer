@@ -178,7 +178,7 @@ def _refused(p, words):
     (dict(extra_cost_per_acre=-5), "extra_cost_per_acre must be a number ≥ 0"),
     (dict(harvest_to_week=None), "harvest_to_week must be a whole week"),
     (dict(harvest_from_week=53), "harvest_from_week must be a whole week"),
-    (dict(kind="contract"), "not supported yet"),
+    (dict(kind="contract"), "not one of the farm's channels"),
     (dict(kind="orchard"), "unknown kind"),
     (dict(id=""), "needs an id"),
     (dict(source="robot"), "source must be one of"),

@@ -336,6 +336,56 @@ settled with the buyer after the season, like interest is post-solve. Result: pe
 on the objective. Validate: lb ≤ the identity's cap on that channel (else refuse — a contract
 above the market is a typo).
 
+**FX.3 as built (2026-10-26).** `farm_v2/utils/commitments.py` `resolve_contracts` (shape and
+identity: crop, channel, `lb_per_week`, `from_week`/`to_week` (may wrap), `mode` REQUIRED ∈
+`deliver | penalty`, `penalty_per_lb` > 0 for penalty and refused on deliver); the market check
+lives in the SOLVER against the cap table C6/C6b enforce (after the hurdle): a week the channel
+takes nothing, a weekly cap below the pounds, an annual cap below the window's total, and a
+channel the hurdle dropped are each refused by name. Entries: `{id, kind: "contract", crop,
+channel, lb_per_week, from_week, to_week, mode, penalty_per_lb}`; `crop` names a parent (the
+identity delivers — a Tunnel Spinach fills a Spinach contract) or a variant (that variant only).
+- **Rows C16**: Σ identity sales on the channel (+ `short[k,w]`, penalty mode) ≥ lb, one row per
+  window week. `short` ≤ lb; the penalty is in the OBJECTIVE and the P&L
+  (`bought_capacity_split["contract_shortfall"]`, inside operating profit) and NOT in C13 nor the
+  weekly cash curve — settled after the season. Guard: $2.4M of unavoidable penalty against a
+  credit line just above peak borrowing still solves, same plan, same cash curve (⚠️ the golden
+  farm's cash floor is OFF — the first version of that guard was inert on the C13 half).
+- **Deliver mode** has no slack. A window week nothing can SELL in — no harvest reaches it even
+  held to the end of its shelf life (`calendar.sell_weeks_of`, h … h+L−1; C4c is still built
+  from the inverse relation, recorded) — is refused by name pre-solve; a contract the crew /
+  barn / land cannot carry goes through FX.1's release → elastic path and is named with the
+  limit (measured: 20,000 lb/wk of kale weeks 38–50 → labour, weeks 43–50, proved).
+- **Shortfall kind.** Each short week is a FACT or a CHOICE: a dead week is a fact outright; for
+  the rest ONE probe re-solve at `CONTRACT_PROBE_PENALTY_PER_LB` ($1,000/lb), a week still short
+  then being one no plan delivers. Skipped with `diagnose_infeasible=False` → `"unknown"`.
+  Measured on the demo: kale on Wholesale 2,000 lb/wk weeks 8–40 at $0.50 → weeks 8–13 and
+  **36–37 are facts** (no kale harvest before week 14 and none in 36–37 — the toy's finding,
+  reproduced); 4,000 lb/wk weeks 14–35 at 1¢ → 83,500 lb short, all CHOICE; at $0.50 → 298 lb.
+  Penalty contracts are `soft` in the `held` registry: released for their delta, never named as
+  a refusal's cause.
+- **§6.3 per-entry delta — built once for every kind.** `commitment_deltas=True` (opt-in; one
+  re-solve per entry, ~4.5 s native / ~18 s in Pyodide each — a total budget is BACKLOG X13)
+  returns per id `{label, delta, tolerance, status}`: `delta` = objective WITHOUT − WITH (what
+  it costs; a paying patch is negative), `tolerance` = both solves' MIP-gap noise (~$320 on the
+  demo; the carry-in read −$71 once). "Without" = pinned planting REMOVED, rows opened both ways
+  (a carry-in freed only below stays capped at its pin — measured: pinned at 10 ac the delta is
+  $80,189, i.e. the cost of being held to 10). One `_solve(c, released, time_limit)` serves the
+  FX.1 release, the probe and the deltas.
+- **Result**: `contracts: [{id, source, crop, channel, mode, lb_per_week, weeks, penalty_per_lb,
+  owed_lbs, delivered_lbs, short_lbs, penalty_cost, short_kind ∈ fact|choice|mixed|unknown|None,
+  by_week: [{week, owed, delivered, short, kind}]}]`, `commitment_deltas` (None unless asked).
+  Adapter forwards both; `fields.js` declares `commitment_deltas` (unsent until the UI step).
+  Overhead ledger EXCLUDES the shortfall line; P&L label added (it renders under "Bought
+  Capacity" — a group label is the UI step's, X12).
+- **Guards:** `tests/test_contracts.py` (36). `/simplify` (4 lenses) moved the market check out of
+  the resolver and into the solver against the enforced table, folded three `milp` calls into
+  `_solve`, one `weeks_text` for every week list, dead weeks classified without the probe, shared
+  `commitments_farm`/`weekly` test helpers. **22 targeted mutants, 22 caught** after two
+  survivors: the cash-floor guard above, and a penalty-sign mutant mapped to a guard that could
+  not see it. Golden unchanged (no contracts → no columns, no rows).
+- Deferred, recorded: `diagnose_infeasible` now also gates the probe — a rename-with-alias (X11);
+  P&L group label (X12); a total budget for the deltas (X13); C4c built from `sell_weeks_of`.
+
 **FX.7 Guards (same commits).** A golden FIXTURE farm with a zone, a variant, a perennial, both
 floor kinds and a contract (the L4 trap: the shipped golden uses none of it, so it can stay
 unchanged at $652,876 — and is then blind to all of this). Mutation-tested per the CLAUDE.md order

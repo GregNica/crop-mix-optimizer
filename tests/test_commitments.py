@@ -9,11 +9,9 @@ and the overwintering carry-in, migrated from C15's week-1 floor to a PIN (growe
 The demo farm says 18 ac of garlic (it planted 18.04 when it was free to choose).
 An infeasible plan names the commitments and WHICH limits they press on (elastic re-solve).
 """
-import copy
-
 import pytest
 
-from tests.helpers import (golden_payload, set_carry_in, solve_payload as solve,
+from tests.helpers import (commitments_farm, set_carry_in, solve_payload as solve,
                            solve_payload_optimal as solve_optimal)
 
 # Schedule acres are reported to 0.1 ac, so sums of them carry that rounding.
@@ -30,8 +28,7 @@ def planted(r, crop):
 
 
 def farm(*entries, garlic=None, **overrides):
-    p = golden_payload(**overrides)
-    p["commitments"] = copy.deepcopy(list(entries))
+    p = commitments_farm(*entries, **overrides)
     if garlic is not None:
         set_carry_in(p, garlic)
     return p
@@ -119,7 +116,7 @@ def _refused(p, words):
     (dict(KALE_STAND, from_week=0), "from_week must be a whole week"),
     (dict(KALE_STAND, to_week=None), "to_week must be a whole week"),
     (dict(KALE_STAND, from_week=1, to_week=1), "no planting of it can be in the ground in week 1"),
-    (dict(KALE_ANNUAL, kind="contract"), "not supported yet"),
+    (dict(KALE_ANNUAL, kind="contract"), "not one of the farm's channels"),
 ])
 def test_bad_floor_is_refused(entry, words):
     _refused(farm(entry), words)

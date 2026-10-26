@@ -80,7 +80,7 @@ def test_total_cost_is_summed_from_its_parts_and_closes_operating_profit(two_cro
     split = r["bought_capacity_split"]
     assert split["hire"] > 0 and split["overtime"] > 0, (
         "fixture bought no hire or no overtime — a dropped term would be invisible")
-    assert set(split) == {"city_water", "overtime", "hire"}
+    assert set(split) == {"city_water", "overtime", "hire", "contract_shortfall"}   # FX.3
     assert r["total_cost"] == pytest.approx(
         r["fixed_cost"] + r["variable_cost"] + sum(split.values()), abs=1e-6)
     assert r["revenue"] - r["total_cost"] == pytest.approx(r["operating_profit"], abs=1e-6)

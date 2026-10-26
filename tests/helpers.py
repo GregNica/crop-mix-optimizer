@@ -38,6 +38,21 @@ def set_carry_in(p: dict, acres: float, crop: str = "Garlic") -> dict:
     return p
 
 
+def commitments_farm(*entries, **overrides) -> dict:
+    """The golden farm with `entries` as its commitments table (Batch FX fixtures)."""
+    import copy
+    p = golden_payload(**overrides)
+    p["commitments"] = copy.deepcopy(list(entries))
+    return p
+
+
+def weekly(r: dict, channel: str, crop: str) -> list:
+    """A crop's weekly pounds into a channel off the solver's own `channel_sales` (52, week 1
+    first); zeros when it sold nothing there."""
+    return (r["channel_sales"].get(channel, {}).get("by_crop", {}).get(crop, {})
+            .get("weekly_lbs") or [0.0] * 52)
+
+
 def index_src() -> str:
     """The app's single HTML file, as text."""
     return INDEX.read_text()

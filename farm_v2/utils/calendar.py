@@ -184,6 +184,26 @@ def week_span(first: int, last: int) -> list[int]:
     return list(range(first, 53)) + list(range(1, last + 1))
 
 
+def weeks_text(weeks) -> str:
+    """'week 30' / 'weeks 12–14, 30' — the one way a list of weeks is written for the grower."""
+    runs = []
+    for x in weeks:
+        if runs and x == runs[-1][1] + 1:
+            runs[-1][1] = x
+        else:
+            runs.append([x, x])
+    span = ", ".join(f"{a}" if a == z else f"{a}–{z}" for a, z in runs)
+    return f"week {span}" if len(weeks) == 1 else f"weeks {span}"
+
+
+def sell_weeks_of(harvest_week: int, shelf_life_weeks: int, n_weeks: int = 52) -> range:
+    """The weeks a week-h harvest can be SOLD in: h … h+L−1, where L counts the harvest week
+    (the solver's C4c bounds stock to what arrived in the last L−1 weeks). Stock does not wrap
+    the year. ⚠️ C4c is still built week-by-week from the inverse relation; if the year ever
+    becomes cyclic, both must move together (FX.3 `/simplify`, recorded)."""
+    return range(harvest_week, min(n_weeks, harvest_week + shelf_life_weeks - 1) + 1)
+
+
 def planting_value(s: dict, crop: dict, key: str, default=None):
     """`key` for planting `s`: its own value when it carries one, else its crop card's.
 

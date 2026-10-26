@@ -162,7 +162,7 @@
     },
     overhead_pct: {
       chat: { label: "Overhead % of revenue", type: "number", unit: "%", min: 0, max: 60,
-        description: "Overhead as a percent of REVENUE (not of costs) — land taxes, admin (incl. phone & internet), office/vehicle. EXCLUDES costs itemized elsewhere (land rent/mortgage, the machinery line, labor, seed, water, fertilizer, fuel, packaging, crop protection, patch-specific costs of perennial plantings, irrigation, storage, channel selling costs, other debt service, interest on operating borrowing, city water, farm insurance, utilities (electricity incl. cooling and pump energy), and the interest, repairs and property tax on owned buildings, storage and irrigation); if the user's figure includes those, ask them to exclude them. If given in dollars, ask for revenue or the percent — don't guess." },
+        description: "Overhead as a percent of REVENUE (not of costs) — land taxes, admin (incl. phone & internet), office/vehicle. EXCLUDES costs itemized elsewhere (land rent/mortgage, the machinery line, labor, seed, water, fertilizer, fuel, packaging, crop protection, patch-specific costs of perennial plantings, contract shortfall penalties, irrigation, storage, channel selling costs, other debt service, interest on operating borrowing, city water, farm insurance, utilities (electricity incl. cooling and pump energy), and the interest, repairs and property tax on owned buildings, storage and irrigation); if the user's figure includes those, ask them to exclude them. If given in dollars, ask for revenue or the percent — don't guess." },
     },
     interest_rate_pct: {
       chat: { label: "Interest APR %", type: "number", unit: "% APR", min: 0, max: 40,
@@ -409,7 +409,8 @@
     payroll_load_pct:            { unsent: 'legacy single payroll load (pre-L.5 server callers); the adapter splits it into fica + straight-time' },
     operating_weeks:             { unsent: 'deprecated; the solver ignores it (cost-accounting basis)' },
     zones:                       { unsent: 'FX.4 named land pools [{name, acres, covered}]; solver + adapter done, the zones card lands with the Batch FX UI' },
-    commitments:                 { unsent: 'FX.2 farm-level commitments [{id, kind, ...}] — perennial patches so far; solver + adapter done, the commitments table lands with the Batch FX UI' },
+    commitments:                 { unsent: 'Batch FX farm-level commitments [{id, kind, ...}] — perennial patches, must-plant floors and contracts; solver + adapter done, the commitments table lands with the Batch FX UI' },
+    commitment_deltas:           { unsent: 'FX.3 §6.3 — one re-solve per commitment for its with/without delta on the objective; opt-in, the Committed section will send it' },
     storage_loss_frac_per_week:  { unsent: 'solver supports in-store shrink; no input yet — DECISIONS GROUP E3' },
     city_water_fixed_fee_per_week: { unsent: 'solver + P&L carry a city-water standing charge; no input yet (found by E5b)' },
   };
