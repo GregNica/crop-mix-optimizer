@@ -306,3 +306,52 @@ def test_without_a_paying_patch_is_the_patch_removed_not_optional():
     d = next(x for x in r["commitment_deltas"] if x["id"] == "c1")
     assert d["status"] == "optimal"
     assert d["delta"] < -1_000 and -d["delta"] > 3 * d["tolerance"]
+
+
+# ---------------------------------------------------------------------------
+# /code-review high on 3e68faa
+# ---------------------------------------------------------------------------
+
+def test_one_more_head_re_solves_never_price_the_commitments(monkeypatch):
+    """#1: the adapter's solve_kwargs carry `commitment_deltas`; a one-more-head re-solve reads
+    only profit, so inheriting it would run one 45 s re-solve per commitment and throw it away
+    (the same omission `diagnose_infeasible` had in FX.1)."""
+    import farm_v2.solver as solver
+    seen = []
+    monkeypatch.setattr(solver, "solve_farm_v2",
+                        lambda **kw: seen.append(kw) or {"status": "optimal", "profit": 90.0})
+    solver.next_head_deltas({"commitment_deltas": True, "diagnose_infeasible": True},
+                            {"status": "optimal", "profit": 100.0, "extra_hires": [{"extra": 0}]})
+    assert seen[0]["commitment_deltas"] is False and seen[0]["diagnose_infeasible"] is False
+
+
+def test_status_only_callers_in_the_client_send_deltas_off():
+    from tests.helpers import index_src
+    assert "diagnose_infeasible: diagnose, commitment_deltas: false" in index_src()
+
+
+@pytest.mark.parametrize("pair, words", [
+    # weekly cap: Spinach on Wholesale takes 25,000 lb/wk; 15,000 + 15,000 each fit alone
+    ((contract(id="a", crop="Spinach", lb_per_week=15_000, from_week=20, to_week=22),
+      contract(id="b", crop="Spinach", lb_per_week=15_000, from_week=22, to_week=24)),
+     "Contracts 'a', 'b' together owe 30,000 lb of Spinach on Wholesale in week 22"),
+    # annual cap: Kale on Wholesale takes 500,000 lb/yr; 260,000 + 260,000
+    ((contract(id="a", lb_per_week=20_000, from_week=14, to_week=26),
+      contract(id="b", lb_per_week=20_000, from_week=38, to_week=50)),
+     "Contract 'a' (with 'b') owes 520,000 lb of Kale on Wholesale over the year"),
+])
+def test_two_contracts_on_one_market_are_checked_together(pair, words):
+    """#4: each fits the cap alone; together they are above the market, which C6/C6b would turn
+    into a bare 'contradiction'. Refused by name instead."""
+    r = solve(farm(*pair))
+    assert r["status"] == "invalid_input"
+    assert words in r["errors"][0], r["errors"][0]
+
+
+def test_deliver_contract_on_a_crop_that_cannot_be_grown_is_refused_by_name():
+    """#5: garlic with no acres carried in is pinned at 0 and has no other planting, so none of
+    it can be sold — a deliver contract on it is a dead-week refusal, not a bare infeasible."""
+    from tests.helpers import set_carry_in
+    r = solve(set_carry_in(farm(deliver(crop="Garlic", lb_per_week=1000, from_week=29, to_week=32)), 0))
+    assert r["status"] == "invalid_input"
+    assert "no planting of it can be harvested and sold" in r["errors"][0]

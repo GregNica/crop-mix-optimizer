@@ -404,13 +404,13 @@
     rainfall_weekly_multipliers: { sentBy: 'monte-carlo', from: [] },
     refuse_rain_short:           { sentBy: 'monte-carlo', from: [] },
     diagnose_infeasible:         { sentBy: 'solveForNumbers', from: [] },   // FX.1: re-solves that read only the status skip the limit diagnosis
+    commitment_deltas:           { sentBy: 'solveForNumbers', from: [] },   // FX.3 §6.3: one re-solve per commitment — always off for status-only callers; the Committed section will opt the main solve in
     // Read by the adapter, sent by nothing. Each is a decision, not an oversight — say which.
     overtime_enabled:            { unsent: 'server off-switch for overtime; the form caps it per role (max_ot_hrs = 0 means none)' },
     payroll_load_pct:            { unsent: 'legacy single payroll load (pre-L.5 server callers); the adapter splits it into fica + straight-time' },
     operating_weeks:             { unsent: 'deprecated; the solver ignores it (cost-accounting basis)' },
     zones:                       { unsent: 'FX.4 named land pools [{name, acres, covered}]; solver + adapter done, the zones card lands with the Batch FX UI' },
     commitments:                 { unsent: 'Batch FX farm-level commitments [{id, kind, ...}] — perennial patches, must-plant floors and contracts; solver + adapter done, the commitments table lands with the Batch FX UI' },
-    commitment_deltas:           { unsent: 'FX.3 §6.3 — one re-solve per commitment for its with/without delta on the objective; opt-in, the Committed section will send it' },
     storage_loss_frac_per_week:  { unsent: 'solver supports in-store shrink; no input yet — DECISIONS GROUP E3' },
     city_water_fixed_fee_per_week: { unsent: 'solver + P&L carry a city-water standing charge; no input yet (found by E5b)' },
   };

@@ -89,7 +89,11 @@ DIAGNOSIS_TIME_LIMIT = 20.0     # s per solve of the infeasible-commitments diag
 # cheaper than growing at the grower's penalty). Told apart by one re-solve with every short
 # pound priced at this much: a week still short then is short at any price the farm could face.
 CONTRACT_PROBE_PENALTY_PER_LB = 1_000.0
-SHORT_TOL_LB = 0.01             # below this a shortfall is solver noise, not a pound
+# Below this a shortfall is solver noise, not a pound. One MIP gap of the demo's objective is
+# ~$60; at the probe price that is 0.06 lb, so a pound keeps gap noise from reading as a fact.
+# At the grower's own price the reported shortfall is the returned plan's real slack — honest
+# even when a better plan inside the gap would deliver it (/code-review high, FX.3).
+SHORT_TOL_LB = 1.0
 # FX.3 — budget per "without this commitment" re-solve (§6.3). Same reasoning as the one-more-head
 # budget: an unproved incumbent is not a figure, so a solve that runs out says so instead.
 COMMITMENT_DELTA_TIME_LIMIT = 45.0
@@ -611,7 +615,8 @@ def solve_farm_v2(
                               post-solve and two plans with one objective can borrow differently.
                               `tolerance` is the two solves' MIP-gap noise (~$200 on the golden
                               farm): a delta inside it is zero. status ∈ optimal | infeasible
-                              (without it the rest cannot be met) | time_limit | base_not_optimal.
+                              (without it the rest cannot be met) | time_limit | error |
+                              base_not_optimal.
         "successions"       : list[dict]
         "crops"             : list[dict]
         "channels"          : list[dict]
@@ -1109,6 +1114,24 @@ def solve_farm_v2(
     # second reading of the channel spec would have to stay in step with demand.py and miss the
     # hurdle, which is the one way a validated market can be gone by the time the rows are built.
     dropped = {(x["crop"], x["channel"]) for x in excluded_channels}
+    root_of = {m: root for root, ms in members_of.items() for m in ms}
+    # Two contracts on one identity's channel draw on ONE market: a parent's and a variant's, or
+    # two buyers of kale — each may fit the cap alone and not together (/code-review high).
+    jointly = {}
+    for c in contracts:
+        for w in c["weeks"]:
+            jointly.setdefault((root_of[c["members"][0]], c["channel"], w), []).append(c)
+    for (root, ch, w), cs in jointly.items():
+        if len(cs) < 2:
+            continue
+        c0, market_w = cs[0], float(demand_table[members_of[root], ch, w].max())
+        owed_w = sum(c["lb"] for c in cs)
+        if owed_w > market_w + 1e-9:
+            return _invalid([
+                f"Contracts {', '.join(repr(c['id']) for c in cs)} together owe {owed_w:,.0f} lb of "
+                f"{crops[root]['name']} on {c0['channel_name']} in week {w}, but that market takes "
+                f"{market_w:,.0f} lb. One contract at a time fits; together they are above the "
+                f"market — check the pounds or raise the channel's cap."], successions)
     for c in contracts:
         ch, who = c["channel"], f"{c['crop']} on {c['channel_name']}"
         if all((crops[m]["name"], c["channel_name"]) in dropped for m in c["members"]):
@@ -1117,12 +1140,16 @@ def solve_farm_v2(
                 f"({min_viable_margin_pct:g}%) dropped that channel for it. Lower the hurdle, or "
                 f"remove the contract."], successions)
         yearly = [annual_caps[(m, ch)] for m in c["members"] if (m, ch) in annual_caps]
-        owed = c["lb"] * len(c["weeks"])
+        same_market = [k for k in contracts if root_of[k["members"][0]] == root_of[c["members"][0]]
+                       and k["channel"] == ch]
+        owed = sum(k["lb"] * len(k["weeks"]) for k in same_market)
         if yearly and owed > max(yearly) + 1e-9:
+            others = (f" (with {', '.join(repr(k['id']) for k in same_market if k is not c)})"
+                      if len(same_market) > 1 else "")
             return _invalid([
-                f"Contract {c['id']!r} owes {owed:,.0f} lb of {who} over its {len(c['weeks'])} "
-                f"weeks, but that market takes {max(yearly):,.0f} lb a year. A contract above the "
-                f"market cannot be delivered — check the pounds, the weeks, or the cap."], successions)
+                f"Contract {c['id']!r}{others} owes {owed:,.0f} lb of {who} over the year, but "
+                f"that market takes {max(yearly):,.0f} lb a year. A contract above the market "
+                f"cannot be delivered — check the pounds, the weeks, or the cap."], successions)
         market = demand_table[c["members"], ch, :].max(axis=0)
         for w in c["weeks"]:
             if market[w] <= 0:
@@ -1840,9 +1867,13 @@ def solve_farm_v2(
     # end of its shelf life (calendar.sell_weeks_of, the relation C4c bounds stock by) — is a
     # shortfall at any price. "deliver" is refused by name here instead of as an elastic
     # "contradiction"; "penalty" carries it as a FACT without needing the probe (report below).
+    # Only plantings the model can actually grow count: not a crop pinned at 0 with nothing else
+    # to plant (`no_carry_in`), nor a planting bounded to 0 acres (/code-review high).
     dead_weeks = []                 # per contract: the window weeks nothing can sell in
     for k, c in enumerate(contracts):
-        sellable = {w for sc in successions if sc["crop"] in c["members"]
+        sellable = {w for i, sc in enumerate(successions)
+                    if sc["crop"] in c["members"] and sc["crop"] not in no_carry_in
+                    and ub[idx_x_start + i] > 0
                     for h in harvest_weeks_of(sc, N_WEEKS)
                     for w in sell_weeks_of(h, shelf_life_weeks[sc["crop"]], N_WEEKS)}
         dead_weeks.append(sorted(set(c["weeks"]) - sellable))
@@ -1981,7 +2012,9 @@ def solve_farm_v2(
         a floor / pin / contract row open both ways (a carry-in is lo = hi = acres; freeing only
         the floor would leave the crop capped at its pin, which prices "no more garlic than
         today", not "no commitment"). One definition for the infeasibility release (every hard
-        entry) and the delta (one id)."""
+        entry) and the delta (one id). ⚠️ Known limit: a carry-in pinned BELOW its lot size
+        exempts its plantings from C10 (`lot_free`), and that exemption survives the release, so
+        its "without" plan may plant sub-lot acres the real farm could not (BACKLOG X14)."""
         lb_r, ub_r = lb.copy(), ub.copy()
         lo_r, hi_r = np.array(lbs_con, dtype=float), np.array(ubs_con, dtype=float)
         for cid in released:
@@ -2374,28 +2407,33 @@ def solve_farm_v2(
     # FX.3 — each contract as it came out: owed, delivered (the identity's sales on that channel
     # that week — more than the order is ordinary sales), short, and the penalty. A short week
     # is a FACT or a CHOICE. A week nothing can sell in (`dead_weeks`, from the calendar) is a
-    # fact outright; for the rest one probe re-solve prices every short pound at
-    # CONTRACT_PROBE_PENALTY_PER_LB, and a week still short then is one no plan delivers (the
-    # toy: spinach's summer gap filled at $5 — a choice). The penalty is summed from the RAW
-    # slacks so it equals what the objective charged.
+    # fact outright; for the rest ONE probe re-solve PER CONTRACT prices that contract's short
+    # pounds at CONTRACT_PROBE_PENALTY_PER_LB (the others stay at the grower's price — priced
+    # jointly, a week the crew cannot fill for both contracts would read "fact" for one of them
+    # when a plan that drops the other delivers it; /code-review high). A week still short then
+    # is one no plan delivers (the toy: spinach's summer gap filled at $5 — a choice). The
+    # penalty is summed from the RAW slacks so it equals what the objective charged.
     short_sol = {kw: float(z[col]) for kw, col in short_col.items()}
-    probe_short = None
-    if diagnose_infeasible and any(v > SHORT_TOL_LB and w not in dead_weeks[k]
-                                   for (k, w), v in short_sol.items()):
+    probe_short = {}                # contract k -> {(k, w): lb short at the probe price}, if proved
+    for k in range(len(contracts)):
+        mine = {kw: col for kw, col in short_col.items() if kw[0] == k}
+        if not diagnose_infeasible or not any(short_sol[(k, w)] > SHORT_TOL_LB and w not in dead_weeks[k]
+                                              for (k, w) in mine):
+            continue
         c_probe = c_obj.copy()
-        c_probe[list(short_col.values())] = CONTRACT_PROBE_PENALTY_PER_LB
+        c_probe[list(mine.values())] = CONTRACT_PROBE_PENALTY_PER_LB
         probe = _solve(c=c_probe)
         if probe.status == 0:
-            probe_short = {kw: float(probe.x[col]) for kw, col in short_col.items()}
+            probe_short[k] = {kw: float(probe.x[col]) for kw, col in mine.items()}
 
     def shortfall_kind(k, w, short):
         if short <= SHORT_TOL_LB:
             return None
         if w in dead_weeks[k]:
             return "fact"
-        if probe_short is None:
+        if k not in probe_short:
             return "unknown"
-        return "fact" if probe_short[(k, w)] > SHORT_TOL_LB else "choice"
+        return "fact" if probe_short[k][(k, w)] > SHORT_TOL_LB else "choice"
 
     contracts_out = []
     for k, c in enumerate(contracts):
@@ -2594,8 +2632,9 @@ def solve_farm_v2(
                    "status": "base_not_optimal"}
             if status == "optimal":
                 free = _solve(released=[cid], time_limit=COMMITMENT_DELTA_TIME_LIMIT)
-                rec["status"] = ("optimal" if free.status == 0 else
-                                 "infeasible" if free.status == 2 else "time_limit")
+                # HiGHS 0 proved, 1 time limit, 2 infeasible; 3/4 (unbounded, numerical) are
+                # an error, not "needs more time" (/code-review high).
+                rec["status"] = {0: "optimal", 1: "time_limit", 2: "infeasible"}.get(free.status, "error")
                 if free.status == 0:
                     # Two solves, each proved only to HiGHS's relative gap: a delta inside
                     # `tolerance` is noise, not a cost (the golden carry-in read −$71 once).
@@ -2732,7 +2771,7 @@ def next_head_deltas(solve_kwargs: dict, result: dict) -> list:
     # TypeError that the per-row `except` turned into "error" on every row (/code-review high).
     kw = dict(solve_kwargs, solver_time_limit=min(float(solve_kwargs.get("solver_time_limit", 80.0)),
                                                   NEXT_HEAD_TIME_LIMIT),
-              diagnose_infeasible=False)
+              diagnose_infeasible=False, commitment_deltas=False)   # FX.3: nor one re-solve per commitment
     out = []
     for j, hire in enumerate(hires):
         try:

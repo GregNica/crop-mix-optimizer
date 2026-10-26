@@ -385,6 +385,23 @@ identity delivers — a Tunnel Spinach fills a Spinach contract) or a variant (t
   not see it. Golden unchanged (no contracts → no columns, no rows).
 - Deferred, recorded: `diagnose_infeasible` now also gates the probe — a rename-with-alias (X11);
   P&L group label (X12); a total budget for the deltas (X13); C4c built from `sell_weeks_of`.
+- **`/code-review high` on `3e68faa` (2026-10-26): 8 findings, 6 fixed, 1 recorded, 1 skipped.**
+  Fixed: (1) `next_head_deltas` forwarded the adapter's `commitment_deltas` — every one-more-head
+  re-solve would have run one 45 s re-solve per commitment and thrown it away (the FX.1
+  `diagnose_infeasible` omission, repeated); now set off there and in the client's
+  `solveForNumbers`. (4) Two contracts on ONE market (a parent's and a variant's, two kale
+  buyers) each fit the cap alone and not together → was a bare elastic "contradiction"; now
+  checked jointly per identity × channel × week and per year, refused naming both. (5) Dead
+  weeks counted plantings the model had bounded to 0 (a crop with no carry-in) — a deliver
+  contract on it now refused by name. (6) HiGHS status 3/4 on a delta re-solve read
+  "time_limit"; now "error". (7) The probe priced every contract at $1,000 at once, so a week the
+  crew cannot fill for two contracts read "fact" for one although dropping the other delivers
+  it — now one probe PER contract, the others at the grower's price. (2) `SHORT_TOL_LB` 0.01 →
+  1 lb (one MIP gap at the probe price is 0.06 lb); at the grower's price the reported shortfall
+  is the plan's real slack, kept. Recorded: (3) a sub-lot carry-in's C10 exemption survives its
+  "without" re-solve → **X14**. Skipped: (8) `resolve_contracts` runs in validation and the
+  solver — the deliberate fail-open pattern floors and blocks already use. 4 new mutants + 8
+  re-run on touched code: 12/12 caught (26 in all).
 
 **FX.7 Guards (same commits).** A golden FIXTURE farm with a zone, a variant, a perennial, both
 floor kinds and a contract (the L4 trap: the shipped golden uses none of it, so it can stay
