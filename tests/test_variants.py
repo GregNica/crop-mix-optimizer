@@ -11,33 +11,20 @@ import copy
 import pytest
 
 from farm_v2.solver import DEMAND_AT_CAP_FRACTION
-from farm_v2.utils.variants import INHERITED_KEYS, identity_groups, resolve_variants
-from tests.helpers import (expand_weekly_caps, golden_payload, saturation_entries,
-                           solve_payload as solve, solve_payload_optimal as solve_optimal)
+from farm_v2.utils.variants import identity_groups, resolve_variants
+from tests.helpers import (TUNNEL_AND_FIELD, expand_weekly_caps, golden_crop, golden_payload,
+                           saturation_entries, solve_payload as solve, solve_payload_optimal as solve_optimal,
+                           spinach_fm_cap, variant_of, weekly, weekly_identity)
 
 SPINACHES = ("Spinach", "Tunnel Spinach")
-
-
-def golden_crop(name):
-    return next(c for c in golden_payload()["crops"] if c["name"] == name)
-
-
-# Spinach's Farmers Market weekly ceiling (6,000 lb/wk, W10–W48), read from the payload through
-# the independent oracle so a re-pinned golden demand cannot leave this guard measuring a stale number.
-FM_CAP = max(c for _, c in expand_weekly_caps(golden_crop("Spinach")["channels"]["Farmers Market"]))
-
-
-def variant_of(parent, **own):
-    """`parent` with every inherited field left out (the variant takes them) and `own` applied."""
-    return {**{k: v for k, v in copy.deepcopy(parent).items() if k not in INHERITED_KEYS}, **own}
+FM_CAP = spinach_fm_cap()
 
 
 def variant_farm(**spinach):
     """Golden farm + a covered 2-ac tunnel growing a year-round Tunnel Spinach sold as Spinach.
 
     `spinach` overrides the PARENT, which the variant then inherits."""
-    p = golden_payload(zones=[{"name": "High tunnel", "acres": 2, "covered": True},
-                              {"name": "Open field"}])
+    p = golden_payload(zones=copy.deepcopy(TUNNEL_AND_FIELD))
     parent = next(c for c in p["crops"] if c["name"] == "Spinach")
     parent.update(spinach)
     p["crops"].append(variant_of(
@@ -50,9 +37,6 @@ def variant_farm(**spinach):
 @pytest.fixture(scope="module")
 def base():
     return solve_optimal(variant_farm())
-
-
-from tests.helpers import weekly  # noqa: E402  (shared with test_contracts)
 
 
 def acre_weeks(r, crops):
@@ -130,8 +114,7 @@ class TestOneMarketPerIdentity:
         assert sum(weekly(base, "Farmers Market", "Tunnel Spinach")) > 1000
 
     def test_both_names_together_fit_the_weekly_cap_and_it_binds(self, base):
-        both = [a + b for a, b in zip(weekly(base, "Farmers Market", "Spinach"),
-                                      weekly(base, "Farmers Market", "Tunnel Spinach"))]
+        both = weekly_identity(base, "Farmers Market", *SPINACHES)
         assert max(both) <= FM_CAP + 1e-6
         assert max(both) >= FM_CAP - 1e-6          # binds — so the row is what holds it
 
@@ -172,7 +155,7 @@ class TestOneMarketPerIdentity:
         alone reaches 6,000 lb in some week, so the peak is 1.0 either way. Measured: 31 weeks
         at cap together, 24 for Spinach alone — this is the check that tells them apart."""
         caps = expand_weekly_caps(golden_crop("Spinach")["channels"]["Farmers Market"])
-        both = [a + b for a, b in zip(*(weekly(base, "Farmers Market", c) for c in SPINACHES))]
+        both = weekly_identity(base, "Farmers Market", *SPINACHES)
         parent = weekly(base, "Farmers Market", "Spinach")
         at_cap = [w for w, cap in caps if both[w - 1] >= DEMAND_AT_CAP_FRACTION * cap]
         assert at_cap != [w for w, cap in caps if parent[w - 1] >= DEMAND_AT_CAP_FRACTION * cap]

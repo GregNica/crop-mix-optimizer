@@ -12,10 +12,8 @@ weeks 36-37, the toy's finding reproduced here) or a CHOICE (shorting was cheape
 import pytest
 
 from farm_v2.utils.commitments import describe, resolve_contracts
-from tests.helpers import (commitments_farm as farm, solve_payload as solve,
+from tests.helpers import (TOL_LB, commitments_farm as farm, solve_payload as solve,
                            solve_payload_optimal as solve_optimal, weekly)
-
-TOL_LB = 0.5
 
 
 def contract(**kw):

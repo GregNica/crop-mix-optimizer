@@ -16,7 +16,7 @@ from farm_v2.utils.water import (
     rain_coverage,
 )
 from farm_v2.utils.zones import WHOLE_FARM, resolve_zones
-from tests.helpers import golden_payload
+from tests.helpers import golden_payload, planted
 
 TUNNEL = [{"name": "High tunnel", "acres": 2}, {"name": "Open field"}]
 
@@ -131,10 +131,6 @@ def tunnel_tomatoes():
     return out
 
 
-def _acres(out, crop):
-    return sum(s["acres"] for s in out["succession_schedule"] if s["crop"] == crop)
-
-
 class TestZonesThroughTheAdapter:
     def test_no_zones_reports_one_whole_farm_zone(self, baseline):
         (z,) = baseline["zones"]
@@ -181,7 +177,7 @@ class TestZonesThroughTheAdapter:
         tunnel = tunnel_tomatoes["zones"][0]
         assert tunnel["name"] == "High tunnel"
         assert max(tunnel["used_acres"]) == pytest.approx(2.0, abs=1e-3)
-        assert _acres(baseline, "Tomatoes") > 2.0 + 1e-6
+        assert planted(baseline, "Tomatoes") > 2.0 + 1e-6
         assert baseline["profit"] - tunnel_tomatoes["profit"] > 10_000
 
     @pytest.mark.parametrize("zones, crop_zones, match", [

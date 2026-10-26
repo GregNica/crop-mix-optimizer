@@ -36,6 +36,8 @@ from tests.helpers import (
     INDEX,
     SATURATION_KEYS,
     annual_equivalent_cap,
+    assert_pnl_identities,
+    assert_pnl_line,
     saturation_entries,
 )
 
@@ -48,7 +50,7 @@ pytestmark = pytest.mark.skipif(not PAYLOAD.exists(), reason="golden payload mis
 
 # The P&L of the shipped default farm. Captured 2026-07-27 from the app's own default payload,
 # re-captured to the CENT on 2026-07-30 so the five plan-determined lines can be pinned tightly
-# (see CASH_TIMED_LINES below for why the other two cannot be).
+# (see CASH_TIMED_LINES in tests/helpers.py for why the other two cannot be).
 GOLDEN = {
     "revenue":          2_510_770.84,
     "variable_cost":      466_950.51,
@@ -424,30 +426,8 @@ GOLDEN = {
 #     used instead of recomputing harvest inflow client-side (SPEC_v3 §9), which is why the
 #     reported storage utilisation changes meaning: it is held stock now, not weekly inflow.
 
-# $50 is the solver noise floor, not a comfort margin. The MILP is solved by HiGHS via scipy,
-# and different builds (notably Pyodide's vs a local venv) settle on solutions that differ by
-# a couple of dollars on a $443k plan — the browser reports $443,460 where this path reports
-# $443,458. Pinning to the literal dollar would make the test fail on a scipy upgrade and
-# teach everyone to re-pin reflexively, which is exactly the habit that makes a money guard
-# worthless. $50 is 0.011% of profit, while every real defect found in this codebase moved
-# $10k-$171k, so nothing that matters can hide under it.
-DOLLAR = 50.0
-
-# ...but only TWO of the pinned lines actually need that much room, and giving it to the other five
-# is what let a real $5.30 movement sit inside the guard while the pin stayed stale.
-#
-# Measured 2026-07-30 across the W4 refactor, which broke an LP tie differently: revenue,
-# variable_cost, fixed_cost and operating_profit came out IDENTICAL TO THE CENT, while `profit` and
-# `interest_cost` moved $5.30 — because interest is charged on the *cash curve*, so it depends on
-# WHICH of several equally-optimal planting weeks HiGHS picks, not just on the plan's economics.
-#
-# So the two cash-timed lines keep the $50, and the rest are pinned to the cent. That is strictly
-# stronger than one loose tolerance everywhere: a $44 regression in fixed_cost can no longer hide,
-# and the two lines that legitimately drift no longer force everyone else to tolerate drift too.
-# It also makes the failure diagnostic — a break in the tight set means the PLAN moved, a break in
-# the loose set alone means its cash timing did.
-CASH_TIMED_LINES = {"profit", "interest_cost"}
-CENT = 0.01
+# DOLLAR / CENT / CASH_TIMED_LINES — the pin tolerances and why they are split — live in
+# tests/helpers.py, shared with the FX golden farm (test_fx_farm.py).
 
 
 @pytest.fixture(scope="module")
@@ -514,25 +494,15 @@ def result(run_from_js):
 class TestGoldenFarm:
     @pytest.mark.parametrize("line", sorted(GOLDEN))
     def test_pnl_line_to_the_dollar(self, result, line):
-        got, want = result[line], GOLDEN[line]
-        tol = DOLLAR if line in CASH_TIMED_LINES else CENT
-        assert got == pytest.approx(want, abs=tol), (
-            f"{line} moved: ${got:,.2f} vs the pinned ${want:,.2f} "
-            f"(delta ${got - want:+,.2f}, tolerance ${tol}). Money changed — identify the cause "
-            f"and, if the new number is the more honest one, re-pin it here with a note."
-        )
+        assert_pnl_line(result, GOLDEN, line)
 
     def test_identities_hold_on_the_golden_farm(self, result):
-        """The pinned numbers must also be internally consistent, so a re-pin can't paper
-        over a broken P&L by adjusting one line."""
-        r = result
-        # Strict and iterated (W8): the adapter no longer forwards the flat bought-cost keys, and
-        # `.get(…, 0.0)` here read all three as 0 — silently, because the golden farm buys none.
-        enumerated = (r["fixed_cost"] + r["variable_cost"]
-                      + sum(r["bought_capacity_split"].values()))
-        assert r["operating_profit"] == pytest.approx(r["revenue"] - enumerated, abs=DOLLAR)
-        assert r["overhead_cost"] == pytest.approx(
-            r["revenue"] * json.loads(PAYLOAD.read_text())["overhead_pct_of_revenue"], rel=1e-6)
+        """Internally consistent too (tests/helpers.py `assert_pnl_identities`): operating profit,
+        overhead and the per-crop contributions all rebuild the headline. Strict and iterated
+        over `bought_capacity_split` (W8): `.get(…, 0.0)` read every bought cost as 0 — silently,
+        because the golden farm buys none. L.2 made overtime nonzero here, which is how the
+        contributions identity was found to omit bought capacity."""
+        assert_pnl_identities(result, json.loads(PAYLOAD.read_text())["overhead_pct_of_revenue"])
 
     def test_plan_is_nonempty_and_within_land(self, result):
         """A degenerate all-zero plan would satisfy the dollar assertions if they were ever
@@ -619,24 +589,8 @@ class TestCropContribution:
     cycle-count or repeat assumption.
     """
 
-    def test_contributions_reconcile_to_net_profit(self, result):
-        """The strongest money assertion available: crop contributions minus the plan-level
-        costs must equal the reported headline, to the cent. If a cost line is ever
-        double-counted, dropped, or allocated to the wrong bucket, this is what catches it."""
-        r = result
-        total = sum(d["contribution"] for d in r["crop_contribution"].values())
-        # No labour term of any kind (W12): wages are a committed weekly cost inside `fixed_cost`,
-        # and no per-crop `growing_cost` carries labour at all, so the identity is back to the
-        # plain form it had before W9 introduced a credit to undo a double charge.
-        # Bought capacity (city water, overtime, hire) is plan-level too — an overtime hour serves
-        # whichever crop the crew is short on that week, so no crop carries it (L.2 made it nonzero
-        # on the golden farm, which is how this identity was found to omit it).
-        rebuilt = (total - r["fixed_cost"] - r["fixed_selling_cost"] - r["interest_cost"]
-                   - sum(r["bought_capacity_split"].values()))
-        assert rebuilt == pytest.approx(r["profit"], abs=1.0), (
-            f"per-crop contributions do not rebuild net profit: {rebuilt:,.2f} vs {r['profit']:,.2f}. "
-            "A cost line is missing, doubled, or in the wrong bucket."
-        )
+    # The contributions-rebuild-profit identity (the strongest money assertion available) is
+    # asserted by TestGoldenFarm.test_identities_hold_on_the_golden_farm via `assert_pnl_identities`.
 
     def test_every_planted_crop_is_accounted_for(self, result):
         planted = {s["crop"] for s in result["succession_schedule"] if s.get("acres", 0) > 0.01}

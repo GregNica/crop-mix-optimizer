@@ -12,29 +12,15 @@ import copy
 
 import pytest
 
-from tests.helpers import golden_payload, solve_payload as solve, solve_payload_optimal as solve_optimal
+from tests.helpers import (ASPARAGUS, BEARING, ESTABLISHING, by_id, commitments_farm, golden_payload,
+                           solve_payload as solve, solve_payload_optimal as solve_optimal)
 
-ASPARAGUS = dict(
-    name="Asparagus", perennial=True, cold_storage=True, crop_size_m3_per_lb=0.0012,
-    shelf_life_weeks=2, labor_grow=0.5, labor_harv=5.5, water_grow=100000, water_harv=100000,
-    fert_grow=2.0, fert_harv=2.0, fuel_grow=1.0, fuel_harv=3.0, crop_protection_cost_per_acre=150,
-    seed_transplant_cost_per_acre=500,      # on the card, and NEVER charged to a block (sunk)
-    channels={"Wholesale": {"price_per_lb": 1.75, "packaging_cost_per_lb": 0.15,
-                            "demand_cap_type": "weekly_flat", "weekly_demand_lbs": 1500},
-              "Farmers Market": {"price_per_lb": 4.00, "packaging_cost_per_lb": 0.30,
-                                 "demand_cap_type": "weekly_varying",
-                                 "demand_ranges": [{"weeks": "W18-W25", "weekly_lbs": 300}]}})
-BEARING = dict(id="c1", kind="perennial", crop="Asparagus", acres=3, planted_year=2019,
-               yield_per_acre=1750, harvest_from_week=18, harvest_to_week=25)
-ESTABLISHING = dict(id="c2", kind="perennial", crop="Asparagus", acres=1, planted_year=2025,
-                    yield_per_acre=0, extra_cost_per_acre=800)
 HARVEST = range(18, 26)
 
 
 def perennial_farm(*blocks, **overrides):
-    p = golden_payload(**overrides)
+    p = commitments_farm(*(blocks or (BEARING, ESTABLISHING)), **overrides)
     p["crops"].append(copy.deepcopy(ASPARAGUS))
-    p["commitments"] = copy.deepcopy(list(blocks or (BEARING, ESTABLISHING)))
     return p
 
 
@@ -44,7 +30,7 @@ def base():
 
 
 def block(r, cid):
-    return next(b for b in r["perennial_blocks"] if b["id"] == cid)
+    return by_id(r, "perennial_blocks", cid)
 
 
 def block_row(r, cid):

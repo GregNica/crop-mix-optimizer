@@ -405,8 +405,53 @@ identity delivers — a Tunnel Spinach fills a Spinach contract) or a variant (t
 
 **FX.7 Guards (same commits).** A golden FIXTURE farm with a zone, a variant, a perennial, both
 floor kinds and a contract (the L4 trap: the shipped golden uses none of it, so it can stay
-unchanged at $652,876 — and is then blind to all of this). Mutation-tested per the CLAUDE.md order
+unchanged at $652,831.24 — FX.1's carry-in pin is the one FX change it saw — and is then blind to all of this). Mutation-tested per the CLAUDE.md order
 (working code → `/simplify` → guards). Toy-vs-app cross-check on the fixture where shapes allow.
+
+**FX.7 as built (2026-10-26).** `tests/helpers.py` `fx_farm()` + `FX_COMMITMENTS` (the shared
+fixture data — the asparagus card and blocks, the kale annual floor, `variant_of`, the pin
+tolerances and `assert_pnl_line`/`assert_pnl_identities` — now live there, imported by the golden,
+perennial, variant, commitment, contract and zone tests); `tests/test_fx_farm.py` (17 guards).
+The farm: golden + a covered 2-ac tunnel (every crop confined to the open field, kale in both — the
+toy's one split crop — the variant in the tunnel) + the toy's Tunnel Spinach + asparagus 3 ac
+bearing / 1 ac establishing + kale `must_stand` 8 ac **weeks 24–30** + `must_plant_annual` 45 +
+the toy's three contracts (kale WS 1,500 lb/wk W20–40 and spinach WS 2,000 W28–36 at $0.50;
+asparagus WS 500 W18–25 deliver) + garlic's 18-ac carry-in. **Pinned profit $619,491.10**
+(golden unchanged, $652,831.24); ~6 s vs 3 s (only kale's slots double — deferral 5 watched).
+- **Measured first, each piece removed:** zones → tunnel spinach 6.8→73.9 ac; variant −$35,902;
+  perennial +$35,200; floors +$34,962 (annual $31,801, standing $512 vs $318 noise); contracts
+  +$10,625 ($6,500 penalty). Kale short in **36–37**, spinach in **35–36** — the toy's two dead
+  windows, reproduced; the asparagus must-deliver binds every week.
+- **The toy's kale standing floor (W10–20) was INERT here** — the annual floor already stands
+  19–24 ac of kale there (own delta $44). A fall window (W40–44 / W42–46) is REFUSED: kale's
+  harvest crew collides with garlic's replant in week 48 — the FX.1 fall-crew check, working.
+  Weeks 24–30 stand 6.0 ac without the floor and exactly 8.0 with it. Liveness guards pin each
+  piece to BIND (floors met exactly, deliver filled exactly, tunnel at its acres, both spinaches
+  at the shared cap in one week), so the pin cannot go quiet the way the golden's did.
+- **Toy-vs-app cross-check (the one shape allows):** the asparagus must-deliver is the same
+  card, block and contract in both models and nothing else touches asparagus, so its with/without
+  cost is self-contained — toy **$2,001.00** = hand derivation (1,150 lb diverted × $2.25 gap ×
+  (1 − 16% overhead) − 1,150 × $0.15 packaging) to the cent; app $1,953–2,049 ± $318 MIP noise.
+  Three legs, so two models agreeing on a wrong number cannot pass (FX.2's lesson).
+- **Finding → BACKLOG X15:** removing the bearing patch is INFEASIBLE in the delta table (c3
+  depends on it) — honest, unexplained; the UI step needs wording and the diagnosis.
+- **Mutation run — the L4 proof (9 mutants, ~45 s wall, repo copies):** zone RHS → whole farm,
+  tunnel gets rain, caps keyed by name, perennial extra free, patch may grow, floors dropped,
+  penalty free, contracts don't bind: **FX CAUGHT 8/8, plain golden SURVIVED 8/8**; the carry-in
+  ceiling control is caught by both. `/simplify` (4 lenses) ran BEFORE the mutants per the
+  CLAUDE.md order: it folded four copies of `standing`/`planted` (two keyed on the name, two on the
+  crop field), two toy loaders, the pin assertion and the identities into helpers.
+- **`/code-review high` on the diff (2026-10-26): 9 findings, all applied.** The two that mattered,
+  reproduced: (1) the kale annual-floor guard summed NINE schedule rows each rounded to 0.1 ac
+  against a 0.15 tolerance — it landed on 45.0 by luck; `planted()` now reads the solver's own
+  `crop_contribution[…]["acres_planted"]` (unrounded, exact to 1e-6) for every caller; (2) the
+  shared FM-cap constant read the golden payload at IMPORT of helpers, so a missing payload would
+  have broken every module at collection instead of skipping — now a function. Also: SPEC said
+  "unchanged at $652,876" beside the new $652,831.24 (FX.1 moved it −$45); the pin's $24,460 of
+  overtime recorded beside the $6,500 penalty (a ~$24k break can be the overtime price); one
+  name-keyed garlic filter switched to the crop field; `TUNNEL_AND_FIELD` named for what both
+  tests mean; importorskip before the module-level payload build; two lint blanks. Skipped:
+  caching the payload reads (measured 0.04 ms each). Re-ran the two touched mutants: caught.
 
 ## 4. Build order
 

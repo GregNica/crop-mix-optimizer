@@ -24,7 +24,7 @@ import re
 
 import pytest
 
-from tests.helpers import REPO
+from tests.helpers import REPO, load_toy_lp
 
 openpyxl = pytest.importorskip("openpyxl")
 
@@ -996,12 +996,7 @@ def test_a_bought_hour_with_no_price_is_refused():
     comparison would AGREE. Both sides wrong together is the one thing that comparison cannot
     see, so the oracle has to refuse outright.
     """
-    import importlib.util
-
-    spec = importlib.util.spec_from_file_location(
-        "toy_v12_lp", REPO / "toy_models" / "toy_v12_lp.py")
-    lp = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(lp)
+    lp = load_toy_lp()
 
     # a zero multiplier prices an overtime hour at $0 while every wage on the roster is healthy
     with pytest.raises(RuntimeError, match="free labour"):

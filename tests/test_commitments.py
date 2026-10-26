@@ -11,20 +11,8 @@ An infeasible plan names the commitments and WHICH limits they press on (elastic
 """
 import pytest
 
-from tests.helpers import (commitments_farm, set_carry_in, solve_payload as solve,
-                           solve_payload_optimal as solve_optimal)
-
-# Schedule acres are reported to 0.1 ac, so sums of them carry that rounding.
-ROUNDING = 0.15
-
-
-def standing(r, crop, w):
-    return sum(s["acres"] for s in r["succession_schedule"]
-               if s["name"].startswith(crop) and w in s["weeks"])
-
-
-def planted(r, crop):
-    return sum(s["acres"] for s in r["succession_schedule"] if s["name"].startswith(crop))
+from tests.helpers import (KALE_ANNUAL, ROUNDING, commitments_farm, planted, set_carry_in,
+                           solve_payload as solve, solve_payload_optimal as solve_optimal, standing)
 
 
 def farm(*entries, garlic=None, **overrides):
@@ -40,7 +28,6 @@ def base():
 
 
 KALE_STAND = dict(id="k1", kind="must_stand", crop="Kale", acres=8, from_week=10, to_week=20)
-KALE_ANNUAL = dict(id="k2", kind="must_plant_annual", crop="Kale", acres=45)
 
 
 # ---------------------------------------------------------------------------
@@ -61,7 +48,7 @@ def test_carry_in_is_a_ceiling_not_only_a_floor():
 def test_carry_in_reserves_the_fall_replant(base):
     """The cyclic year: the same plantings stand in week 1 and go in again in weeks 46-48."""
     replant = sum(s["acres"] for s in base["succession_schedule"]
-                  if s["name"].startswith("Garlic") and s["start_week"] in (46, 47, 48))
+                  if s["crop"] == "Garlic" and s["start_week"] in (46, 47, 48))
     assert replant == pytest.approx(18.0, abs=ROUNDING)
 
 
@@ -186,9 +173,7 @@ def test_a_standing_floor_counts_the_variant():
     p["commitments"] = [dict(id="s1", kind="must_stand", crop="Spinach", acres=1,
                              from_week=3, to_week=4)]
     r = solve_optimal(p)
-    tunnel = lambda w: sum(s["acres"] for s in r["succession_schedule"]
-                           if s["crop"] == "Tunnel Spinach" and w in s["weeks"])
-    assert min(tunnel(w) for w in (3, 4)) >= 1 - ROUNDING
+    assert min(standing(r, "Tunnel Spinach", w) for w in (3, 4)) >= 1 - ROUNDING
 
 
 def test_callers_that_read_only_the_status_skip_the_diagnosis():
