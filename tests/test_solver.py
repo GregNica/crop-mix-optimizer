@@ -527,23 +527,14 @@ class TestCommittedAcres:
         assert res["status"] == "invalid_input", res["status"]
         assert any("diversity ceiling" in e for e in res["errors"]), res["errors"]
 
-    def test_a_long_harvest_after_maturity_is_not_refused(self, minimal_params):
-        """days_to_maturity is plant to FIRST harvest; the harvest window comes after it. The
-        validator kept the old whole-cycle meaning after the calendar moved (greenhouse tomatoes
-        with a 14-week harvest were refused, grower 2026-10-27); planting longer than maturity is
-        the one impossible shape."""
+    def test_a_long_harvest_after_maturity_solves(self, minimal_params):
+        """The rule's home is tests/test_validate.py (plant to FIRST harvest); this pins that the
+        solve path honours it — a 14-week harvest after 85 days was refused here (grower 2026-10-27).
+        The pre-flight guard raises under test (conftest), so "optimal" means checked."""
         import copy
         params = copy.deepcopy(minimal_params)
-        crop = params["crops"][0]
-        crop.update(days_to_maturity=85, planting_weeks=2, harvest_weeks=14)
-        res = _solve(params)
-        assert res["status"] != "invalid_input", res.get("errors")
-        # Not by the guard failing OPEN: the first version of this test passed on a NameError in
-        # the validator (the plan ran unchecked, with a warning saying so).
-        assert not any("could not run" in w for w in res.get("warnings", [])), res["warnings"]
-        crop.update(planting_weeks=14, harvest_weeks=2)
-        res = _solve(params)
-        assert res["status"] == "invalid_input" and any("exceeds the 13 weeks to first harvest" in e for e in res["errors"]), res
+        params["crops"][0].update(days_to_maturity=85, planting_weeks=2, harvest_weeks=14)
+        assert _solve(params)["status"] in ("optimal", "time_limit_feasible")
 
     def test_a_commitment_below_the_lot_size_minimum_is_NOT_refused(self, minimal_params):
         """The check that used to live here was wrong and rejected solvable farms — 2 committed

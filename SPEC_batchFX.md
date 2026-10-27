@@ -68,8 +68,8 @@ shared by validation and the solver. Decisions taken in the build, open to the g
   pre-flight guard (Step 0 fails open) still cannot let one through.
 - **Slot names carry the zone whenever the FARM has >1 zone** ("Kale W10 · High tunnel"), not
   per crop, so editing one crop's eligibility renames nothing. Identity = (crop, start_week, zone).
-- Result: `zones: [{name, acres, used_acres[52]}]` (not in `capacity_series`, which the
-  unplanted-crop diagnosis scans farm-wide); schedule rows carry `zone`; `weekly_land_frac` is now
+- Result: `zones: [{name, acres, used_acres[52]}]` (not in `capacity_series`; the unplanted-crop
+  diagnosis reads them for a crop's own plots first, since 2026-10-27); schedule rows carry `zone`; `weekly_land_frac` is now
   summed from it instead of re-walked in the adapter.
 - ✅ **CLOSED 2026-10-27 by X8 (grower ruling): C10 is per PLANTING, summed over its plots, one plant flag per planting — see §3 "Grower browser review (2026-10-27)" for the measurements.** Was: ⚠️ OPEN — C10 `min_acreage_if_planted` now applies per (start week, ZONE) slot, i.e. per zone
   separately, and y binaries grow ×zones. Fine for a variant pinned to one zone (the toy's 0.25-ac
@@ -84,7 +84,7 @@ shared by validation and the solver. Decisions taken in the build, open to the g
 Fixed: (1) the Gantt label and its CSV parsed the start week off the END of the name, which a zone
 suffix broke ("Kale W10 · Tunnel 2" → "2"); the schedule now carries `start_week`. (2) A
 non-list `zones` raised AttributeError → a traceback; now refused by name. (3) A minimum planting
-larger than every eligible zone left the crop "outcompeted"; now refused (larger than SOME zone →
+larger than every eligible zone left the crop "outcompeted"; now refused (larger than SOME zone → [superseded by X8, 2026-10-27: the minimum is per planting over its plots] →
 warning). (4) Commitments overfilling one zone TOGETHER (each fits alone) gave a bare HiGHS
 "infeasible"; now refused by Hall's condition over zone groups (a per-zone sum would wrongly
 refuse a crop that may spill into another zone — mutant N3 pins that).

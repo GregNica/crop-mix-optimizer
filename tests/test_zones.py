@@ -16,7 +16,7 @@ from farm_v2.utils.water import (
     rain_coverage,
 )
 from farm_v2.utils.zones import WHOLE_FARM, resolve_zones
-from tests.helpers import golden_payload, planted
+from tests.helpers import golden_payload, planted, solve_payload_optimal
 
 TUNNEL = [{"name": "High tunnel", "acres": 2}, {"name": "Open field"}]
 
@@ -228,9 +228,7 @@ class TestZonesThroughTheAdapter:
         tom = next(c for c in p["crops"] if c["name"] == "Tomatoes")
         tom.update(zones=["High tunnel", "Small field"], min_acreage_if_planted=3)
         p["commitments"] = [{"id": "t1", "kind": "must_plant_annual", "crop": "Tomatoes", "acres": 3, "source": "user"}]
-        out = json.loads(run_from_js(json.dumps(p)))
-        assert out["status"] == "optimal", out.get("errors") or out.get("error")
-        assert not any("cannot be planted in" in w for w in out["warnings"])
+        out = solve_payload_optimal(p)
         by_planting = {}
         for s in out["succession_schedule"]:
             if s["crop"] == "Tomatoes" and s["acres"] > 1e-6:
@@ -252,8 +250,7 @@ class TestZonesThroughTheAdapter:
                              "source": "user"}]
         tom = next(c for c in p["crops"] if c["name"] == "Tomatoes")
         tom["zones"] = ["High tunnel"]                          # the patch fills its only plot all year
-        out = json.loads(run_from_js(json.dumps(p)))
-        assert out["status"] == "optimal", out.get("errors") or out.get("error")
+        out = solve_payload_optimal(p)
         rec = next(r for r in out["unplanted_crops"] if r["crop"] == "Tomatoes")
         assert rec["reason"] == "outcompeted"
         assert rec["tightest"] and rec["tightest"]["resource"] == "land in High tunnel", rec
@@ -295,6 +292,7 @@ class TestZonesThroughTheAdapter:
         def crash(**_):
             raise RuntimeError("guard crashed")
         monkeypatch.setattr(solver, "validate_params", crash)
+        monkeypatch.delenv("FARM_V2_STRICT_PREFLIGHT", raising=False)   # the browser's fail-open path, on purpose
         p = golden_payload(zones=TUNNEL)
         p["crops"][0]["zones"] = ["Shade house"]
         _refused(p, "does not have")

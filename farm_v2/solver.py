@@ -46,12 +46,13 @@ See SPEC_v3.md §3.
 from __future__ import annotations
 
 import math
+import os
 import time
 import numpy as np
 from scipy.optimize import milp, LinearConstraint, Bounds
 from scipy.sparse import csr_matrix, hstack
 
-from farm_v2.utils.calendar import (
+from farm_v2.utils.calendar import (cycle_weeks, 
     generate_successions,
     DORMANT,
     build_phase_table,
@@ -371,10 +372,13 @@ def _diagnose_unplanted_crops(
             continue
 
         succ_idx = [i for i, s in enumerate(successions) if s["crop"] == c_idx]
-        cycle_weeks = int(round(float(crop.get("days_to_maturity", 0)) / 7.0))
+        try:
+            cycle = cycle_weeks(crop)[2]           # field occupancy, as the calendar builds it
+        except (KeyError, TypeError, ValueError):   # a perennial card has no annual calendar
+            cycle = 0
         rec = {
             "crop": name,
-            "cycle_weeks": cycle_weeks,
+            "cycle_weeks": cycle,
             "min_acres": float(crop.get("min_acreage_if_planted", 0.0) or 0.0),
             "excluded_channels": excluded_by_crop.get(name) or [],
             "tightest": None,
@@ -413,27 +417,26 @@ def _diagnose_unplanted_crops(
 
         weeks = sorted({w for i in succ_idx for w in range(1, n_weeks + 1)
                         if phase_table[i][w] is not None})
+        # What could have been full in those weeks: the crop's OWN plots first (FX.4 — a crop
+        # confined to a full plot lost on land it could not leave, not on economics; a farm-wide
+        # resource equally full must not displace that), then the farm-wide series. A plot's cap
+        # is one number; a series' is per week.
+        scans = []
+        if zones and len(zones) > 1:
+            for z_idx in sorted({successions[i]["zone"] for i in succ_idx}):
+                zone = zones[z_idx]
+                scans.append((f"land in {zone['name']}", zone.get("used_acres") or [], zone["acres"]))
+        scans += [(res_name, s.get("used") or [], s.get("cap") or []) for res_name, s in (capacity_series or {}).items()]
         best = -1.0
-
-        def _note(res_name, series_used, series_cap):
-            nonlocal best
+        for res_name, used, cap in scans:
             for w in weeks:
-                if w - 1 < len(series_used) and w - 1 < len(series_cap) and series_cap[w - 1] > 0:
-                    ratio = series_used[w - 1] / series_cap[w - 1]
+                cap_w = cap if isinstance(cap, (int, float)) else (cap[w - 1] if w - 1 < len(cap) else 0.0)
+                if w - 1 < len(used) and cap_w > 0:
+                    ratio = used[w - 1] / cap_w
                     if ratio > best + 1e-6:          # a tie at "full" keeps the first named
                         best = ratio
                         if ratio >= NEAR_LIMIT_FRACTION:
                             rec["tightest"] = {"resource": res_name, "week": w, "utilization": float(ratio)}
-
-        # FX.4 — the crop's own plots FIRST: a crop confined to a full plot lost on LAND it could
-        # not leave, not on economics, and a farm-wide resource equally full must not displace that
-        # (landing review 2026-10-27). Only the plots it has slots in are its limit.
-        if zones and len(zones) > 1:
-            for z_idx in sorted({successions[i]["zone"] for i in succ_idx}):
-                zone = zones[z_idx]
-                _note(f"land in {zone['name']}", zone.get("used_acres") or [], [zone["acres"]] * n_weeks)
-        for res_name, series in (capacity_series or {}).items():
-            _note(res_name, series.get("used") or [], series.get("cap") or [])
         rec["reason"] = "outcompeted"
         out.append(rec)
 
@@ -740,6 +743,10 @@ def solve_farm_v2(
         # A guard that crashes must not cost a computable plan — but it must not go quiet
         # either. Silently continuing is how this branch has shipped inert guards before, and
         # this exact path swallowed a NameError of mine while the guard lived in the adapter.
+        # Under test (tests/conftest.py sets FARM_V2_STRICT_PREFLIGHT) it RAISES: a plan that ran
+        # unchecked passed a new test on 2026-10-27, warning and all. The browser keeps the plan.
+        if os.environ.get("FARM_V2_STRICT_PREFLIGHT"):
+            raise
         validation_warnings = [
             f"Pre-flight checks could not run ({type(ge).__name__}: {ge}). The plan was still "
             f"computed, but it was NOT checked for bad inputs."
@@ -1907,20 +1914,14 @@ def solve_farm_v2(
             add_row(cols, c["lb"], np.inf)
 
     # C10 — Min acreage lower, per PLANTING: Σ_z x[i,z] ≥ y × min_frac. A planting is one (crop,
-    # start week) and may be spread over the plots it is eligible in (X8, grower ruling
-    # 2026-10-27): the minimum is on the SUM of its plot slots, and the slots share ONE plant flag
-    # (their y's are tied by equality rows, which presolve folds into a single binary). Measured
-    # why: FX.4's minimum PER ZONE gave every (crop, start week, plot) slot its own flag, and with
-    # plots a crop may use interchangeably the search is symmetric — two plots every crop may use
-    # solved 10–30× slower (36 s / 22 s native vs 2.6 s), three plots hit the time limit; this form
-    # solves them in 6–9 s. A crop eligible in one plot is unchanged: its group is the slot.
-    # A pinned planting's acres are given (FX.2), so it has no minimum and is not grouped. Nor do
-    # the plantings of a carry-in pinned BELOW the
-    # crop's lot size (FX.1, `lot_free` above): 1 ac in the ground against a 2-ac minimum is a
-    # fact, and the fall replant is the same quantity (ruling 1), so the minimum would make the
-    # pin unmeetable (it was only a floor before, which the minimum rounded up). At or above the
-    # lot size one planting meets the pin, so the minimum stays — and the plan's replant lots stay
-    # at least the lot size. A pinned planting has no row at all: its bounds ARE its acres.
+    # start week) spread over the plots it is eligible in (X8, grower ruling 2026-10-27): the
+    # minimum is on the SUM of its plot slots, which share one plant flag (y's tied by equality
+    # rows; presolve folds them into a single binary — measured, no cost). FX.4's minimum PER ZONE
+    # gave every slot its own flag, and plots a crop may use interchangeably made the search
+    # symmetric: two plots solved 10–30× slower, three hit the time limit; this form takes 6–9 s.
+    # No minimum for: a pinned planting (FX.2 — its bounds ARE its acres, so it has no row at all),
+    # and the plantings of a carry-in pinned BELOW the crop's lot size (FX.1, `lot_free`: 1 ac in
+    # the ground against a 2-ac minimum is a fact, and the fall replant is the same quantity).
     planting_slots = {}         # (crop, start_week) -> the plot slots of that one planting
     for i in range(N_S):
         if "pinned_acres" not in successions[i]:
@@ -2608,8 +2609,8 @@ def solve_farm_v2(
                    if (city_water_enabled and idx_cw_start is not None) else np.zeros(N_WEEKS))
 
     # FX.4 — acres standing in each zone, by week: the used side of C1's per-zone rows. Not a
-    # capacity_series entry: the unplanted-crop diagnosis scans those farm-wide, and a zone's
-    # land only limits the crops allowed in it.
+    # capacity_series entry (those are farm-wide; a zone's land only limits the crops allowed in
+    # it) — the unplanted-crop diagnosis reads these for a crop's own plots instead.
     zones_out = [
         {"name": zone["name"], "acres": zone["acres"], "covered": zone["covered"],
          "used_acres": [float(x_sol[members].sum()) * total_land for members in weeks]}

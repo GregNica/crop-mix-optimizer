@@ -19,6 +19,11 @@ import os
 import numpy as np
 import pytest
 
+# The solver's pre-flight guard fails OPEN in the browser (a crashed guard must not cost the grower a
+# plan). Under test that same path let a NameError in the validator pass a new test with a warning
+# (2026-10-27) — so here the guard RAISES, for every test and every solve path at once.
+os.environ.setdefault("FARM_V2_STRICT_PREFLIGHT", "1")
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 

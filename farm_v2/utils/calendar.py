@@ -62,6 +62,30 @@ def week_end_date(week: int, year: int = 2024) -> date:
 # Succession auto-generation
 # ---------------------------------------------------------------------------
 
+def cycle_weeks(crop: dict) -> tuple[int, int, int]:
+    """(weeks_to_harvest, grow_weeks, total_weeks) of an annual crop's card — the ONE derivation.
+
+    days_to_maturity is PLANT TO FIRST HARVEST (the grower's definition, and what every seed
+    catalogue publishes); the harvest window comes after it, so field occupancy is maturity PLUS
+    harvest. Three copies of this rule once drifted apart (the validator kept an older whole-cycle
+    meaning and refused a 14-week harvest the calendar would have built; the diagnosis rounded
+    where the calendar ceiled) — every reader calls this. Raises when planting alone takes longer
+    than the crop takes to mature, the one impossible shape.
+    """
+    plant_w = crop["planting_weeks"]
+    harv_w = crop["harvest_weeks"]
+    weeks_to_harvest = math.ceil(crop["days_to_maturity"] / 7)
+    grow_w = weeks_to_harvest - plant_w
+    if grow_w < 0:
+        raise ValueError(
+            f"Crop '{crop.get('name')}': planting_weeks ({plant_w}) exceeds the "
+            f"{weeks_to_harvest} weeks to first harvest "
+            f"({crop['days_to_maturity']} days_to_maturity). Planting cannot take longer "
+            f"than the crop takes to mature."
+        )
+    return weeks_to_harvest, grow_w, weeks_to_harvest + harv_w
+
+
 def generate_successions(crops: list[dict], year: int = 2024,
                          zone_names: list[str] | None = None) -> list[dict]:
     """
@@ -103,30 +127,14 @@ def generate_successions(crops: list[dict], year: int = 2024,
         if crop.get("perennial"):
             continue
         eligible = crop_zone_names(crop, zone_names)
-        # days_to_maturity is PLANT TO FIRST HARVEST — the grower's definition, and what every
-        # seed catalogue and extension budget publishes. It is NOT total field occupancy.
-        #
-        # This used to read `total_weeks = ceil(dtm/7)` and derive grow as
-        # `total - plant - harvest`, so harvest_weeks ate the growing season: basil came out
-        # with ONE week of growing (35 days, 1 plant, 3 harvest) and tomatoes with three. The
-        # crop was in the ground for less time than it takes to grow it, and the model
-        # under-charged land, labour, water and fertiliser for every crop with a long harvest.
-        #
-        # Occupancy is maturity PLUS the harvest window: you cannot pick for eight weeks and
-        # still clear the bed on the day the first fruit ripens.
-        plant_w       = crop["planting_weeks"]
-        harv_w        = crop["harvest_weeks"]
-        weeks_to_harvest = math.ceil(crop["days_to_maturity"] / 7)
-        grow_w        = weeks_to_harvest - plant_w
-        total_weeks   = weeks_to_harvest + harv_w
-
-        if grow_w < 0:
-            raise ValueError(
-                f"Crop '{crop['name']}': planting_weeks ({plant_w}) exceeds the "
-                f"{weeks_to_harvest} weeks to first harvest "
-                f"({crop['days_to_maturity']} days_to_maturity). Planting cannot take longer "
-                f"than the crop takes to mature."
-            )
+        # The card's calendar, derived once (cycle_weeks above): occupancy is maturity PLUS the
+        # harvest window. This used to read `total_weeks = ceil(dtm/7)` and derive grow as
+        # `total - plant - harvest`, so harvest_weeks ate the growing season: basil came out with
+        # ONE week of growing (35 days, 1 plant, 3 harvest) and the model under-charged land,
+        # labour, water and fertiliser for every crop with a long harvest.
+        plant_w = crop["planting_weeks"]
+        harv_w  = crop["harvest_weeks"]
+        _weeks_to_harvest, grow_w, total_weeks = cycle_weeks(crop)
 
         phases = [0] * plant_w + [1] * grow_w + [2] * harv_w
         # Opt-in year-wrap. Default False, so an unflagged crop behaves as it always has.

@@ -24,7 +24,7 @@ from farm_v2.utils.labor import SEASONAL_TYPES
 from farm_v2.utils.water import WATER_MODES
 
 import math
-from farm_v2.utils.calendar import generate_successions, week_of_year
+from farm_v2.utils.calendar import cycle_weeks, generate_successions, week_of_year
 from farm_v2.utils.zones import crop_zone_names, resolve_zones
 from farm_v2.utils.perennials import resolve_perennial_blocks
 from farm_v2.utils.commitments import committed_acres, resolve_contracts, resolve_floors
@@ -559,26 +559,16 @@ def _validate_crop(crop: dict, ch_names: list[str], year: int) -> list[str]:
     if dtm < 7:
         raise ValueError(f"Crop '{name}' days_to_maturity must be ≥ 7, got {dtm}.")
 
-    # days_to_maturity is PLANT TO FIRST HARVEST (calendar.generate_successions — the grower's
-    # definition, and every seed catalogue's); the harvest window comes AFTER it. This check used
-    # to keep the OLD meaning (planting + harvest inside the maturity weeks) after the calendar
-    # had moved on, and refused a 14-week greenhouse tomato harvest the calendar would have built
-    # (grower, 2026-10-27). One rule, the calendar's.
     plant_w = crop["planting_weeks"]
     harv_w  = crop["harvest_weeks"]
-    weeks_to_harvest = math.ceil(dtm / 7)
-    total_weeks = weeks_to_harvest + harv_w          # field occupancy, as the calendar builds it
-
     if plant_w < 1:
         raise ValueError(f"Crop '{name}' planting_weeks must be ≥ 1, got {plant_w}.")
     if harv_w < 1:
         raise ValueError(f"Crop '{name}' harvest_weeks must be ≥ 1, got {harv_w}.")
-    if plant_w > weeks_to_harvest:
-        raise ValueError(
-            f"Crop '{name}': planting_weeks ({plant_w}) exceeds the {weeks_to_harvest} weeks "
-            f"to first harvest ({dtm} days_to_maturity). Planting cannot take longer than the "
-            f"crop takes to mature."
-        )
+    # The calendar's own rule (plant to FIRST harvest; it raises when planting outlasts maturity).
+    # This check once kept an older whole-cycle meaning after the calendar moved, and refused a
+    # 14-week greenhouse tomato harvest the calendar would have built (grower, 2026-10-27).
+    _weeks_to_harvest, _grow_w, total_weeks = cycle_weeks(crop)
 
     if crop["yield_per_acre"] <= 0:
         raise ValueError(f"Crop '{name}' yield_per_acre must be positive.")

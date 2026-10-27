@@ -16,7 +16,7 @@
 import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
-import { createServer } from 'node:net';
+import { connect, createServer } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -42,7 +42,8 @@ const SHOTS = [
 const freePort = () => new Promise(res => { const s = createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => res(p)); }); });
 const port = await freePort();
 const server = spawn('python3', ['-m', 'http.server', String(port), '-d', path.join(ROOT, 'public'), '--bind', '127.0.0.1'], { stdio: 'ignore' });
-await new Promise(r => setTimeout(r, 700));
+const up = () => new Promise(res => { const s = connect(port, '127.0.0.1'); s.once('connect', () => { s.destroy(); res(true); }); s.once('error', () => res(false)); });
+for (let i = 0; i < 50 && !(await up()); i++) await new Promise(r => setTimeout(r, 100));
 
 try {
   const browser = await chromium.launch();
