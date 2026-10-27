@@ -590,6 +590,18 @@ form's own guards (`tests/fixed_layer_client.cjs`, 17th node harness; `tests/tes
     tolerance is 0.1 ac / 0.1%. ⚠️ Lesson: my first fix of the validator crashed it (a variable the
     later code still used), the guard FAILED OPEN with a warning, and the new test passed on that —
     `solve_payload_optimal` now refuses any result carrying the fail-open warning.
+  - *LANDING `/code-review high` on the whole branch (feat `239918a` → `9abf75a`), 6 findings — 5 fixed,
+    1 recorded:* Monte Carlo now COUNTS the draws the commitments refuse and says so with the results
+    ("N of M drawn years could not be solved — the bad years are NOT in the spread"; the modelling
+    question stays X10); a variant's own yield now varies with the draw and a perennial's PATCH yields
+    are perturbed (`commitments[].yield_per_acre`), where both were held fixed; the sensitivity sweep
+    over Total Land goes through the land scaler (plots follow; fixed plots scale down below the
+    farm; a refused point keeps its reason as a tooltip); a perennial can no longer be a variant's
+    parent ("Sold as" omits it, the form and `variants.py` refuse it by name — the variant would
+    have been an annual missing the fields the card hides); the unplanted-crop diagnosis scans the
+    crop's OWN plots first, so a crop confined to a full plot reports "land in High tunnel", not
+    "outcompeted" with nothing tight. Recorded X21: a must-deliver contract on an overwintering
+    crop pinned at 0 that also has a spring window reaches a bare "contradiction" verdict.
   - *`/code-review high` on the day's changes (7 findings, all fixed the same evening):* a card named
     with a stray space lost its commitments on reload (names are now TRIMMED once, in
     `cropNamesFromDom`); "Back to one field" kept each card's hidden tick grid, and the next "Plant by
@@ -635,6 +647,39 @@ labour, harvest_weeks}`; no `establish_per_acre`/`life_years`, no depreciation l
 contract gains `mode: "deliver" | "penalty"`; `deliver` has no short variable, and its
 infeasibility is diagnosed by the elastic re-solve. FX.5 — the variant inherits labour.
 The toy (v12) is updated to these before FX.4 starts.
+
+## 5b. X19 — plots as THE default (grower idea 2026-10-27; DRAFT for a ruling, not built)
+
+**The idea (grower):** no "Total Land" box and no plot-less state. The form opens on **Plot 1 = the
+whole farm**; Total Land is the SUM of the plots; "+ Add plot" adds one; the last plot cannot be
+deleted. One concept instead of two states, and no seam where plots typed in hectares can disagree
+with a separately typed total (the 0.012-ac refusal of 2026-10-27, now tolerated at 0.1 ac).
+
+**What it touches (why it is a form-wide pass, not a card edit):**
+- `total_land` is the anchor of the whole form: every per-acre input, the land What-If lever, the
+  sensitivity sweep, the demo snapshot (`tests/golden/demo_form_snapshot.json`), the field registry
+  (`fields.js` `total_land` → payload) and the stepper gate read it. It would become a DERIVED
+  value (`Σ plots`), shown read-only beside the plots, still sent to the solver as `total_land` —
+  the solver and every pin stay as they are (one plot = `zones: []` today = the whole farm).
+- Saved plans: v2 states carry `fields.total_land` and `zones: []`. Migration (`migrateFormState`,
+  `FORM_STATE_VERSION` 2 → 3): a plan with no plots becomes one plot "Whole farm" of `total_land`;
+  a plan with plots keeps them, and a remainder plot (blank size) becomes `total_land − Σ sized` —
+  the blank-size remainder DISAPPEARS as a concept (every plot is sized; the farm is their sum).
+- The land What-If lever: "+N% land" adds an open plot of the extra acres (as today); "−N% land"
+  (the sweep) scales every plot. The per-plot levers stay.
+- Rented acres (`rented_acres`) stays a farm-level number ≤ Σ plots — or becomes a per-plot tick
+  ("rented") later; not part of X19.
+- Demo re-capture, the field-registry guard (`total_land` no longer an input), the plots card in
+  the wizard's Farm Basics step, the stepper gate ("Complete all 4 sections").
+
+**Recommendation:** build it as the FIRST item of the co-pilot UI pass (X5/X20), when the crop card
+is reworked anyway — not before. Until then the two-or-none card is a faithful stand-in: the payload
+it sends is exactly what X19 would send (plots list → total = sum), so nothing built on it is thrown
+away. Estimated size: one session, one demo re-capture, no solver change, no pin change.
+
+**Open questions for the grower:** (1) when a plan is loaded from before X19, should the single plot
+be called "Whole farm" or the farm's name? (2) should a plot's size be REQUIRED (no blank), with the
+total always the sum — recommended yes; (3) is "rented" a farm number or a per-plot property?
 
 ## 6. Forward compatibility — the plan-first co-pilot (BACKLOG **X5**, tag `COPILOT`, tabled)
 

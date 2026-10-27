@@ -197,6 +197,12 @@ const near = (a, b, tol) => Math.abs(a - b) <= (tol == null ? 1e-6 : tol);
     ok('+20% on Spinach/Wholesale scales the parent only', !('channels' in scaled1.crops.find(c => c.name === 'Tunnel Spinach'))
        && scaled1.crops.find(c => c.name === 'Spinach').channels.Wholesale.weekly_demand_lbs
           === p.crops.find(c => c.name === 'Spinach').channels.Wholesale.weekly_demand_lbs * 1.2);
+    // A perennial is never offered as a parent, and a saved plan that points a variant at one is refused by name.
+    W.addCrop(); const asp = cards()[cards().length - 1]; set(asp.querySelector('.crop-name-inline'), 'Asparagus'); tick(f(asp, 'perennial'), true);
+    ok('"Sold as" does not offer a perennial card', ![...f(v, 'sells_as').options].some(o => o.value === 'Asparagus'));
+    ok('...and a variant pointed at one is refused by name', (() => { const p = build(); p.crops.find(c => c.name === 'Tunnel Spinach').sells_as = 'Asparagus';
+       return W.eval('validateParams')(p).some(e => /sold as "Asparagus", which is perennial/.test(e)); })());
+    W.deleteCrop(cards().indexOf(asp));
     // A variant whose parent is deleted is REFUSED by name — never quietly its own crop.
     W.deleteCrop(cards().indexOf(cardOf('Spinach')));
     ok('a variant whose parent is gone keeps pointing at it', build().crops.find(c => c.name === 'Tunnel Spinach').sells_as === 'Spinach');
@@ -399,6 +405,9 @@ const near = (a, b, tol) => Math.abs(a - b) <= (tol == null ? 1e-6 : tol);
     ok('+10% land with every zone fixed: a new open zone of the added acres, open to every crop', near(land2.total_land, 88) && land2.zones.length === 3
        && near(land2.zones[2].acres, 8) && land2.zones[2].covered === false && near(land2.zones[0].acres, 2)
        && same(land2.crops[0].zones, ['Open field', land2.zones[2].name]) && !('zones' in land2.crops[1]));
+    const less = W.scaleParamsForScenario(fixedP, { scaleType: 'land' }, 0.5);
+    ok('−50% land with every plot fixed: each plot gives up half (the sensitivity sweep walks below the farm)', near(less.total_land, 40) && less.zones.length === 2
+       && near(less.zones[0].acres, 1) && near(less.zones[1].acres, 39));
     const tun = W.scaleParamsForScenario(p, { scaleType: 'zone', zoneName: 'High tunnel', zoneAcres: 2 }, 1.5);
     ok('a zone lever grows that zone and the farm by the same acres', near(tun.zones[0].acres, 3) && near(tun.total_land, 81) && !('acres' in tun.zones[1]));
     const field = W.scaleParamsForScenario(p, { scaleType: 'zone', zoneName: 'Open field', zoneAcres: 78 }, 1.1);

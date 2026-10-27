@@ -240,6 +240,25 @@ class TestZonesThroughTheAdapter:
             assert sum(plots.values()) >= 3 - 1e-6, (start, plots)          # the planting as a whole
             assert len(plots) == 2 and all(a < 3 for a in plots.values()), (start, plots)   # straddling
 
+    def test_an_unplanted_crop_confined_to_a_full_plot_names_the_plot(self):
+        # The diagnosis scanned farm-wide series only: a crop that lost on land it could not leave
+        # read "outcompeted" with no tightest resource while its plot sat at 100% (landing review).
+        import copy
+        from tests.helpers import ASPARAGUS
+        p = golden_payload(zones=TUNNEL)
+        p["crops"].append(dict(copy.deepcopy(ASPARAGUS), zones=["High tunnel"]))
+        p["commitments"] = [{"id": "p1", "kind": "perennial", "crop": "Asparagus", "zone": "High tunnel", "acres": 2,
+                             "planted_year": 2019, "yield_per_acre": 1750, "harvest_from_week": 18, "harvest_to_week": 25,
+                             "source": "user"}]
+        tom = next(c for c in p["crops"] if c["name"] == "Tomatoes")
+        tom["zones"] = ["High tunnel"]                          # the patch fills its only plot all year
+        out = json.loads(run_from_js(json.dumps(p)))
+        assert out["status"] == "optimal", out.get("errors") or out.get("error")
+        rec = next(r for r in out["unplanted_crops"] if r["crop"] == "Tomatoes")
+        assert rec["reason"] == "outcompeted"
+        assert rec["tightest"] and rec["tightest"]["resource"] == "land in High tunnel", rec
+        assert rec["tightest"]["utilization"] >= 0.95
+
     def test_commitments_that_overfill_one_zone_together_are_refused(self):
         # Each fits the 2-ac tunnel alone; together they need 3. Was a bare HiGHS "infeasible".
         p = golden_payload(zones=TUNNEL)

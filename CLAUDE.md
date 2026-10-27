@@ -30,6 +30,9 @@ Sequence that works:
 3. **`/simplify`** — let it move the code while moving it is still cheap.
 4. *Then* write the deep guards and mutation-test them, against code that has settled.
 5. Browser QA **last**, after all edits. Re-verifying after each refactor is the same waste in a slower loop.
+   **Before asking the grower to look, run `node scripts/screenshot_form.mjs` and READ the PNGs** — jsdom has
+   no layout, and three layout defects reached the grower in one pass (2026-10-27) that a screenshot shows
+   in seconds (a stretched checkbox, a clipped label, a heading that lost its grid span).
 6. `/code-review` before landing.
 
 Not a reason to defer guards indefinitely: step 2 still needs enough coverage that step 3 cannot break the thing silently. The rule is about *when the expensive, mutation-verified layer* gets built, not about writing tests late.

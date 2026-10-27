@@ -72,6 +72,13 @@ def resolve_variants(crops: list[dict]) -> list[dict]:
                 f"Crop '{name}' sells as '{parent_name}', which itself sells as "
                 f"'{parent['sells_as']}'. Point it at '{parent['sells_as']}' directly."
             )
+        # A perennial card carries no planting calendar or planting-phase rates, so a variant of
+        # it would be an annual missing fields the form hides (landing review 2026-10-27).
+        if parent.get("perennial"):
+            raise ValueError(
+                f"Crop '{name}' sells as '{parent_name}', which is perennial — a perennial cannot "
+                f"have variants. Make '{name}' its own crop."
+            )
         variant = dict(crop)
         for key in INHERITED_KEYS:
             # A key the parent leaves out is a default the parent uses; the variant setting it

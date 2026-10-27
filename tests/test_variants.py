@@ -52,6 +52,13 @@ PARENT = {"name": "Spinach", "channels": {"FM": {"price_per_lb": 2.75}}, "crop_d
 
 
 class TestResolveVariants:
+    def test_a_perennial_cannot_be_a_parent(self):
+        # Landing review 2026-10-27: the form hid a variant's planting fields while a perennial
+        # parent had none to inherit, so the solver refused "missing required keys: labor_plant".
+        asparagus = {"name": "Asparagus", "perennial": True, "channels": {"FM": {"price_per_lb": 4.0}}}
+        with pytest.raises(ValueError, match="perennial — a perennial cannot have variants"):
+            resolve_variants([asparagus, {"name": "Tunnel Asparagus", "sells_as": "Asparagus"}])
+
     def test_omitted_inherited_fields_are_the_parents(self):
         _, v = resolve_variants([PARENT, {"name": "T", "sells_as": "Spinach", "yield_per_acre": 6500}])
         assert v["channels"] == PARENT["channels"] and v["labor_harv"] == 50

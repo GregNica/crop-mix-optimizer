@@ -339,7 +339,7 @@ def _limits_text(limits):
 
 def _diagnose_unplanted_crops(
     crops, successions, crop_contribution, annual_caps, demand_table, excluded_channels,
-    capacity_series, phase_table, n_weeks, rain_short_crops=None, no_carry_in=None,
+    capacity_series, phase_table, n_weeks, rain_short_crops=None, no_carry_in=None, zones=None,
 ):
     """Say WHY each crop got zero acres — as DATA, not as sentences.
 
@@ -411,20 +411,29 @@ def _diagnose_unplanted_crops(
             out.append(rec)
             continue
 
-        if capacity_series:
-            weeks = sorted({w for i in succ_idx for w in range(1, n_weeks + 1)
-                            if phase_table[i][w] is not None})
-            best = -1.0
-            for res_name, series in capacity_series.items():
-                used, cap = series.get("used") or [], series.get("cap") or []
-                for w in weeks:
-                    if w - 1 < len(used) and w - 1 < len(cap) and cap[w - 1] > 0:
-                        ratio = used[w - 1] / cap[w - 1]
-                        if ratio > best:
-                            best = ratio
-                            if ratio >= NEAR_LIMIT_FRACTION:
-                                rec["tightest"] = {"resource": res_name, "week": w,
-                                                   "utilization": float(ratio)}
+        weeks = sorted({w for i in succ_idx for w in range(1, n_weeks + 1)
+                        if phase_table[i][w] is not None})
+        best = -1.0
+
+        def _note(res_name, series_used, series_cap):
+            nonlocal best
+            for w in weeks:
+                if w - 1 < len(series_used) and w - 1 < len(series_cap) and series_cap[w - 1] > 0:
+                    ratio = series_used[w - 1] / series_cap[w - 1]
+                    if ratio > best + 1e-6:          # a tie at "full" keeps the first named
+                        best = ratio
+                        if ratio >= NEAR_LIMIT_FRACTION:
+                            rec["tightest"] = {"resource": res_name, "week": w, "utilization": float(ratio)}
+
+        # FX.4 — the crop's own plots FIRST: a crop confined to a full plot lost on LAND it could
+        # not leave, not on economics, and a farm-wide resource equally full must not displace that
+        # (landing review 2026-10-27). Only the plots it has slots in are its limit.
+        if zones and len(zones) > 1:
+            for z_idx in sorted({successions[i]["zone"] for i in succ_idx}):
+                zone = zones[z_idx]
+                _note(f"land in {zone['name']}", zone.get("used_acres") or [], [zone["acres"]] * n_weeks)
+        for res_name, series in (capacity_series or {}).items():
+            _note(res_name, series.get("used") or [], series.get("cap") or [])
         rec["reason"] = "outcompeted"
         out.append(rec)
 
@@ -2752,7 +2761,7 @@ def solve_farm_v2(
         "unplanted_crops":  _diagnose_unplanted_crops(
             crops, successions, crop_contribution, annual_caps, demand_table,
             excluded_channels, capacity_series, phase_table, N_WEEKS, rain_short_crops,
-            no_carry_in,
+            no_carry_in, zones_out,
         ),
         "storage_peak_m3":  max(storage_m3_weekly) if storage_m3_weekly else 0.0,
         "ambient_peak_m3":  max(ambient_m3_weekly) if ambient_m3_weekly else 0.0,
