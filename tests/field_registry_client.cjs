@@ -39,13 +39,20 @@ const diff = (a, b) => [...a].filter(x => !b.has(x));
   ok(`every registered flat input is rendered (stale: ${JSON.stringify(diff(declared, rendered))})`,
      diff(declared, rendered).length === 0);
 
-  // 2. Crop / channel inputs, both directions.
+  // 2. Crop / channel / fixed-layer inputs, both directions. The plots card, the crop cards' plot
+  //    ticks and the commitment rows (Batch FX) render nothing on the shipped demo, so open two plots
+  //    and add one commitment of each kind to a crop card first — then every registered data-f must
+  //    be on the page and every data-f on the page registered. A row input that reached no entry
+  //    would convert in no unit system, silently.
+  W.eval("startPlots(); const card = document.querySelector('#crop-list .crop-detail');"
+       + " ['must_stand', 'must_plant_annual', 'contract', 'perennial'].forEach(k => addCommitment(k, card))");
   const dataF = new Set([...D.querySelectorAll('[data-f]')].map(e => e.getAttribute('data-f')));
   const cropDeclared = new Set(Object.keys(F.crop));
   ok(`every rendered data-f is registered (missing: ${JSON.stringify(diff(dataF, cropDeclared))})`,
      diff(dataF, cropDeclared).length === 0);
   ok(`every registered data-f is rendered (stale: ${JSON.stringify(diff(cropDeclared, dataF))})`,
      diff(cropDeclared, dataF).length === 0);
+  W.eval("renderAllZones([]); renderAllCommitments([])");
 
   // 3. Every non-UI form field reaches the payload; no UI toggle does; every source exists.
   const feeds = new Set(Object.values(F.payload).flatMap(p => p.from || []));

@@ -31,7 +31,8 @@ Constraint order (rows of A):
        and the carry-in PIN of an overwintering crop (week 1, floor = ceiling)
   C16  contracts (FX.3) — Σ identity sales on the channel (+ short, "penalty" mode) ≥ lb owed,
        one row per week of the window; the penalty is in the objective and the P&L, NOT in C13
-  C10  min acreage lower   x[i] ≥ y[i]×min_frac  (N_S)
+  C10  min acreage lower   Σ_plots x[i,z] ≥ y×min_frac, one row per (crop, start week) planting
+       + one tie row y[a]=y[b] per extra plot slot (X8); pinned plantings have none
   C11  max plant acres/week (52)
   C12  max harvest acres/week (52)
   C13  weekly cash floor — cumulative cash ≥ -(opening_cash + credit_line) (52)
@@ -45,6 +46,7 @@ See SPEC_v3.md §3.
 from __future__ import annotations
 
 import math
+import time
 import numpy as np
 from scipy.optimize import milp, LinearConstraint, Bounds
 from scipy.sparse import csr_matrix, hstack
@@ -97,6 +99,10 @@ SHORT_TOL_LB = 1.0
 # FX.3 — budget per "without this commitment" re-solve (§6.3). Same reasoning as the one-more-head
 # budget: an unproved incumbent is not a figure, so a solve that runs out says so instead.
 COMMITMENT_DELTA_TIME_LIMIT = 45.0
+# ...and ONE wall-clock budget for the whole pricing loop (X13): past it, the entries not yet
+# priced come back `time_limit` rather than running — five commitments in Pyodide were +90 s
+# with no bound, worst case 225 s. Skipping entries whose rows are slack is NOT safe in a MILP.
+COMMITMENT_DELTAS_BUDGET_S = 120.0
 MIP_REL_GAP = 1e-4              # HiGHS's default relative MIP gap — the noise floor of one solve
 DEMAND_AT_CAP_FRACTION = 0.95   # a week counts as "at cap" in demand_saturation.weeks_at_cap
 
@@ -1891,22 +1897,34 @@ def solve_farm_v2(
                 cols.append((short_col[(k, w)], 1.0))
             add_row(cols, c["lb"], np.inf)
 
-    # C10 — Min acreage lower: x[i] ≥ y[i] × min_frac. A pinned planting's acres are given (FX.2),
-    # so it has no minimum — 0 keeps the row, and the row count, uniform. Nor do the plantings of
-    # a carry-in pinned BELOW the crop's lot size (FX.1, `lot_free` above): 1 ac in the ground
-    # against a 2-ac minimum is a fact, and the fall replant is the same quantity (ruling 1), so
-    # the minimum would make the pin unmeetable (it was only a floor before, which the minimum
-    # rounded up). At or above the lot size one planting meets the pin, so the minimum stays —
-    # and the plan's replant lots stay at least the lot size.
+    # C10 — Min acreage lower, per PLANTING: Σ_z x[i,z] ≥ y × min_frac. A planting is one (crop,
+    # start week) and may be spread over the plots it is eligible in (X8, grower ruling
+    # 2026-10-27): the minimum is on the SUM of its plot slots, and the slots share ONE plant flag
+    # (their y's are tied by equality rows, which presolve folds into a single binary). Measured
+    # why: FX.4's minimum PER ZONE gave every (crop, start week, plot) slot its own flag, and with
+    # plots a crop may use interchangeably the search is symmetric — two plots every crop may use
+    # solved 10–30× slower (36 s / 22 s native vs 2.6 s), three plots hit the time limit; this form
+    # solves them in 6–9 s. A crop eligible in one plot is unchanged: its group is the slot.
+    # A pinned planting's acres are given (FX.2), so it has no minimum and is not grouped. Nor do
+    # the plantings of a carry-in pinned BELOW the
+    # crop's lot size (FX.1, `lot_free` above): 1 ac in the ground against a 2-ac minimum is a
+    # fact, and the fall replant is the same quantity (ruling 1), so the minimum would make the
+    # pin unmeetable (it was only a floor before, which the minimum rounded up). At or above the
+    # lot size one planting meets the pin, so the minimum stays — and the plan's replant lots stay
+    # at least the lot size. A pinned planting has no row at all: its bounds ARE its acres.
+    planting_slots = {}         # (crop, start_week) -> the plot slots of that one planting
     for i in range(N_S):
-        crop = crops[successions[i]["crop"]]
-        min_acres = (0.0 if "pinned_acres" in successions[i] or i in lot_free
-                     else crop.get("min_acreage_if_planted", 0.0))
-        min_frac = min_acres / total_land
+        if "pinned_acres" not in successions[i]:
+            planting_slots.setdefault((successions[i]["crop"], successions[i]["start_week"]), []).append(i)
+    for (c_idx, _start), slots in planting_slots.items():
+        min_acres = (0.0 if any(i in lot_free for i in slots)
+                     else crops[c_idx].get("min_acreage_if_planted", 0.0))
         add_row(
-            [(idx_x_start + i, -1.0), (idx_y_start + i, min_frac)],
+            [(idx_x_start + i, -1.0) for i in slots] + [(idx_y_start + slots[0], min_acres / total_land)],
             -np.inf, 0.0,
         )
+        for a, b in zip(slots, slots[1:]):          # one flag for the planting: y[a] = y[b]
+            add_row([(idx_y_start + a, 1.0), (idx_y_start + b, -1.0)], 0.0, 0.0)
 
     # C11 — Max plant acres per week
     for w in range(1, N_WEEKS + 1):
@@ -2362,6 +2380,11 @@ def solve_farm_v2(
                     else weekly_cap[finite].max()
                 )
             entry["binding"] = fill if fracs is None else entry["peak_week_frac"]
+            # FX.5 — the names whose pounds these are. The key is the identity's (the parent
+            # card's) because the cap is its market; when only a variant sold, the client must
+            # say "Spinach market (Tunnel Spinach)" and not "Spinach" beside an unplanted note.
+            entry["sold_by"] = [crops[c]["name"] for c in members
+                                if float(sold_by_pair[c, ch_idx]) > 1e-6]
             per_crop[name] = entry
         if per_crop:
             demand_saturation[ch["name"]] = per_crop
@@ -2627,10 +2650,13 @@ def solve_farm_v2(
     deltas_out = None
     if commitment_deltas:
         deltas_out = []
+        started = time.monotonic()
         for cid, h in held.items():
             rec = {"id": cid, "label": h["label"], "delta": None, "tolerance": None,
                    "status": "base_not_optimal"}
-            if status == "optimal":
+            if status == "optimal" and time.monotonic() - started > COMMITMENT_DELTAS_BUDGET_S:
+                rec["status"] = "time_limit"          # the loop's budget, not this entry's solve
+            elif status == "optimal":
                 free = _solve(released=[cid], time_limit=COMMITMENT_DELTA_TIME_LIMIT)
                 # HiGHS 0 proved, 1 time limit, 2 infeasible; 3/4 (unbounded, numerical) are
                 # an error, not "needs more time" (/code-review high).

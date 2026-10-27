@@ -252,22 +252,17 @@ def validate_params(
                 f"Crop '{crop['name']}' has {committed:g} acres already committed, but the "
                 f"zones it may stand in hold only {eligible_acres:g} acres."
             )
-        # A minimum planting no eligible zone can hold makes the crop unplantable, and the
-        # diagnosis would call it "outcompeted". C10 applies per zone slot (FX.4).
+        # A minimum planting the eligible plots cannot hold TOGETHER makes the crop unplantable,
+        # and the diagnosis would call it "outcompeted". C10 is per planting, summed over its plots
+        # (X8, 2026-10-27) — so a 3-ac minimum may sit 1 ac in the tunnel and 2 in the field.
         # A perennial's patches are pinned with no minimum (C10 skips pins), so its card's
         # minimum is never applied — refusing a patch for it would refuse a valid farm (FX.2).
         min_acres = 0.0 if crop.get("perennial") else float(crop.get("min_acreage_if_planted", 0.0) or 0.0)
-        too_small = [z for z in eligible if zone_acres[z] + 1e-9 < min_acres]
-        if too_small and len(too_small) == len(eligible):
+        if min_acres > eligible_acres + 1e-9:
             raise ValueError(
-                f"Crop '{crop['name']}' needs at least {min_acres:g} acres per planting, but "
-                f"every zone it may stand in is smaller ({', '.join(too_small)}). Lower the "
-                f"minimum or allow a larger zone."
-            )
-        if too_small:
-            warnings.append(
-                f"Crop '{crop['name']}' cannot be planted in {', '.join(too_small)}: its "
-                f"{min_acres:g}-acre minimum planting is larger than the zone."
+                f"Crop '{crop['name']}' needs at least {min_acres:g} acres per planting, but the "
+                f"plots it may stand in hold only {eligible_acres:g} acres together "
+                f"({', '.join(eligible)}). Lower the minimum or allow a larger plot."
             )
         zones_of[crop["name"]] = set(eligible)
         if committed > 0:
@@ -564,20 +559,25 @@ def _validate_crop(crop: dict, ch_names: list[str], year: int) -> list[str]:
     if dtm < 7:
         raise ValueError(f"Crop '{name}' days_to_maturity must be ≥ 7, got {dtm}.")
 
-    total_weeks = math.ceil(dtm / 7)
+    # days_to_maturity is PLANT TO FIRST HARVEST (calendar.generate_successions — the grower's
+    # definition, and every seed catalogue's); the harvest window comes AFTER it. This check used
+    # to keep the OLD meaning (planting + harvest inside the maturity weeks) after the calendar
+    # had moved on, and refused a 14-week greenhouse tomato harvest the calendar would have built
+    # (grower, 2026-10-27). One rule, the calendar's.
     plant_w = crop["planting_weeks"]
     harv_w  = crop["harvest_weeks"]
-    grow_w  = total_weeks - plant_w - harv_w
+    weeks_to_harvest = math.ceil(dtm / 7)
+    total_weeks = weeks_to_harvest + harv_w          # field occupancy, as the calendar builds it
 
     if plant_w < 1:
         raise ValueError(f"Crop '{name}' planting_weeks must be ≥ 1, got {plant_w}.")
     if harv_w < 1:
         raise ValueError(f"Crop '{name}' harvest_weeks must be ≥ 1, got {harv_w}.")
-    if grow_w < 0:
+    if plant_w > weeks_to_harvest:
         raise ValueError(
-            f"Crop '{name}': planting_weeks ({plant_w}) + harvest_weeks ({harv_w}) "
-            f"exceed total cycle ({total_weeks} weeks from {dtm} days_to_maturity). "
-            f"Increase days_to_maturity or reduce phase weeks."
+            f"Crop '{name}': planting_weeks ({plant_w}) exceeds the {weeks_to_harvest} weeks "
+            f"to first harvest ({dtm} days_to_maturity). Planting cannot take longer than the "
+            f"crop takes to mature."
         )
 
     if crop["yield_per_acre"] <= 0:

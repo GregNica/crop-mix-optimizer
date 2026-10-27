@@ -129,6 +129,21 @@ GUARDS = [
         "waters a plan that said it has no irrigation, D11's no-source refusal stopped firing in "
         "Irrigated, or an old saved plan loads in the wrong mode",
     ),
+    (
+        "fixed-layer-client",
+        ["tests/fixed_layer_client.cjs"],
+        "the fixed layer no longer reaches the solver as the form shows it (Batch FX): a zone tick, "
+        "a variant's inherited keys, a perennial's calendar, a blank commitment figure sent as 0, a "
+        "contract with no mode, a saved plan losing its zones or commitments, a What-If that leaves "
+        "the zones behind, or the Committed results card misreading the solver's contracts",
+    ),
+    (
+        "fx-form-payload-staleness",
+        ["scripts/capture_fx_payload.cjs", "--check"],
+        "tests/golden/fx_farm_payload.json is not what the form builds from "
+        "tests/golden/fx_farm_form_state.json any more. Run `node scripts/capture_fx_payload.cjs` "
+        "and re-pin tests/test_fx_form.py in the same commit",
+    ),
 ]
 
 

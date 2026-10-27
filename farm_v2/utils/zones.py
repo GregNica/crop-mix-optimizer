@@ -62,7 +62,10 @@ def resolve_zones(zones: list[dict] | None, total_land: float) -> list[dict]:
             f"Zone '{remainder[0]}' takes the rest of the farm, but the other zones already "
             f"use {fixed:g} of the {total_land:g} acres."
         )
-    if not remainder and abs(rest) > 1e-6:
+    # Within what display rounding can produce — a farm typed as 32.37 ha is 79.988 ac, and plots
+    # typed to add up to it in ha miss 80 ac by 0.012 (grower, 2026-10-27, refused at 1e-6). The
+    # plots then stand as typed; the few hundredths of an acre are nobody's.
+    if not remainder and abs(rest) > max(0.1, 1e-3 * float(total_land)):
         raise ValueError(
             f"Zones add up to {fixed:g} acres but the farm is {total_land:g}. Make them add up, "
             f"or leave one zone's acres blank to take the rest."

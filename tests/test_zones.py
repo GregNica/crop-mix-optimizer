@@ -35,6 +35,14 @@ class TestResolveZones:
             {"name": "High tunnel", "acres": 2.0, "covered": False},
             {"name": "Open field", "acres": 78.0, "covered": False}]
 
+    def test_plots_typed_to_the_farm_in_hectares_are_accepted(self):
+        # 80 ac shows as 32.37 ha; plots typed to add up to THAT are 79.988 ac — 0.012 short, which
+        # 1e-6 refused (grower, 2026-10-27). Within 0.1 ac / 0.1% the plots stand as typed.
+        z = resolve_zones([{"name": "High tunnel", "acres": 2.0}, {"name": "Open field", "acres": 77.988}], 80)
+        assert [x["acres"] for x in z] == [2.0, 77.988]
+        with pytest.raises(ValueError, match="add up to 79.5"):
+            resolve_zones([{"name": "A", "acres": 2.0}, {"name": "B", "acres": 77.5}], 80)
+
     def test_covered_is_kept(self):
         z = resolve_zones([{"name": "High tunnel", "acres": 2, "covered": True}, {"name": "F"}], 80)
         assert [x["covered"] for x in z] == [True, False]
@@ -203,19 +211,34 @@ class TestZonesThroughTheAdapter:
             assert s["start_week"] == s["weeks"][0]
             assert f"W{s['start_week']:02d} · " in s["name"]
 
-    def test_a_minimum_planting_no_eligible_zone_can_hold_is_refused(self):
+    def test_a_minimum_planting_the_eligible_plots_cannot_hold_together_is_refused(self):
         p = golden_payload(zones=TUNNEL)
         tom = next(c for c in p["crops"] if c["name"] == "Tomatoes")
         tom["zones"], tom["min_acreage_if_planted"] = ["High tunnel"], 3
-        _refused(p, "every zone it may stand in is smaller")
+        _refused(p, "hold only 2 acres together")
 
-    def test_a_minimum_planting_one_zone_cannot_hold_is_a_warning(self):
-        p = golden_payload(zones=TUNNEL)
+    def test_a_minimum_larger_than_every_eligible_plot_is_met_by_straddling_them(self):
+        # X8 (2026-10-27): the minimum is on the PLANTING, summed over its plots. Tomatoes may
+        # stand in two 2-ac plots only, with a 3-ac minimum and a 3-ac floor: no single plot can
+        # hold a planting, so the floor is met ONLY by a planting straddling both — under FX.4's
+        # per-slot minimum this farm is refused outright (/code-review: the earlier form of this
+        # test passed under both rules).
+        p = golden_payload(zones=[{"name": "High tunnel", "acres": 2}, {"name": "Small field", "acres": 2},
+                                  {"name": "Open field"}])
         tom = next(c for c in p["crops"] if c["name"] == "Tomatoes")
-        tom["min_acreage_if_planted"] = 3
+        tom.update(zones=["High tunnel", "Small field"], min_acreage_if_planted=3)
+        p["commitments"] = [{"id": "t1", "kind": "must_plant_annual", "crop": "Tomatoes", "acres": 3, "source": "user"}]
         out = json.loads(run_from_js(json.dumps(p)))
-        assert out["status"] == "optimal"
-        assert any("cannot be planted in High tunnel" in w for w in out["warnings"])
+        assert out["status"] == "optimal", out.get("errors") or out.get("error")
+        assert not any("cannot be planted in" in w for w in out["warnings"])
+        by_planting = {}
+        for s in out["succession_schedule"]:
+            if s["crop"] == "Tomatoes" and s["acres"] > 1e-6:
+                by_planting.setdefault(s["start_week"], {})[s["zone"]] = s["acres"]
+        assert by_planting, "the floor was met by nothing"
+        for start, plots in by_planting.items():
+            assert sum(plots.values()) >= 3 - 1e-6, (start, plots)          # the planting as a whole
+            assert len(plots) == 2 and all(a < 3 for a in plots.values()), (start, plots)   # straddling
 
     def test_commitments_that_overfill_one_zone_together_are_refused(self):
         # Each fits the 2-ac tunnel alone; together they need 3. Was a bare HiGHS "infeasible".

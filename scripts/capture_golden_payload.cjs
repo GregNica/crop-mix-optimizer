@@ -39,7 +39,10 @@ const OWNED = ['crops', 'ambient_storage_cap', 'rate_ambient_storage',
                // and task tags; pin the roster the form actually sends, not a July capture.
                'employees', 'overtime_rate_multiplier',
                // Batch W — every solve says how the farm is watered.
-               'water_mode'];
+               'water_mode',
+               // Batch FX — every solve sends the fixed layer; the demo's is EMPTY (no zones, no
+               // commitments), and test_fx_farm pins that it stays so.
+               'zones', 'commitments'];
 
 bootApp().then(({ window: w }) => {
   const payload = JSON.parse(fs.readFileSync(PAYLOAD, 'utf8'));

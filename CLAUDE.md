@@ -13,7 +13,7 @@ This project translates a farm profit-maximization Excel Solver model ("Group 5_
 Run the review skills before finalizing work — this is the project default, not optional:
 
 - **Before committing** non-trivial changes to a branch: run **`/simplify`** on the diff (reuse/simplification/efficiency cleanup — quality only, not a bug hunt). Apply its fixes, then commit.
-- **Before landing a branch** (opening a PR / merging to `master`): run **`/code-review`** (bug hunt) *and* `/simplify` across the branch diff. For high-stakes landings (money-affecting solver/payload/accounting changes qualify), use `/code-review ultra` if the grower's plan includes it (it is a billed cloud review only the grower can launch); otherwise run `/code-review max` across the whole branch diff.
+- **Before landing a branch** (opening a PR / merging to `master`): run **`/code-review high`** (bug hunt) *and* `/simplify` across the branch diff. **Never launch `/code-review max` or `/code-review ultra` on your own (grower ruling 2026-10-26)** — they are expensive and the max run that day hit the usage limit mid-review. If a landing seems to warrant one (a golden re-pin, a large money-path diff), say so with the reason and ASK; launch only on a yes. `ultra` is a billed cloud review only the grower can launch.
 
 Trivial/mechanical edits (a one-line copy fix, a comment) may skip `/simplify`. Everything touching the solver, payload builder, cost/accounting math, or the unit system should get it. If the user is committing themselves, remind them to run these first.
 
@@ -43,7 +43,7 @@ Mutations rarely find a bug in the code; they find **guards that cannot fail** (
 - **Docs, UI copy, mechanical edits:** none.
 - **Keep it fast:** run each mutant against ONLY the test(s) written to catch it (seconds, not a 7-minute suite), in parallel, each in its own repo copy (never mutate the real tree — an interrupted run then cannot leave a mutant behind). Run the full suite only to confirm a survivor.
 - **After `/code-review` fixes:** re-run only the mutants that touch changed code, never the whole set.
-- **Review depth by stakes:** `/code-review medium` for toy and doc changes; high/max for the app money path and branch landings.
+- **Review depth by stakes:** `/code-review medium` for toy and doc changes; `high` for the app money path and branch landings. `max`/`ultra` only when proposed with a reason and approved by the grower (ruling 2026-10-26).
 
 ### Verify first, and verify twice when the fix looks like one line
 

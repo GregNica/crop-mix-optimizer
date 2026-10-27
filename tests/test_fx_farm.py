@@ -40,18 +40,26 @@ from tests.helpers import (ASPARAGUS, FX_COMMITMENTS, ROUNDING, TOL_LB,         
 #     fixed layer costs this farm $33,340, mostly the kale annual floor (45 ac of kale the plan
 #     would not choose: $31,801) and the land the asparagus patches hold all year. Solves in
 #     ~6 s against the golden farm's ~3 s: only kale is eligible in both zones, so only its slots
-#     are doubled (SPEC_batchFX FX.4 deferral 5 — watch this if more crops go in both).
+#     are doubled (SPEC_batchFX FX.4 deferral 5 — closed by X8 below, 2026-10-27).
 #     Bought capacity inside operating_profit: overtime $24,460.29 (the golden farm's ~$24,370 —
 #     the floors keep the crew busy) + the $6,500.00 contract penalty. A ~$24k break here can be
 #     the overtime price, not the fixed layer.
+#   2026-10-27 (X8, grower ruling): C10's minimum is now per PLANTING, summed over its plots,
+#     with one plant flag per planting (was per (crop, start week, zone) slot — which made two
+#     plots every crop may use solve 10–30× slower and three hit the time limit). Profit
+#     619,491.10 → 619,418.51 (−$72.59). The relaxed minimum cannot LOWER the true optimum (every
+#     per-slot plan is still feasible), so the move is HiGHS stopping inside its 1e-4 gap (~$100 on
+#     an operating profit of $1.03M) on a differently shaped model — tolerance, not an effect; the
+#     form's build of the same farm moved the other way (+$76.87, test_fx_form.py). The plain
+#     golden farm is unchanged (one plot → every planting is its own slot → identical rows).
 FX_GOLDEN = {
-    "revenue":          2_497_869.57,
-    "variable_cost":      482_363.32,
+    "revenue":          2_494_968.40,
+    "variable_cost":      479_881.36,
     "fixed_cost":         949_497.22,
-    "overhead_cost":      399_659.13,
-    "interest_cost":        2_898.51,
-    "profit":             619_491.10,
-    "operating_profit": 1_035_048.74,
+    "overhead_cost":      399_194.94,
+    "interest_cost":        2_850.72,
+    "profit":             619_418.51,
+    "operating_profit": 1_034_464.17,
 }
 HINT = "If the plain golden farm (test_golden_farm.py) is unchanged, the cause is in the fixed layer."
 
@@ -93,7 +101,8 @@ def test_the_shipped_golden_farm_carries_none_of_this():
     payload has none of it. If the demo ever gains a zone, a variant, a patch or a commitment,
     this fixture's claim changes and the two pins must be re-read together."""
     p = golden_payload()
-    assert "zones" not in p and "commitments" not in p
+    # The form sends both on every solve (UI step), empty: one whole-farm zone, nothing committed.
+    assert not p.get("zones") and not p.get("commitments")
     assert not any(c.get("sells_as") or c.get("perennial") or c.get("zones") for c in p["crops"])
     assert [c["name"] for c in p["crops"] if c.get("committed_acres")] == ["Garlic"]
 

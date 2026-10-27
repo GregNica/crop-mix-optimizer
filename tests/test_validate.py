@@ -134,12 +134,17 @@ class TestCropValidation:
         with pytest.raises(ValueError, match="days_to_maturity"):
             _call(minimal_params, crops=[bad])
 
-    def test_planting_plus_harvest_exceeds_cycle_raises(self, minimal_params, spinach_crop):
+    def test_planting_longer_than_maturity_raises_but_a_long_harvest_does_not(self, minimal_params, spinach_crop):
+        # days_to_maturity is plant to FIRST harvest (calendar.py); the harvest window comes after it.
+        # This test used to pin the old whole-cycle rule (planting + harvest ≤ maturity weeks), which
+        # the calendar had already left behind — a 14-week greenhouse tomato harvest was refused
+        # here while the calendar would have built it (grower, 2026-10-27).
+        long_harvest = copy.deepcopy(spinach_crop)
+        long_harvest["planting_weeks"], long_harvest["harvest_weeks"] = 2, 14     # 42 days → 6 weeks to harvest
+        _call(minimal_params, crops=[long_harvest])                                # accepted
         bad = copy.deepcopy(spinach_crop)
-        bad["planting_weeks"] = 5
-        bad["harvest_weeks"] = 5
-        # days_to_maturity=42 → 6 total weeks; 5+5=10 > 6
-        with pytest.raises(ValueError, match="planting_weeks|harvest_weeks"):
+        bad["planting_weeks"] = 7                                                   # longer than the 6 weeks to maturity
+        with pytest.raises(ValueError, match="planting_weeks .* exceeds the 6 weeks to first harvest"):
             _call(minimal_params, crops=[bad])
 
     def test_zero_yield_raises(self, minimal_params, spinach_crop):

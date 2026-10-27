@@ -325,7 +325,12 @@ def test_one_more_head_re_solves_never_price_the_commitments(monkeypatch):
 
 def test_status_only_callers_in_the_client_send_deltas_off():
     from tests.helpers import index_src
-    assert "diagnose_infeasible: diagnose, commitment_deltas: false" in index_src()
+    src = index_src()
+    # The one caller that asks for deltas is the Committed card's button (UI step); every other
+    # path takes the default. Pinned as the signature default AND the literal the solve sends.
+    assert "async function solveForNumbers(p, { diagnose = false, deltas = false } = {})" in src
+    assert "diagnose_infeasible: diagnose, commitment_deltas: deltas" in src
+    assert "solveForNumbers(params, { deltas: true })" in src
 
 
 @pytest.mark.parametrize("pair, words", [

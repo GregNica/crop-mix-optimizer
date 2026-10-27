@@ -506,5 +506,7 @@
  "fica_pct": 0.0765,
  "straight_time_load_pct": 0.17350000000000002,
  "overtime_rate_multiplier": 1,
- "water_mode": "irrigated"
+ "water_mode": "irrigated",
+ "zones": [],
+ "commitments": []
 }

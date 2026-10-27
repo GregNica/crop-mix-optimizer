@@ -266,7 +266,56 @@
     },
     cold_storage: {},
     overwinters: {},
-    planting_type: {
+    // Batch FX. `sells_as` makes the card a VARIANT of another crop (FX.5: grown differently, sold
+    // as the parent — channels, caps, diversity, labour and handling are the parent's and are
+    // hidden on the card). `perennial` makes it a product card whose ground is its patches in the
+    // commitments table (FX.2); the growing season bounds when a patch uses anything.
+    sells_as: {},
+    perennial: {},
+    growing_from_week: {},
+    growing_to_week: {},
+    // Batch FX — the fixed layer's DYNAMIC rows share this data-f namespace: the zones card (Farm
+    // Basics), each crop card's zone ticks, and the commitments table (Crops). None of them is on
+    // the shipped demo farm, so tests/field_registry_client.cjs renders two zones and one
+    // commitment of each kind before checking that every rendered data-f is registered and every
+    // registered one is rendered.
+    zone_name: {},
+    zone_acres: {
+      units: { measure: 'area_land' },   // acres; blank = the rest of the farm
+    },
+    zone_covered: {},
+    crop_zone: {},                        // one checkbox per farm zone on each crop card
+    zone_crop: {},                        // the same tick seen from the zone's side (Farm Basics)
+    cm_acres: {
+      units: { measure: 'area_land' },   // a floor's acres, a patch's acres
+    },
+    cm_from_week: {},
+    cm_to_week: {},
+    cm_channel: {},
+    cm_lb_per_week: {
+      units: { measure: 'mass', perWeek: true },   // lb/wk owed
+    },
+    cm_mode: {},
+    cm_penalty_per_lb: {
+      units: { measure: 'mass', inverse: true },   // $/lb short
+    },
+    cm_zone: {},
+    cm_planted_year: {},
+    cm_yield_per_acre: {
+      units: { num: 'mass', den: 'area_land' },    // this year's lb/acre (0 = establishing)
+    },
+    cm_harvest_from_week: {},
+    cm_harvest_to_week: {},
+    cm_extra_cost_per_acre: {
+      units: { measure: 'area_land', inverse: true },   // $/acre, this patch alone, this year
+    },
+    cm_labor_grow: {
+      units: { num: 'time', den: 'area_land', perWeek: true },   // hr/acre/wk (blank = the card's)
+    },
+    cm_labor_harv: {
+      units: { num: 'time', den: 'area_land', perWeek: true },
+    },
+      planting_type: {
       chat: { label: "Planting type", type: "enum", enum: ["seed", "transplant"], description: "Direct-seeded or transplanted." },
     },
     seed_transplant_cost_per_acre: {
@@ -371,6 +420,11 @@
     straight_time_load_pct:      { from: ['straight_time_load_pct'] },
     channels:                    { from: ['@channels'] },
     crops:                       { from: ['@crops'] },
+    // Batch FX. Both are sent on EVERY solve — `[]` when the farm names none, which the solver
+    // reads as one whole-farm zone and no commitments — so the shipped farm's payload is the same
+    // farm it always was with two empty lists on it.
+    zones:                       { from: ['@zones'] },
+    commitments:                 { from: ['@commitments'] },
     harvest_storage_cap:         { from: ['harvest_storage_cap'] },
     rate_harvest_storage:        { from: ['harvest_storage_cost_per_m3', 'depreciation_harvest_years'] },
     ambient_storage_cap:         { from: ['ambient_storage_cap'] },
@@ -404,13 +458,11 @@
     rainfall_weekly_multipliers: { sentBy: 'monte-carlo', from: [] },
     refuse_rain_short:           { sentBy: 'monte-carlo', from: [] },
     diagnose_infeasible:         { sentBy: 'solveForNumbers', from: [] },   // FX.1: re-solves that read only the status skip the limit diagnosis
-    commitment_deltas:           { sentBy: 'solveForNumbers', from: [] },   // FX.3 §6.3: one re-solve per commitment — always off for status-only callers; the Committed section will opt the main solve in
+    commitment_deltas:           { sentBy: 'solveForNumbers', from: [] },   // FX.3 §6.3: one re-solve per commitment — off on every solve; the Committed results card's "Price each commitment" button is the one caller that sends true (priceCommitments)
     // Read by the adapter, sent by nothing. Each is a decision, not an oversight — say which.
     overtime_enabled:            { unsent: 'server off-switch for overtime; the form caps it per role (max_ot_hrs = 0 means none)' },
     payroll_load_pct:            { unsent: 'legacy single payroll load (pre-L.5 server callers); the adapter splits it into fica + straight-time' },
     operating_weeks:             { unsent: 'deprecated; the solver ignores it (cost-accounting basis)' },
-    zones:                       { unsent: 'FX.4 named land pools [{name, acres, covered}]; solver + adapter done, the zones card lands with the Batch FX UI' },
-    commitments:                 { unsent: 'Batch FX farm-level commitments [{id, kind, ...}] — perennial patches, must-plant floors and contracts; solver + adapter done, the commitments table lands with the Batch FX UI' },
     storage_loss_frac_per_week:  { unsent: 'solver supports in-store shrink; no input yet — DECISIONS GROUP E3' },
     city_water_fixed_fee_per_week: { unsent: 'solver + P&L carry a city-water standing charge; no input yet (found by E5b)' },
   };

@@ -71,13 +71,13 @@ shared by validation and the solver. Decisions taken in the build, open to the g
 - Result: `zones: [{name, acres, used_acres[52]}]` (not in `capacity_series`, which the
   unplanted-crop diagnosis scans farm-wide); schedule rows carry `zone`; `weekly_land_frac` is now
   summed from it instead of re-walked in the adapter.
-- ⚠️ **OPEN — C10 `min_acreage_if_planted` now applies per (start week, ZONE) slot**, i.e. per zone
+- ✅ **CLOSED 2026-10-27 by X8 (grower ruling): C10 is per PLANTING, summed over its plots, one plant flag per planting — see §3 "Grower browser review (2026-10-27)" for the measurements.** Was: ⚠️ OPEN — C10 `min_acreage_if_planted` now applies per (start week, ZONE) slot, i.e. per zone
   separately, and y binaries grow ×zones. Fine for a variant pinned to one zone (the toy's 0.25-ac
   tunnel minimum); for a crop in two zones the grower may mean the minimum of the planting as a
   whole. Raise with FX.5.
 - Measured: splitting land every crop may use changes nothing (objective identical at gap 1e-9;
   ~$20 apart at the shipped 1e-4 gap — tolerance, not an effect).
-- **Minimum acres: PER ZONE — grower ruling 2026-10-25.** The "overall planting" option is
+- **Minimum acres: PER PLANTING across its plots — grower ruling 2026-10-27 (X8 built), reversing 2026-10-25's PER ZONE once the per-zone binaries were measured to make plots unsolvable in the browser.** Was: PER ZONE; the "overall planting" option was
   BACKLOG X8. Zone limits = the crop × zone tick grid; attribute matching that pre-ticks it = X9.
 
 **`/code-review high` on `2befe7a` (2026-10-25): 10 findings, all reproduced before acting.**
@@ -453,12 +453,164 @@ asparagus WS 500 W18–25 deliver) + garlic's 18-ac carry-in. **Pinned profit $6
   tests mean; importorskip before the module-level payload build; two lint blanks. Skipped:
   caching the payload reads (measured 0.04 ms each). Re-ran the two touched mutants: caught.
 
+**UI step as built (2026-10-26).** Everything the solver learned in FX.1–FX.5 now has a form, and the
+form's own guards (`tests/fixed_layer_client.cjs`, 17th node harness; `tests/test_fx_form.py`).
+- **Zones card** (Farm Basics, under Total Land): rows of `{name, acres (blank = the rest),
+  covered}`; no rows = `zones: []` = one whole-farm zone. The payload sends `zones` and
+  `commitments` on EVERY solve (empty lists on the demo — `fields.js` `from: ['@zones']` /
+  `['@commitments']`, golden payload re-captured with both empty, `test_fx_farm` pins they stay so).
+- **Crop card**: a tick grid "Zones it may stand in" (shown only with ≥2 zones — with one, every crop
+  is in it and the grid would be a dead input); `zones` is sent only when a zone is unticked. A
+  "Sold as" select makes the card a VARIANT: rendered as its own card nested under the parent
+  (ruling 3's "sub-section", kept one-card-per-crop so every collection flow and the one-crop-per-
+  name payload hold), inherited fields hidden (`inherited-field`) and NOT sent (`CROP_INHERITED_KEYS`,
+  pinned to `variants.INHERITED_KEYS` ∩ form keys); "+ Variant" on the parent pre-fills from it;
+  renaming the parent re-points its variants (one-rename rule); a deleted parent leaves the link
+  visibly broken and refused by name, never a silent own-crop. A "Perennial" tick hides the annual
+  calendar (`annual-only`, `CROP_ANNUAL_KEYS` not sent), shows the growing season (each end sent as
+  typed, so one end alone is refused), and links to "+ patch".
+- **Committed card** (top of the Crops section — every row names a crop, so it lives where crops
+  are; ruling 4's "one table"): rows per kind with stable ids (`cm<n>`, pure on the DOM), selects
+  for crop / channel / zone that keep a vanished name selected and marked, contract mode with NO
+  default and a penalty box enabled only in penalty mode, patches with yield 0 = establishing
+  (harvest weeks hidden and not sent). Blank numbers are LEFT OUT, never 0 — the solver refuses
+  by name. Read-only "Already in the ground" rows list each card's carry-in. Unit-bearing fields
+  (`cm_acres`, `cm_lb_per_week`, `cm_penalty_per_lb`, `cm_yield_per_acre`, `cm_extra_cost_per_acre`,
+  `cm_labor_*`, `zone_acres`) convert like crop fields (FX.2 deferral 7 — measured in Metric: ha→acres,
+  kg/wk→lb/wk, $/kg→$/lb). Saved plans carry `zones` and `commitments`; an unknown kind is reported.
+- **Pre-flight** (`validateFixedLayer`, shared by the stepper gate and the solve): FORM rules only — a
+  blank, a choice not made, a link to a crop/channel/zone the farm lacks, a perennial with no patch,
+  no zone ticked. The arithmetic (zones adding up, a contract above its market, a floor the land
+  cannot hold) stays the resolvers': refused in Step 0 and rendered as sent (`/simplify` altitude).
+- **Results — "Committed & Contracts" card**: zones (size, fullest week, weeks full, what grows
+  there), carry-ins, patches (stage, sellable, cost, hours), floors ("held"), contracts (owed /
+  delivered / short / penalty, short weeks labelled FACT vs CHOICE from the solver's probe), and a
+  "What it costs you" column filled by the **Price each commitment** button (X13's UI question:
+  deltas on a button, never on every solve; `solveForNumbers(params, {deltas: true})` is the one
+  caller). Delta statuses worded: within noise / costs / earns / X15 infeasible ("another
+  commitment depends on it") / time budget / error.
+- **X12 built**: `PL_COST_GROUP` renders `contract_shortfall` under "Contract Settlements" in the P&L,
+  inside the same Total Operating Expenses (tripwire untouched; group omitted when $0).
+- **X13 built (solver)**: `COMMITMENT_DELTAS_BUDGET_S` (120 s wall) — entries past it return
+  `time_limit` unsolved.
+- **FX.5 (3)/(6) built**: saturation entries carry `sold_by` (the members with pounds on that
+  channel); `marketLabel` names "Spinach market (Tunnel Spinach)" in the What-If pill and the CSV.
+  **FX.5 (4b)**: the demand scalers skip variants (no `channels` written onto them).
+- **FX.4 (7)/(8) built**: "+N% land" scales every fixed zone with the farm; one What-If lever per zone
+  (`scaleType: 'zone'`: that zone and the farm grow by the same acres; a remainder zone grows through
+  `total_land`); a full tunnel ranks as its own constraint. Gantt rows read "Wk 10 · High tunnel" /
+  "Patch p1 · Open field" (label plain text, escaped at the HTML sink; the CSV takes it raw).
+- **The FX farm from the form** (`scripts/capture_fx_payload.cjs` → `tests/golden/fx_farm_form_state.json`
+  + `fx_farm_payload.json`, a `--check` guard): the same farm as `fx_farm()`, loaded as a saved plan.
+  Pinned **$619,446.39**; the whole −$44.71 against the code pin is ONE field — the card takes whole
+  pounds per tote (57 → 0.0011954 m³/lb vs the fixture's 0.0012) — measured: with that value swapped
+  the form's payload solves to 619,491.10 to the cent. Every other difference (shelf_life vs
+  sales_spread, a diversity cap on the perennial card, Kale's zones listed vs omitted) moves nothing.
+- **Guards**: `/simplify` (4 lenses) ran before the mutants: one `renumberRows` for all five row
+  families, one `refillSelect`, `syncCropKind` per-card with one `onCropsChanged()` (a keystroke in a
+  crop name had rebuilt the commitment table N+1 times), one `zoneUtilSeries`, the `fixed` registry
+  section folded back into `crop`, `mode: null` dropped (a dead special case). **14 targeted mutants,
+  14 caught** (inherited/annual keys kept, zones left behind by the land lever, a variant given
+  channels, a deliver contract carrying a penalty, blank sent as 0, all-ticked zones listed, X12
+  collapsed, market label mute, zone lever not growing the farm, `sold_by` listing non-sellers, the
+  budget inverted, the carry-in id prefix, rename safety off). Deferred from the review, recorded:
+  BACKLOG X16 (`res.floors`), X17 (one utilisation series per constraint), X18 (the P&L ledger
+  split owned by the solver).
+- **`/code-review` (2026-10-26):** a `max` run was started per the old CLAUDE.md rule and STOPPED
+  by the grower (new rule: never max/ultra unasked — default `high`, propose and ask). Its two
+  verified findings before the stop: the X13 budget guard was INERT against a per-entry reset (a
+  one-entry fixture cannot tell a loop budget from a per-entry one — now two entries on a fake
+  clock, mutation-verified); module-level golden-payload reads aborted collection when the file is
+  missing (`golden_payload` now skips the module). Then `/code-review high`: 9 findings, all applied —
+  Monte Carlo rebuilt every crop with `channels` (a variant's draws were all refused and silently
+  skipped) and a forced yield (a perennial card has none); a patch's hidden zone select still
+  travelled; "+ Variant" showed on variant and perennial cards (chains); the harvest pie read a
+  perennial's yield off the card (0 lb) instead of its patch; the commitment selects lacked the
+  rename rule the "Sold as" select had (one `cropRenames` now serves both); the zone tick grid was
+  WIPED below two named zones (a zone name mid-edit un-withdrew crops — now hidden, never emptied,
+  and unread while hidden); a template load renamed a card with no refresh; the zone form checks
+  reported under Crops instead of Farm Basics; the card walk ran twice per keystroke. 5 mutants on
+  the changed code, 5 caught. Monte Carlo's variant skip has no executing guard (needs Pyodide) —
+  recorded, not pinned.
+- **Grower review of the build (2026-10-26) — three changes:** (1) eligibility is TWO-WAY: each
+  zone row in Farm Basics lists the crops it may hold ("Grows: ☑ Kale ☑ Basil…"), mirroring the
+  crop cards' ticks, and either side writes the other (the crop card stays the source of truth
+  the payload reads); (2) the floors are said in plain words — "Grow at least N acres this year"
+  and "Keep N acres in the ground during a window" (must-stand is for a crop that must be
+  physically there with no pounds promised — a farm stand, u-pick — and is the coarse form of the
+  co-pilot's hand-placed planting, §6.2; the carry-in pin needs the mechanism regardless); (3)
+  "+N% land" in What-If is NEW OPEN GROUND anything may use, not every zone scaled: a remainder
+  zone grows, or with every zone fixed an "Extra land (what-if)" zone of the added acres is added
+  and crops confined to named zones may use it. Kept: fact vs choice (the agreed wording), deltas
+  on a button (revisit with the wider UI).
+- **Grower browser review (2026-10-27) — what it found and what changed:**
+  - *Plots, not zones, and never one alone.* The grower opened one zone smaller than the farm and
+    the form could not run (one zone is the whole farm; the second never came). The card now reads
+    **"Plant by plots instead of total acreage"**: one click opens TWO pre-named plots ("Plot 1"
+    takes the rest of the farm, "Plot 2" asks for a size), so both plot rows and every crop card
+    show the crop ticks at once (they used to wait for a typed name). "+ Add plot" appends a third;
+    the pair has no ✕ — "Back to one field" removes them together; a lone plot in a saved plan is
+    refused by name. Rows are a fixed grid (name | size | covered | ✕) with the ticks on their own
+    line; the tick grids on both sides are a fixed-column grid, not a ragged wrap. The grower's word
+    is PLOT in every label and message; the payload and the solver keep `zones`.
+  - *Commitments live on the crop card.* The grower could not find where to add a perennial patch.
+    Every crop card now ends with **"Commitments for this crop"**: its rows and the add buttons
+    (floors + contract on an annual; patch + contract on a perennial). The crop IS the card — no
+    crop select, a rename is followed with nothing to re-point, deleting a crop takes its rows. The
+    top **Committed card is a read-only dashboard** of every card's rows and carry-ins in words and
+    display units, each with "edit on card". Rows carry `data-seq` so a saved plan's order survives
+    the round trip whichever cards the rows sit on (`fx_farm_payload.json` is byte-identical).
+    Amends ruling 4 ("one top-of-form table") to: one top-of-form SUMMARY, edited at the crop.
+  - *Units.* Button text and headings said "acres" in Metric: the buttons carry `data-unit` spans
+    (relabelled with the cards), the dashboard prints display units and re-renders on a unit switch,
+    headings say "Size", refusals are unit-neutral.
+  - *The slow / failed solves — MEASURED, then FIXED the same day (X8, grower ruling 2026-10-27; pins re-set with notes in test_fx_farm.py / test_fx_form.py).* With two or
+    more plots every crop may use, the solve is 10–30× slower and three plots hit the 75 s time
+    limit (native; Pyodide is ~4× slower, so the tab freezes and the 90 s client timeout fires —
+    "page not responding"). Cause: ruling "min acres PER ZONE" gives every (crop, start week, plot)
+    slot its own plant binary, and plots a crop may use interchangeably make the search symmetric.
+    Native timings on the demo farm: no plots 2.6 s; two plots 20/60 36 s, 40/40 22 s; three plots
+    75 s (time limit). A MIP gap of 0.5% barely helps (11 s / 56 s). Prototype of X8 — one plant
+    flag per (crop, start week) with the minimum on the SUM over its plots — brings them to 6.6 s /
+    9.4 s / 7.9 s; the FX golden farm moves $619,446 → $619,523 (Kale may now split a lot across
+    the tunnel and the field). The solver already refuses an impossible commitment BY NAME before
+    solving (invalid_input), so the "won't solve" the grower saw was the timeout, not infeasibility.
+  - *Results card:* appears below the executive summary after a successful solve, only when the farm
+    has plots or commitments — the grower's solves never finished, so it never showed.
+  - *Second browser round (same evening) → fixed:* a text-input rule (`.form-group input {width:100%}`)
+    stretched every checkbox, which squeezed the crop names out of the plot rows' tick grids and
+    pushed "Perennial" away from its box — `input[type=checkbox] {width:auto}`; the plot row wraps
+    cleanly in a narrow card (Covered on its own line) instead of bleeding; ticking Perennial opens
+    the card's first patch row; the Commitments panel is a tinted box with real buttons; the seasons
+    heading spans the card again (a child selector missed the `display:contents` wrapper).
+    **Two solver refusals the grower hit were stale rules:** `validate.py` still checked planting +
+    harvest ≤ maturity weeks after `calendar.py` had moved to plant-to-FIRST-harvest (a 14-week
+    greenhouse tomato harvest was refused) — one rule now, the calendar's; and plots typed in ha to
+    add up to a farm shown in ha missed Total Land by 0.012 ac and were refused at 1e-6 — the sum
+    tolerance is 0.1 ac / 0.1%. ⚠️ Lesson: my first fix of the validator crashed it (a variable the
+    later code still used), the guard FAILED OPEN with a warning, and the new test passed on that —
+    `solve_payload_optimal` now refuses any result carrying the fail-open warning.
+  - *`/code-review high` on the day's changes (7 findings, all fixed the same evening):* a card named
+    with a stray space lost its commitments on reload (names are now TRIMMED once, in
+    `cropNamesFromDom`); "Back to one field" kept each card's hidden tick grid, and the next "Plant by
+    plots" copied the stale ticks positionally onto the new plots (the grids are wiped with the plots);
+    the new zone test could not fail for X8 (rewritten: two 2-ac plots, a 3-ac minimum and a 3-ac
+    floor — only a straddling planting can meet it; mutants M1/M2 now fail on it alone); the pinned
+    planting's dead C10 0-row dropped and the solver's header table corrected; one card walk per
+    `onCropsChanged` (rows passed down); a saved row without an id is minted a `cm<n>` instead of
+    rendering "undefined"; the "rest of farm" hint is on every plot row, not baked into row 0.
+- **Decisions still open to the grower:** the variant as a nested card; the form's own FX pin
+  beside the code's. Tabled by the grower 2026-10-27 for the wider UI pass: plots as THE default
+  (Plot 1 = the farm, Total Land = the sum of the plots, no plot-less state) — see BACKLOG X19;
+  the Committed/results reading moving BEFORE the solve as the co-pilot's micro-run (X5).
+
 ## 4. Build order
 
 FX.4 zones → FX.5 variants (needs zones to be meaningful) → FX.2 perennials → FX.1 floors (+ C15
-migration) → FX.3 contracts (+ shortfall report) → FX.7 fixture and guards → UI (zones card, crop
-card eligibility/`sells_as`/perennial, a "Committed" section, a contracts table) → `/simplify` →
-`/code-review max` (money path) → browser check. FX.6 templates stay in Batch 3 (sourced data).
+migration) → FX.3 contracts (+ shortfall report) → FX.7 fixture and guards → UI (built 2026-10-26, reworked 2026-10-27 after the grower's browser review — plots, commitments on the crop card: zones card,
+crop card eligibility/`sells_as`/perennial, the Committed card, the results card; reworked 2026-10-27 after
+the grower's browser review: plots, commitments on the crop card) → `/simplify` →
+`/code-review high` (money path; max only if proposed and approved) → browser check. FX.6 templates stay in Batch 3 (sourced data).
 
 ## 5. Grower rulings (2026-10-25) — full text in DECISIONS GROUP G
 

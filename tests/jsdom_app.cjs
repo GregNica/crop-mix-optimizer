@@ -122,4 +122,19 @@ function mkWeeks(byWeek) {
   return Array.from({ length: 52 }, (_, i) => byWeek[i + 1] || 0);
 }
 
-module.exports = { bootApp, ROOT, splitCSVRow, captureCSV, mkWeeks };
+/** Type into a field as a grower would: set the value and fire BOTH `input` and `change`, the two
+ *  events the app's listeners split between (unit sync and dirty-tracking on `input`, row
+ *  `onchange` handlers on `change`). Several harnesses used to carry their own copy that fired
+ *  one or the other, so a listener bound to the other event passed in one harness and not another. */
+function setValue(W, el, v) {
+  el.value = v;
+  el.dispatchEvent(new W.Event('input', { bubbles: true }));
+  el.dispatchEvent(new W.Event('change', { bubbles: true }));
+}
+function setChecked(W, el, on) {
+  el.checked = on;
+  el.dispatchEvent(new W.Event('input', { bubbles: true }));
+  el.dispatchEvent(new W.Event('change', { bubbles: true }));
+}
+
+module.exports = { bootApp, ROOT, splitCSVRow, captureCSV, mkWeeks, setValue, setChecked };

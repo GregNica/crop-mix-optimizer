@@ -23,8 +23,15 @@ GOLDEN_PAYLOAD = REPO / "tests" / "golden" / "default_farm_payload.json"
 
 
 def golden_payload(**overrides) -> dict:
-    """The shipped farm's payload with `overrides` applied — a fresh dict each call."""
+    """The shipped farm's payload with `overrides` applied — a fresh dict each call.
+
+    A MISSING file skips the calling module instead of erroring at collection: five modules read
+    this at import (fx_farm, variants, perennials, toy), and a collection error aborts the whole
+    pytest session, not just those tests (/code-review G22). A corrupt file still fails loudly."""
     import json
+    import pytest
+    if not GOLDEN_PAYLOAD.exists():
+        pytest.skip("golden payload missing", allow_module_level=True)
     p = json.loads(GOLDEN_PAYLOAD.read_text())
     p.update(overrides)
     return p
@@ -110,6 +117,10 @@ def solve_payload_optimal(p: dict) -> dict:
     """solve_payload, asserting a plan came back (with the refusal's reasons if not)."""
     r = solve_payload(p)
     assert r["status"] == "optimal", r.get("errors") or r.get("error")
+    # A plan that ran UNCHECKED is not a plan: the pre-flight guard fails open with this warning
+    # when it crashes, and a test that then sees "optimal" has proven nothing (2026-10-27: a
+    # validator NameError passed a new test this way).
+    assert not any("could not run" in w for w in r.get("warnings", [])), r["warnings"]
     return r
 
 
@@ -243,7 +254,7 @@ def fx_farm(**overrides) -> dict:
     """
     p = commitments_farm(*FX_COMMITMENTS, **overrides)
     # FX.4 — a covered 2-ac tunnel and the open field. Every open-field crop is confined to it
-    # (a crop eligible everywhere gets a copy of each slot per zone, the symmetry cost); kale is
+    # (a crop eligible everywhere gets a copy of each slot per zone — X8 ties them to one planting); kale is
     # the one crop allowed in both, as in the toy; the variant is the tunnel's.
     p["zones"] = copy.deepcopy(TUNNEL_AND_FIELD)
     for c in p["crops"]:
@@ -285,6 +296,7 @@ def solved_once(key: str, params: dict):
 SATURATION_KEYS = {
     "basis", "cap_lbs", "sold_lbs", "fill",
     "peak_week_frac", "peak_week_cap_lbs", "weeks_at_cap", "binding",
+    "sold_by",      # FX.5: the names whose pounds these are (the key is the identity's)
 }
 
 
