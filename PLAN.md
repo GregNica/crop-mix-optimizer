@@ -777,6 +777,11 @@ SAY the plan assumes rain alone; (2) build on its own branch; (3) `/simplify` + 
 
 ## Batch FX — The fixed layer (scheduled 2026-10-19; after Batch 2, before Batch 3)
 
+**✅ LANDED 2026-10-28** — `feat/server-llm-expansion` = `6a3adb5` (FX.0 toy v12 → FX.4/5/2/1/3/7 → the
+UI step `9abf75a` → landing review `4283838` → landing simplify `6a3adb5`; pushed). Open from it: BACKLOG
+X10 (loss-year Monte Carlo), X15, X16–X18, X19 (plots as THE default — SPEC_batchFX §5b, ruling TABLED),
+X20 (crop-card UI pass), X21; BC11 (the tabled browser pass). Next batch by this plan: **Batch 3**.
+
 **WHY.** The grower's first page of January (`SPEC_product.md` prompt 1): *"what do you know you
 need to plant? This absorbs the big blocks and then the rest gets filled in with extras."* The app
 has no first page — it optimises every acre from zero. This batch is the **"absorb the big blocks
